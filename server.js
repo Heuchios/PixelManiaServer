@@ -1090,6 +1090,41 @@ function canActivateAccount(username, playerId) {
   return !activePlayerId || activePlayerId === playerId;
 }
 
+function replaceActiveAccountSession(username, replacementPlayerId) {
+  const key = accountKey(username);
+  const activePlayerId = activeAccountSessions.get(key);
+  if (!activePlayerId || activePlayerId === replacementPlayerId) return;
+
+  const existingPlayer = players.get(activePlayerId);
+  const existingSocket = getSocketByPlayerId(activePlayerId);
+  activeAccountSessions.delete(key);
+
+  if (existingPlayer) {
+    cancelActiveTradeForPlayer(activePlayerId, "Trade canceled because the account signed on somewhere else.");
+    activeFishingSessions.delete(activePlayerId);
+  }
+
+  if (existingSocket) {
+    sendJson(existingSocket, {
+      type: "account_session_replaced",
+      message: "This account signed on somewhere else.",
+    });
+    existingSocket.close(4001, "Account signed on elsewhere");
+    return;
+  }
+
+  if (existingPlayer) {
+    broadcastToWorld(existingPlayer.world, {
+      type: "player_left",
+      player_id: activePlayerId,
+      name: existingPlayer.name,
+      world: existingPlayer.world,
+    }, activePlayerId);
+    broadcastSystemToWorld(existingPlayer.world, `${existingPlayer.name} left ${existingPlayer.world}`, activePlayerId);
+    players.delete(activePlayerId);
+  }
+}
+
 function releaseActiveAccountSession(player) {
   if (!player || !player.account_username) return;
 
@@ -1099,7 +1134,11 @@ function releaseActiveAccountSession(player) {
   }
 }
 
-function activatePlayerAccount(socket, player, account) {
+function activatePlayerAccount(socket, player, account, options = {}) {
+  if (!canActivateAccount(account.username, player.id) && options.replaceExisting) {
+    replaceActiveAccountSession(account.username, player.id);
+  }
+
   if (!canActivateAccount(account.username, player.id)) {
     return { ok: false, message: "That account is already signed on." };
   }
@@ -1285,7 +1324,7 @@ function handleAccountLogin(socket, player, data) {
     return;
   }
 
-  const activation = activatePlayerAccount(socket, player, account);
+  const activation = activatePlayerAccount(socket, player, account, { replaceExisting: true });
   if (!activation.ok) {
     sendAuthError(socket, requestId, "login", activation.message);
     return;
@@ -1319,7 +1358,7 @@ function handleAccountTokenLogin(socket, player, data) {
     return;
   }
 
-  const activation = activatePlayerAccount(socket, player, account);
+  const activation = activatePlayerAccount(socket, player, account, { replaceExisting: true });
   if (!activation.ok) {
     sendAuthError(socket, requestId, "token_login", activation.message);
     return;
