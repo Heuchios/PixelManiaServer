@@ -10,6 +10,9 @@ const DATA_FOLDER = process.env.PIXELMANIA_DATA_DIR ? path.resolve(process.env.P
 const WORLD_SAVE_FOLDER = process.env.WORLD_SAVE_FOLDER ? path.resolve(process.env.WORLD_SAVE_FOLDER) : path.join(DATA_FOLDER, "worlds");
 const PLAYER_SAVE_FOLDER = process.env.PLAYER_SAVE_FOLDER ? path.resolve(process.env.PLAYER_SAVE_FOLDER) : path.join(DATA_FOLDER, "players");
 const ACCOUNTS_SAVE_PATH = process.env.ACCOUNTS_SAVE_PATH ? path.resolve(process.env.ACCOUNTS_SAVE_PATH) : path.join(DATA_FOLDER, "accounts.json");
+const LEGACY_DATA_FOLDERS = [
+  path.join(__dirname, "node_modules"),
+];
 const SAVE_DEBOUNCE_MS = 250;
 const PERIODIC_SAVE_MS = 30000;
 const MIN_USERNAME_LENGTH = 3;
@@ -619,6 +622,7 @@ function safeFileName(value, fallback = "data") {
 function ensureDataFolders() {
   fs.mkdirSync(WORLD_SAVE_FOLDER, { recursive: true });
   fs.mkdirSync(PLAYER_SAVE_FOLDER, { recursive: true });
+  migrateLegacyDataFolders();
 }
 
 function readJsonFile(filePath) {
@@ -647,6 +651,140 @@ function writeJsonFileAtomic(filePath, data) {
   const tempPath = `${filePath}.tmp`;
   fs.writeFileSync(tempPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
   fs.renameSync(tempPath, filePath);
+}
+
+function getJsonSavedAtTime(filePath) {
+  const data = readJsonFile(filePath);
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const savedAt = Date.parse(String(data.saved_at || data.updated_at || ""));
+    if (Number.isFinite(savedAt)) return savedAt;
+
+    const playerSavedAt = Date.parse(String(data.player_data?.saved_at || ""));
+    if (Number.isFinite(playerSavedAt)) return playerSavedAt;
+  }
+
+  try {
+    return fs.statSync(filePath).mtimeMs;
+  } catch (_error) {
+    return 0;
+  }
+}
+
+function getCountDictionaryScore(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return 0;
+
+  let score = 0;
+  for (const rawCount of Object.values(value)) {
+    const count = Number(rawCount);
+    if (Number.isFinite(count) && count > 0) {
+      score += count;
+    }
+  }
+  return score;
+}
+
+function getJsonContentScore(data) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return 0;
+
+  const playerData = data.player_data && typeof data.player_data === "object" ? data.player_data : data;
+  const playerInventoryScore = [
+    "inventory",
+    "seed_inventory",
+    "tool_inventory",
+    "back_inventory",
+    "currency_inventory",
+    "material_inventory",
+    "lure_inventory",
+    "fish_inventory",
+  ].reduce((total, field) => total + getCountDictionaryScore(playerData[field]), 0);
+  if (playerInventoryScore > 0) return playerInventoryScore;
+
+  const worldScore = [
+    "foreground",
+    "blocks",
+    "background",
+    "background_blocks",
+    "removed_foreground",
+    "removed_background",
+    "seeds",
+    "planted_seeds",
+    "interactions",
+    "drops",
+    "item_drops",
+  ].reduce((total, field) => total + (Array.isArray(data[field]) ? data[field].length : 0), 0);
+  if (worldScore > 0) return worldScore;
+
+  if (Array.isArray(data.accounts)) return data.accounts.length;
+  return 0;
+}
+
+function copyJsonIfMissingOrNewer(sourcePath, targetPath, label) {
+  if (!fs.existsSync(sourcePath)) return;
+
+  const sourceData = readJsonFile(sourcePath);
+  if (!sourceData) return;
+
+  if (fs.existsSync(targetPath)) {
+    const targetData = readJsonFile(targetPath);
+    const sourceTime = getJsonSavedAtTime(sourcePath);
+    const targetTime = getJsonSavedAtTime(targetPath);
+    const sourceScore = getJsonContentScore(sourceData);
+    const targetScore = getJsonContentScore(targetData);
+    const targetLooksLikeEmptyPlaceholder = targetScore <= 5 && sourceScore > targetScore + 5;
+    if (targetTime >= sourceTime && !targetLooksLikeEmptyPlaceholder) return;
+
+    const backupPath = `${targetPath}.pre-migration-${Date.now()}`;
+    fs.copyFileSync(targetPath, backupPath);
+    console.warn(`PixelManiaServer data migration backed up older ${label}: ${backupPath}`);
+  }
+
+  fs.mkdirSync(path.dirname(targetPath), { recursive: true });
+  fs.copyFileSync(sourcePath, targetPath);
+  console.warn(`PixelManiaServer data migration copied ${label}: ${sourcePath} -> ${targetPath}`);
+}
+
+function copyJsonFolderIfMissingOrNewer(sourceFolder, targetFolder, label) {
+  if (!fs.existsSync(sourceFolder)) return;
+
+  let entries = [];
+  try {
+    entries = fs.readdirSync(sourceFolder, { withFileTypes: true });
+  } catch (error) {
+    console.warn(`Could not scan legacy ${label} folder ${sourceFolder}:`, error.message);
+    return;
+  }
+
+  fs.mkdirSync(targetFolder, { recursive: true });
+  for (const entry of entries) {
+    if (!entry.isFile() || path.extname(entry.name).toLowerCase() !== ".json") continue;
+    copyJsonIfMissingOrNewer(
+      path.join(sourceFolder, entry.name),
+      path.join(targetFolder, entry.name),
+      `${label} file`
+    );
+  }
+}
+
+function migrateLegacyDataFolders() {
+  for (const legacyFolder of LEGACY_DATA_FOLDERS) {
+    if (!fs.existsSync(legacyFolder)) continue;
+
+    copyJsonIfMissingOrNewer(
+      path.join(legacyFolder, "accounts.json"),
+      ACCOUNTS_SAVE_PATH,
+      "accounts file"
+    );
+    copyJsonFolderIfMissingOrNewer(
+      path.join(legacyFolder, "worlds"),
+      WORLD_SAVE_FOLDER,
+      "worlds"
+    );
+    copyJsonFolderIfMissingOrNewer(
+      path.join(legacyFolder, "players"),
+      PLAYER_SAVE_FOLDER,
+      "players"
+    );
+  }
 }
 
 function getWorldSavePath(worldName) {
@@ -1794,18 +1932,44 @@ function serializeVendStateForClient(vend, player = null) {
     pending_wls: safe.pending_wls,
     logs: safe.logs.map((entry) => ({ ...entry })),
     status: getVendStatus(safe),
-    can_manage: canPlayerManageVend(player, safe),
+    can_manage: canPlayerManageVend(player, safe, safe.world),
   };
 }
 
-function canPlayerManageVend(player, vend) {
-  if (isAdmin(player)) return true;
-  if (!player || !player.authenticated) return false;
-  const ownerKey = accountKey(vend?.owner_username || "");
-  return ownerKey === "" || ownerKey === accountKey(player.account_username);
+function isWorldLocked(worldName) {
+  const state = ensureWorldState(worldName);
+  return Boolean(state.world_lock?.is_locked);
 }
 
-function canPlayerBreakOwnVendingMachine(player, worldName, update) {
+function canPlayerPlaceVendingMachine(player, worldName) {
+  if (isAdmin(player)) return true;
+  if (!player || !player.authenticated) return false;
+
+  if (isWorldLocked(worldName)) {
+    return canPlayerControlWorldLock(player, worldName);
+  }
+
+  return canPlayerBuildInWorld(player, worldName);
+}
+
+function canPlayerManageVend(player, vend, worldName = "") {
+  if (isAdmin(player)) return true;
+  if (!player || !player.authenticated) return false;
+
+  const cleanWorldName = cleanWorld(worldName || vend?.world || "");
+  if (isWorldLocked(cleanWorldName)) {
+    return canPlayerControlWorldLock(player, cleanWorldName);
+  }
+
+  const ownerKey = accountKey(vend?.owner_username || "");
+  if (ownerKey === "") {
+    return canPlayerPlaceVendingMachine(player, cleanWorldName);
+  }
+
+  return ownerKey === accountKey(player.account_username);
+}
+
+function canPlayerBreakVendingMachine(player, worldName, update) {
   if (!player || !player.authenticated) return false;
   if (!update || update.action !== "break" || update.layer === "background") return false;
 
@@ -1813,9 +1977,17 @@ function canPlayerBreakOwnVendingMachine(player, worldName, update) {
   const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isVendBlockType(block.block_type)) return false;
 
+  if (isWorldLocked(worldName)) {
+    return canPlayerControlWorldLock(player, worldName);
+  }
+
   const vend = getVendStateAt(worldName, update.x, update.y, false);
-  if (accountKey(vend.owner_username || "") === "") return false;
-  return canPlayerManageVend(player, vend);
+  const ownerKey = accountKey(vend.owner_username || "");
+  return ownerKey === "" ? canPlayerBuildInWorld(player, worldName) : ownerKey === accountKey(player.account_username);
+}
+
+function canPlayerBreakOwnVendingMachine(player, worldName, update) {
+  return canPlayerBreakVendingMachine(player, worldName, update);
 }
 
 function canListItemInVend(itemId, itemCategory) {
@@ -1991,13 +2163,13 @@ function handleVendingTransaction(socket, player, data) {
 
 function handleVendSetListing(socket, player, data, worldName, vend) {
   const hasOwner = accountKey(vend.owner_username || "") !== "";
-  if (!hasOwner && !canPlayerBuildInWorld(player, worldName)) {
-    rejectVendTransaction(socket, data, "This world is locked.");
+  if (!hasOwner && !canPlayerPlaceVendingMachine(player, worldName)) {
+    rejectVendTransaction(socket, data, isWorldLocked(worldName) ? "Only the world owner can list items in vending machines here." : "You cannot use this vending machine.");
     return;
   }
 
-  if (hasOwner && !canPlayerManageVend(player, vend)) {
-    rejectVendTransaction(socket, data, "Only the vending machine owner can change this listing.");
+  if (hasOwner && !canPlayerManageVend(player, vend, worldName)) {
+    rejectVendTransaction(socket, data, isWorldLocked(worldName) ? "Only the world owner can change this vending machine." : "Only the vending machine owner can change this listing.");
     return;
   }
 
@@ -2127,7 +2299,7 @@ function handleVendBuy(socket, player, data, worldName, vend) {
 }
 
 function handleVendCollect(socket, player, data, worldName, vend) {
-  if (!canPlayerManageVend(player, vend)) {
+  if (!canPlayerManageVend(player, vend, worldName)) {
     rejectVendTransaction(socket, data, "Only the vending machine owner can collect from it.");
     return;
   }
@@ -2161,7 +2333,7 @@ function handleVendCollect(socket, player, data, worldName, vend) {
 }
 
 function handleVendCancel(socket, player, data, worldName, vend) {
-  if (!canPlayerManageVend(player, vend)) {
+  if (!canPlayerManageVend(player, vend, worldName)) {
     rejectVendTransaction(socket, data, "Only the vending machine owner can cancel this listing.");
     return;
   }

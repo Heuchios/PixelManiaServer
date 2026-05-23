@@ -1,0 +1,211 @@
+{
+  "world_state_version": 1,
+  "world_name": "TESTS",
+  "saved_at": "2026-05-22T05:54:26.665Z",
+  "blocks": [
+    {
+      "x": 56,
+      "y": 46,
+      "block_type": "world_lock"
+    }
+  ],
+  "background_blocks": [],
+  "removed_foreground": [
+    {
+      "x": 57,
+      "y": 53,
+      "block_type": "dirt"
+    },
+    {
+      "x": 56,
+      "y": 53,
+      "block_type": "dirt"
+    },
+    {
+      "x": 55,
+      "y": 53,
+      "block_type": "dirt"
+    },
+    {
+      "x": 58,
+      "y": 46,
+      "block_type": "leaf"
+    },
+    {
+      "x": 58,
+      "y": 47,
+      "block_type": "leaf"
+    },
+    {
+      "x": 53,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 53,
+      "y": 51,
+      "block_type": "dirt"
+    },
+    {
+      "x": 51,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 52,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 53,
+      "y": 49,
+      "block_type": "grass"
+    },
+    {
+      "x": 52,
+      "y": 49,
+      "block_type": "grass"
+    },
+    {
+      "x": 52,
+      "y": 46,
+      "block_type": "dirt"
+    },
+    {
+      "x": 53,
+      "y": 46,
+      "block_type": "dirt"
+    },
+    {
+      "x": 52,
+      "y": 45,
+      "block_type": "grass"
+    },
+    {
+      "x": 53,
+      "y": 45,
+      "block_type": "grass"
+    },
+    {
+      "x": 46,
+      "y": 43,
+      "block_type": "wood"
+    },
+    {
+      "x": 48,
+      "y": 45,
+      "block_type": "grass"
+    },
+    {
+      "x": 47,
+      "y": 45,
+      "block_type": "grass"
+    },
+    {
+      "x": 39,
+      "y": 44,
+      "block_type": "wood"
+    },
+    {
+      "x": 39,
+      "y": 45,
+      "block_type": "wood"
+    }
+  ],
+  "removed_background": [
+    {
+      "x": 48,
+      "y": 45,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 47,
+      "y": 45,
+      "block_type": "cave_background"
+    }
+  ],
+  "seeds": [],
+  "interactions": [],
+  "world_lock": {
+    "is_locked": true,
+    "owner_name": "USO",
+    "lock_grid_x": 56,
+    "lock_grid_y": 46,
+    "allowed_players": [
+      "UCE"
+    ],
+    "public_build": false
+  },
+  "drops": [
+    {
+      "drop_id": "74efd089-5e61-4218-8cf8-1a98f2e61d47_69586_9",
+      "item_type": "leaf",
+      "item_category": "block",
+      "is_seed": false,
+      "amount": 1,
+      "x": 1856,
+      "y": 1504,
+      "pickup_delay": 0
+    },
+    {
+      "drop_id": "74efd089-5e61-4218-8cf8-1a98f2e61d47_69586_10",
+      "item_type": "leaf_seed",
+      "item_category": "seed",
+      "is_seed": true,
+      "amount": 1,
+      "x": 1847,
+      "y": 1500,
+      "pickup_delay": 0
+    },
+    {
+      "drop_id": "74efd089-5e61-4218-8cf8-1a98f2e61d47_69587_11",
+      "item_type": "gem",
+      "item_category": "currency",
+      "is_seed": false,
+      "amount": 3,
+      "x": 1865,
+      "y": 1500,
+      "pickup_delay": 0
+    },
+    {
+      "drop_id": "f7f19ecc-71b8-4c42-8e04-977f7f6c522b_61485_1",
+      "item_type": "wood",
+      "item_category": "block",
+      "is_seed": false,
+      "amount": 1,
+      "x": 1248,
+      "y": 1408,
+      "pickup_delay": 0
+    },
+    {
+      "drop_id": "f7f19ecc-71b8-4c42-8e04-977f7f6c522b_61485_2",
+      "item_type": "gem",
+      "item_category": "currency",
+      "is_seed": false,
+      "amount": 4,
+      "x": 1239,
+      "y": 1404,
+      "pickup_delay": 0
+    },
+    {
+      "drop_id": "f7f19ecc-71b8-4c42-8e04-977f7f6c522b_62096_3",
+      "item_type": "wood",
+      "item_category": "block",
+      "is_seed": false,
+      "amount": 1,
+      "x": 1248,
+      "y": 1440,
+      "pickup_delay": 0
+    },
+    {
+      "drop_id": "f7f19ecc-71b8-4c42-8e04-977f7f6c522b_62096_4",
+      "item_type": "gem",
+      "item_category": "currency",
+      "is_seed": false,
+      "amount": 6,
+      "x": 1239,
+      "y": 1436,
+      "pickup_delay": 0
+    }
+  ]
+}

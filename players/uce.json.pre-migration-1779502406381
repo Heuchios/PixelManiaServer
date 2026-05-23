@@ -1,0 +1,36 @@
+{
+  "player_state_version": 1,
+  "username": "uce",
+  "saved_at": "2026-05-23T02:06:45.017Z",
+  "player_data": {
+    "player_data_version": 1,
+    "account_username": "uce",
+    "selected_item_type": "legendary_wings",
+    "selected_item_category": "back",
+    "primary_hotbar_tool": "punch",
+    "hotbar_items": [
+      "punch",
+      "gem",
+      "legendary_wings"
+    ],
+    "hotbar_item_categories": [
+      "tool",
+      "currency",
+      "back"
+    ],
+    "player_health": 3,
+    "inventory": {},
+    "seed_inventory": {},
+    "tool_inventory": {
+      "pickaxe": 1
+    },
+    "back_inventory": {},
+    "currency_inventory": {},
+    "material_inventory": {},
+    "lure_inventory": {},
+    "fish_inventory": {},
+    "equipped_tool": "",
+    "equipped_back_item": "",
+    "saved_at": "2026-05-23T02:06:44.764Z"
+  }
+}
