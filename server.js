@@ -1223,14 +1223,25 @@ function handleAccountRegister(socket, player, data) {
 function handleAccountLogin(socket, player, data) {
   const requestId = makeRequestId(data);
   const username = cleanAccountName(data.username);
+  const email = cleanEmail(data.email || "");
   if (username === "") {
     sendAuthError(socket, requestId, "login", "Enter your username.");
+    return;
+  }
+
+  if (email === "") {
+    sendAuthError(socket, requestId, "login", "Enter your email address.");
     return;
   }
 
   const account = accounts.get(accountKey(username));
   if (!account || !hasPassword(account)) {
     sendAuthError(socket, requestId, "login", "Username not found.");
+    return;
+  }
+
+  if (email !== cleanEmail(account.email || "")) {
+    sendAuthError(socket, requestId, "login", "Email does not match that username.");
     return;
   }
 
