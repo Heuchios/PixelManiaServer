@@ -1942,23 +1942,21 @@ function isWorldLocked(worldName) {
 }
 
 function canPlayerPlaceVendingMachine(player, worldName) {
-  if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
 
   if (isWorldLocked(worldName)) {
-    return canPlayerControlWorldLock(player, worldName);
+    return isPlayerWorldOwner(player, worldName);
   }
 
   return canPlayerBuildInWorld(player, worldName);
 }
 
 function canPlayerManageVend(player, vend, worldName = "") {
-  if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
 
   const cleanWorldName = cleanWorld(worldName || vend?.world || "");
   if (isWorldLocked(cleanWorldName)) {
-    return canPlayerControlWorldLock(player, cleanWorldName);
+    return isPlayerWorldOwner(player, cleanWorldName);
   }
 
   const ownerKey = accountKey(vend?.owner_username || "");
@@ -1978,7 +1976,7 @@ function canPlayerBreakVendingMachine(player, worldName, update) {
   if (!block || !isVendBlockType(block.block_type)) return false;
 
   if (isWorldLocked(worldName)) {
-    return canPlayerControlWorldLock(player, worldName);
+    return isPlayerWorldOwner(player, worldName);
   }
 
   const vend = getVendStateAt(worldName, update.x, update.y, false);
@@ -2235,8 +2233,8 @@ function handleVendBuy(socket, player, data, worldName, vend) {
     return;
   }
 
-  if (accountKey(vend.owner_username || "") === accountKey(player.account_username)) {
-    rejectVendTransaction(socket, data, "You cannot buy from your own vending machine.");
+  if (canPlayerManageVend(player, vend, worldName)) {
+    rejectVendTransaction(socket, data, "You cannot buy from a vending machine you manage.");
     return;
   }
 
@@ -2986,6 +2984,15 @@ function canPlayerControlWorldLock(player, worldName) {
   return ownerKey !== "" && ownerKey === accountKey(player.account_username);
 }
 
+function isPlayerWorldOwner(player, worldName) {
+  if (!player || !player.authenticated) return false;
+
+  const state = ensureWorldState(worldName);
+  const lock = state.world_lock || {};
+  const ownerKey = accountKey(lock.owner_name || lock.owner_username || "");
+  return ownerKey !== "" && ownerKey === accountKey(player.account_username);
+}
+
 function canPlayerBuildInWorld(player, worldName) {
   if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
@@ -3185,8 +3192,8 @@ function prepareVendBreakInventoryReturn(socket, player, worldName, update) {
     return { ok: true, playerState: null, message: "" };
   }
 
-  if (!canPlayerManageVend(player, vend)) {
-    sendActionRejected(socket, "world_block_update", "Only the vending machine owner can break it while it has items.");
+  if (!canPlayerManageVend(player, vend, worldName)) {
+    sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can break this vending machine." : "Only the vending machine owner can break it while it has items.");
     return { ok: false };
   }
 
@@ -3276,6 +3283,11 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
     }
 
     if (isVendBlockType(update.block_type)) {
+      if (!canPlayerBreakVendingMachine(player, worldName, update)) {
+        sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can break vending machines." : "Only the vending machine owner can break it.");
+        return { ok: false };
+      }
+
       const vendReturn = prepareVendBreakInventoryReturn(socket, player, worldName, update);
       if (!vendReturn.ok) return { ok: false };
       return {
@@ -3289,6 +3301,11 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
 
   if (!ItemDatabase.isPlaceableBlock(update.block_type)) {
     sendActionRejected(socket, "world_block_update", "That item cannot be placed.");
+    return { ok: false };
+  }
+
+  if (isVendBlockType(update.block_type) && !canPlayerPlaceVendingMachine(player, worldName)) {
+    sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can place vending machines." : "You cannot place vending machines here.");
     return { ok: false };
   }
 

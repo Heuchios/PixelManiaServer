@@ -1,0 +1,7 @@
+node_modules/
+players/
+worlds/
+accounts.json
+server_out.log
+server_err.log
+.env
