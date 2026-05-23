@@ -4359,7 +4359,15 @@ function getProtectedClearEntries(state, data) {
   return protectedEntries;
 }
 
-function replaceWorldStateAndBroadcast(worldName, state) {
+function addBedrockFloorEntries(target) {
+  for (let x = 0; x < WORLD_WIDTH; x += 1) {
+    for (let y = BEDROCK_START_Y; y < WORLD_HEIGHT; y += 1) {
+      target.set(gridKey(x, y), { x, y, block_type: "bedrock" });
+    }
+  }
+}
+
+function replaceWorldStateAndBroadcast(worldName, state, extraMessageData = {}) {
   const clean = cleanWorld(worldName);
   const existingTimer = worldSaveTimers.get(clean);
   if (existingTimer) {
@@ -4369,7 +4377,7 @@ function replaceWorldStateAndBroadcast(worldName, state) {
 
   worldStates.set(clean, state);
   saveWorldState(clean);
-  broadcastToWorld(clean, buildWorldStateMessage(clean));
+  broadcastToWorld(clean, buildWorldStateMessage(clean, extraMessageData));
 }
 
 function clearWorldByAdmin(worldName, data) {
@@ -4379,6 +4387,7 @@ function clearWorldByAdmin(worldName, data) {
   nextState.cleared = true;
 
   const protectedEntries = getProtectedClearEntries(currentState, data);
+  addBedrockFloorEntries(nextState.foreground);
 
   for (const [key, entry] of protectedEntries.entries()) {
     nextState.foreground.set(key, { ...entry });
@@ -4392,13 +4401,13 @@ function clearWorldByAdmin(worldName, data) {
     currentState.seeds.size +
     currentState.drops.size;
 
-  replaceWorldStateAndBroadcast(clean, nextState);
+  replaceWorldStateAndBroadcast(clean, nextState, { respawn_player: true });
   return { removedCount, protectedCount: protectedEntries.size };
 }
 
 function resetWorldByAdmin(worldName) {
   const clean = cleanWorld(worldName);
-  replaceWorldStateAndBroadcast(clean, createEmptyWorldState());
+  replaceWorldStateAndBroadcast(clean, createEmptyWorldState(), { respawn_player: true });
 }
 
 function parseGiveCommand(data, command) {
@@ -4770,6 +4779,10 @@ function loadWorldState(worldName) {
     state.cleared = true;
     state.removed_foreground.clear();
     state.removed_background.clear();
+  }
+
+  if (state.cleared) {
+    addBedrockFloorEntries(state.foreground);
   }
 
   if (data.world_lock && typeof data.world_lock === "object" && !Array.isArray(data.world_lock)) {
@@ -5605,7 +5618,7 @@ function serializeWorldState(worldName) {
   };
 }
 
-function buildWorldStateMessage(worldName) {
+function buildWorldStateMessage(worldName, extraMessageData = {}) {
   const state = ensureWorldState(worldName);
   return {
     type: "world_state",
@@ -5619,6 +5632,7 @@ function buildWorldStateMessage(worldName) {
     interactions: Array.from(state.interactions.values()),
     world_lock: state.world_lock || {},
     drops: Array.from(state.drops.values()),
+    ...extraMessageData,
   };
 }
 
