@@ -378,11 +378,11 @@ wss.on("connection", (socket) => {
         sendActionRejected(socket, "world_block_update", "This world is locked.");
         return;
       }
-      if (update.action === "break" && update.block_type === "world_lock" && !canPlayerControlWorldLock(player, worldName)) {
+      if (update.action === "break" && update.block_type === "world_lock" && isWorldLocked(worldName) && !canPlayerControlWorldLock(player, worldName)) {
         sendActionRejected(socket, "world_block_update", "Only the world lock owner can break the lock.");
         return;
       }
-      if (update.action === "place" && update.block_type === "world_lock" && ensureWorldState(worldName).world_lock?.is_locked && !canPlayerControlWorldLock(player, worldName)) {
+      if (update.action === "place" && update.block_type === "world_lock" && (ensureWorldState(worldName).world_lock?.is_locked || hasWorldLockBlock(worldName))) {
         sendActionRejected(socket, "world_block_update", "This world already has a lock.");
         return;
       }
@@ -2202,6 +2202,29 @@ function isWorldLocked(worldName) {
   return Boolean(state.world_lock?.is_locked);
 }
 
+function hasWorldLockBlock(worldName) {
+  const state = ensureWorldState(worldName);
+  for (const block of state.foreground.values()) {
+    if (clampString(block?.block_type || "") === "world_lock") {
+      return true;
+    }
+  }
+  return false;
+}
+
+function isActiveWorldLockGrid(state, x, y) {
+  const lock = state.world_lock || {};
+  if (!lock.is_locked) return false;
+
+  const lockGridX = Math.trunc(Number(lock.lock_grid_x));
+  const lockGridY = Math.trunc(Number(lock.lock_grid_y));
+  if (!Number.isFinite(lockGridX) || !Number.isFinite(lockGridY) || lockGridX === 999999 || lockGridY === 999999) {
+    return true;
+  }
+
+  return lockGridX === Math.trunc(Number(x) || 0) && lockGridY === Math.trunc(Number(y) || 0);
+}
+
 function getWorldLockProtectedStorageBlocks(worldName) {
   const state = ensureWorldState(worldName);
   const protectedBlocks = [];
@@ -3965,6 +3988,11 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
     return { ok: false };
   }
 
+  if (update.block_type === "world_lock" && (state.world_lock?.is_locked || hasWorldLockBlock(worldName))) {
+    sendActionRejected(socket, "world_block_update", "This world already has a World Lock.");
+    return { ok: false };
+  }
+
   if (isVendBlockType(update.block_type) && !canPlayerPlaceVendingMachine(player, worldName)) {
     sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can place vending machines." : "Lock this world before placing vending machines.");
     return { ok: false };
@@ -4066,6 +4094,11 @@ function prepareWorldLockStateUpdate(socket, player, worldName, update) {
 
   if (currentLock.is_locked && !nextLock.is_locked && hasWorldLockProtectedStorageBlocks(worldName)) {
     sendActionRejected(socket, "world_lock_state", "Remove all Safes and vending machines before unlocking the World Lock.");
+    return false;
+  }
+
+  if (currentLock.is_locked && nextLock.is_locked && !isActiveWorldLockGrid(state, nextLock.lock_grid_x, nextLock.lock_grid_y)) {
+    sendActionRejected(socket, "world_lock_state", "This world already has a World Lock.");
     return false;
   }
 
@@ -4762,7 +4795,7 @@ function applyBlockUpdateToWorldState(worldName, update) {
       block_type: update.block_type || "",
     });
 
-    if (update.block_type === "world_lock") {
+    if (update.block_type === "world_lock" && isActiveWorldLockGrid(state, update.x, update.y)) {
       state.world_lock = {};
     }
   }
