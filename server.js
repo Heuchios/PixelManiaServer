@@ -452,6 +452,13 @@ wss.on("connection", (socket) => {
 
       const update = sanitizeInteractionUpdate(data, worldName);
       if (!update) return;
+
+      if (update.action === "entrance_gate_move") {
+        if (!requireBuildPermission(socket, player, worldName, "move the Entrance Gate")) return;
+        handleEntranceGateMoveUpdate(socket, player, worldName, update);
+        return;
+      }
+
       if (update.action === "world_lock_state") {
         if (!prepareWorldLockStateUpdate(socket, player, worldName, update)) return;
       } else if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) {
@@ -4975,8 +4982,252 @@ function applySeedUpdateToWorldState(worldName, update) {
   }
 }
 
+function findEntranceGateInState(state) {
+  for (const block of state.foreground.values()) {
+    if (clampString(block?.block_type || "") === ENTRANCE_GATE_TYPE) {
+      return { x: block.x, y: block.y };
+    }
+  }
+
+  return null;
+}
+
+function isProtectedEntranceSupportBlock(blockType) {
+  const clean = clampString(blockType || "");
+  return (
+    clean === "world_lock" ||
+    clean === SAFE_BLOCK_TYPE ||
+    isVendBlockType(clean) ||
+    clean === "crafting_station" ||
+    clean === "crafting_station_left" ||
+    clean === "crafting_station_right" ||
+    clean === "furnace" ||
+    clean === "wooden_door" ||
+    clean === "sign"
+  );
+}
+
+function rejectEntranceMove(socket, message) {
+  sendActionRejected(socket, "world_interaction_update", message);
+  return { ok: false };
+}
+
+function validateEntranceGateMove(socket, player, worldName, update) {
+  const state = ensureWorldState(worldName);
+  const oldGate = findEntranceGateInState(state) || { x: update.old_x, y: update.old_y };
+
+  if (!isGridInWorld(oldGate.x, oldGate.y)) {
+    return rejectEntranceMove(socket, "Entrance Gate missing.");
+  }
+
+  if (oldGate.x === update.x && oldGate.y === update.y) {
+    return rejectEntranceMove(socket, "Entrance Gate is already there.");
+  }
+
+  if (!isGridInWorld(update.x, update.y)) {
+    return rejectEntranceMove(socket, "Outside world bounds.");
+  }
+
+  if (update.y <= 3 || update.y + 1 >= BEDROCK_START_Y) {
+    return rejectEntranceMove(socket, "Not enough space for the Entrance Gate.");
+  }
+
+  if (!isPlayerNearGrid(player, update.x, update.y)) {
+    return rejectEntranceMove(socket, "Too far away.");
+  }
+
+  const targetKey = gridKey(update.x, update.y);
+  if (state.foreground.has(targetKey)) {
+    return rejectEntranceMove(socket, "That spot is blocked.");
+  }
+
+  if (state.seeds.has(targetKey)) {
+    return rejectEntranceMove(socket, "A seed is blocking that spot.");
+  }
+
+  for (let x = update.x - 1; x <= update.x + 1; x += 1) {
+    const walkingKey = gridKey(x, update.y);
+    if (!isGridInWorld(x, update.y)) {
+      return rejectEntranceMove(socket, "Not enough walking space around the gate.");
+    }
+
+    if (x !== update.x && (state.foreground.has(walkingKey) || state.seeds.has(walkingKey))) {
+      return rejectEntranceMove(socket, "Clear the walking space beside the gate first.");
+    }
+  }
+
+  for (let y = update.y - 3; y < update.y; y += 1) {
+    const checkKey = gridKey(update.x, y);
+    if (state.foreground.has(checkKey) || state.seeds.has(checkKey)) {
+      return rejectEntranceMove(socket, "Not enough clear space above the gate.");
+    }
+  }
+
+  for (let x = update.x - 1; x <= update.x + 1; x += 1) {
+    const underY = update.y + 1;
+    if (!isGridInWorld(x, underY)) {
+      return rejectEntranceMove(socket, "Not enough space under the gate.");
+    }
+
+    const underKey = gridKey(x, underY);
+    if (state.seeds.has(underKey)) {
+      return rejectEntranceMove(socket, "A seed is under the gate spot.");
+    }
+
+    const underBlock = state.foreground.get(underKey);
+    const underType = clampString(underBlock?.block_type || "");
+    if (underType === "") continue;
+
+    if (underType === ENTRANCE_GATE_TYPE || isProtectedEntranceSupportBlock(underType)) {
+      return rejectEntranceMove(socket, "A protected block is under that spot.");
+    }
+
+    if (underType !== "bedrock" && !ItemDatabase.canBreakBlock(underType)) {
+      return rejectEntranceMove(socket, "Unbreakable block under gate spot.");
+    }
+  }
+
+  return { ok: true, state, oldGate };
+}
+
+function applyEntranceGateMoveToWorldState(worldName, state, oldGate, newGate) {
+  const updates = [];
+  const oldGateKey = gridKey(oldGate.x, oldGate.y);
+
+  state.foreground.delete(oldGateKey);
+  state.interactions.delete(oldGateKey);
+  state.removed_foreground.set(oldGateKey, {
+    x: oldGate.x,
+    y: oldGate.y,
+    block_type: ENTRANCE_GATE_TYPE,
+  });
+  updates.push({
+    type: "world_block_update",
+    action: "break",
+    layer: "foreground",
+    x: oldGate.x,
+    y: oldGate.y,
+    block_type: ENTRANCE_GATE_TYPE,
+    world: cleanWorld(worldName),
+  });
+
+  for (let x = oldGate.x - 1; x <= oldGate.x + 1; x += 1) {
+    const y = oldGate.y + 1;
+    if (!isGridInWorld(x, y)) continue;
+
+    const key = gridKey(x, y);
+    state.foreground.set(key, { x, y, block_type: "dirt" });
+    state.removed_foreground.delete(key);
+    updates.push({
+      type: "world_block_update",
+      action: "place",
+      layer: "foreground",
+      x,
+      y,
+      block_type: "dirt",
+      world: cleanWorld(worldName),
+    });
+  }
+
+  for (let x = newGate.x - 1; x <= newGate.x + 1; x += 1) {
+    const y = newGate.y + 1;
+    const key = gridKey(x, y);
+    state.foreground.set(key, { x, y, block_type: "bedrock" });
+    state.removed_foreground.delete(key);
+    state.interactions.delete(key);
+    updates.push({
+      type: "world_block_update",
+      action: "place",
+      layer: "foreground",
+      x,
+      y,
+      block_type: "bedrock",
+      world: cleanWorld(worldName),
+    });
+  }
+
+  const newGateKey = gridKey(newGate.x, newGate.y);
+  state.foreground.set(newGateKey, {
+    x: newGate.x,
+    y: newGate.y,
+    block_type: ENTRANCE_GATE_TYPE,
+  });
+  state.removed_foreground.delete(newGateKey);
+  state.interactions.delete(newGateKey);
+  updates.push({
+    type: "world_block_update",
+    action: "place",
+    layer: "foreground",
+    x: newGate.x,
+    y: newGate.y,
+    block_type: ENTRANCE_GATE_TYPE,
+    world: cleanWorld(worldName),
+  });
+
+  return updates;
+}
+
+function handleEntranceGateMoveUpdate(socket, player, worldName, update) {
+  const validation = validateEntranceGateMove(socket, player, worldName, update);
+  if (!validation.ok) return false;
+
+  const spendResult = spendServerInventoryCost(player.account_username, {
+    item_id: "entrance_mover",
+    item_category: "tool",
+    amount: 1,
+  });
+  if (!spendResult.ok) {
+    sendActionRejected(socket, "world_interaction_update", spendResult.message);
+    return false;
+  }
+
+  const updates = applyEntranceGateMoveToWorldState(
+    worldName,
+    validation.state,
+    validation.oldGate,
+    { x: update.x, y: update.y }
+  );
+
+  saveWorldState(worldName);
+  for (const blockUpdate of updates) {
+    broadcastToWorld(worldName, blockUpdate);
+  }
+
+  sendInventoryTransactionResult(socket, {
+    ok: true,
+    action: "entrance_gate_move",
+    message: "Entrance Gate moved.",
+    username: player.account_username,
+    player_data: spendResult.state || {},
+  });
+  return true;
+}
+
 function sanitizeInteractionUpdate(data, worldName) {
   const action = String(data.action || "").trim();
+
+  if (action === "entrance_gate_move") {
+    const x = Number(data.x);
+    const y = Number(data.y);
+    const oldX = Number(data.old_x);
+    const oldY = Number(data.old_y);
+    if (![x, y, oldX, oldY].every(Number.isFinite)) return null;
+    const gridX = Math.trunc(x);
+    const gridY = Math.trunc(y);
+    const oldGridX = Math.trunc(oldX);
+    const oldGridY = Math.trunc(oldY);
+    if (!isGridInWorld(gridX, gridY) || !isGridInWorld(oldGridX, oldGridY)) return null;
+
+    return {
+      type: "world_interaction_update",
+      world: cleanWorld(worldName),
+      action,
+      x: gridX,
+      y: gridY,
+      old_x: oldGridX,
+      old_y: oldGridY,
+    };
+  }
 
   if (action === "door_state") {
     const x = Number(data.x);
