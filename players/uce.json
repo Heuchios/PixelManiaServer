@@ -1,0 +1,104 @@
+{
+  "player_state_version": 1,
+  "username": "uce",
+  "saved_at": "2026-05-23T01:44:31.591Z",
+  "player_data": {
+    "player_data_version": 1,
+    "account_username": "uce",
+    "selected_item_type": "wrench",
+    "selected_item_category": "tool",
+    "primary_hotbar_tool": "wrench",
+    "hotbar_items": [
+      "wrench",
+      "world_lock",
+      "cave_background",
+      "legendary_wings",
+      "dirt",
+      "dirt_seed"
+    ],
+    "hotbar_item_categories": [
+      "tool",
+      "block",
+      "block",
+      "back",
+      "block",
+      "seed"
+    ],
+    "player_health": 3,
+    "inventory": {
+      "cave_background": 27,
+      "crafting_station_left": 0,
+      "crafting_station_right": 0,
+      "dirt": 47,
+      "entrance_gate": 0,
+      "furnace": 0,
+      "gem_block": 0,
+      "glass": 0,
+      "glass_panel": 0,
+      "grass": 14,
+      "lava": 0,
+      "leaf": 2,
+      "sand": 1,
+      "sign": 0,
+      "stone": 5,
+      "stone_brick": 0,
+      "water": 0,
+      "wood": 0,
+      "wood_plank": 0,
+      "wood_platform": 0,
+      "wooden_door": 0,
+      "world_lock": 105
+    },
+    "seed_inventory": {
+      "dirt_seed": 16,
+      "gem_block_seed": 0,
+      "glass_panel_seed": 0,
+      "glass_seed": 0,
+      "grass_seed": 4,
+      "lava_seed": 0,
+      "leaf_seed": 1,
+      "sand_seed": 0,
+      "sign_seed": 0,
+      "stone_brick_seed": 0,
+      "stone_seed": 1,
+      "wood_plank_seed": 0,
+      "wood_platform_seed": 0,
+      "wood_seed": 0,
+      "wooden_door_seed": 0
+    },
+    "tool_inventory": {
+      "axe": 0,
+      "entrance_mover": 0,
+      "fishing_rod": 1,
+      "pickaxe": 1,
+      "shovel": 0,
+      "wrench": 0
+    },
+    "back_inventory": {
+      "legendary_wings": 2
+    },
+    "currency_inventory": {
+      "gem": 99999
+    },
+    "material_inventory": {
+      "metal_scrap": 0,
+      "refined_glass": 0,
+      "refined_stone": 0
+    },
+    "lure_inventory": {
+      "golden_lure": 0,
+      "lure_pack": 0,
+      "shiny_lure": 0,
+      "worm_lure": 0
+    },
+    "fish_inventory": {
+      "bluegill": 0,
+      "crystal_fish": 0,
+      "golden_carp": 0,
+      "pond_fish": 0
+    },
+    "equipped_tool": "fishing_rod",
+    "equipped_back_item": "legendary_wings",
+    "saved_at": "2026-05-23T01:44:31.336Z"
+  }
+}

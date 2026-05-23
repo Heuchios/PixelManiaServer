@@ -1,0 +1,1655 @@
+{
+  "world_state_version": 1,
+  "world_name": "START",
+  "saved_at": "2026-05-23T01:41:59.189Z",
+  "blocks": [
+    {
+      "x": 32,
+      "y": 46,
+      "block_type": "dirt"
+    },
+    {
+      "x": 34,
+      "y": 41,
+      "block_type": "dirt"
+    },
+    {
+      "x": 50,
+      "y": 43,
+      "block_type": "world_lock"
+    },
+    {
+      "x": 57,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 58,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 59,
+      "y": 47,
+      "block_type": "dirt"
+    },
+    {
+      "x": 59,
+      "y": 46,
+      "block_type": "dirt"
+    },
+    {
+      "x": 59,
+      "y": 45,
+      "block_type": "dirt"
+    },
+    {
+      "x": 58,
+      "y": 45,
+      "block_type": "dirt"
+    },
+    {
+      "x": 61,
+      "y": 39,
+      "block_type": "dirt"
+    },
+    {
+      "x": 63,
+      "y": 39,
+      "block_type": "dirt"
+    },
+    {
+      "x": 63,
+      "y": 40,
+      "block_type": "dirt"
+    },
+    {
+      "x": 64,
+      "y": 43,
+      "block_type": "dirt"
+    },
+    {
+      "x": 65,
+      "y": 46,
+      "block_type": "dirt"
+    },
+    {
+      "x": 66,
+      "y": 51,
+      "block_type": "dirt"
+    },
+    {
+      "x": 64,
+      "y": 56,
+      "block_type": "dirt"
+    },
+    {
+      "x": 65,
+      "y": 56,
+      "block_type": "dirt"
+    },
+    {
+      "x": 65,
+      "y": 57,
+      "block_type": "dirt"
+    },
+    {
+      "x": 64,
+      "y": 57,
+      "block_type": "dirt"
+    },
+    {
+      "x": 66,
+      "y": 57,
+      "block_type": "dirt"
+    },
+    {
+      "x": 63,
+      "y": 56,
+      "block_type": "dirt"
+    },
+    {
+      "x": 63,
+      "y": 55,
+      "block_type": "dirt"
+    },
+    {
+      "x": 62,
+      "y": 55,
+      "block_type": "dirt"
+    },
+    {
+      "x": 61,
+      "y": 55,
+      "block_type": "dirt"
+    },
+    {
+      "x": 63,
+      "y": 54,
+      "block_type": "dirt"
+    },
+    {
+      "x": 48,
+      "y": 50,
+      "block_type": "vend_pending"
+    }
+  ],
+  "background_blocks": [
+    {
+      "x": 36,
+      "y": 44,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 58,
+      "y": 50,
+      "block_type": "cave_background"
+    }
+  ],
+  "removed_foreground": [
+    {
+      "x": 51,
+      "y": 47,
+      "block_type": "dirt"
+    },
+    {
+      "x": 52,
+      "y": 47,
+      "block_type": "dirt"
+    },
+    {
+      "x": 52,
+      "y": 46,
+      "block_type": "grass"
+    },
+    {
+      "x": 50,
+      "y": 47,
+      "block_type": "dirt"
+    },
+    {
+      "x": 52,
+      "y": 42,
+      "block_type": "dirt"
+    },
+    {
+      "x": 51,
+      "y": 42,
+      "block_type": "dirt"
+    },
+    {
+      "x": 50,
+      "y": 42,
+      "block_type": "dirt"
+    },
+    {
+      "x": 52,
+      "y": 43,
+      "block_type": "dirt"
+    },
+    {
+      "x": 51,
+      "y": 43,
+      "block_type": "dirt"
+    },
+    {
+      "x": 49,
+      "y": 43,
+      "block_type": "dirt"
+    },
+    {
+      "x": 49,
+      "y": 42,
+      "block_type": "dirt"
+    },
+    {
+      "x": 48,
+      "y": 42,
+      "block_type": "dirt"
+    },
+    {
+      "x": 48,
+      "y": 43,
+      "block_type": "dirt"
+    },
+    {
+      "x": 48,
+      "y": 44,
+      "block_type": "dirt"
+    },
+    {
+      "x": 49,
+      "y": 44,
+      "block_type": "dirt"
+    },
+    {
+      "x": 45,
+      "y": 47,
+      "block_type": "dirt"
+    },
+    {
+      "x": 46,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 39,
+      "y": 47,
+      "block_type": "stone"
+    },
+    {
+      "x": 39,
+      "y": 46,
+      "block_type": "grass"
+    },
+    {
+      "x": 54,
+      "y": 43,
+      "block_type": "leaf"
+    },
+    {
+      "x": 55,
+      "y": 41,
+      "block_type": "leaf"
+    },
+    {
+      "x": 56,
+      "y": 42,
+      "block_type": "leaf"
+    },
+    {
+      "x": 56,
+      "y": 43,
+      "block_type": "leaf"
+    },
+    {
+      "x": 64,
+      "y": 54,
+      "block_type": "stone"
+    },
+    {
+      "x": 65,
+      "y": 54,
+      "block_type": "dirt"
+    },
+    {
+      "x": 66,
+      "y": 54,
+      "block_type": "dirt"
+    },
+    {
+      "x": 67,
+      "y": 54,
+      "block_type": "stone"
+    },
+    {
+      "x": 55,
+      "y": 46,
+      "block_type": "wood"
+    },
+    {
+      "x": 55,
+      "y": 47,
+      "block_type": "wood"
+    },
+    {
+      "x": 53,
+      "y": 47,
+      "block_type": "dirt"
+    },
+    {
+      "x": 53,
+      "y": 46,
+      "block_type": "grass"
+    },
+    {
+      "x": 54,
+      "y": 47,
+      "block_type": "grass"
+    },
+    {
+      "x": 55,
+      "y": 45,
+      "block_type": "wood"
+    },
+    {
+      "x": 55,
+      "y": 44,
+      "block_type": "wood"
+    },
+    {
+      "x": 54,
+      "y": 42,
+      "block_type": "leaf"
+    },
+    {
+      "x": 55,
+      "y": 42,
+      "block_type": "leaf"
+    },
+    {
+      "x": 55,
+      "y": 43,
+      "block_type": "leaf"
+    },
+    {
+      "x": 45,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 38,
+      "y": 45,
+      "block_type": "dirt"
+    },
+    {
+      "x": 38,
+      "y": 44,
+      "block_type": "wood"
+    },
+    {
+      "x": 38,
+      "y": 43,
+      "block_type": "wood"
+    },
+    {
+      "x": 38,
+      "y": 42,
+      "block_type": "wood"
+    },
+    {
+      "x": 34,
+      "y": 44,
+      "block_type": "dirt"
+    },
+    {
+      "x": 34,
+      "y": 43,
+      "block_type": "grass"
+    },
+    {
+      "x": 35,
+      "y": 45,
+      "block_type": "dirt"
+    },
+    {
+      "x": 35,
+      "y": 44,
+      "block_type": "grass"
+    },
+    {
+      "x": 36,
+      "y": 45,
+      "block_type": "dirt"
+    },
+    {
+      "x": 36,
+      "y": 44,
+      "block_type": "grass"
+    },
+    {
+      "x": 36,
+      "y": 46,
+      "block_type": "stone"
+    },
+    {
+      "x": 37,
+      "y": 46,
+      "block_type": "dirt"
+    },
+    {
+      "x": 38,
+      "y": 46,
+      "block_type": "dirt"
+    },
+    {
+      "x": 38,
+      "y": 47,
+      "block_type": "dirt"
+    },
+    {
+      "x": 40,
+      "y": 49,
+      "block_type": "stone"
+    },
+    {
+      "x": 39,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 39,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 40,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 41,
+      "y": 50,
+      "block_type": "stone"
+    },
+    {
+      "x": 41,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 42,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 42,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 43,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 43,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 37,
+      "y": 45,
+      "block_type": "grass"
+    },
+    {
+      "x": 32,
+      "y": 44,
+      "block_type": "grass"
+    },
+    {
+      "x": 31,
+      "y": 44,
+      "block_type": "grass"
+    },
+    {
+      "x": 32,
+      "y": 45,
+      "block_type": "dirt"
+    },
+    {
+      "x": 31,
+      "y": 45,
+      "block_type": "dirt"
+    },
+    {
+      "x": 30,
+      "y": 44,
+      "block_type": "dirt"
+    },
+    {
+      "x": 30,
+      "y": 45,
+      "block_type": "stone"
+    },
+    {
+      "x": 30,
+      "y": 46,
+      "block_type": "sand"
+    },
+    {
+      "x": 31,
+      "y": 46,
+      "block_type": "sand"
+    },
+    {
+      "x": 31,
+      "y": 47,
+      "block_type": "dirt"
+    },
+    {
+      "x": 30,
+      "y": 47,
+      "block_type": "dirt"
+    },
+    {
+      "x": 35,
+      "y": 46,
+      "block_type": "dirt"
+    },
+    {
+      "x": 34,
+      "y": 46,
+      "block_type": "dirt"
+    },
+    {
+      "x": 34,
+      "y": 45,
+      "block_type": "dirt"
+    },
+    {
+      "x": 37,
+      "y": 47,
+      "block_type": "dirt"
+    },
+    {
+      "x": 36,
+      "y": 47,
+      "block_type": "dirt"
+    },
+    {
+      "x": 35,
+      "y": 47,
+      "block_type": "dirt"
+    },
+    {
+      "x": 47,
+      "y": 47,
+      "block_type": "dirt"
+    },
+    {
+      "x": 44,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 44,
+      "y": 47,
+      "block_type": "grass"
+    },
+    {
+      "x": 34,
+      "y": 47,
+      "block_type": "dirt"
+    },
+    {
+      "x": 40,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 40,
+      "y": 47,
+      "block_type": "grass"
+    },
+    {
+      "x": 41,
+      "y": 47,
+      "block_type": "grass"
+    },
+    {
+      "x": 42,
+      "y": 47,
+      "block_type": "grass"
+    },
+    {
+      "x": 43,
+      "y": 47,
+      "block_type": "grass"
+    },
+    {
+      "x": 44,
+      "y": 46,
+      "block_type": "dirt"
+    },
+    {
+      "x": 43,
+      "y": 48,
+      "block_type": "stone"
+    },
+    {
+      "x": 42,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 41,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 48,
+      "y": 46,
+      "block_type": "grass"
+    },
+    {
+      "x": 47,
+      "y": 46,
+      "block_type": "grass"
+    },
+    {
+      "x": 44,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 44,
+      "y": 51,
+      "block_type": "dirt"
+    },
+    {
+      "x": 44,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 45,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 45,
+      "y": 51,
+      "block_type": "dirt"
+    },
+    {
+      "x": 66,
+      "y": 53,
+      "block_type": "grass"
+    },
+    {
+      "x": 67,
+      "y": 53,
+      "block_type": "grass"
+    },
+    {
+      "x": 68,
+      "y": 54,
+      "block_type": "dirt"
+    },
+    {
+      "x": 69,
+      "y": 54,
+      "block_type": "dirt"
+    },
+    {
+      "x": 69,
+      "y": 55,
+      "block_type": "dirt"
+    },
+    {
+      "x": 68,
+      "y": 55,
+      "block_type": "dirt"
+    },
+    {
+      "x": 53,
+      "y": 51,
+      "block_type": "dirt"
+    },
+    {
+      "x": 52,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 53,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 68,
+      "y": 57,
+      "block_type": "dirt"
+    },
+    {
+      "x": 69,
+      "y": 57,
+      "block_type": "dirt"
+    },
+    {
+      "x": 72,
+      "y": 47,
+      "block_type": "leaf"
+    },
+    {
+      "x": 72,
+      "y": 48,
+      "block_type": "leaf"
+    },
+    {
+      "x": 54,
+      "y": 51,
+      "block_type": "dirt"
+    },
+    {
+      "x": 55,
+      "y": 51,
+      "block_type": "stone"
+    },
+    {
+      "x": 84,
+      "y": 52,
+      "block_type": "dirt"
+    },
+    {
+      "x": 83,
+      "y": 52,
+      "block_type": "dirt"
+    },
+    {
+      "x": 83,
+      "y": 51,
+      "block_type": "dirt"
+    },
+    {
+      "x": 84,
+      "y": 51,
+      "block_type": "dirt"
+    },
+    {
+      "x": 44,
+      "y": 53,
+      "block_type": "sand"
+    },
+    {
+      "x": 43,
+      "y": 53,
+      "block_type": "stone"
+    },
+    {
+      "x": 45,
+      "y": 53,
+      "block_type": "stone"
+    },
+    {
+      "x": 46,
+      "y": 53,
+      "block_type": "dirt"
+    },
+    {
+      "x": 52,
+      "y": 44,
+      "block_type": "dirt"
+    },
+    {
+      "x": 38,
+      "y": 40,
+      "block_type": "leaf"
+    },
+    {
+      "x": 39,
+      "y": 40,
+      "block_type": "leaf"
+    },
+    {
+      "x": 38,
+      "y": 39,
+      "block_type": "leaf"
+    },
+    {
+      "x": 68,
+      "y": 56,
+      "block_type": "dirt"
+    },
+    {
+      "x": 46,
+      "y": 51,
+      "block_type": "dirt"
+    },
+    {
+      "x": 41,
+      "y": 52,
+      "block_type": "dirt"
+    },
+    {
+      "x": 41,
+      "y": 53,
+      "block_type": "sand"
+    },
+    {
+      "x": 41,
+      "y": 54,
+      "block_type": "dirt"
+    },
+    {
+      "x": 42,
+      "y": 53,
+      "block_type": "dirt"
+    },
+    {
+      "x": 42,
+      "y": 52,
+      "block_type": "dirt"
+    },
+    {
+      "x": 43,
+      "y": 52,
+      "block_type": "dirt"
+    },
+    {
+      "x": 44,
+      "y": 52,
+      "block_type": "dirt"
+    },
+    {
+      "x": 33,
+      "y": 47,
+      "block_type": "dirt"
+    },
+    {
+      "x": 35,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 36,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 36,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 37,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 37,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 37,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 30,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 31,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 31,
+      "y": 51,
+      "block_type": "stone"
+    },
+    {
+      "x": 32,
+      "y": 51,
+      "block_type": "stone"
+    },
+    {
+      "x": 32,
+      "y": 50,
+      "block_type": "sand"
+    },
+    {
+      "x": 31,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 31,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 39,
+      "y": 52,
+      "block_type": "dirt"
+    },
+    {
+      "x": 53,
+      "y": 45,
+      "block_type": "dirt"
+    },
+    {
+      "x": 53,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 53,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 55,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 56,
+      "y": 51,
+      "block_type": "dirt"
+    },
+    {
+      "x": 57,
+      "y": 49,
+      "block_type": "grass"
+    },
+    {
+      "x": 57,
+      "y": 51,
+      "block_type": "dirt"
+    },
+    {
+      "x": 49,
+      "y": 47,
+      "block_type": "dirt"
+    },
+    {
+      "x": 48,
+      "y": 47,
+      "block_type": "dirt"
+    },
+    {
+      "x": 45,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 42,
+      "y": 54,
+      "block_type": "stone"
+    },
+    {
+      "x": 42,
+      "y": 55,
+      "block_type": "dirt"
+    },
+    {
+      "x": 41,
+      "y": 55,
+      "block_type": "dirt"
+    },
+    {
+      "x": 42,
+      "y": 56,
+      "block_type": "dirt"
+    },
+    {
+      "x": 43,
+      "y": 56,
+      "block_type": "dirt"
+    },
+    {
+      "x": 52,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 52,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 51,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 54,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 56,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 57,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 50,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 55,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 54,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 55,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 56,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 56,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 54,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 55,
+      "y": 52,
+      "block_type": "dirt"
+    },
+    {
+      "x": 56,
+      "y": 52,
+      "block_type": "dirt"
+    },
+    {
+      "x": 47,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 48,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 49,
+      "y": 48,
+      "block_type": "dirt"
+    },
+    {
+      "x": 46,
+      "y": 49,
+      "block_type": "water"
+    },
+    {
+      "x": 46,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 47,
+      "y": 50,
+      "block_type": "dirt"
+    },
+    {
+      "x": 47,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 48,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 49,
+      "y": 50,
+      "block_type": "water"
+    },
+    {
+      "x": 50,
+      "y": 50,
+      "block_type": "water"
+    },
+    {
+      "x": 49,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 50,
+      "y": 49,
+      "block_type": "dirt"
+    }
+  ],
+  "removed_background": [
+    {
+      "x": 51,
+      "y": 47,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 52,
+      "y": 47,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 50,
+      "y": 47,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 46,
+      "y": 48,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 39,
+      "y": 47,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 53,
+      "y": 47,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 54,
+      "y": 48,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 45,
+      "y": 48,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 34,
+      "y": 44,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 35,
+      "y": 45,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 36,
+      "y": 45,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 38,
+      "y": 46,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 38,
+      "y": 47,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 37,
+      "y": 46,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 32,
+      "y": 46,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 32,
+      "y": 45,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 31,
+      "y": 45,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 30,
+      "y": 45,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 30,
+      "y": 46,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 31,
+      "y": 46,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 31,
+      "y": 47,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 30,
+      "y": 47,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 36,
+      "y": 46,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 35,
+      "y": 46,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 34,
+      "y": 46,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 34,
+      "y": 45,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 37,
+      "y": 47,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 36,
+      "y": 47,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 35,
+      "y": 47,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 44,
+      "y": 48,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 34,
+      "y": 47,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 40,
+      "y": 48,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 42,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 41,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 43,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 43,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 42,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 41,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 40,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 39,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 39,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 40,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 42,
+      "y": 48,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 41,
+      "y": 48,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 43,
+      "y": 48,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 44,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 44,
+      "y": 51,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 44,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 69,
+      "y": 54,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 69,
+      "y": 55,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 68,
+      "y": 54,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 68,
+      "y": 55,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 55,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 54,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 83,
+      "y": 52,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 84,
+      "y": 52,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 45,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 45,
+      "y": 51,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 53,
+      "y": 48,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 53,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 55,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 54,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 54,
+      "y": 51,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 55,
+      "y": 51,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 56,
+      "y": 51,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 56,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 57,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 57,
+      "y": 51,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 56,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 43,
+      "y": 53,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 42,
+      "y": 53,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 41,
+      "y": 53,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 41,
+      "y": 54,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 42,
+      "y": 54,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 42,
+      "y": 55,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 41,
+      "y": 55,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 42,
+      "y": 56,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 43,
+      "y": 56,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 53,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 52,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 52,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 52,
+      "y": 48,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 56,
+      "y": 52,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 55,
+      "y": 52,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 48,
+      "y": 48,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 47,
+      "y": 48,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 50,
+      "y": 48,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 49,
+      "y": 48,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 51,
+      "y": 48,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 45,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 46,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 46,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 47,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 47,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 48,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 49,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 48,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 50,
+      "y": 50,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 49,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 46,
+      "y": 51,
+      "block_type": "cave_background"
+    }
+  ],
+  "seeds": [],
+  "interactions": [
+    {
+      "action": "vend_state",
+      "world": "START",
+      "x": 48,
+      "y": 50,
+      "owner_username": "USO",
+      "owner_name": "USO",
+      "listing": {
+        "item_id": "legendary_wings",
+        "item_category": "back",
+        "stock": 1,
+        "amount_per_sale": 1,
+        "price_wls": 1,
+        "created_at": "2026-05-23T01:41:58.930Z"
+      },
+      "pending_wls": 0,
+      "logs": [],
+      "updated_at": "2026-05-23T01:41:58.930Z"
+    }
+  ],
+  "world_lock": {
+    "is_locked": true,
+    "owner_name": "USO",
+    "lock_grid_x": 50,
+    "lock_grid_y": 43,
+    "allowed_players": [],
+    "public_build": false
+  },
+  "drops": [
+    {
+      "drop_id": "1806cdad-5026-4b87-a907-4457883df5b7_16067_1",
+      "item_type": "dirt",
+      "item_category": "block",
+      "is_seed": false,
+      "amount": 1,
+      "x": 1248,
+      "y": 1664,
+      "pickup_delay": 0
+    }
+  ]
+}

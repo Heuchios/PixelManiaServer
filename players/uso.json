@@ -1,0 +1,105 @@
+{
+  "player_state_version": 1,
+  "username": "USO",
+  "saved_at": "2026-05-23T01:42:23.976Z",
+  "player_data": {
+    "player_data_version": 1,
+    "account_username": "USO",
+    "selected_item_type": "wrench",
+    "selected_item_category": "tool",
+    "primary_hotbar_tool": "wrench",
+    "hotbar_items": [
+      "wrench",
+      "dirt",
+      "cave_background",
+      "golden_lure",
+      "world_lock",
+      "grass"
+    ],
+    "hotbar_item_categories": [
+      "tool",
+      "block",
+      "block",
+      "lure",
+      "block",
+      "block"
+    ],
+    "player_health": 3,
+    "inventory": {
+      "cave_background": 71,
+      "crafting_station_left": 0,
+      "crafting_station_right": 0,
+      "dirt": 58,
+      "entrance_gate": 0,
+      "furnace": 50,
+      "gem_block": 0,
+      "glass": 0,
+      "glass_panel": 0,
+      "grass": 17,
+      "lava": 0,
+      "leaf": 11,
+      "sand": 6,
+      "sign": 0,
+      "stone": 7,
+      "stone_brick": 0,
+      "water": 4,
+      "wood": 8,
+      "wood_plank": 0,
+      "wood_platform": 0,
+      "wooden_door": 0,
+      "world_lock": 500,
+      "vend_empty": 0
+    },
+    "seed_inventory": {
+      "dirt_seed": 26,
+      "gem_block_seed": 0,
+      "glass_panel_seed": 0,
+      "glass_seed": 0,
+      "grass_seed": 4,
+      "lava_seed": 0,
+      "leaf_seed": 3,
+      "sand_seed": 2,
+      "sign_seed": 0,
+      "stone_brick_seed": 0,
+      "stone_seed": 0,
+      "wood_plank_seed": 0,
+      "wood_platform_seed": 0,
+      "wood_seed": 0,
+      "wooden_door_seed": 0
+    },
+    "tool_inventory": {
+      "axe": 0,
+      "entrance_mover": 1,
+      "fishing_rod": 1,
+      "pickaxe": 1,
+      "shovel": 0,
+      "wrench": 0
+    },
+    "back_inventory": {
+      "legendary_wings": 0
+    },
+    "currency_inventory": {
+      "gem": 92449
+    },
+    "material_inventory": {
+      "metal_scrap": 0,
+      "refined_glass": 0,
+      "refined_stone": 0
+    },
+    "lure_inventory": {
+      "golden_lure": 3,
+      "lure_pack": 0,
+      "shiny_lure": 47,
+      "worm_lure": 101
+    },
+    "fish_inventory": {
+      "bluegill": 1,
+      "crystal_fish": 1,
+      "golden_carp": 1,
+      "pond_fish": 0
+    },
+    "equipped_tool": "fishing_rod",
+    "equipped_back_item": "",
+    "saved_at": "2026-05-23T01:42:23.716Z"
+  }
+}

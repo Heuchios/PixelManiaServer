@@ -1,0 +1,60 @@
+{
+  "world_state_version": 1,
+  "world_name": "DLKASFKLSADJF",
+  "saved_at": "2026-05-23T00:09:55.996Z",
+  "blocks": [],
+  "background_blocks": [],
+  "removed_foreground": [
+    {
+      "x": 54,
+      "y": 49,
+      "block_type": "dirt"
+    },
+    {
+      "x": 53,
+      "y": 49,
+      "block_type": "grass"
+    },
+    {
+      "x": 52,
+      "y": 49,
+      "block_type": "grass"
+    },
+    {
+      "x": 54,
+      "y": 48,
+      "block_type": "grass"
+    },
+    {
+      "x": 65,
+      "y": 45,
+      "block_type": "stone"
+    },
+    {
+      "x": 65,
+      "y": 44,
+      "block_type": "grass"
+    }
+  ],
+  "removed_background": [
+    {
+      "x": 54,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 53,
+      "y": 49,
+      "block_type": "cave_background"
+    },
+    {
+      "x": 65,
+      "y": 45,
+      "block_type": "cave_background"
+    }
+  ],
+  "seeds": [],
+  "interactions": [],
+  "world_lock": {},
+  "drops": []
+}

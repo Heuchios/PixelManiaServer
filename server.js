@@ -1,0 +1,4587 @@
+const WebSocket = require("ws");
+const crypto = require("crypto");
+const fs = require("fs");
+const path = require("path");
+const ItemDatabase = require("./server_item_database");
+
+const HOST = process.env.HOST || "0.0.0.0";
+const PORT = Math.max(1, Math.trunc(Number(process.env.PORT) || 8080));
+const DATA_FOLDER = process.env.PIXELMANIA_DATA_DIR ? path.resolve(process.env.PIXELMANIA_DATA_DIR) : __dirname;
+const WORLD_SAVE_FOLDER = process.env.WORLD_SAVE_FOLDER ? path.resolve(process.env.WORLD_SAVE_FOLDER) : path.join(DATA_FOLDER, "worlds");
+const PLAYER_SAVE_FOLDER = process.env.PLAYER_SAVE_FOLDER ? path.resolve(process.env.PLAYER_SAVE_FOLDER) : path.join(DATA_FOLDER, "players");
+const ACCOUNTS_SAVE_PATH = process.env.ACCOUNTS_SAVE_PATH ? path.resolve(process.env.ACCOUNTS_SAVE_PATH) : path.join(DATA_FOLDER, "accounts.json");
+const SAVE_DEBOUNCE_MS = 250;
+const PERIODIC_SAVE_MS = 30000;
+const MIN_USERNAME_LENGTH = 3;
+const MAX_USERNAME_LENGTH = 16;
+const MIN_PASSWORD_LENGTH = 4;
+const MAX_WORLD_NAME_LENGTH = 32;
+const WORLD_WIDTH = Math.max(1, Math.trunc(Number(process.env.WORLD_WIDTH) || 100));
+const WORLD_HEIGHT = Math.max(1, Math.trunc(Number(process.env.WORLD_HEIGHT) || 70));
+const TILE_SIZE = Math.max(1, Math.trunc(Number(process.env.TILE_SIZE) || 32));
+const POSITION_MARGIN_PIXELS = TILE_SIZE * 4;
+const MAX_PACKET_BYTES = 64 * 1024;
+const MAX_CHAT_LENGTH = 220;
+const MAX_SIGN_TEXT_LENGTH = 500;
+const MAX_DROP_AMOUNT = 9999;
+const MAX_ITEM_STACK = ItemDatabase.DEFAULT_STACK_LIMIT;
+const MAX_PLAYER_INVENTORY_KEYS = 500;
+const MAX_ITEM_ID_LENGTH = 64;
+const MAX_DROP_ID_LENGTH = 96;
+const MAX_MOVE_PIXELS_PER_SECOND = 900;
+const MAX_PICKUP_DISTANCE_PIXELS = TILE_SIZE * 6;
+const MAX_GRID_ACTION_DISTANCE_PIXELS = TILE_SIZE * 6;
+const MAX_DROP_CREATE_DISTANCE_PIXELS = TILE_SIZE * 6;
+const SERVER_DROP_PICKUP_DELAY = 0.25;
+const TRADE_SLOT_COUNT = 6;
+const MAX_TRADE_DISTANCE_PIXELS = TILE_SIZE * 10;
+const VEND_BLOCK_EMPTY = "vend_empty";
+const VEND_BLOCK_PENDING = "vend_pending";
+const VEND_BLOCK_SOLD = "vend_sold";
+const VEND_BLOCK_TYPES = new Set([VEND_BLOCK_EMPTY, VEND_BLOCK_PENDING, VEND_BLOCK_SOLD]);
+const VEND_LOG_LIMIT = 30;
+const SERVER_SEED_GROW_TIME_SECONDS = Math.max(1, Number(process.env.SEED_GROW_TIME_SECONDS) || 8);
+const MATURE_SEED_EXTRA_DROP_CHANCE = Math.max(0, Math.min(1, Number(process.env.MATURE_SEED_EXTRA_DROP_CHANCE) || 0.65));
+const FISHING_SESSION_TTL_MS = Math.max(10000, Math.trunc(Number(process.env.FISHING_SESSION_TTL_MS) || 90000));
+const ADMIN_USERNAMES = new Set(["uso"]);
+const MESSAGE_RATE_LIMITS = {
+  login: { limit: 10, windowMs: 10000 },
+  account_register: { limit: 6, windowMs: 15000 },
+  account_login: { limit: 8, windowMs: 15000 },
+  account_token_login: { limit: 8, windowMs: 15000 },
+  account_state_save: { limit: 8, windowMs: 10000 },
+  inventory_transaction_request: { limit: 12, windowMs: 5000 },
+  trade_request: { limit: 6, windowMs: 5000 },
+  trade_response: { limit: 12, windowMs: 5000 },
+  trade_offer_update: { limit: 18, windowMs: 5000 },
+  trade_confirm: { limit: 12, windowMs: 5000 },
+  trade_final_confirm: { limit: 12, windowMs: 5000 },
+  trade_cancel: { limit: 12, windowMs: 5000 },
+  player_state_request: { limit: 8, windowMs: 10000 },
+  player_state_save: { limit: 6, windowMs: 10000 },
+  join_world: { limit: 12, windowMs: 10000 },
+  chat: { limit: 8, windowMs: 5000 },
+  developer_command_request: { limit: 5, windowMs: 5000 },
+  world_block_update: { limit: 35, windowMs: 1000 },
+  world_seed_update: { limit: 25, windowMs: 1000 },
+  world_interaction_update: { limit: 20, windowMs: 1000 },
+  world_item_drop_create: { limit: 20, windowMs: 1000 },
+  world_drop_create: { limit: 20, windowMs: 1000 },
+  world_item_drop_update: { limit: 30, windowMs: 1000 },
+  world_drop_update: { limit: 30, windowMs: 1000 },
+  world_item_drop_pickup: { limit: 30, windowMs: 1000 },
+  world_item_drop_remove: { limit: 30, windowMs: 1000 },
+  world_drop_pickup: { limit: 30, windowMs: 1000 },
+  world_drop_remove: { limit: 30, windowMs: 1000 },
+  player_position: { limit: 75, windowMs: 1000 },
+};
+const SHOP_CATALOG = new Map([
+  ["crafting_station", { item_id: "crafting_station", item_category: "block", amount: 1, price: 80 }],
+  ["vend_empty", { item_id: "vend_empty", item_category: "block", amount: 1, price: 7500 }],
+  ["entrance_mover", { item_id: "entrance_mover", item_category: "tool", amount: 1, price: 200 }],
+  ["lure_pack", { item_id: "lure_pack", item_category: "lure", amount: 1, price: 25, pack_size: 5 }],
+]);
+const LURE_PACK_TABLE = [
+  { item_id: "worm_lure", item_category: "lure", weight: 65 },
+  { item_id: "shiny_lure", item_category: "lure", weight: 28 },
+  { item_id: "golden_lure", item_category: "lure", weight: 7 },
+];
+
+const wss = new WebSocket.Server({ host: HOST, port: PORT });
+const players = new Map();
+const worldStates = new Map();
+const playerStates = new Map();
+const accounts = new Map();
+const activeAccountSessions = new Map();
+const activeTrades = new Map();
+const tradeByPlayerId = new Map();
+const activeFishingSessions = new Map();
+const worldSaveTimers = new Map();
+const playerSaveTimers = new Map();
+let accountsSaveTimer = null;
+const periodicSaveTimer = setInterval(() => {
+  flushPendingSaves();
+}, PERIODIC_SAVE_MS);
+if (typeof periodicSaveTimer.unref === "function") periodicSaveTimer.unref();
+
+console.log(`PixelMania server running on ws://${HOST}:${PORT}`);
+
+ensureDataFolders();
+loadAccounts();
+
+wss.on("connection", (socket) => {
+  const playerId = crypto.randomUUID();
+
+  players.set(playerId, {
+    id: playerId,
+    name: "Guest",
+    account_username: "",
+    account_email: "",
+    authenticated: false,
+    world: "START",
+    x: 0,
+    y: 0,
+    facing: 1,
+    equipment_slots: {},
+    last_position_at: 0,
+  });
+
+  socket.playerId = playerId;
+  socket.rateLimits = new Map();
+
+  socket.send(JSON.stringify({
+    type: "connected",
+    player_id: playerId,
+  }));
+
+  socket.on("message", (raw) => {
+    if (getRawLength(raw) > MAX_PACKET_BYTES) {
+      socket.close(1009, "Packet too large");
+      return;
+    }
+
+    let data;
+
+    try {
+      data = JSON.parse(raw);
+    } catch {
+      return;
+    }
+
+    if (!data || typeof data !== "object" || Array.isArray(data)) return;
+
+    const player = players.get(playerId);
+    if (!player) return;
+
+    if (!checkMessageRateLimit(socket, String(data.type || "unknown"))) return;
+
+    if (data.type === "login") {
+      player.name = cleanName(data.name);
+
+      socket.send(JSON.stringify({
+        type: "login_ok",
+        player_id: playerId,
+        name: player.name,
+        username: player.account_username,
+        email: player.account_email,
+      }));
+      return;
+    }
+
+    if (data.type === "account_register") {
+      handleAccountRegister(socket, player, data);
+      return;
+    }
+
+    if (data.type === "account_login") {
+      handleAccountLogin(socket, player, data);
+      return;
+    }
+
+    if (data.type === "account_token_login") {
+      handleAccountTokenLogin(socket, player, data);
+      return;
+    }
+
+    if (data.type === "account_state_save") {
+      const account = sanitizeAccountState(data);
+      if (!account) return;
+      if (!player.authenticated) return;
+      if (accountKey(account.username) !== accountKey(player.account_username)) return;
+
+      upsertAccount(account);
+      return;
+    }
+
+    if (data.type === "inventory_transaction_request") {
+      handleInventoryTransactionRequest(socket, player, data);
+      return;
+    }
+
+    if (data.type === "trade_request") {
+      handleTradeRequest(socket, player, data);
+      return;
+    }
+
+    if (data.type === "trade_response") {
+      handleTradeResponse(socket, player, data);
+      return;
+    }
+
+    if (data.type === "trade_offer_update") {
+      handleTradeOfferUpdate(socket, player, data);
+      return;
+    }
+
+    if (data.type === "trade_confirm") {
+      handleTradeConfirm(socket, player, data);
+      return;
+    }
+
+    if (data.type === "trade_final_confirm") {
+      handleTradeFinalConfirm(socket, player, data);
+      return;
+    }
+
+    if (data.type === "trade_cancel") {
+      handleTradeCancel(socket, player, data);
+      return;
+    }
+
+    if (data.type === "player_state_request") {
+      if (!requireAuthenticated(socket, player, "load player data")) return;
+
+      const username = cleanAccountName(data.username || player.account_username || player.name);
+      if (username === "") return;
+      if (!isPlayerOwnAccount(player, username)) return;
+
+      const state = ensurePlayerState(username);
+      socket.send(JSON.stringify({
+        type: "player_state",
+        found: state !== null,
+        username,
+        player_data: state || {},
+      }));
+      return;
+    }
+
+    if (data.type === "player_state_save") {
+      if (!requireAuthenticated(socket, player, "save player data")) return;
+
+      if (tradeByPlayerId.has(playerId)) {
+        sendActionRejected(socket, "player_state_save", "Finish or cancel your trade before saving inventory.");
+        return;
+      }
+
+      const username = cleanAccountName(data.username || player.account_username || player.name);
+      if (username === "") return;
+      if (!isPlayerOwnAccount(player, username)) return;
+
+      const state = sanitizePlayerState(data, username);
+      if (!state) return;
+      const serverState = mergeClientPlayerStateIntoServerState(username, state);
+      if (!serverState) return;
+
+      upsertAccount({
+        username,
+        email: player.account_email,
+      });
+      setPlayerState(username, serverState);
+      queuePlayerSave(username);
+      return;
+    }
+
+    if (data.type === "join_world") {
+      if (!requireAuthenticated(socket, player, "join worlds")) return;
+
+      const oldWorld = player.world;
+      const newWorld = cleanWorld(data.world);
+
+      if (oldWorld && oldWorld !== newWorld) {
+        cancelActiveTradeForPlayer(playerId, "Trade canceled because a player changed worlds.");
+        activeFishingSessions.delete(playerId);
+      }
+
+      if (oldWorld && oldWorld !== newWorld) {
+        broadcastSystemToWorld(oldWorld, `${player.name} left ${oldWorld}`);
+        broadcastToWorld(oldWorld, {
+          type: "player_left",
+          player_id: playerId,
+          name: player.name,
+          world: oldWorld,
+        }, playerId);
+      }
+
+      player.world = newWorld;
+      player.last_position_at = 0;
+      ensureWorldState(player.world);
+
+      socket.send(JSON.stringify({
+        type: "join_world_ok",
+        world: player.world,
+        players: getPlayersInWorld(player.world, playerId),
+      }));
+
+      socket.send(JSON.stringify(buildWorldStateMessage(player.world)));
+
+      broadcastToWorld(player.world, {
+        type: "player_joined",
+        player_id: playerId,
+        name: player.name,
+        x: player.x,
+        y: player.y,
+        facing: player.facing,
+        world: player.world,
+        equipment_slots: player.equipment_slots,
+      }, playerId);
+
+      broadcastSystemToWorld(player.world, `${player.name} joined ${player.world}`, playerId);
+      return;
+    }
+
+    if (data.type === "chat") {
+      if (!requireAuthenticated(socket, player, "chat")) return;
+
+      const message = String(data.message || "").trim().slice(0, MAX_CHAT_LENGTH);
+      if (message.length === 0) return;
+
+      broadcastToWorld(player.world, {
+        type: "chat",
+        player_id: playerId,
+        name: player.name,
+        message,
+        world: player.world,
+      });
+      return;
+    }
+
+    if (data.type === "developer_command_request") {
+      handleDeveloperCommandRequest(socket, player, data);
+      return;
+    }
+
+    if (data.type === "world_block_update") {
+      if (!requireAuthenticated(socket, player, "edit worlds")) return;
+
+      const worldName = cleanWorld(data.world || player.world || "START");
+      if (!requireSameWorld(socket, player, worldName, "edit that world")) return;
+
+      const update = sanitizeBlockUpdate(data, worldName);
+      if (!update) return;
+      if (!canPlayerBuildInWorld(player, worldName) && !canPlayerBreakOwnVendingMachine(player, worldName, update)) {
+        sendActionRejected(socket, "world_block_update", "This world is locked.");
+        return;
+      }
+      if (update.action === "break" && update.block_type === "world_lock" && !canPlayerControlWorldLock(player, worldName)) {
+        sendActionRejected(socket, "world_block_update", "Only the world lock owner can break the lock.");
+        return;
+      }
+      if (update.action === "place" && update.block_type === "world_lock" && ensureWorldState(worldName).world_lock?.is_locked && !canPlayerControlWorldLock(player, worldName)) {
+        sendActionRejected(socket, "world_block_update", "This world already has a lock.");
+        return;
+      }
+
+      const validation = validateBlockUpdateAgainstServerState(socket, player, worldName, update);
+      if (!validation.ok) return;
+
+      applyBlockUpdateToWorldState(worldName, update);
+      if (update.action === "place" && isVendBlockType(update.block_type)) {
+        initializeVendOwnerOnPlace(worldName, update, player);
+      }
+      queueWorldSave(worldName);
+      broadcastToWorld(worldName, update, playerId);
+      emitBreakDrops(worldName, update);
+
+      if (validation.playerState) {
+        sendInventoryTransactionResult(socket, {
+          ok: true,
+          action: update.action === "break" ? "world_block_break" : "world_block_place",
+          message: String(validation.message || ""),
+          username: player.account_username,
+          player_data: validation.playerState,
+        });
+      }
+      return;
+    }
+
+    if (data.type === "world_seed_update") {
+      if (!requireAuthenticated(socket, player, "edit worlds")) return;
+
+      const worldName = cleanWorld(data.world || player.world || "START");
+      if (!requireSameWorld(socket, player, worldName, "edit that world")) return;
+      if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) return;
+
+      const update = sanitizeSeedUpdate(data, worldName);
+      if (!update) return;
+
+      const validation = validateSeedUpdateAgainstServerState(socket, player, worldName, update);
+      if (!validation.ok) return;
+
+      applySeedUpdateToWorldState(worldName, update);
+      queueWorldSave(worldName);
+      broadcastToWorld(worldName, update, playerId);
+
+      if (validation.playerState) {
+        sendInventoryTransactionResult(socket, {
+          ok: true,
+          action: "world_seed_place",
+          message: "",
+          username: player.account_username,
+          player_data: validation.playerState,
+        });
+      }
+      return;
+    }
+
+    if (data.type === "world_interaction_update") {
+      if (!requireAuthenticated(socket, player, "edit worlds")) return;
+
+      const worldName = cleanWorld(data.world || player.world || "START");
+      if (!requireSameWorld(socket, player, worldName, "edit that world")) return;
+
+      const update = sanitizeInteractionUpdate(data, worldName);
+      if (!update) return;
+      if (update.action === "world_lock_state") {
+        if (!prepareWorldLockStateUpdate(socket, player, worldName, update)) return;
+      } else if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) {
+        return;
+      }
+
+      applyInteractionUpdateToWorldState(worldName, update);
+      queueWorldSave(worldName);
+      broadcastToWorld(worldName, update, playerId);
+      return;
+    }
+
+    if (data.type === "world_item_drop_create" || data.type === "world_drop_create") {
+      if (!requireAuthenticated(socket, player, "edit drops")) return;
+
+      const worldName = cleanWorld(data.world || player.world || "START");
+      if (!requireSameWorld(socket, player, worldName, "create drops in that world")) return;
+
+      const update = sanitizeDropCreate(data, worldName);
+      if (!update) return;
+      if (!validateDropCreateAgainstServerState(socket, player, update)) return;
+
+      const spendResult = spendServerInventoryCost(player.account_username, {
+        item_id: update.item_type,
+        item_category: update.item_category,
+        amount: update.amount,
+      });
+      if (!spendResult.ok) {
+        sendActionRejected(socket, "world_item_drop_create", spendResult.message);
+        return;
+      }
+
+      applyDropCreateToWorldState(worldName, update);
+      queueWorldSave(worldName);
+      broadcastToWorld(worldName, update, playerId);
+      sendInventoryTransactionResult(socket, {
+        ok: true,
+        action: "world_item_drop_create",
+        message: "",
+        username: player.account_username,
+        player_data: spendResult.state,
+      });
+      return;
+    }
+
+    if (data.type === "world_item_drop_update" || data.type === "world_drop_update") {
+      if (!requireAuthenticated(socket, player, "edit drops")) return;
+
+      const worldName = cleanWorld(data.world || player.world || "START");
+      if (!requireSameWorld(socket, player, worldName, "edit drops in that world")) return;
+      if (!requireBuildPermission(socket, player, worldName, "edit drops in this locked world")) return;
+
+      const update = sanitizeDropUpdate(data, worldName);
+      if (!update) return;
+      if (!validateDropUpdateAgainstServerState(socket, player, worldName, update)) return;
+
+      applyDropUpdateToWorldState(worldName, update);
+      queueWorldSave(worldName);
+      broadcastToWorld(worldName, update, playerId);
+      return;
+    }
+
+    if (
+      data.type === "world_item_drop_pickup" ||
+      data.type === "world_item_drop_remove" ||
+      data.type === "world_drop_pickup" ||
+      data.type === "world_drop_remove"
+    ) {
+      if (!requireAuthenticated(socket, player, "pick up drops")) return;
+
+      const worldName = cleanWorld(data.world || player.world || "START");
+      if (!requireSameWorld(socket, player, worldName, "pick up drops in that world")) return;
+
+      const update = sanitizeDropPickup(data, worldName, player);
+      if (!update) return;
+
+      const pickedDrop = applyDropPickupToWorldState(worldName, update, player);
+      if (!pickedDrop) {
+        sendActionRejected(socket, "world_item_drop_pickup", "That drop is not available.");
+        return;
+      }
+
+      const grant = grantItemToPlayerState(
+        player.account_username,
+        pickedDrop.item_type,
+        pickedDrop.item_category,
+        pickedDrop.amount
+      );
+      if (grant) {
+        sendInventoryTransactionResult(socket, {
+          ok: true,
+          action: "drop_pickup",
+          message: `Picked up ${pickedDrop.amount} ${pickedDrop.item_type}.`,
+          username: player.account_username,
+          rewards: [{
+            item_id: pickedDrop.item_type,
+            item_category: pickedDrop.item_category,
+            amount: pickedDrop.amount,
+          }],
+          player_data: ensurePlayerState(player.account_username),
+        });
+      } else {
+        sendActionRejected(socket, "world_item_drop_pickup", "Could not add that item to your server inventory.");
+        return;
+      }
+
+      queueWorldSave(worldName);
+      broadcastToWorld(worldName, update, playerId);
+      return;
+    }
+
+    if (data.type === "player_position") {
+      if (!requireAuthenticated(socket, player, "move online")) return;
+
+      player.name = player.account_username || player.name;
+
+      const position = sanitizePlayerPosition(data, player);
+      if (!position) return;
+      if (!requireSameWorld(socket, player, position.world, "move in that world")) return;
+      if (!acceptPlayerMovement(socket, player, position)) return;
+
+      player.x = position.x;
+      player.y = position.y;
+      player.facing = position.facing;
+
+      if (data.equipment_slots && typeof data.equipment_slots === "object" && !Array.isArray(data.equipment_slots)) {
+        player.equipment_slots = sanitizeEquipmentSlots(data.equipment_slots, player.account_username);
+      } else {
+        player.equipment_slots = sanitizeEquipmentSlots({
+          hand: data.equipped_tool || "",
+          back: data.equipped_back || "",
+        }, player.account_username);
+      }
+
+      broadcastToWorld(player.world, {
+        type: "player_position",
+        player_id: playerId,
+        name: player.name,
+        x: player.x,
+        y: player.y,
+        facing: player.facing,
+        world: position.world,
+        equipment_slots: player.equipment_slots,
+      }, playerId);
+      return;
+    }
+  });
+
+  socket.on("close", () => {
+    const player = players.get(playerId);
+    if (player) {
+      cancelActiveTradeForPlayer(playerId, "Trade canceled because a player disconnected.");
+      activeFishingSessions.delete(playerId);
+      releaseActiveAccountSession(player);
+
+      broadcastToWorld(player.world, {
+        type: "player_left",
+        player_id: playerId,
+        name: player.name,
+        world: player.world,
+      }, playerId);
+
+      broadcastSystemToWorld(player.world, `${player.name} left ${player.world}`, playerId);
+    }
+
+    players.delete(playerId);
+  });
+});
+
+function cleanName(value) {
+  const clean = String(value || "Guest").trim();
+  return clean.length > 0 ? clean : "Guest";
+}
+
+function cleanAccountName(value) {
+  const clean = String(value || "").trim();
+  return clean.length > 0 ? clean : "";
+}
+
+function cleanEmail(value) {
+  return String(value || "").trim().toLowerCase();
+}
+
+function cleanWorld(value) {
+  const clean = String(value || "START").trim().toUpperCase().replace(/\s+/g, "_");
+  const safe = clean.replace(/[^A-Z0-9_-]/g, "").slice(0, MAX_WORLD_NAME_LENGTH);
+  return safe.length > 0 ? safe : "START";
+}
+
+function safeFileName(value, fallback = "data") {
+  const clean = String(value || fallback).trim().replace(/\s+/g, "_");
+  const safe = clean.replace(/[^a-zA-Z0-9_-]/g, "");
+  return safe.length > 0 ? safe : fallback;
+}
+
+function ensureDataFolders() {
+  fs.mkdirSync(WORLD_SAVE_FOLDER, { recursive: true });
+  fs.mkdirSync(PLAYER_SAVE_FOLDER, { recursive: true });
+}
+
+function readJsonFile(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return null;
+    return JSON.parse(fs.readFileSync(filePath, "utf8"));
+  } catch (error) {
+    console.warn(`Could not read ${filePath}:`, error.message);
+    backupCorruptJsonFile(filePath);
+    return null;
+  }
+}
+
+function backupCorruptJsonFile(filePath) {
+  try {
+    if (!fs.existsSync(filePath)) return;
+    const backupPath = `${filePath}.corrupt-${Date.now()}`;
+    fs.copyFileSync(filePath, backupPath);
+  } catch (error) {
+    console.warn(`Could not back up corrupt JSON ${filePath}:`, error.message);
+  }
+}
+
+function writeJsonFileAtomic(filePath, data) {
+  fs.mkdirSync(path.dirname(filePath), { recursive: true });
+  const tempPath = `${filePath}.tmp`;
+  fs.writeFileSync(tempPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+  fs.renameSync(tempPath, filePath);
+}
+
+function getWorldSavePath(worldName) {
+  return path.join(WORLD_SAVE_FOLDER, `${safeFileName(cleanWorld(worldName), "START")}.json`);
+}
+
+function getPlayerSavePath(username) {
+  return path.join(PLAYER_SAVE_FOLDER, `${safeFileName(cleanAccountName(username).toLowerCase(), "guest")}.json`);
+}
+
+function makeRequestId(data) {
+  return String(data.request_id || "").trim();
+}
+
+function validateUsername(value) {
+  const username = cleanAccountName(value);
+  if (username.length < MIN_USERNAME_LENGTH) {
+    return { ok: false, message: `Username must be at least ${MIN_USERNAME_LENGTH} characters.` };
+  }
+  if (username.length > MAX_USERNAME_LENGTH) {
+    return { ok: false, message: `Username must be ${MAX_USERNAME_LENGTH} characters or less.` };
+  }
+  if (!/^[A-Za-z0-9_]+$/.test(username)) {
+    return { ok: false, message: "Use letters, numbers, and underscore only." };
+  }
+  return { ok: true, username };
+}
+
+function validateEmail(value) {
+  const email = cleanEmail(value);
+  if (email === "") {
+    return { ok: false, message: "Enter an email address." };
+  }
+  if (email.includes(" ")) {
+    return { ok: false, message: "Email cannot contain spaces." };
+  }
+  const atIndex = email.indexOf("@");
+  if (atIndex <= 0 || atIndex !== email.lastIndexOf("@")) {
+    return { ok: false, message: "Enter a valid email address." };
+  }
+  const domain = email.slice(atIndex + 1);
+  if (domain.length < 3 || domain.indexOf(".") <= 0 || domain.endsWith(".")) {
+    return { ok: false, message: "Enter a valid email address." };
+  }
+  return { ok: true, email };
+}
+
+function validatePassword(value) {
+  const password = String(value || "");
+  if (password.length < MIN_PASSWORD_LENGTH) {
+    return { ok: false, message: `Password must be at least ${MIN_PASSWORD_LENGTH} characters.` };
+  }
+  return { ok: true, password };
+}
+
+function makePasswordHash(password, salt = crypto.randomBytes(16).toString("hex")) {
+  const hash = crypto.scryptSync(String(password || ""), salt, 64).toString("hex");
+  return { salt, hash };
+}
+
+function verifyPassword(account, password) {
+  if (!account || !account.password_salt || !account.password_hash) return false;
+
+  const result = makePasswordHash(password, account.password_salt);
+  const expected = Buffer.from(account.password_hash, "hex");
+  const actual = Buffer.from(result.hash, "hex");
+  if (expected.length !== actual.length) return false;
+  return crypto.timingSafeEqual(expected, actual);
+}
+
+function makeTokenHash(token) {
+  return crypto.createHash("sha256").update(String(token || "")).digest("hex");
+}
+
+function issueSessionToken(account) {
+  const token = crypto.randomBytes(32).toString("hex");
+  account.session_token_hash = makeTokenHash(token);
+  account.last_seen_at = new Date().toISOString();
+  queueAccountsSave();
+  return token;
+}
+
+function hasPassword(account) {
+  return Boolean(account && account.password_salt && account.password_hash);
+}
+
+function getAccountRole(username) {
+  if (ADMIN_USERNAMES.has(accountKey(username))) return "admin";
+  return "player";
+}
+
+function isAdmin(player) {
+  return Boolean(player && player.authenticated && getAccountRole(player.account_username) === "admin");
+}
+
+function canActivateAccount(username, playerId) {
+  const key = accountKey(username);
+  const activePlayerId = activeAccountSessions.get(key);
+  return !activePlayerId || activePlayerId === playerId;
+}
+
+function releaseActiveAccountSession(player) {
+  if (!player || !player.account_username) return;
+
+  const key = accountKey(player.account_username);
+  if (activeAccountSessions.get(key) === player.id) {
+    activeAccountSessions.delete(key);
+  }
+}
+
+function activatePlayerAccount(socket, player, account) {
+  if (!canActivateAccount(account.username, player.id)) {
+    return { ok: false, message: "That account is already signed on." };
+  }
+
+  releaseActiveAccountSession(player);
+
+  player.account_username = account.username;
+  player.account_email = cleanEmail(account.email || "");
+  player.authenticated = true;
+  player.name = account.username;
+  activeAccountSessions.set(accountKey(account.username), player.id);
+
+  return { ok: true };
+}
+
+function isPlayerOwnAccount(player, username) {
+  return accountKey(username) === accountKey(player.account_username);
+}
+
+function sendAuthError(socket, requestId, action, message) {
+  socket.send(JSON.stringify({
+    type: "account_auth_error",
+    ok: false,
+    request_id: requestId,
+    action,
+    message,
+  }));
+}
+
+function sendAuthOk(socket, requestId, action, account, token) {
+  socket.send(JSON.stringify({
+    type: "account_auth_ok",
+    ok: true,
+    request_id: requestId,
+    action,
+    username: account.username,
+    email: cleanEmail(account.email || ""),
+    session_token: token,
+    role: getAccountRole(account.username),
+  }));
+}
+
+function findAccountByEmail(email) {
+  const clean = cleanEmail(email);
+  if (clean === "") return null;
+
+  for (const account of accounts.values()) {
+    if (cleanEmail(account.email || "") === clean) {
+      return account;
+    }
+  }
+
+  return null;
+}
+
+function handleAccountRegister(socket, player, data) {
+  const requestId = makeRequestId(data);
+  const usernameValidation = validateUsername(data.username);
+  if (!usernameValidation.ok) {
+    sendAuthError(socket, requestId, "register", usernameValidation.message);
+    return;
+  }
+
+  const emailValidation = validateEmail(data.email);
+  if (!emailValidation.ok) {
+    sendAuthError(socket, requestId, "register", emailValidation.message);
+    return;
+  }
+
+  const passwordValidation = validatePassword(data.password);
+  if (!passwordValidation.ok) {
+    sendAuthError(socket, requestId, "register", passwordValidation.message);
+    return;
+  }
+
+  const key = accountKey(usernameValidation.username);
+  const existing = accounts.get(key);
+  if (existing && hasPassword(existing)) {
+    sendAuthError(socket, requestId, "register", "Username is already registered.");
+    return;
+  }
+
+  const emailOwner = findAccountByEmail(emailValidation.email);
+  if (emailOwner && accountKey(emailOwner.username) !== key) {
+    sendAuthError(socket, requestId, "register", "Email is already registered.");
+    return;
+  }
+
+  const passwordHash = makePasswordHash(passwordValidation.password);
+  const now = new Date().toISOString();
+  const account = {
+    ...(existing || {}),
+    username: existing?.username || usernameValidation.username,
+    email: emailValidation.email,
+    password_salt: passwordHash.salt,
+    password_hash: passwordHash.hash,
+    role: getAccountRole(usernameValidation.username),
+    created_at: existing?.created_at || now,
+    last_seen_at: now,
+  };
+
+  const activation = activatePlayerAccount(socket, player, account);
+  if (!activation.ok) {
+    sendAuthError(socket, requestId, "register", activation.message);
+    return;
+  }
+
+  accounts.set(key, account);
+  const token = issueSessionToken(account);
+  sendAuthOk(socket, requestId, "register", account, token);
+}
+
+function handleAccountLogin(socket, player, data) {
+  const requestId = makeRequestId(data);
+  const username = cleanAccountName(data.username);
+  if (username === "") {
+    sendAuthError(socket, requestId, "login", "Enter your username.");
+    return;
+  }
+
+  const account = accounts.get(accountKey(username));
+  if (!account || !hasPassword(account)) {
+    sendAuthError(socket, requestId, "login", "Username not found.");
+    return;
+  }
+
+  if (!verifyPassword(account, data.password)) {
+    sendAuthError(socket, requestId, "login", "Password does not match.");
+    return;
+  }
+
+  const activation = activatePlayerAccount(socket, player, account);
+  if (!activation.ok) {
+    sendAuthError(socket, requestId, "login", activation.message);
+    return;
+  }
+
+  account.last_seen_at = new Date().toISOString();
+  const token = issueSessionToken(account);
+  sendAuthOk(socket, requestId, "login", account, token);
+}
+
+function handleAccountTokenLogin(socket, player, data) {
+  const requestId = makeRequestId(data);
+  const username = cleanAccountName(data.username);
+  const token = String(data.session_token || "").trim();
+  if (username === "" || token === "") {
+    sendAuthError(socket, requestId, "token_login", "Saved login expired. Sign on again.");
+    return;
+  }
+
+  const account = accounts.get(accountKey(username));
+  if (!account || !account.session_token_hash || account.session_token_hash !== makeTokenHash(token)) {
+    sendAuthError(socket, requestId, "token_login", "Saved login expired. Sign on again.");
+    return;
+  }
+
+  const activation = activatePlayerAccount(socket, player, account);
+  if (!activation.ok) {
+    sendAuthError(socket, requestId, "token_login", activation.message);
+    return;
+  }
+
+  account.last_seen_at = new Date().toISOString();
+  const nextToken = issueSessionToken(account);
+  sendAuthOk(socket, requestId, "token_login", account, nextToken);
+}
+
+function requireAuthenticated(socket, player, action) {
+  if (player && player.authenticated && player.account_username) {
+    return true;
+  }
+
+  socket.send(JSON.stringify({
+    type: "auth_required",
+    message: `Sign on before you ${action}.`,
+  }));
+  return false;
+}
+
+function sendPlayerState(socket, username) {
+  const state = ensurePlayerState(username);
+  socket.send(JSON.stringify({
+    type: "player_state",
+    found: state !== null,
+    username: cleanAccountName(username),
+    player_data: state || {},
+  }));
+}
+
+function sendInventoryTransactionResult(socket, payload) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+
+  socket.send(JSON.stringify({
+    ...payload,
+    type: "inventory_transaction_result",
+    ok: Boolean(payload.ok),
+    request_id: String(payload.request_id || ""),
+    action: String(payload.action || ""),
+    message: String(payload.message || ""),
+    username: cleanAccountName(payload.username || ""),
+    rewards: Array.isArray(payload.rewards) ? payload.rewards : [],
+    player_data: payload.player_data || {},
+  }));
+}
+
+function sendInventoryTransactionRejected(socket, data, message) {
+  sendInventoryTransactionResult(socket, {
+    ok: false,
+    request_id: makeRequestId(data),
+    action: String(data.action || ""),
+    message,
+  });
+}
+
+function sendJson(socket, payload) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  socket.send(JSON.stringify(payload));
+}
+
+function makeTradeSlots() {
+  return Array.from({ length: TRADE_SLOT_COUNT }, () => null);
+}
+
+function getTradePartyIds(trade) {
+  return [trade.requester_id, trade.target_id];
+}
+
+function getTradePartyName(trade, playerId) {
+  if (playerId === trade.requester_id) return trade.requester_username;
+  if (playerId === trade.target_id) return trade.target_username;
+  return "Player";
+}
+
+function getOtherTradePartyId(trade, playerId) {
+  if (playerId === trade.requester_id) return trade.target_id;
+  if (playerId === trade.target_id) return trade.requester_id;
+  return "";
+}
+
+function getTradeParticipantRecord(playerId) {
+  const player = players.get(playerId);
+  const socket = getSocketByPlayerId(playerId);
+  if (!player || !socket) return null;
+  return { player, socket };
+}
+
+function isTradeParticipant(trade, playerId) {
+  return Boolean(trade && (trade.requester_id === playerId || trade.target_id === playerId));
+}
+
+function sendTradeError(socket, data, message) {
+  sendJson(socket, {
+    type: "trade_error",
+    trade_id: String(data.trade_id || ""),
+    message,
+  });
+}
+
+function sendTradeChat(playerId, message) {
+  const record = getTradeParticipantRecord(playerId);
+  if (!record) return;
+
+  sendJson(record.socket, {
+    type: "chat",
+    player_id: "system",
+    name: "System",
+    message,
+    world: record.player.world,
+  });
+}
+
+function serializeTradeSlots(slots) {
+  const result = makeTradeSlots();
+  if (!Array.isArray(slots)) return result;
+
+  for (let i = 0; i < Math.min(slots.length, TRADE_SLOT_COUNT); i += 1) {
+    const item = slots[i];
+    if (!item) continue;
+    const itemId = clampString(item.item_id || "");
+    if (!ItemDatabase.hasItem(itemId)) continue;
+
+    const itemCategory = resolveInventoryCategory(itemId, item.item_category || item.category || "");
+    if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) continue;
+
+    result[i] = {
+      item_id: itemId,
+      item_category: itemCategory,
+      amount: clampInteger(item.amount || 0, 0, ItemDatabase.getStackLimit(itemId)),
+    };
+  }
+
+  return result;
+}
+
+function buildTradeStateMessage(trade, message = "") {
+  return {
+    type: "trade_state",
+    trade_id: trade.id,
+    status: trade.status,
+    world: trade.world,
+    requester_player_id: trade.requester_id,
+    requester_username: trade.requester_username,
+    target_player_id: trade.target_id,
+    target_username: trade.target_username,
+    offers: {
+      [trade.requester_id]: serializeTradeSlots(trade.offers[trade.requester_id]),
+      [trade.target_id]: serializeTradeSlots(trade.offers[trade.target_id]),
+    },
+    accepted: {
+      [trade.requester_id]: Boolean(trade.accepted[trade.requester_id]),
+      [trade.target_id]: Boolean(trade.accepted[trade.target_id]),
+    },
+    final_accepted: {
+      [trade.requester_id]: Boolean(trade.final_accepted[trade.requester_id]),
+      [trade.target_id]: Boolean(trade.final_accepted[trade.target_id]),
+    },
+    message,
+  };
+}
+
+function sendTradeState(trade, message = "") {
+  const payload = JSON.stringify(buildTradeStateMessage(trade, message));
+
+  for (const playerId of getTradePartyIds(trade)) {
+    const record = getTradeParticipantRecord(playerId);
+    if (!record) continue;
+    record.socket.send(payload);
+  }
+}
+
+function clearTrade(trade) {
+  if (!trade) return;
+  activeTrades.delete(trade.id);
+  tradeByPlayerId.delete(trade.requester_id);
+  tradeByPlayerId.delete(trade.target_id);
+}
+
+function cancelTrade(trade, message = "Trade canceled.") {
+  if (!trade) return;
+
+  for (const playerId of getTradePartyIds(trade)) {
+    const record = getTradeParticipantRecord(playerId);
+    if (!record) continue;
+    sendJson(record.socket, {
+      type: "trade_canceled",
+      trade_id: trade.id,
+      message,
+    });
+    sendTradeChat(playerId, message);
+  }
+
+  clearTrade(trade);
+}
+
+function cancelActiveTradeForPlayer(playerId, message = "Trade canceled.") {
+  const tradeId = tradeByPlayerId.get(playerId);
+  if (!tradeId) return;
+  cancelTrade(activeTrades.get(tradeId), message);
+}
+
+function findOnlinePlayerByPlayerId(playerId) {
+  const cleanId = String(playerId || "").trim();
+  if (cleanId === "") return null;
+
+  const player = players.get(cleanId);
+  const socket = getSocketByPlayerId(cleanId);
+  if (!player || !socket) return null;
+  return { player, socket };
+}
+
+function arePlayersCloseEnoughForTrade(playerA, playerB) {
+  if (!playerA || !playerB) return false;
+  if (playerA.world !== playerB.world) return false;
+
+  const ax = Number(playerA.x);
+  const ay = Number(playerA.y);
+  const bx = Number(playerB.x);
+  const by = Number(playerB.y);
+  if (![ax, ay, bx, by].every(Number.isFinite)) return true;
+
+  return Math.hypot(ax - bx, ay - by) <= MAX_TRADE_DISTANCE_PIXELS;
+}
+
+function handleTradeRequest(socket, player, data) {
+  if (!requireAuthenticated(socket, player, "trade")) return;
+
+  if (tradeByPlayerId.has(player.id)) {
+    sendTradeError(socket, data, "Finish your current trade first.");
+    return;
+  }
+
+  const targetPlayerId = String(data.target_player_id || data.player_id || "").trim();
+  const targetUsername = cleanAccountName(data.target_username || data.username || "");
+  let targetRecord = targetPlayerId !== "" ? findOnlinePlayerByPlayerId(targetPlayerId) : null;
+
+  if (!targetRecord && targetUsername !== "") {
+    targetRecord = findOnlinePlayerByUsername(targetUsername);
+  }
+
+  if (!targetRecord || !targetRecord.player.authenticated) {
+    sendTradeError(socket, data, "That player is not online.");
+    return;
+  }
+
+  const target = targetRecord.player;
+  if (target.id === player.id || accountKey(target.account_username) === accountKey(player.account_username)) {
+    sendTradeError(socket, data, "You cannot trade with yourself.");
+    return;
+  }
+
+  if (tradeByPlayerId.has(target.id)) {
+    sendTradeError(socket, data, "That player is already trading.");
+    return;
+  }
+
+  if (!arePlayersCloseEnoughForTrade(player, target)) {
+    sendTradeError(socket, data, "Move closer to that player to trade.");
+    return;
+  }
+
+  const tradeId = crypto.randomUUID();
+  const trade = {
+    id: tradeId,
+    status: "pending",
+    world: player.world,
+    requester_id: player.id,
+    requester_username: player.account_username,
+    target_id: target.id,
+    target_username: target.account_username,
+    offers: {},
+    accepted: {},
+    final_accepted: {},
+    created_at: Date.now(),
+    updated_at: Date.now(),
+  };
+
+  trade.offers[player.id] = makeTradeSlots();
+  trade.offers[target.id] = makeTradeSlots();
+  trade.accepted[player.id] = false;
+  trade.accepted[target.id] = false;
+  trade.final_accepted[player.id] = false;
+  trade.final_accepted[target.id] = false;
+
+  activeTrades.set(tradeId, trade);
+  tradeByPlayerId.set(player.id, tradeId);
+  tradeByPlayerId.set(target.id, tradeId);
+
+  sendTradeChat(target.id, `${player.account_username} wants to trade with you.`);
+  sendTradeChat(player.id, `Trade request sent to ${target.account_username}.`);
+  sendJson(targetRecord.socket, {
+    type: "trade_request_received",
+    trade_id: trade.id,
+    requester_player_id: trade.requester_id,
+    requester_username: trade.requester_username,
+    target_player_id: trade.target_id,
+    target_username: trade.target_username,
+    world: trade.world,
+    message: `${trade.requester_username} wants to trade. Type /trade ${trade.requester_username} or wrench that player to accept.`,
+  });
+  sendJson(socket, {
+    type: "trade_request_sent",
+    trade_id: trade.id,
+    requester_player_id: trade.requester_id,
+    requester_username: trade.requester_username,
+    target_player_id: trade.target_id,
+    target_username: trade.target_username,
+    world: trade.world,
+    message: `Trade request sent to ${trade.target_username}.`,
+  });
+}
+
+function handleTradeResponse(socket, player, data) {
+  if (!requireAuthenticated(socket, player, "trade")) return;
+
+  const trade = findTradeForResponse(player, data);
+  if (!trade || !isTradeParticipant(trade, player.id)) {
+    sendTradeError(socket, data, "Trade not found.");
+    return;
+  }
+
+  if (trade.status !== "pending") {
+    sendTradeError(socket, data, "That trade request is no longer pending.");
+    return;
+  }
+
+  if (player.id !== trade.target_id) {
+    sendTradeError(socket, data, "Only the requested player can accept this trade.");
+    return;
+  }
+
+  const accepted = Boolean(data.accepted);
+  if (!accepted) {
+    cancelTrade(trade, `${player.account_username} declined the trade.`);
+    return;
+  }
+
+  const requesterRecord = getTradeParticipantRecord(trade.requester_id);
+  if (!requesterRecord || requesterRecord.player.world !== player.world) {
+    cancelTrade(trade, "Trade canceled because a player is no longer available.");
+    return;
+  }
+
+  trade.status = "active";
+  trade.updated_at = Date.now();
+  sendTradeState(trade, "Trade started.");
+}
+
+function findTradeForResponse(player, data) {
+  const explicitTradeId = String(data.trade_id || "").trim();
+  if (explicitTradeId !== "") return activeTrades.get(explicitTradeId);
+
+  const requesterUsername = cleanAccountName(data.requester_username || data.target_username || data.username || "");
+  if (requesterUsername !== "") {
+    for (const trade of activeTrades.values()) {
+      if (trade.status !== "pending") continue;
+      if (trade.target_id !== player.id) continue;
+      if (accountKey(trade.requester_username) !== accountKey(requesterUsername)) continue;
+      return trade;
+    }
+  }
+
+  const tradeId = tradeByPlayerId.get(player.id);
+  return tradeId ? activeTrades.get(tradeId) : null;
+}
+
+function sanitizeTradeOfferItem(data) {
+  const slotIndex = clampInteger(data.slot_index, 0, TRADE_SLOT_COUNT - 1);
+  const amount = clampInteger(data.amount || 0, 0, MAX_ITEM_STACK);
+  if (amount <= 0) {
+    return { slotIndex, item: null };
+  }
+
+  const itemId = clampString(data.item_id || data.item_type || data.item || "");
+  if (itemId === "" || itemId === "punch") return null;
+  if (!ItemDatabase.hasItem(itemId)) return null;
+  if (!ItemDatabase.isTradeableItem(itemId)) return null;
+
+  const itemCategory = resolveInventoryCategory(itemId, data.item_category || data.category || "");
+  if (itemId === "" || itemCategory === "" || itemId === "punch") return null;
+  if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) return null;
+
+  return {
+    slotIndex,
+    item: {
+      item_id: itemId,
+      item_category: itemCategory,
+      amount: clampInteger(amount, 1, ItemDatabase.getStackLimit(itemId)),
+    },
+  };
+}
+
+function getTradeOfferTotals(slots, overrideSlot = -1, overrideItem = null) {
+  const totals = new Map();
+
+  for (let i = 0; i < TRADE_SLOT_COUNT; i += 1) {
+    const item = i === overrideSlot ? overrideItem : slots[i];
+    if (!item) continue;
+
+    const itemId = clampString(item.item_id || "");
+    if (!ItemDatabase.hasItem(itemId)) continue;
+    const itemCategory = resolveInventoryCategory(itemId, item.item_category || "");
+    const amount = clampInteger(item.amount || 0, 0, ItemDatabase.getStackLimit(itemId));
+    if (itemId === "" || itemCategory === "" || amount <= 0) continue;
+    if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) continue;
+
+    const key = `${itemCategory}:${itemId}`;
+    const existing = totals.get(key) || { item_id: itemId, item_category: itemCategory, amount: 0 };
+    existing.amount = clampInteger(existing.amount + amount, 0, ItemDatabase.getStackLimit(itemId));
+    totals.set(key, existing);
+  }
+
+  return Array.from(totals.values());
+}
+
+function canOfferTradeItems(username, slots, overrideSlot = -1, overrideItem = null) {
+  const state = ensureWritablePlayerState(username);
+  if (!state) return { ok: false, message: "Could not load server inventory." };
+
+  const totals = getTradeOfferTotals(slots, overrideSlot, overrideItem);
+  for (const item of totals) {
+    if (!ItemDatabase.isTradeableItem(item.item_id)) {
+      return { ok: false, message: `${item.item_id} cannot be traded.` };
+    }
+
+    if (getInventoryCount(state, item.item_id, item.item_category) < item.amount) {
+      return { ok: false, message: `Not enough ${item.item_id}.` };
+    }
+  }
+
+  return { ok: true };
+}
+
+function resetTradeApprovals(trade) {
+  for (const playerId of getTradePartyIds(trade)) {
+    trade.accepted[playerId] = false;
+    trade.final_accepted[playerId] = false;
+  }
+}
+
+function handleTradeOfferUpdate(socket, player, data) {
+  if (!requireAuthenticated(socket, player, "trade")) return;
+
+  const trade = activeTrades.get(String(data.trade_id || tradeByPlayerId.get(player.id) || ""));
+  if (!trade || !isTradeParticipant(trade, player.id)) {
+    sendTradeError(socket, data, "Trade not found.");
+    return;
+  }
+
+  if (trade.status !== "active") {
+    sendTradeError(socket, data, "You cannot change items during final confirmation.");
+    return;
+  }
+
+  const parsed = sanitizeTradeOfferItem(data);
+  if (!parsed) {
+    sendTradeError(socket, data, "Invalid trade item.");
+    return;
+  }
+
+  const offerSlots = trade.offers[player.id] || makeTradeSlots();
+  const validation = canOfferTradeItems(player.account_username, offerSlots, parsed.slotIndex, parsed.item);
+  if (!validation.ok) {
+    sendTradeError(socket, data, validation.message);
+    return;
+  }
+
+  offerSlots[parsed.slotIndex] = parsed.item;
+  trade.offers[player.id] = offerSlots;
+  resetTradeApprovals(trade);
+  trade.updated_at = Date.now();
+  sendTradeState(trade, "Trade offer updated.");
+}
+
+function handleTradeConfirm(socket, player, data) {
+  if (!requireAuthenticated(socket, player, "trade")) return;
+
+  const trade = activeTrades.get(String(data.trade_id || tradeByPlayerId.get(player.id) || ""));
+  if (!trade || !isTradeParticipant(trade, player.id)) {
+    sendTradeError(socket, data, "Trade not found.");
+    return;
+  }
+
+  if (trade.status !== "active") {
+    sendTradeError(socket, data, "Trade is not ready for confirmation.");
+    return;
+  }
+
+  const validation = canOfferTradeItems(player.account_username, trade.offers[player.id] || makeTradeSlots());
+  if (!validation.ok) {
+    sendTradeError(socket, data, validation.message);
+    return;
+  }
+
+  trade.accepted[player.id] = true;
+  trade.updated_at = Date.now();
+
+  if (getTradePartyIds(trade).every((playerId) => Boolean(trade.accepted[playerId]))) {
+    trade.status = "final_pending";
+    for (const playerId of getTradePartyIds(trade)) {
+      trade.final_accepted[playerId] = false;
+    }
+    sendTradeState(trade, "Final confirmation required.");
+    return;
+  }
+
+  sendTradeState(trade, `${player.account_username} accepted the trade.`);
+}
+
+function handleTradeFinalConfirm(socket, player, data) {
+  if (!requireAuthenticated(socket, player, "trade")) return;
+
+  const trade = activeTrades.get(String(data.trade_id || tradeByPlayerId.get(player.id) || ""));
+  if (!trade || !isTradeParticipant(trade, player.id)) {
+    sendTradeError(socket, data, "Trade not found.");
+    return;
+  }
+
+  if (trade.status !== "final_pending") {
+    sendTradeError(socket, data, "Final confirmation is not ready.");
+    return;
+  }
+
+  trade.final_accepted[player.id] = true;
+  trade.updated_at = Date.now();
+
+  if (getTradePartyIds(trade).every((playerId) => Boolean(trade.final_accepted[playerId]))) {
+    executeTrade(trade);
+    return;
+  }
+
+  sendTradeState(trade, `${player.account_username} final-confirmed the trade.`);
+}
+
+function handleTradeCancel(socket, player, data) {
+  if (!requireAuthenticated(socket, player, "trade")) return;
+
+  const trade = activeTrades.get(String(data.trade_id || tradeByPlayerId.get(player.id) || ""));
+  if (!trade || !isTradeParticipant(trade, player.id)) {
+    sendTradeError(socket, data, "Trade not found.");
+    return;
+  }
+
+  cancelTrade(trade, `${player.account_username} canceled the trade.`);
+}
+
+function validateFullTradeInventory(trade, stateA, stateB) {
+  const offersA = getTradeOfferTotals(trade.offers[trade.requester_id] || makeTradeSlots());
+  const offersB = getTradeOfferTotals(trade.offers[trade.target_id] || makeTradeSlots());
+
+  for (const item of offersA) {
+    if (!ItemDatabase.isTradeableItem(item.item_id)) {
+      return { ok: false, message: `${item.item_id} cannot be traded.` };
+    }
+    if (getInventoryCount(stateA, item.item_id, item.item_category) < item.amount) {
+      return { ok: false, message: `${trade.requester_username} no longer has enough ${item.item_id}.` };
+    }
+  }
+
+  for (const item of offersB) {
+    if (!ItemDatabase.isTradeableItem(item.item_id)) {
+      return { ok: false, message: `${item.item_id} cannot be traded.` };
+    }
+    if (getInventoryCount(stateB, item.item_id, item.item_category) < item.amount) {
+      return { ok: false, message: `${trade.target_username} no longer has enough ${item.item_id}.` };
+    }
+  }
+
+  return { ok: true, offersA, offersB };
+}
+
+function applyTradeItems(fromState, toState, items) {
+  for (const item of items) {
+    if (!spendItemFromState(fromState, item.item_id, item.item_category, item.amount)) {
+      return false;
+    }
+  }
+
+  for (const item of items) {
+    addItemToState(toState, item.item_id, item.item_category, item.amount);
+  }
+
+  return true;
+}
+
+function executeTrade(trade) {
+  const requesterRecord = getTradeParticipantRecord(trade.requester_id);
+  const targetRecord = getTradeParticipantRecord(trade.target_id);
+  if (!requesterRecord || !targetRecord) {
+    cancelTrade(trade, "Trade canceled because a player is no longer online.");
+    return;
+  }
+
+  const stateA = ensureWritablePlayerState(trade.requester_username);
+  const stateB = ensureWritablePlayerState(trade.target_username);
+  if (!stateA || !stateB) {
+    cancelTrade(trade, "Trade canceled because server inventory could not be loaded.");
+    return;
+  }
+
+  const validation = validateFullTradeInventory(trade, stateA, stateB);
+  if (!validation.ok) {
+    cancelTrade(trade, validation.message);
+    return;
+  }
+
+  if (!applyTradeItems(stateA, stateB, validation.offersA) || !applyTradeItems(stateB, stateA, validation.offersB)) {
+    cancelTrade(trade, "Trade canceled because inventory changed.");
+    return;
+  }
+
+  const savedAt = new Date().toISOString();
+  stateA.saved_at = savedAt;
+  stateB.saved_at = savedAt;
+  setPlayerState(trade.requester_username, stateA);
+  setPlayerState(trade.target_username, stateB);
+  queuePlayerSave(trade.requester_username);
+  queuePlayerSave(trade.target_username);
+
+  sendJson(requesterRecord.socket, {
+    type: "trade_completed",
+    trade_id: trade.id,
+    message: "Trade completed.",
+    username: trade.requester_username,
+    player_data: stateA,
+  });
+
+  sendJson(targetRecord.socket, {
+    type: "trade_completed",
+    trade_id: trade.id,
+    message: "Trade completed.",
+    username: trade.target_username,
+    player_data: stateB,
+  });
+
+  sendTradeChat(trade.requester_id, "Trade completed.");
+  sendTradeChat(trade.target_id, "Trade completed.");
+  clearTrade(trade);
+}
+
+function handleInventoryTransactionRequest(socket, player, data) {
+  if (!requireAuthenticated(socket, player, "change inventory")) return;
+
+  const action = String(data.action || "").trim();
+  if (action === "shop_buy") {
+    handleShopBuyTransaction(socket, player, data);
+    return;
+  }
+
+  if (action === "vend_get_state" || action === "vend_set_listing" || action === "vend_buy" || action === "vend_collect" || action === "vend_cancel") {
+    handleVendingTransaction(socket, player, data);
+    return;
+  }
+
+  if (action === "craft_recipe" || action === "furnace_recipe") {
+    handleStationRecipeTransaction(socket, player, data);
+    return;
+  }
+
+  if (action === "fishing_start") {
+    handleFishingStartTransaction(socket, player, data);
+    return;
+  }
+
+  if (action === "fishing_complete") {
+    handleFishingCompleteTransaction(socket, player, data);
+    return;
+  }
+
+  if (action === "seed_splice") {
+    handleSeedSpliceTransaction(socket, player, data);
+    return;
+  }
+
+  if (action === "seed_harvest") {
+    handleSeedHarvestTransaction(socket, player, data);
+    return;
+  }
+
+  sendInventoryTransactionRejected(socket, data, "Unknown inventory transaction.");
+}
+
+function handleShopBuyTransaction(socket, player, data) {
+  const requestId = makeRequestId(data);
+  const itemId = clampString(data.item_id || data.item || "");
+  const listing = SHOP_CATALOG.get(itemId);
+  if (!listing) {
+    sendInventoryTransactionRejected(socket, data, "Shop item is not sold by the server.");
+    return;
+  }
+
+  if (!ItemDatabase.hasItem(listing.item_id) || !ItemDatabase.canStoreItemInCategory(listing.item_id, listing.item_category)) {
+    sendInventoryTransactionRejected(socket, data, "Shop item is not valid on the server.");
+    return;
+  }
+
+  if (itemId === "lure_pack") {
+    const rewardTableValid = LURE_PACK_TABLE.every((reward) => (
+      ItemDatabase.hasItem(reward.item_id) &&
+      ItemDatabase.canStoreItemInCategory(reward.item_id, reward.item_category)
+    ));
+    if (!rewardTableValid) {
+      sendInventoryTransactionRejected(socket, data, "Lure Pack rewards are not configured.");
+      return;
+    }
+  }
+
+  const requestedAmount = clampInteger(data.amount || listing.amount, 1, ItemDatabase.getStackLimit(listing.item_id));
+  const requestedPrice = clampInteger(data.price || listing.price, 0, MAX_ITEM_STACK);
+  if (requestedAmount !== listing.amount || requestedPrice !== listing.price) {
+    sendInventoryTransactionRejected(socket, data, "Shop price changed. Reopen the shop.");
+    return;
+  }
+
+  const username = player.account_username;
+  const state = ensureWritablePlayerState(username);
+  if (!state) {
+    sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
+    return;
+  }
+
+  if (!spendItemFromState(state, "gem", "currency", listing.price)) {
+    sendInventoryTransactionRejected(socket, data, "Not enough gems.");
+    return;
+  }
+
+  const rewards = [];
+  if (itemId === "lure_pack") {
+    for (let i = 0; i < listing.pack_size * listing.amount; i += 1) {
+      const reward = rollWeightedReward(LURE_PACK_TABLE);
+      addItemToState(state, reward.item_id, reward.item_category, 1);
+      rewards.push({
+        item_id: reward.item_id,
+        item_category: reward.item_category,
+        amount: 1,
+      });
+    }
+  } else {
+    addItemToState(state, listing.item_id, listing.item_category, listing.amount);
+    rewards.push({
+      item_id: listing.item_id,
+      item_category: listing.item_category,
+      amount: listing.amount,
+    });
+  }
+
+  state.saved_at = new Date().toISOString();
+  setPlayerState(username, state);
+  queuePlayerSave(username);
+
+  sendInventoryTransactionResult(socket, {
+    ok: true,
+    request_id: requestId,
+    action: "shop_buy",
+    message: itemId === "lure_pack" ? "Purchased and opened Lure Pack." : `Purchased ${listing.item_id}.`,
+    username,
+    rewards: combineRewardEntries(rewards),
+    player_data: state,
+  });
+}
+
+function isVendBlockType(blockType) {
+  return VEND_BLOCK_TYPES.has(clampString(blockType || ""));
+}
+
+function makeEmptyVendState(worldName, x, y) {
+  return {
+    action: "vend_state",
+    world: cleanWorld(worldName),
+    x: Math.trunc(Number(x) || 0),
+    y: Math.trunc(Number(y) || 0),
+    owner_username: "",
+    owner_name: "",
+    listing: null,
+    pending_wls: 0,
+    logs: [],
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function sanitizeVendListing(rawListing) {
+  if (!rawListing || typeof rawListing !== "object" || Array.isArray(rawListing)) return null;
+
+  const itemId = clampString(rawListing.item_id || rawListing.item_type || "");
+  if (itemId === "" || !ItemDatabase.hasItem(itemId)) return null;
+
+  const itemCategory = resolveInventoryCategory(itemId, rawListing.item_category || rawListing.category || "");
+  if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) return null;
+
+  const stackLimit = ItemDatabase.getStackLimit(itemId);
+  const stock = clampInteger(rawListing.stock || rawListing.amount || 0, 0, stackLimit);
+  const amountPerSale = clampInteger(rawListing.amount_per_sale || rawListing.per_sale || 1, 1, stackLimit);
+  const priceWls = clampInteger(rawListing.price_wls || rawListing.price || 1, 1, ItemDatabase.getStackLimit("world_lock"));
+
+  if (stock <= 0 || amountPerSale <= 0 || stock < amountPerSale) return null;
+
+  return {
+    item_id: itemId,
+    item_category: itemCategory,
+    stock,
+    amount_per_sale: amountPerSale,
+    price_wls: priceWls,
+    created_at: String(rawListing.created_at || new Date().toISOString()),
+  };
+}
+
+function sanitizeVendLogEntry(rawEntry) {
+  if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) return null;
+
+  const buyerName = cleanAccountName(rawEntry.buyer_username || rawEntry.buyer_name || "");
+  const itemId = clampString(rawEntry.item_id || "");
+  if (buyerName === "" || itemId === "" || !ItemDatabase.hasItem(itemId)) return null;
+
+  const itemCategory = resolveInventoryCategory(itemId, rawEntry.item_category || "");
+  if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) return null;
+
+  return {
+    buyer_username: buyerName,
+    item_id: itemId,
+    item_category: itemCategory,
+    amount: clampInteger(rawEntry.amount || 0, 1, ItemDatabase.getStackLimit(itemId)),
+    price_wls: clampInteger(rawEntry.price_wls || 0, 0, ItemDatabase.getStackLimit("world_lock")),
+    date: String(rawEntry.date || rawEntry.sold_at || new Date().toISOString()),
+  };
+}
+
+function sanitizeVendState(rawEntry, worldName, x, y) {
+  const safe = makeEmptyVendState(worldName, x, y);
+  if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) return safe;
+
+  safe.owner_username = cleanAccountName(rawEntry.owner_username || rawEntry.owner_name || "");
+  safe.owner_name = safe.owner_username.toUpperCase();
+  safe.listing = sanitizeVendListing(rawEntry.listing);
+  safe.pending_wls = clampInteger(rawEntry.pending_wls || rawEntry.pending_world_locks || 0, 0, ItemDatabase.getStackLimit("world_lock"));
+  safe.updated_at = String(rawEntry.updated_at || safe.updated_at);
+
+  const rawLogs = Array.isArray(rawEntry.logs) ? rawEntry.logs : [];
+  safe.logs = rawLogs
+    .map(sanitizeVendLogEntry)
+    .filter(Boolean)
+    .slice(-VEND_LOG_LIMIT);
+
+  if (!safe.listing && safe.pending_wls <= 0) {
+    safe.owner_name = safe.owner_username.toUpperCase();
+  }
+
+  return safe;
+}
+
+function getVendStatus(vend) {
+  if (!vend) return "empty";
+  if (Number(vend.pending_wls) > 0) return "sold";
+  if (vend.listing && Number(vend.listing.stock) > 0) return "listed";
+  return "empty";
+}
+
+function getVendVisualBlockType(vend) {
+  const status = getVendStatus(vend);
+  if (status === "sold") return VEND_BLOCK_SOLD;
+  if (status === "listed") return VEND_BLOCK_PENDING;
+  return VEND_BLOCK_EMPTY;
+}
+
+function serializeVendStateForClient(vend, player = null) {
+  const safe = sanitizeVendState(vend, vend?.world || "", vend?.x || 0, vend?.y || 0);
+  return {
+    action: "vend_state",
+    world: cleanWorld(safe.world || ""),
+    x: safe.x,
+    y: safe.y,
+    owner_username: safe.owner_username,
+    owner_name: safe.owner_name,
+    listing: safe.listing ? { ...safe.listing } : {},
+    pending_wls: safe.pending_wls,
+    logs: safe.logs.map((entry) => ({ ...entry })),
+    status: getVendStatus(safe),
+    can_manage: canPlayerManageVend(player, safe),
+  };
+}
+
+function canPlayerManageVend(player, vend) {
+  if (isAdmin(player)) return true;
+  if (!player || !player.authenticated) return false;
+  const ownerKey = accountKey(vend?.owner_username || "");
+  return ownerKey === "" || ownerKey === accountKey(player.account_username);
+}
+
+function canPlayerBreakOwnVendingMachine(player, worldName, update) {
+  if (!player || !player.authenticated) return false;
+  if (!update || update.action !== "break" || update.layer === "background") return false;
+
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
+  if (!block || !isVendBlockType(block.block_type)) return false;
+
+  const vend = getVendStateAt(worldName, update.x, update.y, false);
+  if (accountKey(vend.owner_username || "") === "") return false;
+  return canPlayerManageVend(player, vend);
+}
+
+function canListItemInVend(itemId, itemCategory) {
+  const cleanItemId = clampString(itemId || "");
+  if (cleanItemId === "" || !ItemDatabase.hasItem(cleanItemId)) return false;
+  if (cleanItemId === "punch" || cleanItemId === "world_lock") return false;
+  if (isVendBlockType(cleanItemId)) return false;
+
+  const definition = ItemDatabase.getItemDefinition(cleanItemId);
+  if (!definition || definition.hidden) return false;
+
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
+  return ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory) && ItemDatabase.isTradeableItem(cleanItemId);
+}
+
+function getVendStateAt(worldName, x, y, createIfMissing = false) {
+  const state = ensureWorldState(worldName);
+  const key = gridKey(x, y);
+  const existing = state.interactions.get(key);
+
+  if (existing && existing.action === "vend_state") {
+    const safe = sanitizeVendState(existing, worldName, x, y);
+    state.interactions.set(key, safe);
+    return safe;
+  }
+
+  const empty = makeEmptyVendState(worldName, x, y);
+  if (createIfMissing) {
+    state.interactions.set(key, empty);
+  }
+  return empty;
+}
+
+function setVendStateAt(worldName, vend) {
+  const state = ensureWorldState(worldName);
+  const safe = sanitizeVendState(vend, worldName, vend.x, vend.y);
+  safe.updated_at = new Date().toISOString();
+  state.interactions.set(gridKey(safe.x, safe.y), safe);
+  return safe;
+}
+
+function clearVendOwnerIfEmpty(vend) {
+  if (vend && accountKey(vend.owner_username || "") !== "") {
+    vend.owner_name = cleanAccountName(vend.owner_username).toUpperCase();
+  }
+}
+
+function initializeVendOwnerOnPlace(worldName, update, player) {
+  if (!player || !player.authenticated) return;
+  const vend = makeEmptyVendState(worldName, update.x, update.y);
+  vend.owner_username = player.account_username;
+  vend.owner_name = player.account_username.toUpperCase();
+  setVendStateAt(worldName, vend);
+}
+
+function syncVendVisualBlock(worldName, vend) {
+  const state = ensureWorldState(worldName);
+  const key = gridKey(vend.x, vend.y);
+  const block = state.foreground.get(key);
+  if (!block || !isVendBlockType(block.block_type)) return "";
+
+  const blockType = getVendVisualBlockType(vend);
+  block.block_type = blockType;
+  return blockType;
+}
+
+function sendVendStateUpdateToWorld(worldName, vend) {
+  const blockType = syncVendVisualBlock(worldName, vend);
+  if (blockType !== "") {
+    broadcastToWorld(worldName, {
+      type: "world_block_update",
+      action: "place",
+      layer: "foreground",
+      x: vend.x,
+      y: vend.y,
+      block_type: blockType,
+      world: cleanWorld(worldName),
+    });
+  }
+
+  broadcastToWorld(worldName, {
+    type: "world_interaction_update",
+    ...serializeVendStateForClient(vend),
+    world: cleanWorld(worldName),
+  });
+}
+
+function validateVendAccess(socket, player, data, worldName, grid) {
+  if (!grid) {
+    sendInventoryTransactionRejected(socket, data, "Vending machine position is missing.");
+    return false;
+  }
+
+  if (!isPlayerNearGrid(player, grid.x, grid.y)) {
+    sendInventoryTransactionRejected(socket, data, "Too far away from that vending machine.");
+    return false;
+  }
+
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(grid.x, grid.y));
+  if (!block || !isVendBlockType(block.block_type)) {
+    sendInventoryTransactionRejected(socket, data, "That is not a vending machine.");
+    return false;
+  }
+
+  return true;
+}
+
+function sendVendTransactionResult(socket, data, player, vend, ok, message, playerState = null) {
+  sendInventoryTransactionResult(socket, {
+    ok,
+    request_id: makeRequestId(data),
+    action: String(data.action || ""),
+    message,
+    username: player?.account_username || "",
+    player_data: playerState || (player ? ensurePlayerState(player.account_username) || {} : {}),
+    vend_state: vend ? serializeVendStateForClient(vend, player) : {},
+  });
+}
+
+function rejectVendTransaction(socket, data, message) {
+  sendInventoryTransactionResult(socket, {
+    ok: false,
+    request_id: makeRequestId(data),
+    action: String(data.action || ""),
+    message,
+    vend_state: {},
+  });
+}
+
+function handleVendingTransaction(socket, player, data) {
+  const action = String(data.action || "").trim();
+  const worldName = getTransactionWorldName(player, data);
+  if (!requireSameWorld(socket, player, worldName, "use that vending machine")) return;
+
+  const grid = getTransactionGrid(data);
+  if (!validateVendAccess(socket, player, data, worldName, grid)) return;
+
+  const vend = getVendStateAt(worldName, grid.x, grid.y, true);
+
+  if (action === "vend_get_state") {
+    sendVendTransactionResult(socket, data, player, vend, true, "");
+    return;
+  }
+
+  if (tradeByPlayerId.has(player.id)) {
+    rejectVendTransaction(socket, data, "Finish or cancel your trade before using a vending machine.");
+    return;
+  }
+
+  if (action === "vend_set_listing") {
+    handleVendSetListing(socket, player, data, worldName, vend);
+    return;
+  }
+
+  if (action === "vend_buy") {
+    handleVendBuy(socket, player, data, worldName, vend);
+    return;
+  }
+
+  if (action === "vend_collect") {
+    handleVendCollect(socket, player, data, worldName, vend);
+    return;
+  }
+
+  if (action === "vend_cancel") {
+    handleVendCancel(socket, player, data, worldName, vend);
+    return;
+  }
+
+  rejectVendTransaction(socket, data, "Unknown vending action.");
+}
+
+function handleVendSetListing(socket, player, data, worldName, vend) {
+  const hasOwner = accountKey(vend.owner_username || "") !== "";
+  if (!hasOwner && !canPlayerBuildInWorld(player, worldName)) {
+    rejectVendTransaction(socket, data, "This world is locked.");
+    return;
+  }
+
+  if (hasOwner && !canPlayerManageVend(player, vend)) {
+    rejectVendTransaction(socket, data, "Only the vending machine owner can change this listing.");
+    return;
+  }
+
+  if (vend.listing || Number(vend.pending_wls) > 0) {
+    rejectVendTransaction(socket, data, "Cancel or collect the current vending machine first.");
+    return;
+  }
+
+  const itemId = clampString(data.item_id || data.item_type || "");
+  const itemCategory = resolveInventoryCategory(itemId, data.item_category || data.category || "");
+  const stock = clampInteger(data.stock || data.amount || 0, 1, ItemDatabase.getStackLimit(itemId));
+  const amountPerSale = clampInteger(data.amount_per_sale || data.per_sale || 1, 1, ItemDatabase.getStackLimit(itemId));
+  const priceWls = clampInteger(data.price_wls || data.price || 1, 1, ItemDatabase.getStackLimit("world_lock"));
+
+  if (!canListItemInVend(itemId, itemCategory)) {
+    rejectVendTransaction(socket, data, "That item cannot be sold in a vending machine.");
+    return;
+  }
+
+  if (stock < amountPerSale) {
+    rejectVendTransaction(socket, data, "Stock must be at least the amount sold per purchase.");
+    return;
+  }
+
+  const state = ensureWritablePlayerState(player.account_username);
+  if (!state) {
+    rejectVendTransaction(socket, data, "Could not load your server inventory.");
+    return;
+  }
+
+  if (getInventoryCount(state, itemId, itemCategory) < stock) {
+    rejectVendTransaction(socket, data, `Not enough ${itemId}.`);
+    return;
+  }
+
+  if (!spendItemFromState(state, itemId, itemCategory, stock)) {
+    rejectVendTransaction(socket, data, "Server inventory changed. Try again.");
+    return;
+  }
+
+  vend.owner_username = player.account_username;
+  vend.owner_name = player.account_username.toUpperCase();
+  vend.listing = {
+    item_id: itemId,
+    item_category: itemCategory,
+    stock,
+    amount_per_sale: amountPerSale,
+    price_wls: priceWls,
+    created_at: new Date().toISOString(),
+  };
+  vend.pending_wls = 0;
+
+  const savedVend = setVendStateAt(worldName, vend);
+  persistPlayerInventoryChange(player.account_username, state);
+  queueWorldSave(worldName);
+  sendVendStateUpdateToWorld(worldName, savedVend);
+  sendVendTransactionResult(socket, data, player, savedVend, true, "Vending machine listing saved.", state);
+}
+
+function handleVendBuy(socket, player, data, worldName, vend) {
+  if (!vend.listing || Number(vend.listing.stock) <= 0) {
+    rejectVendTransaction(socket, data, "This vending machine is empty.");
+    return;
+  }
+
+  if (accountKey(vend.owner_username || "") === accountKey(player.account_username)) {
+    rejectVendTransaction(socket, data, "You cannot buy from your own vending machine.");
+    return;
+  }
+
+  const listing = vend.listing;
+  const maxSaleCount = Math.max(1, Math.floor(Number(listing.stock) / Number(listing.amount_per_sale)));
+  const saleCount = clampInteger(data.sale_count || 1, 1, maxSaleCount);
+  const itemAmount = Number(listing.amount_per_sale) * saleCount;
+  const priceWls = Number(listing.price_wls) * saleCount;
+  const pendingLimit = ItemDatabase.getStackLimit("world_lock");
+
+  if (Number(vend.pending_wls) + priceWls > pendingLimit) {
+    rejectVendTransaction(socket, data, "This vending machine needs to be collected first.");
+    return;
+  }
+
+  const buyerState = ensureWritablePlayerState(player.account_username);
+  if (!buyerState) {
+    rejectVendTransaction(socket, data, "Could not load your server inventory.");
+    return;
+  }
+
+  if (getInventoryCount(buyerState, "world_lock", "block") < priceWls) {
+    rejectVendTransaction(socket, data, "Not enough World Locks.");
+    return;
+  }
+
+  if (!canAddItemToState(buyerState, listing.item_id, listing.item_category, itemAmount)) {
+    rejectVendTransaction(socket, data, "Your inventory cannot hold that item.");
+    return;
+  }
+
+  if (!spendItemFromState(buyerState, "world_lock", "block", priceWls)) {
+    rejectVendTransaction(socket, data, "Server inventory changed. Try again.");
+    return;
+  }
+
+  addItemToState(buyerState, listing.item_id, listing.item_category, itemAmount);
+
+  listing.stock = Math.max(0, Number(listing.stock) - itemAmount);
+  vend.pending_wls = clampInteger(Number(vend.pending_wls) + priceWls, 0, pendingLimit);
+  vend.logs.push({
+    buyer_username: player.account_username,
+    item_id: listing.item_id,
+    item_category: listing.item_category,
+    amount: itemAmount,
+    price_wls: priceWls,
+    date: new Date().toISOString(),
+  });
+  vend.logs = vend.logs.slice(-VEND_LOG_LIMIT);
+
+  if (listing.stock <= 0) {
+    vend.listing = null;
+  }
+
+  const savedVend = setVendStateAt(worldName, vend);
+  persistPlayerInventoryChange(player.account_username, buyerState);
+  queueWorldSave(worldName);
+  sendVendStateUpdateToWorld(worldName, savedVend);
+  sendVendTransactionResult(socket, data, player, savedVend, true, "Purchase complete.", buyerState);
+}
+
+function handleVendCollect(socket, player, data, worldName, vend) {
+  if (!canPlayerManageVend(player, vend)) {
+    rejectVendTransaction(socket, data, "Only the vending machine owner can collect from it.");
+    return;
+  }
+
+  const pendingWls = clampInteger(vend.pending_wls || 0, 0, ItemDatabase.getStackLimit("world_lock"));
+  if (pendingWls <= 0) {
+    rejectVendTransaction(socket, data, "No World Locks to collect.");
+    return;
+  }
+
+  const state = ensureWritablePlayerState(player.account_username);
+  if (!state) {
+    rejectVendTransaction(socket, data, "Could not load your server inventory.");
+    return;
+  }
+
+  if (!canAddItemToState(state, "world_lock", "block", pendingWls)) {
+    rejectVendTransaction(socket, data, "Your inventory cannot hold those World Locks.");
+    return;
+  }
+
+  addItemToState(state, "world_lock", "block", pendingWls);
+  vend.pending_wls = 0;
+  clearVendOwnerIfEmpty(vend);
+
+  const savedVend = setVendStateAt(worldName, vend);
+  persistPlayerInventoryChange(player.account_username, state);
+  queueWorldSave(worldName);
+  sendVendStateUpdateToWorld(worldName, savedVend);
+  sendVendTransactionResult(socket, data, player, savedVend, true, `Collected ${pendingWls} World Locks.`, state);
+}
+
+function handleVendCancel(socket, player, data, worldName, vend) {
+  if (!canPlayerManageVend(player, vend)) {
+    rejectVendTransaction(socket, data, "Only the vending machine owner can cancel this listing.");
+    return;
+  }
+
+  if (!vend.listing) {
+    rejectVendTransaction(socket, data, "There is no listing to cancel.");
+    return;
+  }
+
+  const listing = vend.listing;
+  const state = ensureWritablePlayerState(player.account_username);
+  if (!state) {
+    rejectVendTransaction(socket, data, "Could not load your server inventory.");
+    return;
+  }
+
+  if (!canAddItemToState(state, listing.item_id, listing.item_category, listing.stock)) {
+    rejectVendTransaction(socket, data, "Your inventory cannot hold the returned items.");
+    return;
+  }
+
+  addItemToState(state, listing.item_id, listing.item_category, listing.stock);
+  vend.listing = null;
+  clearVendOwnerIfEmpty(vend);
+
+  const savedVend = setVendStateAt(worldName, vend);
+  persistPlayerInventoryChange(player.account_username, state);
+  queueWorldSave(worldName);
+  sendVendStateUpdateToWorld(worldName, savedVend);
+  sendVendTransactionResult(socket, data, player, savedVend, true, "Vending listing canceled.", state);
+}
+
+function normalizeInventoryAmountEntry(rawEntry) {
+  if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) return null;
+
+  const itemId = clampString(rawEntry.item_id || rawEntry.item_type || rawEntry.item || "");
+  if (itemId === "" || !ItemDatabase.hasItem(itemId)) return null;
+
+  const itemCategory = resolveInventoryCategory(itemId, rawEntry.item_category || rawEntry.category || "");
+  if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) return null;
+
+  const amount = clampInteger(rawEntry.amount || 0, 1, ItemDatabase.getStackLimit(itemId));
+  return { item_id: itemId, item_category: itemCategory, amount };
+}
+
+function getTransactionWorldName(player, data) {
+  return cleanWorld(data.world || player.world || "START");
+}
+
+function getTransactionGrid(data, xKey = "x", yKey = "y") {
+  const x = Number(data[xKey]);
+  const y = Number(data[yKey]);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+
+  const gridX = Math.trunc(x);
+  const gridY = Math.trunc(y);
+  if (!isGridInWorld(gridX, gridY)) return null;
+
+  return { x: gridX, y: gridY };
+}
+
+function getStationIdForTransaction(data) {
+  const action = String(data.action || "").trim();
+  const stationId = String(data.station_id || data.station || "").trim();
+  if (stationId !== "") return stationId;
+  return action === "furnace_recipe" ? "furnace" : "crafting_station";
+}
+
+function validateStationAccess(socket, player, worldName, stationId, grid) {
+  if (!grid) {
+    sendActionRejected(socket, "inventory_transaction_request", "Station position is missing.");
+    return false;
+  }
+
+  if (!isPlayerNearGrid(player, grid.x, grid.y)) {
+    sendActionRejected(socket, "inventory_transaction_request", "Too far away from that station.");
+    return false;
+  }
+
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(grid.x, grid.y));
+  const blockType = block ? String(block.block_type || "") : "";
+
+  if (stationId === "crafting_station") {
+    if (blockType === "crafting_station_left" || blockType === "crafting_station_right") return true;
+    sendActionRejected(socket, "inventory_transaction_request", "Craft at a Crafting Station.");
+    return false;
+  }
+
+  if (stationId === "furnace") {
+    if (blockType === "furnace") return true;
+    sendActionRejected(socket, "inventory_transaction_request", "Smelt at a Furnace.");
+    return false;
+  }
+
+  sendActionRejected(socket, "inventory_transaction_request", "Unknown station.");
+  return false;
+}
+
+function handleStationRecipeTransaction(socket, player, data) {
+  const requestId = makeRequestId(data);
+  const worldName = getTransactionWorldName(player, data);
+  if (!requireSameWorld(socket, player, worldName, "use that station")) return;
+
+  const stationId = getStationIdForTransaction(data);
+  const recipeId = clampString(data.recipe_id || data.id || "");
+  const recipe = ItemDatabase.getStationRecipe(stationId, recipeId);
+  if (!recipe) {
+    sendInventoryTransactionRejected(socket, data, "Recipe is not configured on the server.");
+    return;
+  }
+
+  const stationGrid = getTransactionGrid(data, "station_x", "station_y") || getTransactionGrid(data);
+  if (!validateStationAccess(socket, player, worldName, stationId, stationGrid)) return;
+
+  if (tradeByPlayerId.has(player.id)) {
+    sendInventoryTransactionRejected(socket, data, "Finish or cancel your trade before crafting.");
+    return;
+  }
+
+  const costs = recipe.cost.map(normalizeInventoryAmountEntry);
+  const output = normalizeInventoryAmountEntry(recipe.output);
+  if (costs.some((entry) => entry === null) || !output) {
+    sendInventoryTransactionRejected(socket, data, "Recipe has invalid server item data.");
+    return;
+  }
+
+  const username = player.account_username;
+  const state = ensureWritablePlayerState(username);
+  if (!state) {
+    sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
+    return;
+  }
+
+  for (const cost of costs) {
+    if (getInventoryCount(state, cost.item_id, cost.item_category) < cost.amount) {
+      sendInventoryTransactionRejected(socket, data, `Not enough ${cost.item_id}.`);
+      return;
+    }
+  }
+
+  for (const cost of costs) {
+    if (!spendItemFromState(state, cost.item_id, cost.item_category, cost.amount)) {
+      sendInventoryTransactionRejected(socket, data, "Server inventory changed. Try again.");
+      return;
+    }
+  }
+
+  if (!addItemToState(state, output.item_id, output.item_category, output.amount)) {
+    sendInventoryTransactionRejected(socket, data, "Could not add recipe output.");
+    return;
+  }
+
+  persistPlayerInventoryChange(username, state);
+
+  sendInventoryTransactionResult(socket, {
+    ok: true,
+    request_id: requestId,
+    action: stationId === "furnace" ? "furnace_recipe" : "craft_recipe",
+    station_id: stationId,
+    recipe_id: recipe.id,
+    message: stationId === "furnace" ? `Smelted ${output.item_id}.` : `Crafted ${output.item_id}.`,
+    username,
+    rewards: [output],
+    player_data: state,
+  });
+}
+
+function getFishingGrid(data) {
+  return getTransactionGrid(data, "target_x", "target_y") || getTransactionGrid(data);
+}
+
+function validateFishingTarget(socket, player, worldName, grid, data) {
+  if (!grid) {
+    sendInventoryTransactionRejected(socket, data, "Fishing target is missing.");
+    return false;
+  }
+
+  if (!isPlayerNearGrid(player, grid.x, grid.y, MAX_GRID_ACTION_DISTANCE_PIXELS)) {
+    sendInventoryTransactionRejected(socket, data, "Water is too far away.");
+    return false;
+  }
+
+  const worldState = ensureWorldState(worldName);
+  const serverBlock = worldState.foreground.get(gridKey(grid.x, grid.y));
+  if (serverBlock && String(serverBlock.block_type || "") !== "water") {
+    sendInventoryTransactionRejected(socket, data, "Cast the fishing rod on water.");
+    return false;
+  }
+
+  return true;
+}
+
+function rollFishingReward(lureId) {
+  const entry = rollWeightedReward(ItemDatabase.getFishingTable(lureId));
+  if (!entry) return null;
+
+  const fishId = clampString(entry.fish_id || "");
+  if (!ItemDatabase.hasItem(fishId) || resolveInventoryCategory(fishId) !== "fish") return null;
+
+  return {
+    fish_id: fishId,
+    difficulty: clampInteger(entry.difficulty || 1, 1, 10),
+  };
+}
+
+function handleFishingStartTransaction(socket, player, data) {
+  const requestId = makeRequestId(data);
+  const worldName = getTransactionWorldName(player, data);
+  if (!requireSameWorld(socket, player, worldName, "fish in that world")) return;
+
+  if (activeFishingSessions.has(player.id)) {
+    sendInventoryTransactionRejected(socket, data, "Finish your current cast first.");
+    return;
+  }
+
+  const grid = getFishingGrid(data);
+  if (!validateFishingTarget(socket, player, worldName, grid, data)) return;
+
+  const lureId = clampString(data.lure_id || data.item_id || "");
+  const lureDefinition = ItemDatabase.getItemDefinition(lureId);
+  if (!lureDefinition || lureDefinition.category !== "lure" || lureDefinition.shop_pack) {
+    sendInventoryTransactionRejected(socket, data, "That item cannot be used as fishing bait.");
+    return;
+  }
+
+  const username = player.account_username;
+  const state = ensureWritablePlayerState(username);
+  if (!state) {
+    sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
+    return;
+  }
+
+  if (!spendItemFromState(state, lureId, "lure", 1)) {
+    sendInventoryTransactionRejected(socket, data, `Not enough ${lureId}.`);
+    return;
+  }
+
+  const reward = rollFishingReward(lureId);
+  if (!reward) {
+    sendInventoryTransactionRejected(socket, data, "Fishing rewards are not configured.");
+    return;
+  }
+
+  persistPlayerInventoryChange(username, state);
+
+  const sessionId = crypto.randomUUID();
+  activeFishingSessions.set(player.id, {
+    session_id: sessionId,
+    username,
+    world: worldName,
+    lure_id: lureId,
+    fish_id: reward.fish_id,
+    difficulty: reward.difficulty,
+    target_x: grid.x,
+    target_y: grid.y,
+    expires_at: Date.now() + FISHING_SESSION_TTL_MS,
+  });
+
+  sendInventoryTransactionResult(socket, {
+    ok: true,
+    request_id: requestId,
+    action: "fishing_start",
+    message: `Casting with ${lureId}.`,
+    username,
+    lure_id: lureId,
+    session_id: sessionId,
+    fish_id: reward.fish_id,
+    difficulty: reward.difficulty,
+    target_x: grid.x,
+    target_y: grid.y,
+    player_data: state,
+  });
+}
+
+function handleFishingCompleteTransaction(socket, player, data) {
+  const requestId = makeRequestId(data);
+  const session = activeFishingSessions.get(player.id);
+  if (!session) {
+    sendInventoryTransactionRejected(socket, data, "Fishing session expired.");
+    return;
+  }
+
+  const sessionId = String(data.session_id || "").trim();
+  if (sessionId !== "" && sessionId !== session.session_id) {
+    sendInventoryTransactionRejected(socket, data, "Fishing session changed.");
+    return;
+  }
+
+  activeFishingSessions.delete(player.id);
+
+  if (Date.now() > session.expires_at || player.world !== session.world) {
+    sendInventoryTransactionRejected(socket, data, "The fish got away.");
+    return;
+  }
+
+  const success = Boolean(data.success);
+  if (!success) {
+    sendInventoryTransactionResult(socket, {
+      ok: true,
+      request_id: requestId,
+      action: "fishing_complete",
+      message: "The fish got away.",
+      username: player.account_username,
+      fish_id: "",
+      player_data: ensurePlayerState(player.account_username) || {},
+    });
+    return;
+  }
+
+  const state = ensureWritablePlayerState(player.account_username);
+  if (!state || !addItemToState(state, session.fish_id, "fish", 1)) {
+    sendInventoryTransactionRejected(socket, data, "Could not save caught fish.");
+    return;
+  }
+
+  persistPlayerInventoryChange(player.account_username, state);
+
+  sendInventoryTransactionResult(socket, {
+    ok: true,
+    request_id: requestId,
+    action: "fishing_complete",
+    message: `Caught ${session.fish_id}.`,
+    username: player.account_username,
+    fish_id: session.fish_id,
+    rewards: [{ item_id: session.fish_id, item_category: "fish", amount: 1 }],
+    player_data: state,
+  });
+}
+
+function getSeedGrowthRemaining(seed) {
+  if (!seed) return SERVER_SEED_GROW_TIME_SECONDS;
+  const maxGrowTime = Math.max(1, Number(seed.max_grow_time) || SERVER_SEED_GROW_TIME_SECONDS);
+  const plantedAt = Number(seed.planted_at || 0);
+  if (!Number.isFinite(plantedAt) || plantedAt <= 0) {
+    return Math.max(0, Math.min(maxGrowTime, Number(seed.grow_time) || maxGrowTime));
+  }
+
+  const elapsed = Math.max(0, (Date.now() - plantedAt) / 1000);
+  return Math.max(0, maxGrowTime - elapsed);
+}
+
+function isSeedMature(seed) {
+  return getSeedGrowthRemaining(seed) <= 0;
+}
+
+function serializeSeedForMessage(seed) {
+  const growTime = getSeedGrowthRemaining(seed);
+  const maxGrowTime = Math.max(1, Number(seed.max_grow_time) || SERVER_SEED_GROW_TIME_SECONDS);
+  return {
+    x: seed.x,
+    y: seed.y,
+    seed_type: seed.seed_type,
+    grow_time: growTime,
+    max_grow_time: maxGrowTime,
+    mature: growTime <= 0,
+  };
+}
+
+function makeServerSeedEntry(x, y, seedType) {
+  return {
+    x,
+    y,
+    seed_type: seedType,
+    grow_time: SERVER_SEED_GROW_TIME_SECONDS,
+    max_grow_time: SERVER_SEED_GROW_TIME_SECONDS,
+    planted_at: Date.now(),
+  };
+}
+
+function getBlockTypeForSeed(seedType) {
+  const definition = ItemDatabase.getItemDefinition(seedType);
+  if (!definition || definition.category !== "seed") return "";
+  return clampString(definition.grows_into || String(seedType || "").replace(/_seed$/, ""));
+}
+
+function handleSeedSpliceTransaction(socket, player, data) {
+  const requestId = makeRequestId(data);
+  const worldName = getTransactionWorldName(player, data);
+  if (!requireSameWorld(socket, player, worldName, "splice seeds in that world")) return;
+  if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) return;
+
+  const grid = getTransactionGrid(data);
+  if (!grid || !isPlayerNearGrid(player, grid.x, grid.y)) {
+    sendInventoryTransactionRejected(socket, data, "Too far away.");
+    return;
+  }
+
+  const secondSeed = clampString(data.seed_type || data.second_seed_type || data.item_id || "");
+  if (!ItemDatabase.hasItem(secondSeed) || resolveInventoryCategory(secondSeed) !== "seed") {
+    sendInventoryTransactionRejected(socket, data, "Select a valid seed to splice.");
+    return;
+  }
+
+  const worldState = ensureWorldState(worldName);
+  const key = gridKey(grid.x, grid.y);
+  const seed = worldState.seeds.get(key);
+  if (!seed) {
+    sendInventoryTransactionRejected(socket, data, "There is no seed-tree there.");
+    return;
+  }
+
+  if (isSeedMature(seed)) {
+    sendInventoryTransactionRejected(socket, data, "This seed-tree is mature. Harvest it first.");
+    return;
+  }
+
+  const resultSeed = ItemDatabase.getSpliceResult(seed.seed_type, secondSeed);
+  if (resultSeed === "" || !ItemDatabase.hasItem(resultSeed)) {
+    sendInventoryTransactionRejected(socket, data, "These seeds cannot be spliced.");
+    return;
+  }
+
+  const state = ensureWritablePlayerState(player.account_username);
+  if (!state || !spendItemFromState(state, secondSeed, "seed", 1)) {
+    sendInventoryTransactionRejected(socket, data, `Not enough ${secondSeed}.`);
+    return;
+  }
+
+  persistPlayerInventoryChange(player.account_username, state);
+
+  const update = {
+    type: "world_seed_update",
+    action: "splice",
+    x: grid.x,
+    y: grid.y,
+    seed_type: resultSeed,
+    previous_seed_type: seed.seed_type,
+    grow_time: SERVER_SEED_GROW_TIME_SECONDS,
+    max_grow_time: SERVER_SEED_GROW_TIME_SECONDS,
+    world: worldName,
+  };
+
+  applySeedUpdateToWorldState(worldName, update);
+  queueWorldSave(worldName);
+  broadcastToWorld(worldName, update);
+
+  sendInventoryTransactionResult(socket, {
+    ok: true,
+    request_id: requestId,
+    action: "seed_splice",
+    message: `Spliced into ${resultSeed}.`,
+    username: player.account_username,
+    seed_type: resultSeed,
+    previous_seed_type: seed.seed_type,
+    player_data: state,
+  });
+}
+
+function handleSeedHarvestTransaction(socket, player, data) {
+  const requestId = makeRequestId(data);
+  const worldName = getTransactionWorldName(player, data);
+  if (!requireSameWorld(socket, player, worldName, "harvest seeds in that world")) return;
+  if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) return;
+
+  const grid = getTransactionGrid(data);
+  if (!grid || !isPlayerNearGrid(player, grid.x, grid.y)) {
+    sendInventoryTransactionRejected(socket, data, "Too far away.");
+    return;
+  }
+
+  const worldState = ensureWorldState(worldName);
+  const key = gridKey(grid.x, grid.y);
+  const seed = worldState.seeds.get(key);
+  if (!seed) {
+    sendInventoryTransactionRejected(socket, data, "There is no seed-tree there.");
+    return;
+  }
+
+  const dropPosition = getGridCenterPixels(grid.x, grid.y);
+  const drops = [];
+  if (isSeedMature(seed)) {
+    const blockType = getBlockTypeForSeed(seed.seed_type);
+    if (blockType !== "") {
+      drops.push({ item_id: blockType, item_category: "block", amount: 1, y_offset: 0 });
+    }
+    if (randomChance(MATURE_SEED_EXTRA_DROP_CHANCE)) {
+      drops.push({ item_id: seed.seed_type, item_category: "seed", amount: 1, y_offset: -8 });
+    }
+  } else {
+    drops.push({ item_id: seed.seed_type, item_category: "seed", amount: 1, y_offset: 0 });
+  }
+
+  const update = {
+    type: "world_seed_update",
+    action: "remove",
+    x: grid.x,
+    y: grid.y,
+    seed_type: seed.seed_type,
+    world: worldName,
+  };
+
+  applySeedUpdateToWorldState(worldName, update);
+  queueWorldSave(worldName);
+  broadcastToWorld(worldName, update);
+
+  const rewards = [];
+  for (const drop of drops) {
+    const payload = createServerDrop(
+      worldName,
+      drop.item_id,
+      drop.item_category,
+      drop.amount,
+      dropPosition.x,
+      dropPosition.y + drop.y_offset,
+      SERVER_DROP_PICKUP_DELAY
+    );
+    if (!payload) continue;
+    rewards.push({ item_id: drop.item_id, item_category: drop.item_category, amount: drop.amount });
+    broadcastToWorld(worldName, payload);
+  }
+
+  sendInventoryTransactionResult(socket, {
+    ok: true,
+    request_id: requestId,
+    action: "seed_harvest",
+    message: "Seed-tree harvested.",
+    username: player.account_username,
+    rewards,
+    player_data: ensurePlayerState(player.account_username) || {},
+  });
+}
+
+function rollWeightedReward(table) {
+  const totalWeight = table.reduce((total, entry) => total + Math.max(0, Number(entry.weight) || 0), 0);
+  if (totalWeight <= 0) return table[0];
+
+  let roll = crypto.randomInt(1, totalWeight + 1);
+  for (const entry of table) {
+    roll -= Math.max(0, Number(entry.weight) || 0);
+    if (roll <= 0) return entry;
+  }
+
+  return table[table.length - 1];
+}
+
+function combineRewardEntries(rewards) {
+  const combined = new Map();
+  for (const reward of rewards) {
+    const itemId = clampString(reward.item_id || "");
+    if (itemId === "") continue;
+    if (!ItemDatabase.hasItem(itemId)) continue;
+    const itemCategory = resolveInventoryCategory(itemId, reward.item_category || reward.category || "");
+    if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) continue;
+    const amount = clampInteger(reward.amount || 0, 0, ItemDatabase.getStackLimit(itemId));
+    if (amount <= 0) continue;
+    const key = `${itemCategory}:${itemId}`;
+    const existing = combined.get(key) || { item_id: itemId, item_category: itemCategory, amount: 0 };
+    existing.amount = clampInteger(existing.amount + amount, 0, ItemDatabase.getStackLimit(itemId));
+    combined.set(key, existing);
+  }
+  return Array.from(combined.values());
+}
+
+function getRawLength(raw) {
+  if (Buffer.isBuffer(raw)) return raw.length;
+  return Buffer.byteLength(String(raw || ""), "utf8");
+}
+
+function checkMessageRateLimit(socket, messageType) {
+  const limits = MESSAGE_RATE_LIMITS[messageType] || { limit: 60, windowMs: 1000 };
+  const now = Date.now();
+  const bucketKey = messageType || "unknown";
+  const bucket = socket.rateLimits.get(bucketKey) || {
+    count: 0,
+    resetAt: now + limits.windowMs,
+    warnedAt: 0,
+  };
+
+  if (now >= bucket.resetAt) {
+    bucket.count = 0;
+    bucket.resetAt = now + limits.windowMs;
+    bucket.warnedAt = 0;
+  }
+
+  bucket.count += 1;
+  socket.rateLimits.set(bucketKey, bucket);
+
+  if (bucket.count <= limits.limit) {
+    return true;
+  }
+
+  if (now - bucket.warnedAt > 1000 && socket.readyState === WebSocket.OPEN) {
+    bucket.warnedAt = now;
+    socket.send(JSON.stringify({
+      type: "rate_limited",
+      action: bucketKey,
+      message: "Slow down a little.",
+    }));
+  }
+
+  return false;
+}
+
+function sendActionRejected(socket, action, message) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+
+  socket.send(JSON.stringify({
+    type: "action_rejected",
+    action,
+    message,
+  }));
+}
+
+function requireSameWorld(socket, player, worldName, action) {
+  if (!player) return false;
+
+  const currentWorld = cleanWorld(player.world || "START");
+  const targetWorld = cleanWorld(worldName || "START");
+  if (currentWorld === targetWorld) return true;
+
+  sendActionRejected(socket, action, "Join that world before sending actions for it.");
+  return false;
+}
+
+function isGridInWorld(x, y) {
+  return (
+    Number.isInteger(x) &&
+    Number.isInteger(y) &&
+    x >= 0 &&
+    x < WORLD_WIDTH &&
+    y >= 0 &&
+    y < WORLD_HEIGHT
+  );
+}
+
+function isPositionInWorldBounds(x, y) {
+  const min = -POSITION_MARGIN_PIXELS;
+  const maxX = WORLD_WIDTH * TILE_SIZE + POSITION_MARGIN_PIXELS;
+  const maxY = WORLD_HEIGHT * TILE_SIZE + POSITION_MARGIN_PIXELS;
+  return Number.isFinite(x) && Number.isFinite(y) && x >= min && x <= maxX && y >= min && y <= maxY;
+}
+
+function clampInteger(value, min, max) {
+  const number = Math.trunc(Number(value) || 0);
+  return Math.min(max, Math.max(min, number));
+}
+
+function clampString(value, limit = MAX_ITEM_ID_LENGTH) {
+  return String(value || "").trim().slice(0, limit);
+}
+
+function canPlayerControlWorldLock(player, worldName) {
+  if (isAdmin(player)) return true;
+  if (!player || !player.authenticated) return false;
+
+  const state = ensureWorldState(worldName);
+  const lock = state.world_lock || {};
+  const ownerKey = accountKey(lock.owner_name || "");
+  return ownerKey !== "" && ownerKey === accountKey(player.account_username);
+}
+
+function canPlayerBuildInWorld(player, worldName) {
+  if (isAdmin(player)) return true;
+  if (!player || !player.authenticated) return false;
+
+  const state = ensureWorldState(worldName);
+  const lock = state.world_lock || {};
+  if (!lock.is_locked) return true;
+
+  const playerKey = accountKey(player.account_username);
+  if (playerKey === "") return false;
+  if (accountKey(lock.owner_name || "") === playerKey) return true;
+  if (Boolean(lock.public_build)) return true;
+
+  const allowedPlayers = Array.isArray(lock.allowed_players) ? lock.allowed_players : [];
+  return allowedPlayers.some((name) => accountKey(name) === playerKey);
+}
+
+function requireBuildPermission(socket, player, worldName, action) {
+  if (canPlayerBuildInWorld(player, worldName)) return true;
+
+  sendActionRejected(socket, action, "This world is locked.");
+  return false;
+}
+
+function getGridCenterPixels(x, y) {
+  return {
+    x: (Number(x) || 0) * TILE_SIZE,
+    y: (Number(y) || 0) * TILE_SIZE,
+  };
+}
+
+function isPlayerNearPoint(player, x, y, maxDistance = MAX_GRID_ACTION_DISTANCE_PIXELS) {
+  if (!player) return false;
+  const px = Number(player.x);
+  const py = Number(player.y);
+  const tx = Number(x);
+  const ty = Number(y);
+  if (![px, py, tx, ty].every(Number.isFinite)) return false;
+  return Math.hypot(px - tx, py - ty) <= maxDistance;
+}
+
+function isPlayerNearGrid(player, x, y, maxDistance = MAX_GRID_ACTION_DISTANCE_PIXELS) {
+  const center = getGridCenterPixels(x, y);
+  return isPlayerNearPoint(player, center.x, center.y, maxDistance);
+}
+
+function persistPlayerInventoryChange(username, state) {
+  if (!state) return null;
+  state.saved_at = new Date().toISOString();
+  setPlayerState(username, state);
+  queuePlayerSave(username);
+  return state;
+}
+
+function spendServerInventoryCost(username, cost) {
+  if (!cost || Number(cost.amount) <= 0) return { ok: true, state: null };
+
+  const state = ensureWritablePlayerState(username);
+  if (!state) {
+    return { ok: false, message: "Could not load your server inventory." };
+  }
+
+  if (!ItemDatabase.hasItem(cost.item_id) || !ItemDatabase.canStoreItemInCategory(cost.item_id, cost.item_category)) {
+    return { ok: false, message: "That item is not valid on the server." };
+  }
+
+  if (getInventoryCount(state, cost.item_id, cost.item_category) < cost.amount) {
+    return { ok: false, message: `Not enough ${cost.item_id}.` };
+  }
+
+  if (!spendItemFromState(state, cost.item_id, cost.item_category, cost.amount)) {
+    return { ok: false, message: "Server inventory changed. Try again." };
+  }
+
+  return { ok: true, state: persistPlayerInventoryChange(username, state) };
+}
+
+function makeServerDropId(worldName, itemType) {
+  const cleanWorldName = safeFileName(cleanWorld(worldName), "START");
+  const cleanItem = safeFileName(clampString(itemType || "drop"), "drop");
+  return `server_${cleanWorldName}_${cleanItem}_${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
+}
+
+function randomChance(chance) {
+  const safeChance = Math.max(0, Math.min(1, Number(chance) || 0));
+  if (safeChance <= 0) return false;
+  if (safeChance >= 1) return true;
+  return crypto.randomInt(0, 1000000) < Math.floor(safeChance * 1000000);
+}
+
+function randomRangeInclusive(min, max) {
+  const safeMin = Math.trunc(Number(min) || 0);
+  const safeMax = Math.trunc(Number(max) || safeMin);
+  if (safeMax <= safeMin) return safeMin;
+  return crypto.randomInt(safeMin, safeMax + 1);
+}
+
+function getGemDropRangeForRarity(rarity) {
+  switch (String(rarity || "common")) {
+    case "uncommon":
+      return [2, 6];
+    case "rare":
+      return [5, 10];
+    case "epic":
+      return [10, 20];
+    case "legendary":
+      return [20, 35];
+    case "common":
+    default:
+      return [0, 3];
+  }
+}
+
+function createServerDrop(worldName, itemType, itemCategory, amount, x, y, pickupDelay = SERVER_DROP_PICKUP_DELAY) {
+  const itemId = clampString(itemType || "");
+  if (!ItemDatabase.hasItem(itemId)) return null;
+
+  const resolvedCategory = resolveInventoryCategory(itemId, itemCategory);
+  if (!ItemDatabase.canStoreItemInCategory(itemId, resolvedCategory)) return null;
+
+  const safeAmount = clampInteger(amount || 1, 1, Math.min(MAX_DROP_AMOUNT, ItemDatabase.getStackLimit(itemId)));
+  const payload = {
+    type: "world_item_drop_create",
+    world: cleanWorld(worldName),
+    drop_id: makeServerDropId(worldName, itemId),
+    item_type: itemId,
+    item_category: resolvedCategory,
+    is_seed: resolvedCategory === "seed",
+    amount: safeAmount,
+    x: Number(x) || 0,
+    y: Number(y) || 0,
+    pickup_delay: Math.max(0, Number(pickupDelay) || 0),
+  };
+
+  applyDropCreateToWorldState(worldName, payload);
+  return payload;
+}
+
+function getBreakDropsForBlock(blockType, layer) {
+  const itemId = clampString(blockType || "");
+  const definition = ItemDatabase.getItemDefinition(itemId);
+  if (!definition || definition.category !== "block") return [];
+
+  const drops = [];
+  if (isVendBlockType(itemId)) {
+    drops.push({ item_id: VEND_BLOCK_EMPTY, item_category: "block", amount: 1 });
+  } else if (itemId === "crafting_station_left") {
+    drops.push({ item_id: "crafting_station", item_category: "block", amount: 1 });
+  } else if (itemId !== "crafting_station_right" && ItemDatabase.isDropableItem(itemId)) {
+    drops.push({ item_id: itemId, item_category: "block", amount: 1 });
+  }
+
+  const rules = definition.drop_rules && typeof definition.drop_rules === "object" ? definition.drop_rules : {};
+  const seedId = clampString(definition.seed || "");
+  const seedChance = Number.isFinite(rules.seed_chance) ? rules.seed_chance : 0.25;
+  if (seedId !== "" && ItemDatabase.hasItem(seedId) && randomChance(seedChance)) {
+    drops.push({ item_id: seedId, item_category: "seed", amount: 1 });
+  }
+
+  if (layer === "foreground" && ItemDatabase.hasItem("gem")) {
+    const configuredRange = Array.isArray(rules.gem_range) ? rules.gem_range : getGemDropRangeForRarity(definition.rarity);
+    const gemAmount = randomRangeInclusive(configuredRange[0], configuredRange[1]);
+    if (gemAmount > 0) {
+      drops.push({ item_id: "gem", item_category: "currency", amount: gemAmount });
+    }
+  }
+
+  return drops;
+}
+
+function emitBreakDrops(worldName, update) {
+  if (!update || update.action !== "break" || update.block_type === "") return;
+
+  const position = getGridCenterPixels(update.x, update.y);
+  const drops = getBreakDropsForBlock(update.block_type, update.layer);
+  for (const drop of drops) {
+    const payload = createServerDrop(
+      worldName,
+      drop.item_id,
+      drop.item_category,
+      drop.amount,
+      position.x,
+      position.y,
+      SERVER_DROP_PICKUP_DELAY
+    );
+    if (!payload) continue;
+    broadcastToWorld(worldName, payload);
+  }
+}
+
+function prepareVendBreakInventoryReturn(socket, player, worldName, update) {
+  const vend = getVendStateAt(worldName, update.x, update.y, false);
+  const listing = vend.listing && Number(vend.listing.stock) > 0 ? vend.listing : null;
+  const pendingWls = clampInteger(vend.pending_wls || 0, 0, ItemDatabase.getStackLimit("world_lock"));
+
+  if (!listing && pendingWls <= 0) {
+    return { ok: true, playerState: null, message: "" };
+  }
+
+  if (!canPlayerManageVend(player, vend)) {
+    sendActionRejected(socket, "world_block_update", "Only the vending machine owner can break it while it has items.");
+    return { ok: false };
+  }
+
+  const state = ensureWritablePlayerState(player.account_username);
+  if (!state) {
+    sendActionRejected(socket, "world_block_update", "Could not load your server inventory.");
+    return { ok: false };
+  }
+
+  const returned = [];
+  if (listing) {
+    const itemId = clampString(listing.item_id || "");
+    const itemCategory = resolveInventoryCategory(itemId, listing.item_category || "");
+    const stock = clampInteger(listing.stock || 0, 1, ItemDatabase.getStackLimit(itemId));
+    if (!canAddItemToState(state, itemId, itemCategory, stock)) {
+      sendActionRejected(socket, "world_block_update", "Your inventory cannot hold the vending item.");
+      return { ok: false };
+    }
+
+    addItemToState(state, itemId, itemCategory, stock);
+    returned.push(`${itemId} x${stock}`);
+    vend.listing = null;
+  }
+
+  if (pendingWls > 0) {
+    if (!canAddItemToState(state, "world_lock", "block", pendingWls)) {
+      sendActionRejected(socket, "world_block_update", "Your inventory cannot hold those World Locks.");
+      return { ok: false };
+    }
+
+    addItemToState(state, "world_lock", "block", pendingWls);
+    returned.push(`World Lock x${pendingWls}`);
+    vend.pending_wls = 0;
+  }
+
+  persistPlayerInventoryChange(player.account_username, state);
+  setVendStateAt(worldName, vend);
+
+  return {
+    ok: true,
+    playerState: state,
+    message: returned.length > 0 ? `Returned ${returned.join(", ")}.` : "",
+  };
+}
+
+function validateBlockUpdateAgainstServerState(socket, player, worldName, update) {
+  const state = ensureWorldState(worldName);
+  const key = gridKey(update.x, update.y);
+
+  if (!isPlayerNearGrid(player, update.x, update.y)) {
+    sendActionRejected(socket, "world_block_update", "Too far away.");
+    return { ok: false };
+  }
+
+  if (update.action === "break") {
+    const targetLayer = update.layer === "background" ? state.background : state.foreground;
+    const removedLayer = update.layer === "background" ? state.removed_background : state.removed_foreground;
+    const serverBlock = targetLayer.get(key);
+    const blockType = serverBlock ? serverBlock.block_type : update.block_type;
+
+    if (removedLayer.has(key) && !serverBlock) {
+      sendActionRejected(socket, "world_block_update", "That block is already broken.");
+      return { ok: false };
+    }
+
+    if (blockType === "") {
+      sendActionRejected(socket, "world_block_update", "Server needs a block type to break.");
+      return { ok: false };
+    }
+
+    if (serverBlock && update.block_type !== "" && serverBlock.block_type !== update.block_type) {
+      sendActionRejected(socket, "world_block_update", "That block changed on the server.");
+      return { ok: false };
+    }
+
+    const expectedLayer = ItemDatabase.getPlaceLayer(blockType);
+    if (expectedLayer !== "" && expectedLayer !== update.layer) {
+      sendActionRejected(socket, "world_block_update", "That block is on a different layer.");
+      return { ok: false };
+    }
+
+    update.block_type = blockType;
+
+    if (update.block_type !== "" && !ItemDatabase.canBreakBlock(update.block_type)) {
+      sendActionRejected(socket, "world_block_update", "That block cannot be broken.");
+      return { ok: false };
+    }
+
+    if (isVendBlockType(update.block_type)) {
+      const vendReturn = prepareVendBreakInventoryReturn(socket, player, worldName, update);
+      if (!vendReturn.ok) return { ok: false };
+      return {
+        ok: true,
+        playerState: vendReturn.playerState || null,
+        message: vendReturn.message || "",
+      };
+    }
+    return { ok: true };
+  }
+
+  if (!ItemDatabase.isPlaceableBlock(update.block_type)) {
+    sendActionRejected(socket, "world_block_update", "That item cannot be placed.");
+    return { ok: false };
+  }
+
+  const requiredLayer = ItemDatabase.getPlaceLayer(update.block_type);
+  if (requiredLayer !== update.layer) {
+    sendActionRejected(socket, "world_block_update", `Place ${update.block_type} on the ${requiredLayer} layer.`);
+    return { ok: false };
+  }
+
+  const targetLayer = update.layer === "background" ? state.background : state.foreground;
+  if (targetLayer.has(key)) {
+    sendActionRejected(socket, "world_block_update", "That spot is already occupied.");
+    return { ok: false };
+  }
+
+  if (update.layer === "foreground" && state.seeds.has(key)) {
+    sendActionRejected(socket, "world_block_update", "A seed is already planted there.");
+    return { ok: false };
+  }
+
+  if (update.block_type === "crafting_station_left" && state.foreground.has(gridKey(update.x + 1, update.y))) {
+    sendActionRejected(socket, "world_block_update", "Crafting Station needs 2 empty tiles.");
+    return { ok: false };
+  }
+
+  if (ItemDatabase.requiresLeftStationPart(update.block_type)) {
+    const leftPart = state.foreground.get(gridKey(update.x - 1, update.y));
+    if (!leftPart || leftPart.block_type !== "crafting_station_left") {
+      sendActionRejected(socket, "world_block_update", "Crafting Station right side needs its left side first.");
+      return { ok: false };
+    }
+  }
+
+  const cost = ItemDatabase.getPlacementCost(update.block_type);
+  const spendResult = spendServerInventoryCost(player.account_username, cost);
+  if (!spendResult.ok) {
+    sendActionRejected(socket, "world_block_update", spendResult.message);
+    return { ok: false };
+  }
+
+  return {
+    ok: true,
+    playerState: spendResult.state,
+  };
+}
+
+function validateSeedUpdateAgainstServerState(socket, player, worldName, update) {
+  if (update.action !== "place") return { ok: true };
+
+  if (!isPlayerNearGrid(player, update.x, update.y)) {
+    sendActionRejected(socket, "world_seed_update", "Too far away.");
+    return { ok: false };
+  }
+
+  if (!ItemDatabase.hasItem(update.seed_type) || resolveInventoryCategory(update.seed_type) !== "seed") {
+    sendActionRejected(socket, "world_seed_update", "That seed does not exist on the server.");
+    return { ok: false };
+  }
+
+  const state = ensureWorldState(worldName);
+  const key = gridKey(update.x, update.y);
+  if (state.seeds.has(key)) {
+    sendActionRejected(socket, "world_seed_update", "A seed is already planted there.");
+    return { ok: false };
+  }
+
+  const spendResult = spendServerInventoryCost(player.account_username, {
+    item_id: update.seed_type,
+    item_category: "seed",
+    amount: 1,
+  });
+  if (!spendResult.ok) {
+    sendActionRejected(socket, "world_seed_update", spendResult.message);
+    return { ok: false };
+  }
+
+  return {
+    ok: true,
+    playerState: spendResult.state,
+  };
+}
+
+function prepareWorldLockStateUpdate(socket, player, worldName, update) {
+  const state = ensureWorldState(worldName);
+  const currentLock = state.world_lock || {};
+  const nextLock = update.state || {};
+
+  if (currentLock.is_locked && !canPlayerControlWorldLock(player, worldName)) {
+    sendActionRejected(socket, "world_lock_state", "Only the world lock owner can change this lock.");
+    return false;
+  }
+
+  if (nextLock.is_locked) {
+    if (!isGridInWorld(nextLock.lock_grid_x, nextLock.lock_grid_y)) {
+      sendActionRejected(socket, "world_lock_state", "World lock position is outside the world.");
+      return false;
+    }
+
+    const lockBlock = state.foreground.get(gridKey(nextLock.lock_grid_x, nextLock.lock_grid_y));
+    if (!lockBlock || lockBlock.block_type !== "world_lock") {
+      sendActionRejected(socket, "world_lock_state", "Place a world lock block first.");
+      return false;
+    }
+
+    if (!isAdmin(player)) {
+      nextLock.owner_name = cleanName(player.account_username).toUpperCase();
+    }
+  }
+
+  update.state = nextLock;
+  return true;
+}
+
+function sanitizePlayerPosition(data, player) {
+  const x = Number(data.x);
+  const y = Number(data.y);
+  if (!isPositionInWorldBounds(x, y)) return null;
+
+  return {
+    x,
+    y,
+    facing: Number(data.facing) < 0 ? -1 : 1,
+    world: cleanWorld(data.world || player.world || "START"),
+  };
+}
+
+function acceptPlayerMovement(socket, player, position) {
+  const now = Date.now();
+  const lastAt = Number(player.last_position_at || 0);
+
+  if (!lastAt || isAdmin(player)) {
+    player.last_position_at = now;
+    return true;
+  }
+
+  const elapsedSeconds = Math.max((now - lastAt) / 1000, 0.016);
+  const maxDistance = MAX_MOVE_PIXELS_PER_SECOND * elapsedSeconds + TILE_SIZE * 2;
+  const distance = Math.hypot(position.x - player.x, position.y - player.y);
+
+  if (distance > maxDistance) {
+    sendActionRejected(socket, "player_position", "Movement was too fast.");
+    return false;
+  }
+
+  player.last_position_at = now;
+  return true;
+}
+
+function sendDeveloperDenied(socket, requestId, command, message) {
+  socket.send(JSON.stringify({
+    type: "developer_command_denied",
+    request_id: requestId,
+    command,
+    message,
+  }));
+}
+
+function sendDeveloperApproved(socket, requestId, command, message = "Server approved developer command.", extra = {}) {
+  socket.send(JSON.stringify({
+    type: "developer_command_approved",
+    request_id: requestId,
+    command,
+    message,
+    ...extra,
+  }));
+}
+
+function splitCommand(command) {
+  const clean = String(command || "").trim().replace(/^\//, "");
+  if (clean === "") return [];
+  return clean.split(/\s+/);
+}
+
+function parseTargetedGiveCommand(command) {
+  const parts = splitCommand(command);
+  if (parts.length < 4) return null;
+  if (String(parts[0] || "").toLowerCase() !== "give") return null;
+
+  const targetUsername = cleanAccountName(parts[1]);
+  const itemId = clampString(parts[2] || "");
+  const amount = clampInteger(parts[3] || 1, 1, MAX_ITEM_STACK);
+  if (targetUsername === "" || itemId === "") return null;
+
+  return { targetUsername, itemId, amount };
+}
+
+function parseGiveCommand(data, command) {
+  const parts = splitCommand(command);
+  if (parts.length === 0 || String(parts[0] || "").toLowerCase() !== "give") return null;
+
+  const metadataTarget = cleanAccountName(data.target_username || data.target || "");
+  const metadataItemId = clampString(data.item_id || data.item_type || data.item || "");
+  if (metadataTarget !== "" && metadataItemId !== "") {
+    const metadataItemCategory = resolveInventoryCategory(metadataItemId, data.item_category || data.category || "");
+    return {
+      targetUsername: metadataTarget,
+      itemId: metadataItemId,
+      itemCategory: metadataItemCategory,
+      amount: clampInteger(data.amount || 1, 1, MAX_ITEM_STACK),
+    };
+  }
+
+  const targetedGive = parseTargetedGiveCommand(command);
+  if (!targetedGive) return null;
+
+  return {
+    ...targetedGive,
+    itemCategory: resolveInventoryCategory(targetedGive.itemId),
+  };
+}
+
+function cleanInventoryCategory(value) {
+  return ItemDatabase.cleanCategory(value);
+}
+
+function inferInventoryCategory(itemId) {
+  return ItemDatabase.resolveItemCategory(itemId);
+}
+
+function resolveInventoryCategory(itemId, requestedCategory = "") {
+  return ItemDatabase.resolveItemCategory(itemId, requestedCategory);
+}
+
+function getInventoryFieldForCategory(category, itemId) {
+  return ItemDatabase.getInventoryFieldForItem(itemId, category) || "inventory";
+}
+
+function createDefaultPlayerState(username) {
+  const state = sanitizePlayerState({
+    account_username: username,
+    inventory: {},
+    seed_inventory: {},
+    tool_inventory: { pickaxe: 1 },
+    back_inventory: {},
+    currency_inventory: {},
+    material_inventory: {},
+    lure_inventory: {},
+    fish_inventory: {},
+  }, username);
+
+  return state;
+}
+
+function mergeClientPlayerStateIntoServerState(username, incomingState) {
+  const serverState = ensureWritablePlayerState(username) || createDefaultPlayerState(username);
+  if (!serverState || !incomingState) return null;
+
+  const merged = {
+    ...serverState,
+    player_data_version: Math.max(1, Math.trunc(Number(incomingState.player_data_version) || 1)),
+    account_username: cleanAccountName(username),
+    selected_item_type: clampString(incomingState.selected_item_type || "punch"),
+    selected_item_category: cleanInventoryCategory(incomingState.selected_item_category || "tool") || "tool",
+    primary_hotbar_tool: clampString(incomingState.primary_hotbar_tool || "punch"),
+    hotbar_items: sanitizeStringArray(incomingState.hotbar_items, 16),
+    hotbar_item_categories: sanitizeStringArray(incomingState.hotbar_item_categories, 16),
+    player_health: clampInteger(incomingState.player_health || serverState.player_health || 3, 0, 100),
+    saved_at: new Date().toISOString(),
+  };
+
+  merged.equipped_tool = doesStateOwnEquippedItem(merged, incomingState.equipped_tool || "", "hand")
+    ? clampString(incomingState.equipped_tool || "")
+    : "";
+  merged.equipped_back_item = doesStateOwnEquippedItem(merged, incomingState.equipped_back_item || "", "back")
+    ? clampString(incomingState.equipped_back_item || "")
+    : "";
+
+  return merged;
+}
+
+function getInventoryCount(state, itemId, itemCategory) {
+  if (!state) return 0;
+  const cleanItemId = clampString(itemId || "");
+  if (!ItemDatabase.hasItem(cleanItemId)) return 0;
+
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
+  const inventoryField = getInventoryFieldForCategory(resolvedCategory, cleanItemId);
+  const inventory = state[inventoryField];
+  if (!inventory || typeof inventory !== "object" || Array.isArray(inventory)) return 0;
+  return clampInteger(inventory[cleanItemId] || 0, 0, ItemDatabase.getStackLimit(cleanItemId));
+}
+
+function canAddItemToState(state, itemId, itemCategory, amount) {
+  if (!state) return false;
+  const cleanItemId = clampString(itemId || "");
+  if (cleanItemId === "" || !ItemDatabase.hasItem(cleanItemId)) return false;
+
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
+  if (!ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory)) return false;
+
+  const stackLimit = ItemDatabase.getStackLimit(cleanItemId);
+  const safeAmount = clampInteger(amount || 0, 0, stackLimit);
+  return getInventoryCount(state, cleanItemId, resolvedCategory) + safeAmount <= stackLimit;
+}
+
+function addItemToState(state, itemId, itemCategory, amount) {
+  if (!state) return null;
+
+  const cleanItemId = clampString(itemId || "");
+  if (cleanItemId === "") return null;
+  if (!ItemDatabase.hasItem(cleanItemId)) return null;
+
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
+  if (!ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory)) return null;
+
+  const inventoryField = getInventoryFieldForCategory(resolvedCategory, cleanItemId);
+  if (!state[inventoryField] || typeof state[inventoryField] !== "object" || Array.isArray(state[inventoryField])) {
+    state[inventoryField] = {};
+  }
+
+  const stackLimit = ItemDatabase.getStackLimit(cleanItemId);
+  const currentCount = clampInteger(state[inventoryField][cleanItemId] || 0, 0, stackLimit);
+  state[inventoryField][cleanItemId] = clampInteger(currentCount + amount, 0, stackLimit);
+
+  return {
+    inventoryField,
+    count: state[inventoryField][cleanItemId],
+    itemCategory: resolvedCategory,
+  };
+}
+
+function spendItemFromState(state, itemId, itemCategory, amount) {
+  if (!state) return false;
+
+  const cleanItemId = clampString(itemId || "");
+  if (cleanItemId === "") return false;
+  if (!ItemDatabase.hasItem(cleanItemId)) return false;
+
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
+  if (!ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory)) return false;
+
+  const inventoryField = getInventoryFieldForCategory(resolvedCategory, cleanItemId);
+  if (!state[inventoryField] || typeof state[inventoryField] !== "object" || Array.isArray(state[inventoryField])) {
+    state[inventoryField] = {};
+  }
+
+  const currentCount = getInventoryCount(state, cleanItemId, resolvedCategory);
+  const safeAmount = clampInteger(amount || 0, 0, ItemDatabase.getStackLimit(cleanItemId));
+  if (currentCount < safeAmount) return false;
+
+  state[inventoryField][cleanItemId] = currentCount - safeAmount;
+  return true;
+}
+
+function ensureWritablePlayerState(username) {
+  const clean = cleanAccountName(username);
+  if (clean === "") return null;
+
+  let state = ensurePlayerState(clean);
+  if (!state) {
+    state = createDefaultPlayerState(clean);
+    setPlayerState(clean, state);
+  }
+
+  return state;
+}
+
+function doesAccountExist(username) {
+  const clean = cleanAccountName(username);
+  if (clean === "") return false;
+  return accounts.has(accountKey(clean)) || fs.existsSync(getPlayerSavePath(clean));
+}
+
+function grantItemToPlayerState(username, itemId, itemCategory, amount) {
+  const state = ensureWritablePlayerState(username);
+  if (!state) return null;
+
+  const grant = addItemToState(state, itemId, itemCategory, amount);
+  if (!grant) return null;
+
+  state.saved_at = new Date().toISOString();
+  setPlayerState(username, state);
+  queuePlayerSave(username);
+
+  return grant;
+}
+
+function getSocketByPlayerId(playerId) {
+  for (const client of wss.clients) {
+    if (client.readyState !== WebSocket.OPEN) continue;
+    if (client.playerId === playerId) return client;
+  }
+
+  return null;
+}
+
+function findOnlinePlayerByUsername(username) {
+  const key = accountKey(username);
+  if (key === "") return null;
+
+  for (const player of players.values()) {
+    if (!player.authenticated) continue;
+    if (accountKey(player.account_username) !== key) continue;
+
+    const socket = getSocketByPlayerId(player.id);
+    if (!socket) continue;
+
+    return { player, socket };
+  }
+
+  return null;
+}
+
+function handleDeveloperCommandRequest(socket, player, data) {
+  if (!requireAuthenticated(socket, player, "use admin commands")) return;
+
+  const requestId = makeRequestId(data);
+  const command = String(data.command || "").trim();
+  if (command === "") return;
+
+  if (!isAdmin(player)) {
+    sendDeveloperDenied(socket, requestId, command, "Developer commands are only available to admins.");
+    return;
+  }
+
+  const giveCommand = parseGiveCommand(data, command);
+  if (giveCommand) {
+    if (!ItemDatabase.hasItem(giveCommand.itemId)) {
+      sendDeveloperDenied(socket, requestId, command, "That item does not exist on the server.");
+      return;
+    }
+
+    if (!ItemDatabase.isGrantableItem(giveCommand.itemId)) {
+      sendDeveloperDenied(socket, requestId, command, "That item cannot be granted directly.");
+      return;
+    }
+
+    if (!ItemDatabase.canStoreItemInCategory(giveCommand.itemId, giveCommand.itemCategory)) {
+      sendDeveloperDenied(socket, requestId, command, "That item category does not match the server database.");
+      return;
+    }
+
+    if (!doesAccountExist(giveCommand.targetUsername)) {
+      sendDeveloperDenied(socket, requestId, command, "Target account does not exist.");
+      return;
+    }
+
+    const grant = grantItemToPlayerState(
+      giveCommand.targetUsername,
+      giveCommand.itemId,
+      giveCommand.itemCategory,
+      giveCommand.amount
+    );
+    if (!grant) {
+      sendDeveloperDenied(socket, requestId, command, "Could not save target inventory.");
+      return;
+    }
+
+    const target = findOnlinePlayerByUsername(giveCommand.targetUsername);
+    if (target && accountKey(target.player.account_username) !== accountKey(player.account_username)) {
+      target.socket.send(JSON.stringify({
+        type: "item_grant",
+        username: target.player.account_username,
+        target_username: target.player.account_username,
+        item_id: giveCommand.itemId,
+        item_type: giveCommand.itemId,
+        item_category: giveCommand.itemCategory,
+        amount: giveCommand.amount,
+        granted_by: player.account_username,
+      }));
+    }
+
+    sendDeveloperApproved(
+      socket,
+      requestId,
+      command,
+      accountKey(giveCommand.targetUsername) === accountKey(player.account_username)
+        ? "Grant saved to your server inventory."
+        : (target ? "Grant delivered by server." : "Grant saved to offline account."),
+      {
+        delivery: accountKey(giveCommand.targetUsername) === accountKey(player.account_username)
+          ? "self_saved"
+          : (target ? "online" : "offline_saved"),
+        target_username: cleanAccountName(giveCommand.targetUsername),
+        item_id: giveCommand.itemId,
+        item_category: giveCommand.itemCategory,
+        amount: giveCommand.amount,
+        inventory_field: grant.inventoryField,
+        count: grant.count,
+      }
+    );
+    return;
+  }
+
+  sendDeveloperApproved(socket, requestId, command);
+}
+
+function gridKey(x, y) {
+  return `${Number(x) || 0},${Number(y) || 0}`;
+}
+
+function ensureWorldState(worldName) {
+  const clean = cleanWorld(worldName);
+  if (!worldStates.has(clean)) {
+    worldStates.set(clean, loadWorldState(clean));
+  }
+  return worldStates.get(clean);
+}
+
+function createEmptyWorldState() {
+  return {
+    foreground: new Map(),
+    background: new Map(),
+    removed_foreground: new Map(),
+    removed_background: new Map(),
+    seeds: new Map(),
+    interactions: new Map(),
+    world_lock: {},
+    drops: new Map(),
+  };
+}
+
+function loadWorldState(worldName) {
+  const state = createEmptyWorldState();
+  const data = readJsonFile(getWorldSavePath(worldName));
+
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return state;
+  }
+
+  loadGridArrayIntoMap(state.foreground, data.foreground || data.blocks, normalizeBlockEntry);
+  loadGridArrayIntoMap(state.background, data.background || data.background_blocks, normalizeBlockEntry);
+  loadGridArrayIntoMap(state.removed_foreground, data.removed_foreground, normalizeRemovedBlockEntry);
+  loadGridArrayIntoMap(state.removed_background, data.removed_background, normalizeRemovedBlockEntry);
+  loadGridArrayIntoMap(state.seeds, data.seeds || data.planted_seeds, normalizeSeedEntry);
+  loadInteractionsIntoMap(state.interactions, data.interactions, worldName);
+  loadDropsIntoMap(state.drops, data.drops || data.item_drops);
+
+  if (data.world_lock && typeof data.world_lock === "object" && !Array.isArray(data.world_lock)) {
+    state.world_lock = sanitizeWorldLockState(data.world_lock);
+  }
+
+  return state;
+}
+
+function loadGridArrayIntoMap(target, rawEntries, normalizeEntry) {
+  if (!Array.isArray(rawEntries)) return;
+
+  for (const rawEntry of rawEntries) {
+    const entry = normalizeEntry(rawEntry);
+    if (!entry) continue;
+    target.set(gridKey(entry.x, entry.y), entry);
+  }
+}
+
+function normalizeBlockEntry(rawEntry) {
+  if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) return null;
+
+  const x = Number(rawEntry.x);
+  const y = Number(rawEntry.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const gridX = Math.trunc(x);
+  const gridY = Math.trunc(y);
+  if (!isGridInWorld(gridX, gridY)) return null;
+
+  const blockType = clampString(rawEntry.block_type || rawEntry.type || "");
+  if (blockType.length === 0) return null;
+  if (!ItemDatabase.hasItem(blockType) || resolveInventoryCategory(blockType) !== "block") return null;
+
+  const entry = {
+    x: gridX,
+    y: gridY,
+    block_type: blockType,
+  };
+
+  if (Object.prototype.hasOwnProperty.call(rawEntry, "door_open")) {
+    entry.door_open = Boolean(rawEntry.door_open);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(rawEntry, "sign_text")) {
+    entry.sign_text = String(rawEntry.sign_text || "").slice(0, MAX_SIGN_TEXT_LENGTH);
+  }
+
+  return entry;
+}
+
+function normalizeRemovedBlockEntry(rawEntry) {
+  if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) return null;
+
+  const x = Number(rawEntry.x);
+  const y = Number(rawEntry.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const gridX = Math.trunc(x);
+  const gridY = Math.trunc(y);
+  if (!isGridInWorld(gridX, gridY)) return null;
+
+  const blockType = clampString(rawEntry.block_type || rawEntry.type || "");
+  if (blockType !== "" && (!ItemDatabase.hasItem(blockType) || resolveInventoryCategory(blockType) !== "block")) {
+    return null;
+  }
+
+  return {
+    x: gridX,
+    y: gridY,
+    block_type: blockType,
+  };
+}
+
+function normalizeSeedEntry(rawEntry) {
+  if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) return null;
+
+  const x = Number(rawEntry.x);
+  const y = Number(rawEntry.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const gridX = Math.trunc(x);
+  const gridY = Math.trunc(y);
+  if (!isGridInWorld(gridX, gridY)) return null;
+
+  const seedType = clampString(rawEntry.seed_type || rawEntry.type || "");
+  if (seedType.length === 0) return null;
+  if (!ItemDatabase.hasItem(seedType) || resolveInventoryCategory(seedType) !== "seed") return null;
+
+  const maxGrowTime = Math.max(1, Math.min(86400, Number(rawEntry.max_grow_time) || SERVER_SEED_GROW_TIME_SECONDS));
+  const rawMature = Boolean(rawEntry.mature);
+  const growTime = rawMature ? 0 : Math.max(0, Math.min(maxGrowTime, Number(rawEntry.grow_time) || maxGrowTime));
+  let plantedAt = Number(rawEntry.planted_at || 0);
+  if (!Number.isFinite(plantedAt) || plantedAt <= 0) {
+    plantedAt = Date.now() - Math.max(0, maxGrowTime - growTime) * 1000;
+  }
+
+  return {
+    x: gridX,
+    y: gridY,
+    seed_type: seedType,
+    grow_time: growTime,
+    max_grow_time: maxGrowTime,
+    planted_at: plantedAt,
+  };
+}
+
+function loadInteractionsIntoMap(target, rawEntries, worldName = "") {
+  if (!Array.isArray(rawEntries)) return;
+
+  for (const rawEntry of rawEntries) {
+    if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) continue;
+
+    const action = String(rawEntry.action || "").trim();
+    const x = Number(rawEntry.x);
+    const y = Number(rawEntry.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    const gridX = Math.trunc(x);
+    const gridY = Math.trunc(y);
+    if (!isGridInWorld(gridX, gridY)) continue;
+
+    if (action === "door_state") {
+      target.set(gridKey(gridX, gridY), {
+        action,
+        x: gridX,
+        y: gridY,
+        open: Boolean(rawEntry.open),
+        world: cleanWorld(rawEntry.world || ""),
+      });
+    } else if (action === "sign_text") {
+      target.set(gridKey(gridX, gridY), {
+        action,
+        x: gridX,
+        y: gridY,
+        text: String(rawEntry.text || rawEntry.sign_text || "").slice(0, MAX_SIGN_TEXT_LENGTH),
+        world: cleanWorld(rawEntry.world || ""),
+      });
+    } else if (action === "vend_state") {
+      target.set(gridKey(gridX, gridY), sanitizeVendState(rawEntry, rawEntry.world || worldName, gridX, gridY));
+    }
+  }
+}
+
+function loadDropsIntoMap(target, rawEntries) {
+  if (!Array.isArray(rawEntries)) return;
+
+  for (const rawEntry of rawEntries) {
+    if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) continue;
+
+    const dropId = clampString(rawEntry.drop_id || "", MAX_DROP_ID_LENGTH);
+    if (dropId.length === 0) continue;
+
+    const itemType = clampString(rawEntry.item_type || rawEntry.type || "");
+    if (itemType.length === 0) continue;
+    if (!ItemDatabase.hasItem(itemType)) continue;
+
+    const x = Number(rawEntry.x);
+    const y = Number(rawEntry.y);
+    if (!isPositionInWorldBounds(x, y)) continue;
+
+    const itemCategory = resolveInventoryCategory(itemType, rawEntry.item_category || "");
+    if (!ItemDatabase.canStoreItemInCategory(itemType, itemCategory)) continue;
+
+    target.set(dropId, {
+      drop_id: dropId,
+      item_type: itemType,
+      item_category: itemCategory,
+      is_seed: itemCategory === "seed",
+      amount: clampInteger(rawEntry.amount || 1, 1, Math.min(MAX_DROP_AMOUNT, ItemDatabase.getStackLimit(itemType))),
+      x,
+      y,
+      pickup_delay: Math.max(0, Number(rawEntry.pickup_delay) || 0),
+    });
+  }
+}
+
+function sanitizeBlockUpdate(data, worldName) {
+  const action = String(data.action || "").trim();
+  if (action !== "place" && action !== "break") return null;
+
+  const layer = String(data.layer || "foreground").trim() === "background" ? "background" : "foreground";
+  const x = Number(data.x);
+  const y = Number(data.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const gridX = Math.trunc(x);
+  const gridY = Math.trunc(y);
+  if (!isGridInWorld(gridX, gridY)) return null;
+
+  const blockType = clampString(data.block_type || "");
+  if (action === "place" && blockType.length === 0) return null;
+  if (blockType !== "" && (!ItemDatabase.hasItem(blockType) || resolveInventoryCategory(blockType) !== "block")) return null;
+
+  return {
+    type: "world_block_update",
+    action,
+    layer,
+    x: gridX,
+    y: gridY,
+    block_type: blockType,
+    world: cleanWorld(worldName),
+  };
+}
+
+function sanitizeSeedUpdate(data, worldName) {
+  const action = String(data.action || "").trim();
+  if (action !== "place" && action !== "remove") return null;
+
+  const x = Number(data.x);
+  const y = Number(data.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const gridX = Math.trunc(x);
+  const gridY = Math.trunc(y);
+  if (!isGridInWorld(gridX, gridY)) return null;
+
+  const seedType = clampString(data.seed_type || "");
+  if (action === "place" && seedType.length === 0) return null;
+  if (seedType !== "" && (!ItemDatabase.hasItem(seedType) || resolveInventoryCategory(seedType) !== "seed")) return null;
+
+  const maxGrowTime = SERVER_SEED_GROW_TIME_SECONDS;
+
+  return {
+    type: "world_seed_update",
+    action,
+    x: gridX,
+    y: gridY,
+    seed_type: seedType,
+    grow_time: maxGrowTime,
+    max_grow_time: maxGrowTime,
+    world: cleanWorld(worldName),
+  };
+}
+
+function applyBlockUpdateToWorldState(worldName, update) {
+  const state = ensureWorldState(worldName);
+  const key = gridKey(update.x, update.y);
+  const target = update.layer === "background" ? state.background : state.foreground;
+  const removed = update.layer === "background" ? state.removed_background : state.removed_foreground;
+
+  if (update.action === "place") {
+    target.set(key, {
+      x: update.x,
+      y: update.y,
+      block_type: update.block_type,
+    });
+    removed.delete(key);
+    if (update.block_type !== "wooden_door" && update.block_type !== "sign") {
+      state.interactions.delete(key);
+    }
+    return;
+  }
+
+  if (update.action === "break") {
+    target.delete(key);
+    state.interactions.delete(key);
+    removed.set(key, {
+      x: update.x,
+      y: update.y,
+      block_type: update.block_type || "",
+    });
+
+    if (update.block_type === "world_lock") {
+      state.world_lock = {};
+    }
+  }
+}
+
+function applySeedUpdateToWorldState(worldName, update) {
+  const state = ensureWorldState(worldName);
+  const key = gridKey(update.x, update.y);
+
+  if (update.action === "place" || update.action === "splice") {
+    state.seeds.set(key, makeServerSeedEntry(update.x, update.y, update.seed_type));
+  } else if (update.action === "remove") {
+    state.seeds.delete(key);
+  }
+}
+
+function sanitizeInteractionUpdate(data, worldName) {
+  const action = String(data.action || "").trim();
+
+  if (action === "door_state") {
+    const x = Number(data.x);
+    const y = Number(data.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const gridX = Math.trunc(x);
+    const gridY = Math.trunc(y);
+    if (!isGridInWorld(gridX, gridY)) return null;
+
+    return {
+      type: "world_interaction_update",
+      world: cleanWorld(worldName),
+      action,
+      x: gridX,
+      y: gridY,
+      open: Boolean(data.open),
+    };
+  }
+
+  if (action === "sign_text") {
+    const x = Number(data.x);
+    const y = Number(data.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const gridX = Math.trunc(x);
+    const gridY = Math.trunc(y);
+    if (!isGridInWorld(gridX, gridY)) return null;
+
+    return {
+      type: "world_interaction_update",
+      world: cleanWorld(worldName),
+      action,
+      x: gridX,
+      y: gridY,
+      text: String(data.text || "").slice(0, MAX_SIGN_TEXT_LENGTH),
+    };
+  }
+
+  if (action === "world_lock_state") {
+    const state = data.state && typeof data.state === "object" && !Array.isArray(data.state) ? data.state : {};
+
+    return {
+      type: "world_interaction_update",
+      world: cleanWorld(worldName),
+      action,
+      state: sanitizeWorldLockState(state),
+    };
+  }
+
+  return null;
+}
+
+function sanitizeWorldLockState(state) {
+  const rawState = state && typeof state === "object" && !Array.isArray(state) ? state : {};
+  const allowedPlayers = Array.isArray(rawState.allowed_players) ? rawState.allowed_players : [];
+  const isLocked = Boolean(rawState.is_locked);
+  const lockGridX = Math.trunc(Number(rawState.lock_grid_x) || 999999);
+  const lockGridY = Math.trunc(Number(rawState.lock_grid_y) || 999999);
+
+  return {
+    is_locked: isLocked,
+    owner_name: cleanAccountName(rawState.owner_name || "").toUpperCase(),
+    lock_grid_x: lockGridX,
+    lock_grid_y: lockGridY,
+    allowed_players: allowedPlayers
+      .map((name) => cleanAccountName(name).toUpperCase())
+      .filter((name, index, list) => name.length > 0 && list.indexOf(name) === index)
+      .slice(0, 100),
+    public_build: Boolean(rawState.public_build),
+  };
+}
+
+function interactionKey(update) {
+  return gridKey(update.x, update.y);
+}
+
+function applyInteractionUpdateToWorldState(worldName, update) {
+  const state = ensureWorldState(worldName);
+
+  if (update.action === "door_state") {
+    state.interactions.set(interactionKey(update), {
+      action: update.action,
+      x: update.x,
+      y: update.y,
+      open: update.open,
+      world: cleanWorld(worldName),
+    });
+    return;
+  }
+
+  if (update.action === "sign_text") {
+    state.interactions.set(interactionKey(update), {
+      action: update.action,
+      x: update.x,
+      y: update.y,
+      text: update.text,
+      world: cleanWorld(worldName),
+    });
+    return;
+  }
+
+  if (update.action === "world_lock_state") {
+    state.world_lock = update.state;
+  }
+}
+
+function sanitizeDropCreate(data, worldName) {
+  const dropId = clampString(data.drop_id || "", MAX_DROP_ID_LENGTH);
+  if (dropId.length === 0) return null;
+
+  const itemType = clampString(data.item_type || data.type_id || data.item || "");
+  if (itemType.length === 0) return null;
+  if (!ItemDatabase.hasItem(itemType)) return null;
+  if (!ItemDatabase.isDropableItem(itemType)) return null;
+
+  const x = Number(data.x);
+  const y = Number(data.y);
+  if (!isPositionInWorldBounds(x, y)) return null;
+
+  const itemCategory = resolveInventoryCategory(itemType, data.item_category || "");
+  if (!ItemDatabase.canStoreItemInCategory(itemType, itemCategory)) return null;
+
+  return {
+    type: "world_item_drop_create",
+    world: cleanWorld(worldName),
+    drop_id: dropId,
+    item_type: itemType,
+    item_category: itemCategory,
+    is_seed: itemCategory === "seed",
+    amount: clampInteger(data.amount || 1, 1, Math.min(MAX_DROP_AMOUNT, ItemDatabase.getStackLimit(itemType))),
+    x,
+    y,
+    pickup_delay: Math.max(0, Number(data.pickup_delay) || 0),
+  };
+}
+
+function validateDropCreateAgainstServerState(socket, player, update) {
+  if (!ItemDatabase.hasItem(update.item_type)) {
+    sendActionRejected(socket, "world_item_drop_create", "That item does not exist on the server.");
+    return false;
+  }
+
+  if (!ItemDatabase.isDropableItem(update.item_type)) {
+    sendActionRejected(socket, "world_item_drop_create", "That item cannot be dropped.");
+    return false;
+  }
+
+  if (!ItemDatabase.canStoreItemInCategory(update.item_type, update.item_category)) {
+    sendActionRejected(socket, "world_item_drop_create", "That item category does not match the server.");
+    return false;
+  }
+
+  if (!isPlayerNearPoint(player, update.x, update.y, MAX_DROP_CREATE_DISTANCE_PIXELS)) {
+    sendActionRejected(socket, "world_item_drop_create", "Drop closer to your player.");
+    return false;
+  }
+
+  return true;
+}
+
+function sanitizeDropUpdate(data, worldName) {
+  const dropId = clampString(data.drop_id || "", MAX_DROP_ID_LENGTH);
+  if (dropId.length === 0) return null;
+
+  const update = {
+    type: "world_item_drop_update",
+    world: cleanWorld(worldName),
+    drop_id: dropId,
+  };
+
+  if (Object.prototype.hasOwnProperty.call(data, "amount")) {
+    update.amount = clampInteger(data.amount || 0, 0, MAX_DROP_AMOUNT);
+  }
+
+  const x = Number(data.x);
+  const y = Number(data.y);
+  if (isPositionInWorldBounds(x, y)) {
+    update.x = x;
+    update.y = y;
+  }
+
+  return update;
+}
+
+function validateDropUpdateAgainstServerState(socket, player, worldName, update) {
+  const state = ensureWorldState(worldName);
+  const drop = state.drops.get(update.drop_id);
+  if (!drop) {
+    sendActionRejected(socket, "world_item_drop_update", "That drop no longer exists.");
+    return false;
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(update, "amount") ||
+    Object.prototype.hasOwnProperty.call(update, "x") ||
+    Object.prototype.hasOwnProperty.call(update, "y")
+  ) {
+    sendActionRejected(socket, "world_item_drop_update", "Drop movement and amounts are server controlled.");
+    return false;
+  }
+
+  if (!isPlayerNearPoint(player, drop.x, drop.y, MAX_DROP_CREATE_DISTANCE_PIXELS)) {
+    sendActionRejected(socket, "world_item_drop_update", "Too far away.");
+    return false;
+  }
+
+  return true;
+}
+
+function sanitizeDropPickup(data, worldName, player) {
+  const dropId = clampString(data.drop_id || "", MAX_DROP_ID_LENGTH);
+  if (dropId.length === 0) return null;
+
+  return {
+    type: "world_item_drop_pickup",
+    world: cleanWorld(worldName),
+    drop_id: dropId,
+    player_id: player.id,
+    name: cleanName(player.name),
+  };
+}
+
+function applyDropCreateToWorldState(worldName, update) {
+  const state = ensureWorldState(worldName);
+  state.drops.set(update.drop_id, {
+    drop_id: update.drop_id,
+    item_type: update.item_type,
+    item_category: update.item_category,
+    is_seed: update.is_seed,
+    amount: update.amount,
+    x: update.x,
+    y: update.y,
+    pickup_delay: update.pickup_delay,
+  });
+}
+
+function applyDropUpdateToWorldState(worldName, update) {
+  const state = ensureWorldState(worldName);
+  const drop = state.drops.get(update.drop_id);
+  if (!drop) return;
+
+  if (Object.prototype.hasOwnProperty.call(update, "amount")) {
+    if (update.amount <= 0) {
+      state.drops.delete(update.drop_id);
+      return;
+    }
+    drop.amount = Math.min(update.amount, drop.amount);
+  }
+
+  if (
+    Object.prototype.hasOwnProperty.call(update, "x") &&
+    Object.prototype.hasOwnProperty.call(update, "y")
+  ) {
+    drop.x = update.x;
+    drop.y = update.y;
+  }
+}
+
+function applyDropPickupToWorldState(worldName, update, player) {
+  const state = ensureWorldState(worldName);
+  const drop = state.drops.get(update.drop_id);
+  if (!drop) return false;
+  if (!isPlayerNearDrop(player, drop)) return false;
+
+  state.drops.delete(update.drop_id);
+  return drop;
+}
+
+function isPlayerNearDrop(player, drop) {
+  if (!player || !drop) return false;
+  if (!Number.isFinite(player.x) || !Number.isFinite(player.y)) return false;
+  if (!Number.isFinite(drop.x) || !Number.isFinite(drop.y)) return false;
+
+  return Math.hypot(player.x - drop.x, player.y - drop.y) <= MAX_PICKUP_DISTANCE_PIXELS;
+}
+
+function getForegroundBlocksForState(state) {
+  const blocks = [];
+
+  for (const block of state.foreground.values()) {
+    const entry = { ...block };
+    const interaction = state.interactions.get(gridKey(block.x, block.y));
+
+    if (interaction && interaction.action === "door_state") {
+      entry.door_open = Boolean(interaction.open);
+    } else if (interaction && interaction.action === "sign_text") {
+      entry.sign_text = String(interaction.text || "");
+    }
+
+    blocks.push(entry);
+  }
+
+  return blocks;
+}
+
+function serializeWorldState(worldName) {
+  const state = ensureWorldState(worldName);
+
+  return {
+    world_state_version: 1,
+    world_name: cleanWorld(worldName),
+    saved_at: new Date().toISOString(),
+    blocks: getForegroundBlocksForState(state),
+    background_blocks: Array.from(state.background.values()),
+    removed_foreground: Array.from(state.removed_foreground.values()),
+    removed_background: Array.from(state.removed_background.values()),
+    seeds: Array.from(state.seeds.values()).map(serializeSeedForMessage),
+    interactions: Array.from(state.interactions.values()),
+    world_lock: state.world_lock || {},
+    drops: Array.from(state.drops.values()),
+  };
+}
+
+function buildWorldStateMessage(worldName) {
+  const state = ensureWorldState(worldName);
+  return {
+    type: "world_state",
+    world: cleanWorld(worldName),
+    foreground: getForegroundBlocksForState(state),
+    background: Array.from(state.background.values()),
+    removed_foreground: Array.from(state.removed_foreground.values()),
+    removed_background: Array.from(state.removed_background.values()),
+    seeds: Array.from(state.seeds.values()).map(serializeSeedForMessage),
+    interactions: Array.from(state.interactions.values()),
+    world_lock: state.world_lock || {},
+    drops: Array.from(state.drops.values()),
+  };
+}
+
+function queueWorldSave(worldName) {
+  const clean = cleanWorld(worldName);
+  const existingTimer = worldSaveTimers.get(clean);
+  if (existingTimer) clearTimeout(existingTimer);
+
+  worldSaveTimers.set(clean, setTimeout(() => {
+    worldSaveTimers.delete(clean);
+    saveWorldState(clean);
+  }, SAVE_DEBOUNCE_MS));
+}
+
+function saveWorldState(worldName) {
+  const clean = cleanWorld(worldName);
+  writeJsonFileAtomic(getWorldSavePath(clean), serializeWorldState(clean));
+}
+
+function loadAccounts() {
+  accounts.clear();
+  const data = readJsonFile(ACCOUNTS_SAVE_PATH);
+
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return;
+  }
+
+  const rawAccounts = Array.isArray(data.accounts) ? data.accounts : [];
+  for (const rawAccount of rawAccounts) {
+    const account = sanitizeAccountState(rawAccount);
+    if (!account) continue;
+    accounts.set(accountKey(account.username), account);
+  }
+}
+
+function sanitizeAccountState(rawAccount) {
+  if (!rawAccount || typeof rawAccount !== "object" || Array.isArray(rawAccount)) return null;
+
+  const username = cleanAccountName(rawAccount.username || rawAccount.account_username || rawAccount.name || "");
+  if (username === "") return null;
+
+  return {
+    username,
+    email: cleanEmail(rawAccount.email || ""),
+    password_salt: String(rawAccount.password_salt || ""),
+    password_hash: String(rawAccount.password_hash || ""),
+    session_token_hash: String(rawAccount.session_token_hash || ""),
+    role: String(rawAccount.role || getAccountRole(username)),
+    created_at: String(rawAccount.created_at || new Date().toISOString()),
+    last_seen_at: String(rawAccount.last_seen_at || ""),
+  };
+}
+
+function accountKey(username) {
+  return cleanAccountName(username).toLowerCase();
+}
+
+function upsertAccount(rawAccount) {
+  const incoming = sanitizeAccountState(rawAccount);
+  if (!incoming) return null;
+
+  const key = accountKey(incoming.username);
+  const existing = accounts.get(key) || {};
+  const account = {
+    username: existing.username || incoming.username,
+    email: incoming.email || existing.email || "",
+    password_salt: existing.password_salt || incoming.password_salt || "",
+    password_hash: existing.password_hash || incoming.password_hash || "",
+    session_token_hash: existing.session_token_hash || incoming.session_token_hash || "",
+    role: existing.role || incoming.role || getAccountRole(incoming.username),
+    created_at: existing.created_at || incoming.created_at || new Date().toISOString(),
+    last_seen_at: new Date().toISOString(),
+  };
+
+  accounts.set(key, account);
+  queueAccountsSave();
+  return account;
+}
+
+function queueAccountsSave() {
+  if (accountsSaveTimer) clearTimeout(accountsSaveTimer);
+
+  accountsSaveTimer = setTimeout(() => {
+    accountsSaveTimer = null;
+    saveAccounts();
+  }, SAVE_DEBOUNCE_MS);
+}
+
+function saveAccounts() {
+  writeJsonFileAtomic(ACCOUNTS_SAVE_PATH, {
+    account_state_version: 1,
+    saved_at: new Date().toISOString(),
+    accounts: Array.from(accounts.values()),
+  });
+}
+
+function sanitizeCountDictionary(rawValue, limit = MAX_PLAYER_INVENTORY_KEYS, expectedCategory = "") {
+  const safe = {};
+  if (!rawValue || typeof rawValue !== "object" || Array.isArray(rawValue)) return safe;
+
+  for (const [rawKey, rawCount] of Object.entries(rawValue).slice(0, limit)) {
+    const itemId = clampString(rawKey || "");
+    if (itemId.length === 0) continue;
+    if (!ItemDatabase.hasItem(itemId)) continue;
+
+    const resolvedCategory = resolveInventoryCategory(itemId, expectedCategory);
+    if (!ItemDatabase.canStoreItemInCategory(itemId, resolvedCategory)) continue;
+    if (expectedCategory !== "" && resolvedCategory !== expectedCategory) continue;
+
+    const count = clampInteger(rawCount || 0, 0, ItemDatabase.getStackLimit(itemId));
+    safe[itemId] = count;
+  }
+
+  return safe;
+}
+
+function sanitizeStringArray(rawValue, limit = 32) {
+  if (!Array.isArray(rawValue)) return [];
+  return rawValue.map((value) => clampString(value || "")).slice(0, limit);
+}
+
+function sanitizePlayerState(rawState, username) {
+  if (!rawState || typeof rawState !== "object" || Array.isArray(rawState)) return null;
+
+  const accountUsername = cleanAccountName(username || rawState.account_username || rawState.username || "");
+  if (accountUsername === "") return null;
+
+  const state = {
+    player_data_version: Math.max(1, Math.trunc(Number(rawState.player_data_version) || 1)),
+    account_username: accountUsername,
+    selected_item_type: clampString(rawState.selected_item_type || "punch"),
+    selected_item_category: cleanInventoryCategory(rawState.selected_item_category || "tool") || "tool",
+    primary_hotbar_tool: clampString(rawState.primary_hotbar_tool || "punch"),
+    hotbar_items: sanitizeStringArray(rawState.hotbar_items, 16),
+    hotbar_item_categories: sanitizeStringArray(rawState.hotbar_item_categories, 16),
+    player_health: clampInteger(rawState.player_health || 3, 0, 100),
+    inventory: sanitizeCountDictionary(rawState.inventory, MAX_PLAYER_INVENTORY_KEYS, "block"),
+    seed_inventory: sanitizeCountDictionary(rawState.seed_inventory, MAX_PLAYER_INVENTORY_KEYS, "seed"),
+    tool_inventory: sanitizeCountDictionary(rawState.tool_inventory, MAX_PLAYER_INVENTORY_KEYS, "tool"),
+    back_inventory: sanitizeCountDictionary(rawState.back_inventory, MAX_PLAYER_INVENTORY_KEYS, "back"),
+    currency_inventory: sanitizeCountDictionary(rawState.currency_inventory, MAX_PLAYER_INVENTORY_KEYS, "currency"),
+    material_inventory: sanitizeCountDictionary(rawState.material_inventory, MAX_PLAYER_INVENTORY_KEYS, "material"),
+    lure_inventory: sanitizeCountDictionary(rawState.lure_inventory, MAX_PLAYER_INVENTORY_KEYS, "lure"),
+    fish_inventory: sanitizeCountDictionary(rawState.fish_inventory, MAX_PLAYER_INVENTORY_KEYS, "fish"),
+    equipped_tool: "",
+    equipped_back_item: "",
+    saved_at: new Date().toISOString(),
+  };
+
+  const equippedTool = clampString(rawState.equipped_tool || "");
+  if (doesStateOwnEquippedItem(state, equippedTool, "hand")) {
+    state.equipped_tool = equippedTool;
+  }
+
+  const equippedBack = clampString(rawState.equipped_back_item || "");
+  if (doesStateOwnEquippedItem(state, equippedBack, "back")) {
+    state.equipped_back_item = equippedBack;
+  }
+
+  return state;
+}
+
+function ensurePlayerState(username) {
+  const clean = cleanAccountName(username);
+  if (clean === "") return null;
+
+  const key = accountKey(clean);
+  if (playerStates.has(key)) {
+    return playerStates.get(key);
+  }
+
+  const data = readJsonFile(getPlayerSavePath(clean));
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
+    return null;
+  }
+
+  const state = sanitizePlayerState(data.player_data || data, clean);
+  if (!state) return null;
+
+  playerStates.set(key, state);
+  return state;
+}
+
+function setPlayerState(username, state) {
+  const clean = cleanAccountName(username);
+  if (clean === "") return;
+
+  playerStates.set(accountKey(clean), state);
+}
+
+function queuePlayerSave(username) {
+  const key = accountKey(username);
+  if (key === "") return;
+
+  const existingTimer = playerSaveTimers.get(key);
+  if (existingTimer) clearTimeout(existingTimer);
+
+  playerSaveTimers.set(key, setTimeout(() => {
+    playerSaveTimers.delete(key);
+    savePlayerState(username);
+  }, SAVE_DEBOUNCE_MS));
+}
+
+function savePlayerState(username) {
+  const clean = cleanAccountName(username);
+  if (clean === "") return;
+
+  const state = playerStates.get(accountKey(clean));
+  if (!state) return;
+
+  writeJsonFileAtomic(getPlayerSavePath(clean), {
+    player_state_version: 1,
+    username: clean,
+    saved_at: new Date().toISOString(),
+    player_data: state,
+  });
+}
+
+function sanitizeEquipmentSlots(rawSlots, username = "") {
+  const safe = {};
+  const state = username !== "" ? ensurePlayerState(username) : null;
+  const allowedSlots = [
+    "hand", "back", "head", "hat", "eyes", "face",
+    "shirt", "pants", "legs", "feet", "shoes",
+    "neck", "aura"
+  ];
+
+  for (const slot of allowedSlots) {
+    if (!Object.prototype.hasOwnProperty.call(rawSlots, slot)) continue;
+
+    const value = clampString(rawSlots[slot] || "");
+    if (value.length > 0 && isItemAllowedInEquipmentSlot(value, slot) && doesStateOwnEquippedItem(state, value, slot)) {
+      safe[slot] = value;
+    } else {
+      safe[slot] = "";
+    }
+  }
+
+  return safe;
+}
+
+function isItemAllowedInEquipmentSlot(itemId, slot) {
+  const definition = ItemDatabase.getItemDefinition(itemId);
+  if (!definition || !definition.equipable) return false;
+
+  const equipmentSlot = String(definition.equipment_slot || "");
+  if (equipmentSlot === "") return false;
+  if (equipmentSlot === slot) return true;
+  return equipmentSlot === "hand" && slot === "hand";
+}
+
+function doesStateOwnEquippedItem(state, itemId, slot) {
+  if (itemId === "") return true;
+  if (!state) return false;
+
+  const definition = ItemDatabase.getItemDefinition(itemId);
+  if (!definition) return false;
+
+  return getInventoryCount(state, itemId, definition.category) > 0 && isItemAllowedInEquipmentSlot(itemId, slot);
+}
+
+function getPlayersInWorld(worldName, excludePlayerId = "") {
+  const result = [];
+
+  for (const player of players.values()) {
+    if (player.id === excludePlayerId) continue;
+    if (player.world !== worldName) continue;
+
+    result.push({
+      player_id: player.id,
+      name: player.name,
+      x: player.x,
+      y: player.y,
+      facing: player.facing,
+      world: player.world,
+      equipment_slots: player.equipment_slots || {},
+    });
+  }
+
+  return result;
+}
+
+function broadcastSystemToWorld(worldName, message, excludePlayerId = "") {
+  broadcastToWorld(worldName, {
+    type: "chat",
+    player_id: "system",
+    name: "System",
+    message,
+    world: worldName,
+  }, excludePlayerId);
+}
+
+function broadcastToWorld(worldName, message, excludePlayerId = "") {
+  const raw = JSON.stringify(message);
+
+  for (const client of wss.clients) {
+    if (client.readyState !== WebSocket.OPEN) continue;
+    if (client.playerId === excludePlayerId) continue;
+
+    const player = players.get(client.playerId);
+    if (!player) continue;
+    if (player.world !== worldName) continue;
+
+    client.send(raw);
+  }
+}
+
+function flushPendingSaves() {
+  for (const [worldName, timer] of worldSaveTimers.entries()) {
+    clearTimeout(timer);
+    saveWorldState(worldName);
+  }
+  worldSaveTimers.clear();
+
+  for (const [usernameKey, timer] of playerSaveTimers.entries()) {
+    clearTimeout(timer);
+    const state = playerStates.get(usernameKey);
+    if (state) savePlayerState(state.account_username || usernameKey);
+  }
+  playerSaveTimers.clear();
+
+  if (accountsSaveTimer) {
+    clearTimeout(accountsSaveTimer);
+    accountsSaveTimer = null;
+    saveAccounts();
+  }
+}
+
+process.on("SIGINT", () => {
+  flushPendingSaves();
+  process.exit(0);
+});
+
+process.on("SIGTERM", () => {
+  flushPendingSaves();
+  process.exit(0);
+});
+
+process.on("exit", () => {
+  flushPendingSaves();
+});
