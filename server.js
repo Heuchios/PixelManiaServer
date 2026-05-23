@@ -26,6 +26,7 @@ const MIN_PASSWORD_LENGTH = 8;
 const MAX_WORLD_NAME_LENGTH = 32;
 const WORLD_WIDTH = Math.max(1, Math.trunc(Number(process.env.WORLD_WIDTH) || 100));
 const WORLD_HEIGHT = Math.max(1, Math.trunc(Number(process.env.WORLD_HEIGHT) || 70));
+const BEDROCK_START_Y = Math.max(0, WORLD_HEIGHT - 4);
 const TILE_SIZE = Math.max(1, Math.trunc(Number(process.env.TILE_SIZE) || 32));
 const POSITION_MARGIN_PIXELS = TILE_SIZE * 4;
 const MAX_PACKET_BYTES = 64 * 1024;
@@ -49,6 +50,7 @@ const VEND_BLOCK_SOLD = "vend_sold";
 const VEND_BLOCK_TYPES = new Set([VEND_BLOCK_EMPTY, VEND_BLOCK_PENDING, VEND_BLOCK_SOLD]);
 const VEND_LOG_LIMIT = 30;
 const SAFE_BLOCK_TYPE = "safe";
+const ENTRANCE_GATE_TYPE = "entrance_gate";
 const SAFE_SLOT_COUNT = 10;
 const SERVER_SEED_GROW_TIME_SECONDS = Math.max(1, Number(process.env.SEED_GROW_TIME_SECONDS) || 8);
 const MATURE_SEED_EXTRA_DROP_CHANCE = Math.max(0, Math.min(1, Number(process.env.MATURE_SEED_EXTRA_DROP_CHANCE) || 0.65));
@@ -4196,6 +4198,147 @@ function parseTargetedGiveCommand(command) {
   return { targetUsername, itemId, amount };
 }
 
+function getDeveloperCommandName(command) {
+  const parts = splitCommand(command);
+  if (parts.length === 0) return "";
+  return String(parts[0] || "").toLowerCase();
+}
+
+function getDeveloperCommandWorldName(player, data) {
+  return cleanWorld(data.world || data.world_name || player?.world || "START");
+}
+
+function isClearProtectedBlockType(blockType) {
+  const clean = clampString(blockType || "");
+  return clean === "world_lock" || clean === ENTRANCE_GATE_TYPE || clean === "bedrock";
+}
+
+function sanitizeProtectedForegroundEntry(rawEntry) {
+  if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) return null;
+
+  const x = Math.trunc(Number(rawEntry.x));
+  const y = Math.trunc(Number(rawEntry.y));
+  if (!isGridInWorld(x, y)) return null;
+
+  const blockType = clampString(rawEntry.block_type || rawEntry.type || "");
+  if (!isClearProtectedBlockType(blockType)) return null;
+  if (!ItemDatabase.hasItem(blockType) || resolveInventoryCategory(blockType) !== "block") return null;
+
+  return { x, y, block_type: blockType };
+}
+
+function putProtectedEntry(target, entry) {
+  if (!entry) return;
+  target.set(gridKey(entry.x, entry.y), entry);
+}
+
+function getActiveWorldLockKeyForState(state) {
+  const lock = state.world_lock || {};
+  if (!lock.is_locked) return "";
+
+  const lockGridX = Math.trunc(Number(lock.lock_grid_x));
+  const lockGridY = Math.trunc(Number(lock.lock_grid_y));
+  if (!isGridInWorld(lockGridX, lockGridY)) return "";
+
+  return gridKey(lockGridX, lockGridY);
+}
+
+function getProtectedClearEntries(state, data) {
+  const protectedEntries = new Map();
+  const activeWorldLockKey = getActiveWorldLockKeyForState(state);
+  const lock = state.world_lock || {};
+  let keptLegacyWorldLock = false;
+
+  const tryPutProtectedEntry = (entry) => {
+    if (!entry) return;
+
+    if (entry.block_type === "world_lock") {
+      if (!lock.is_locked) return;
+
+      const key = gridKey(entry.x, entry.y);
+      if (activeWorldLockKey !== "") {
+        if (key !== activeWorldLockKey) return;
+      } else if (keptLegacyWorldLock) {
+        return;
+      }
+
+      keptLegacyWorldLock = true;
+    }
+
+    putProtectedEntry(protectedEntries, entry);
+  };
+
+  for (const block of state.foreground.values()) {
+    const entry = sanitizeProtectedForegroundEntry(block);
+    tryPutProtectedEntry(entry);
+  }
+
+  const rawProtected = Array.isArray(data.protected_foreground)
+    ? data.protected_foreground
+    : (Array.isArray(data.protected_blocks) ? data.protected_blocks : []);
+
+  for (const rawEntry of rawProtected) {
+    const entry = sanitizeProtectedForegroundEntry(rawEntry);
+    tryPutProtectedEntry(entry);
+  }
+
+  if (lock.is_locked && activeWorldLockKey !== "") {
+    const lockGridX = Math.trunc(Number(lock.lock_grid_x));
+    const lockGridY = Math.trunc(Number(lock.lock_grid_y));
+    putProtectedEntry(protectedEntries, { x: lockGridX, y: lockGridY, block_type: "world_lock" });
+  }
+
+  return protectedEntries;
+}
+
+function replaceWorldStateAndBroadcast(worldName, state) {
+  const clean = cleanWorld(worldName);
+  const existingTimer = worldSaveTimers.get(clean);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+    worldSaveTimers.delete(clean);
+  }
+
+  worldStates.set(clean, state);
+  saveWorldState(clean);
+  broadcastToWorld(clean, buildWorldStateMessage(clean));
+}
+
+function clearWorldByAdmin(worldName, data) {
+  const clean = cleanWorld(worldName);
+  const currentState = ensureWorldState(clean);
+  const nextState = createEmptyWorldState();
+  const protectedEntries = getProtectedClearEntries(currentState, data);
+
+  for (const [key, entry] of protectedEntries.entries()) {
+    nextState.foreground.set(key, { ...entry });
+  }
+
+  nextState.world_lock = sanitizeWorldLockState(currentState.world_lock || {});
+
+  let removedCount = 0;
+  for (let x = 0; x < WORLD_WIDTH; x += 1) {
+    for (let y = 0; y < WORLD_HEIGHT; y += 1) {
+      const key = gridKey(x, y);
+      if (protectedEntries.has(key)) continue;
+
+      if (y < BEDROCK_START_Y) {
+        nextState.removed_foreground.set(key, { x, y, block_type: "" });
+        nextState.removed_background.set(key, { x, y, block_type: "" });
+        removedCount += 1;
+      }
+    }
+  }
+
+  replaceWorldStateAndBroadcast(clean, nextState);
+  return { removedCount, protectedCount: protectedEntries.size };
+}
+
+function resetWorldByAdmin(worldName) {
+  const clean = cleanWorld(worldName);
+  replaceWorldStateAndBroadcast(clean, createEmptyWorldState());
+}
+
 function parseGiveCommand(data, command) {
   const parts = splitCommand(command);
   if (parts.length === 0 || String(parts[0] || "").toLowerCase() !== "give") return null;
@@ -4422,6 +4565,26 @@ function handleDeveloperCommandRequest(socket, player, data) {
 
   if (!isAdmin(player)) {
     sendDeveloperDenied(socket, requestId, command, "Developer commands are only available to admins.");
+    return;
+  }
+
+  const commandName = getDeveloperCommandName(command);
+  if (commandName === "clear") {
+    const commandWorld = getDeveloperCommandWorldName(player, data);
+    const result = clearWorldByAdmin(commandWorld, data);
+    sendDeveloperApproved(
+      socket,
+      requestId,
+      command,
+      `Server cleared ${commandWorld}. Removed ${result.removedCount} generated tiles and preserved ${result.protectedCount} protected blocks.`
+    );
+    return;
+  }
+
+  if (commandName === "resetworld" || commandName === "reset_world" || commandName === "reworld") {
+    const commandWorld = getDeveloperCommandWorldName(player, data);
+    resetWorldByAdmin(commandWorld);
+    sendDeveloperApproved(socket, requestId, command, `Server reset ${commandWorld}.`);
     return;
   }
 
