@@ -156,6 +156,7 @@ wss.on("connection", (socket) => {
 
   socket.playerId = playerId;
   socket.rateLimits = new Map();
+  socket.authRequiredNotices = new Map();
 
   socket.send(JSON.stringify({
     type: "connected",
@@ -1333,6 +1334,15 @@ function requireAuthenticated(socket, player, action) {
   if (player && player.authenticated && player.account_username) {
     return true;
   }
+
+  const noticeKey = String(action || "action");
+  const now = Date.now();
+  if (!socket.authRequiredNotices) socket.authRequiredNotices = new Map();
+  const lastNoticeAt = socket.authRequiredNotices.get(noticeKey) || 0;
+  if (now - lastNoticeAt < 3000) {
+    return false;
+  }
+  socket.authRequiredNotices.set(noticeKey, now);
 
   socket.send(JSON.stringify({
     type: "auth_required",
