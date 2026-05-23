@@ -1,11 +1,16 @@
+require("dotenv").config();
+
 const WebSocket = require("ws");
 const crypto = require("crypto");
 const fs = require("fs");
+const http = require("http");
+const nodemailer = require("nodemailer");
 const path = require("path");
 const ItemDatabase = require("./server_item_database");
 
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Math.max(1, Math.trunc(Number(process.env.PORT) || 8080));
+const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, "");
 const DATA_FOLDER = process.env.PIXELMANIA_DATA_DIR ? path.resolve(process.env.PIXELMANIA_DATA_DIR) : __dirname;
 const WORLD_SAVE_FOLDER = process.env.WORLD_SAVE_FOLDER ? path.resolve(process.env.WORLD_SAVE_FOLDER) : path.join(DATA_FOLDER, "worlds");
 const PLAYER_SAVE_FOLDER = process.env.PLAYER_SAVE_FOLDER ? path.resolve(process.env.PLAYER_SAVE_FOLDER) : path.join(DATA_FOLDER, "players");
@@ -46,6 +51,13 @@ const VEND_LOG_LIMIT = 30;
 const SERVER_SEED_GROW_TIME_SECONDS = Math.max(1, Number(process.env.SEED_GROW_TIME_SECONDS) || 8);
 const MATURE_SEED_EXTRA_DROP_CHANCE = Math.max(0, Math.min(1, Number(process.env.MATURE_SEED_EXTRA_DROP_CHANCE) || 0.65));
 const FISHING_SESSION_TTL_MS = Math.max(10000, Math.trunc(Number(process.env.FISHING_SESSION_TTL_MS) || 90000));
+const EMAIL_VERIFICATION_TTL_MS = Math.max(5 * 60 * 1000, Math.trunc(Number(process.env.EMAIL_VERIFICATION_TTL_MINUTES) || 60) * 60 * 1000);
+const SMTP_HOST = String(process.env.SMTP_HOST || "").trim();
+const SMTP_PORT = Math.max(1, Math.trunc(Number(process.env.SMTP_PORT) || 587));
+const SMTP_SECURE = String(process.env.SMTP_SECURE || "").trim().toLowerCase() === "true";
+const SMTP_USER = String(process.env.SMTP_USER || "").trim();
+const SMTP_PASS = String(process.env.SMTP_PASS || "");
+const SMTP_FROM = String(process.env.SMTP_FROM || SMTP_USER || "PixelMania <no-reply@pixelmania.local>").trim();
 const ADMIN_USERNAMES = new Set(["uso"]);
 const MESSAGE_RATE_LIMITS = {
   login: { limit: 10, windowMs: 10000 },
@@ -90,7 +102,8 @@ const LURE_PACK_TABLE = [
   { item_id: "golden_lure", item_category: "lure", weight: 7 },
 ];
 
-const wss = new WebSocket.Server({ host: HOST, port: PORT });
+const httpServer = http.createServer(handleHttpRequest);
+const wss = new WebSocket.Server({ server: httpServer });
 const players = new Map();
 const worldStates = new Map();
 const playerStates = new Map();
@@ -102,15 +115,22 @@ const activeFishingSessions = new Map();
 const worldSaveTimers = new Map();
 const playerSaveTimers = new Map();
 let accountsSaveTimer = null;
+let mailTransporter = null;
 const periodicSaveTimer = setInterval(() => {
   flushPendingSaves();
 }, PERIODIC_SAVE_MS);
 if (typeof periodicSaveTimer.unref === "function") periodicSaveTimer.unref();
 
-console.log(`PixelMania server running on ws://${HOST}:${PORT}`);
-
 ensureDataFolders();
 loadAccounts();
+
+httpServer.listen(PORT, HOST, () => {
+  console.log(`PixelMania server running on ws://${HOST}:${PORT}`);
+  console.log(`PixelMania email verification running at ${PUBLIC_BASE_URL}/verify-email`);
+  if (!SMTP_HOST) {
+    console.warn("SMTP_HOST is not set. Verification links will be printed to the server console instead of emailed.");
+  }
+});
 
 wss.on("connection", (socket) => {
   const playerId = crypto.randomUUID();
@@ -619,6 +639,61 @@ function safeFileName(value, fallback = "data") {
   return safe.length > 0 ? safe : fallback;
 }
 
+function escapeHtml(value) {
+  return String(value || "")
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#039;");
+}
+
+function sendHtml(response, statusCode, title, message) {
+  response.writeHead(statusCode, {
+    "Content-Type": "text/html; charset=utf-8",
+    "Cache-Control": "no-store",
+  });
+  response.end(`<!doctype html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(title)}</title>
+  <style>
+    body { margin: 0; min-height: 100vh; display: grid; place-items: center; background: #07131d; color: #f3fbff; font-family: Arial, sans-serif; }
+    main { max-width: 520px; padding: 32px; text-align: center; border: 2px solid #265a82; background: rgba(10, 28, 42, 0.92); box-shadow: 0 18px 60px rgba(0,0,0,.35); }
+    h1 { margin: 0 0 12px; font-size: 32px; }
+    p { margin: 0; font-size: 18px; line-height: 1.5; color: #ccecff; }
+  </style>
+</head>
+<body><main><h1>${escapeHtml(title)}</h1><p>${escapeHtml(message)}</p></main></body>
+</html>`);
+}
+
+function handleHttpRequest(request, response) {
+  let url;
+  try {
+    url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
+  } catch (_error) {
+    sendHtml(response, 400, "Bad Request", "That verification link is not valid.");
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/health") {
+    response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+    response.end(JSON.stringify({ ok: true, service: "PixelManiaServer" }));
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/verify-email") {
+    const result = verifyEmailToken(url.searchParams.get("token") || "");
+    sendHtml(response, result.ok ? 200 : 400, result.ok ? "Email Verified" : "Verification Failed", result.message);
+    return;
+  }
+
+  sendHtml(response, 404, "PixelMania Server", "This server endpoint is for PixelMania account verification.");
+}
+
 function ensureDataFolders() {
   fs.mkdirSync(WORLD_SAVE_FOLDER, { recursive: true });
   fs.mkdirSync(PLAYER_SAVE_FOLDER, { recursive: true });
@@ -867,6 +942,119 @@ function issueSessionToken(account) {
   return token;
 }
 
+function isAccountEmailVerified(account) {
+  return Boolean(account && account.email_verified);
+}
+
+function makeEmailVerificationToken(account) {
+  const token = crypto.randomBytes(32).toString("hex");
+  account.email_verification_token_hash = makeTokenHash(token);
+  account.email_verification_expires_at = new Date(Date.now() + EMAIL_VERIFICATION_TTL_MS).toISOString();
+  account.email_verified = false;
+  account.email_verified_at = "";
+  return token;
+}
+
+function makeEmailVerificationUrl(token) {
+  return `${PUBLIC_BASE_URL}/verify-email?token=${encodeURIComponent(token)}`;
+}
+
+function hasActiveEmailVerificationToken(account) {
+  if (!account || !account.email_verification_token_hash) return false;
+  const expiresAt = Date.parse(String(account.email_verification_expires_at || ""));
+  return Number.isFinite(expiresAt) && Date.now() <= expiresAt;
+}
+
+function getMailTransporter() {
+  if (mailTransporter) return mailTransporter;
+  if (!SMTP_HOST) return null;
+
+  const transportOptions = {
+    host: SMTP_HOST,
+    port: SMTP_PORT,
+    secure: SMTP_SECURE,
+  };
+
+  if (SMTP_USER !== "" || SMTP_PASS !== "") {
+    transportOptions.auth = {
+      user: SMTP_USER,
+      pass: SMTP_PASS,
+    };
+  }
+
+  mailTransporter = nodemailer.createTransport(transportOptions);
+  return mailTransporter;
+}
+
+async function sendVerificationEmail(account, token) {
+  const verificationUrl = makeEmailVerificationUrl(token);
+  const to = cleanEmail(account.email || "");
+  if (to === "") return;
+
+  const transporter = getMailTransporter();
+  if (!transporter) {
+    console.warn(`Email verification link for ${account.username} <${to}>: ${verificationUrl}`);
+    return;
+  }
+
+  await transporter.sendMail({
+    from: SMTP_FROM,
+    to,
+    subject: "Verify your PixelMania account",
+    text: [
+      `Hi ${account.username},`,
+      "",
+      "Verify your PixelMania account before signing on:",
+      verificationUrl,
+      "",
+      "If you did not create this account, ignore this email.",
+    ].join("\n"),
+    html: [
+      `<p>Hi ${escapeHtml(account.username)},</p>`,
+      "<p>Verify your PixelMania account before signing on:</p>",
+      `<p><a href="${escapeHtml(verificationUrl)}">Verify PixelMania Account</a></p>`,
+      "<p>If you did not create this account, ignore this email.</p>",
+    ].join("\n"),
+  });
+}
+
+function queueVerificationEmail(account, token) {
+  sendVerificationEmail(account, token).catch((error) => {
+    console.warn(`Could not send verification email to ${account.email}:`, error.message);
+    console.warn(`Email verification link for ${account.username}: ${makeEmailVerificationUrl(token)}`);
+  });
+}
+
+function verifyEmailToken(token) {
+  const cleanToken = String(token || "").trim();
+  if (cleanToken === "") {
+    return { ok: false, message: "This verification link is missing its token." };
+  }
+
+  const tokenHash = makeTokenHash(cleanToken);
+  for (const account of accounts.values()) {
+    if (account.email_verification_token_hash !== tokenHash) continue;
+
+    const expiresAt = Date.parse(String(account.email_verification_expires_at || ""));
+    if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) {
+      account.email_verification_token_hash = "";
+      account.email_verification_expires_at = "";
+      queueAccountsSave();
+      return { ok: false, message: "This verification link expired. Register again to send a new email." };
+    }
+
+    account.email_verified = true;
+    account.email_verified_at = new Date().toISOString();
+    account.email_verification_token_hash = "";
+    account.email_verification_expires_at = "";
+    account.session_token_hash = "";
+    queueAccountsSave();
+    return { ok: true, message: "Your PixelMania email is verified. You can return to the game and sign on." };
+  }
+
+  return { ok: false, message: "This verification link is invalid or has already been used." };
+}
+
 function hasPassword(account) {
   return Boolean(account && account.password_salt && account.password_hash);
 }
@@ -915,13 +1103,14 @@ function isPlayerOwnAccount(player, username) {
   return accountKey(username) === accountKey(player.account_username);
 }
 
-function sendAuthError(socket, requestId, action, message) {
+function sendAuthError(socket, requestId, action, message, extra = {}) {
   socket.send(JSON.stringify({
     type: "account_auth_error",
     ok: false,
     request_id: requestId,
     action,
     message,
+    ...extra,
   }));
 }
 
@@ -935,6 +1124,22 @@ function sendAuthOk(socket, requestId, action, account, token) {
     email: cleanEmail(account.email || ""),
     session_token: token,
     role: getAccountRole(account.username),
+    email_verified: isAccountEmailVerified(account),
+  }));
+}
+
+function sendVerificationRequired(socket, requestId, action, account, message) {
+  socket.send(JSON.stringify({
+    type: "account_auth_ok",
+    ok: true,
+    request_id: requestId,
+    action,
+    username: account.username,
+    email: cleanEmail(account.email || ""),
+    role: getAccountRole(account.username),
+    email_verified: false,
+    requires_email_verification: true,
+    message,
   }));
 }
 
@@ -973,14 +1178,22 @@ function handleAccountRegister(socket, player, data) {
 
   const key = accountKey(usernameValidation.username);
   const existing = accounts.get(key);
-  if (existing && hasPassword(existing)) {
+  if (existing && hasPassword(existing) && isAccountEmailVerified(existing)) {
     sendAuthError(socket, requestId, "register", "Username is already registered.");
+    return;
+  }
+  if (existing && hasPassword(existing) && cleanEmail(existing.email || "") !== emailValidation.email) {
+    sendAuthError(socket, requestId, "register", "That username is waiting for verification with a different email.");
     return;
   }
 
   const emailOwner = findAccountByEmail(emailValidation.email);
-  if (emailOwner && accountKey(emailOwner.username) !== key) {
+  if (emailOwner && accountKey(emailOwner.username) !== key && isAccountEmailVerified(emailOwner)) {
     sendAuthError(socket, requestId, "register", "Email is already registered.");
+    return;
+  }
+  if (emailOwner && accountKey(emailOwner.username) !== key && !isAccountEmailVerified(emailOwner)) {
+    sendAuthError(socket, requestId, "register", "That email is already waiting for verification.");
     return;
   }
 
@@ -992,20 +1205,19 @@ function handleAccountRegister(socket, player, data) {
     email: emailValidation.email,
     password_salt: passwordHash.salt,
     password_hash: passwordHash.hash,
+    session_token_hash: "",
+    email_verified: false,
+    email_verified_at: "",
     role: getAccountRole(usernameValidation.username),
     created_at: existing?.created_at || now,
     last_seen_at: now,
   };
 
-  const activation = activatePlayerAccount(socket, player, account);
-  if (!activation.ok) {
-    sendAuthError(socket, requestId, "register", activation.message);
-    return;
-  }
-
+  const verificationToken = makeEmailVerificationToken(account);
   accounts.set(key, account);
-  const token = issueSessionToken(account);
-  sendAuthOk(socket, requestId, "register", account, token);
+  queueAccountsSave();
+  queueVerificationEmail(account, verificationToken);
+  sendVerificationRequired(socket, requestId, "register", account, "Account created. Check your email to verify before signing on.");
 }
 
 function handleAccountLogin(socket, player, data) {
@@ -1024,6 +1236,25 @@ function handleAccountLogin(socket, player, data) {
 
   if (!verifyPassword(account, data.password)) {
     sendAuthError(socket, requestId, "login", "Password does not match.");
+    return;
+  }
+
+  if (!isAccountEmailVerified(account)) {
+    if (hasActiveEmailVerificationToken(account)) {
+      sendAuthError(socket, requestId, "login", "Verify your email before signing on. Check your email for the verification link.", {
+        requires_email_verification: true,
+        email: cleanEmail(account.email || ""),
+      });
+      return;
+    }
+
+    const verificationToken = makeEmailVerificationToken(account);
+    queueAccountsSave();
+    queueVerificationEmail(account, verificationToken);
+    sendAuthError(socket, requestId, "login", "Verify your email before signing on. I sent a new verification email.", {
+      requires_email_verification: true,
+      email: cleanEmail(account.email || ""),
+    });
     return;
   }
 
@@ -1050,6 +1281,14 @@ function handleAccountTokenLogin(socket, player, data) {
   const account = accounts.get(accountKey(username));
   if (!account || !account.session_token_hash || account.session_token_hash !== makeTokenHash(token)) {
     sendAuthError(socket, requestId, "token_login", "Saved login expired. Sign on again.");
+    return;
+  }
+
+  if (!isAccountEmailVerified(account)) {
+    sendAuthError(socket, requestId, "token_login", "Verify your email before signing on.", {
+      requires_email_verification: true,
+      email: cleanEmail(account.email || ""),
+    });
     return;
   }
 
@@ -4473,13 +4712,19 @@ function sanitizeAccountState(rawAccount) {
 
   const username = cleanAccountName(rawAccount.username || rawAccount.account_username || rawAccount.name || "");
   if (username === "") return null;
+  const hasEmailVerifiedField = Object.prototype.hasOwnProperty.call(rawAccount, "email_verified");
+  const passwordHash = String(rawAccount.password_hash || "");
 
   return {
     username,
     email: cleanEmail(rawAccount.email || ""),
     password_salt: String(rawAccount.password_salt || ""),
-    password_hash: String(rawAccount.password_hash || ""),
+    password_hash: passwordHash,
     session_token_hash: String(rawAccount.session_token_hash || ""),
+    email_verified: hasEmailVerifiedField ? Boolean(rawAccount.email_verified) : passwordHash !== "",
+    email_verified_at: String(rawAccount.email_verified_at || ""),
+    email_verification_token_hash: String(rawAccount.email_verification_token_hash || ""),
+    email_verification_expires_at: String(rawAccount.email_verification_expires_at || ""),
     role: String(rawAccount.role || getAccountRole(username)),
     created_at: String(rawAccount.created_at || new Date().toISOString()),
     last_seen_at: String(rawAccount.last_seen_at || ""),
@@ -4502,6 +4747,10 @@ function upsertAccount(rawAccount) {
     password_salt: existing.password_salt || incoming.password_salt || "",
     password_hash: existing.password_hash || incoming.password_hash || "",
     session_token_hash: existing.session_token_hash || incoming.session_token_hash || "",
+    email_verified: Object.prototype.hasOwnProperty.call(existing, "email_verified") ? Boolean(existing.email_verified) : Boolean(incoming.email_verified),
+    email_verified_at: existing.email_verified_at || incoming.email_verified_at || "",
+    email_verification_token_hash: existing.email_verification_token_hash || incoming.email_verification_token_hash || "",
+    email_verification_expires_at: existing.email_verification_expires_at || incoming.email_verification_expires_at || "",
     role: existing.role || incoming.role || getAccountRole(incoming.username),
     created_at: existing.created_at || incoming.created_at || new Date().toISOString(),
     last_seen_at: new Date().toISOString(),
