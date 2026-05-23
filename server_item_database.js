@@ -176,6 +176,18 @@ const ITEMS = Object.freeze({
     placement_cost: { amount: 0 },
     interact_rules: { can_interact: true, interaction_message: "Open vending machine." },
   }),
+  safe: block({
+    rarity: "epic",
+    block_health: 6,
+    placeable: true,
+    tradeable: true,
+    dropable: true,
+    admin_grantable: true,
+    shop_price: 7500,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+    interact_rules: { can_interact: true, interaction_message: "Open safe." },
+    permissions: { world_owner_only: true },
+  }),
   crafting_station_left: block({
     rarity: "uncommon",
     block_health: 5,

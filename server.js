@@ -48,6 +48,8 @@ const VEND_BLOCK_PENDING = "vend_pending";
 const VEND_BLOCK_SOLD = "vend_sold";
 const VEND_BLOCK_TYPES = new Set([VEND_BLOCK_EMPTY, VEND_BLOCK_PENDING, VEND_BLOCK_SOLD]);
 const VEND_LOG_LIMIT = 30;
+const SAFE_BLOCK_TYPE = "safe";
+const SAFE_SLOT_COUNT = 10;
 const SERVER_SEED_GROW_TIME_SECONDS = Math.max(1, Number(process.env.SEED_GROW_TIME_SECONDS) || 8);
 const MATURE_SEED_EXTRA_DROP_CHANCE = Math.max(0, Math.min(1, Number(process.env.MATURE_SEED_EXTRA_DROP_CHANCE) || 0.65));
 const FISHING_SESSION_TTL_MS = Math.max(10000, Math.trunc(Number(process.env.FISHING_SESSION_TTL_MS) || 90000));
@@ -93,6 +95,7 @@ const MESSAGE_RATE_LIMITS = {
 const SHOP_CATALOG = new Map([
   ["crafting_station", { item_id: "crafting_station", item_category: "block", amount: 1, price: 80 }],
   ["vend_empty", { item_id: "vend_empty", item_category: "block", amount: 1, price: 7500 }],
+  ["safe", { item_id: "safe", item_category: "block", amount: 1, price: 7500 }],
   ["entrance_mover", { item_id: "entrance_mover", item_category: "tool", amount: 1, price: 200 }],
   ["lure_pack", { item_id: "lure_pack", item_category: "lure", amount: 1, price: 25, pack_size: 5 }],
 ]);
@@ -390,6 +393,9 @@ wss.on("connection", (socket) => {
       applyBlockUpdateToWorldState(worldName, update);
       if (update.action === "place" && isVendBlockType(update.block_type)) {
         initializeVendOwnerOnPlace(worldName, update, player);
+      }
+      if (update.action === "place" && isSafeBlockType(update.block_type)) {
+        initializeSafeOwnerOnPlace(worldName, update, player);
       }
       queueWorldSave(worldName);
       broadcastToWorld(worldName, update, playerId);
@@ -1960,6 +1966,11 @@ function handleInventoryTransactionRequest(socket, player, data) {
     return;
   }
 
+  if (action === "safe_get_state" || action === "safe_deposit" || action === "safe_withdraw") {
+    handleSafeTransaction(socket, player, data);
+    return;
+  }
+
   if (action === "craft_recipe" || action === "furnace_recipe") {
     handleStationRecipeTransaction(socket, player, data);
     return;
@@ -2612,6 +2623,378 @@ function handleVendCancel(socket, player, data, worldName, vend) {
   queueWorldSave(worldName);
   sendVendStateUpdateToWorld(worldName, savedVend);
   sendVendTransactionResult(socket, data, player, savedVend, true, "Vending listing canceled.", state);
+}
+
+function isSafeBlockType(blockType) {
+  return clampString(blockType || "") === SAFE_BLOCK_TYPE;
+}
+
+function makeEmptySafeState(worldName, x, y) {
+  return {
+    action: "safe_state",
+    world: cleanWorld(worldName),
+    x: Math.trunc(Number(x) || 0),
+    y: Math.trunc(Number(y) || 0),
+    owner_username: "",
+    owner_name: "",
+    slots: [],
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function canStoreItemInSafe(itemId, itemCategory) {
+  const cleanItemId = clampString(itemId || "");
+  if (cleanItemId === "" || !ItemDatabase.hasItem(cleanItemId)) return false;
+  if (cleanItemId === "punch" || cleanItemId === SAFE_BLOCK_TYPE) return false;
+
+  const definition = ItemDatabase.getItemDefinition(cleanItemId);
+  if (!definition || definition.hidden) return false;
+
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
+  return ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory);
+}
+
+function sanitizeSafeSlot(rawSlot) {
+  if (!rawSlot || typeof rawSlot !== "object" || Array.isArray(rawSlot)) return null;
+
+  const itemId = clampString(rawSlot.item_id || rawSlot.item_type || rawSlot.item || "");
+  if (!canStoreItemInSafe(itemId, rawSlot.item_category || rawSlot.category || "")) return null;
+
+  const itemCategory = resolveInventoryCategory(itemId, rawSlot.item_category || rawSlot.category || "");
+  const amount = clampInteger(rawSlot.amount || 0, 1, ItemDatabase.getStackLimit(itemId));
+  if (amount <= 0) return null;
+
+  return {
+    item_id: itemId,
+    item_category: itemCategory,
+    amount,
+  };
+}
+
+function sanitizeSafeState(rawEntry, worldName, x, y) {
+  const safe = makeEmptySafeState(worldName, x, y);
+  if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) return safe;
+
+  safe.owner_username = cleanAccountName(rawEntry.owner_username || rawEntry.owner_name || "");
+  safe.owner_name = safe.owner_username.toUpperCase();
+  safe.updated_at = String(rawEntry.updated_at || safe.updated_at);
+
+  const rawSlots = Array.isArray(rawEntry.slots) ? rawEntry.slots : [];
+  safe.slots = rawSlots
+    .map(sanitizeSafeSlot)
+    .filter(Boolean)
+    .slice(0, SAFE_SLOT_COUNT);
+
+  return safe;
+}
+
+function serializeSafeStateForClient(safe, player = null) {
+  const cleanSafe = sanitizeSafeState(safe, safe?.world || "", safe?.x || 0, safe?.y || 0);
+  return {
+    action: "safe_state",
+    world: cleanWorld(cleanSafe.world || ""),
+    x: cleanSafe.x,
+    y: cleanSafe.y,
+    owner_username: cleanSafe.owner_username,
+    owner_name: cleanSafe.owner_name,
+    slots: cleanSafe.slots.map((slot) => ({ ...slot })),
+    max_slots: SAFE_SLOT_COUNT,
+    can_manage: canPlayerManageSafe(player, cleanSafe, cleanSafe.world),
+  };
+}
+
+function canPlayerPlaceSafe(player, worldName) {
+  return isPlayerWorldOwner(player, worldName);
+}
+
+function canPlayerManageSafe(player, safe, worldName = "") {
+  if (!player || !player.authenticated) return false;
+  const cleanWorldName = cleanWorld(worldName || safe?.world || "");
+  return isPlayerWorldOwner(player, cleanWorldName);
+}
+
+function canPlayerBreakSafe(player, worldName, update) {
+  if (!player || !player.authenticated) return false;
+  if (!update || update.action !== "break" || update.layer === "background") return false;
+
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
+  if (!block || !isSafeBlockType(block.block_type)) return false;
+
+  return isPlayerWorldOwner(player, worldName);
+}
+
+function getSafeStateAt(worldName, x, y, createIfMissing = false) {
+  const state = ensureWorldState(worldName);
+  const key = gridKey(x, y);
+  const existing = state.interactions.get(key);
+
+  if (existing && existing.action === "safe_state") {
+    const safe = sanitizeSafeState(existing, worldName, x, y);
+    state.interactions.set(key, safe);
+    return safe;
+  }
+
+  const empty = makeEmptySafeState(worldName, x, y);
+  if (createIfMissing) {
+    state.interactions.set(key, empty);
+  }
+  return empty;
+}
+
+function setSafeStateAt(worldName, safe) {
+  const state = ensureWorldState(worldName);
+  const cleanSafe = sanitizeSafeState(safe, worldName, safe.x, safe.y);
+  cleanSafe.updated_at = new Date().toISOString();
+  state.interactions.set(gridKey(cleanSafe.x, cleanSafe.y), cleanSafe);
+  return cleanSafe;
+}
+
+function initializeSafeOwnerOnPlace(worldName, update, player) {
+  if (!player || !player.authenticated) return;
+  const safe = makeEmptySafeState(worldName, update.x, update.y);
+  safe.owner_username = player.account_username;
+  safe.owner_name = player.account_username.toUpperCase();
+  setSafeStateAt(worldName, safe);
+}
+
+function sendSafeStateUpdateToWorld(worldName, safe) {
+  broadcastToWorld(worldName, {
+    type: "world_interaction_update",
+    ...serializeSafeStateForClient(safe),
+    world: cleanWorld(worldName),
+  });
+}
+
+function validateSafeAccess(socket, player, data, worldName, grid) {
+  if (!grid) {
+    sendInventoryTransactionRejected(socket, data, "Safe position is missing.");
+    return false;
+  }
+
+  if (!isPlayerNearGrid(player, grid.x, grid.y)) {
+    sendInventoryTransactionRejected(socket, data, "Too far away from that safe.");
+    return false;
+  }
+
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(grid.x, grid.y));
+  if (!block || !isSafeBlockType(block.block_type)) {
+    sendInventoryTransactionRejected(socket, data, "That is not a safe.");
+    return false;
+  }
+
+  return true;
+}
+
+function sendSafeTransactionResult(socket, data, player, safe, ok, message, playerState = null) {
+  sendInventoryTransactionResult(socket, {
+    ok,
+    request_id: makeRequestId(data),
+    action: String(data.action || ""),
+    message,
+    username: player?.account_username || "",
+    player_data: playerState || (player ? ensurePlayerState(player.account_username) || {} : {}),
+    safe_state: safe ? serializeSafeStateForClient(safe, player) : {},
+  });
+}
+
+function rejectSafeTransaction(socket, data, message) {
+  sendInventoryTransactionResult(socket, {
+    ok: false,
+    request_id: makeRequestId(data),
+    action: String(data.action || ""),
+    message,
+    safe_state: {},
+  });
+}
+
+function handleSafeTransaction(socket, player, data) {
+  const action = String(data.action || "").trim();
+  const worldName = getTransactionWorldName(player, data);
+  if (!requireSameWorld(socket, player, worldName, "use that safe")) return;
+
+  const grid = getTransactionGrid(data);
+  if (!validateSafeAccess(socket, player, data, worldName, grid)) return;
+
+  const safe = getSafeStateAt(worldName, grid.x, grid.y, true);
+
+  if (!canPlayerManageSafe(player, safe, worldName)) {
+    rejectSafeTransaction(socket, data, "Only the world owner can open this safe.");
+    return;
+  }
+
+  if (accountKey(safe.owner_username || "") !== accountKey(player.account_username)) {
+    safe.owner_username = player.account_username;
+    safe.owner_name = player.account_username.toUpperCase();
+  }
+
+  if (action === "safe_get_state") {
+    const savedSafe = setSafeStateAt(worldName, safe);
+    sendSafeTransactionResult(socket, data, player, savedSafe, true, "");
+    return;
+  }
+
+  if (tradeByPlayerId.has(player.id)) {
+    rejectSafeTransaction(socket, data, "Finish or cancel your trade before using a safe.");
+    return;
+  }
+
+  if (action === "safe_deposit") {
+    handleSafeDeposit(socket, player, data, worldName, safe);
+    return;
+  }
+
+  if (action === "safe_withdraw") {
+    handleSafeWithdraw(socket, player, data, worldName, safe);
+    return;
+  }
+
+  rejectSafeTransaction(socket, data, "Unknown safe action.");
+}
+
+function findSafeMergeSlot(safe, itemId, itemCategory, amount) {
+  const stackLimit = ItemDatabase.getStackLimit(itemId);
+  for (let i = 0; i < safe.slots.length; i += 1) {
+    const slot = safe.slots[i];
+    if (!slot) continue;
+    if (slot.item_id === itemId && slot.item_category === itemCategory && Number(slot.amount) + amount <= stackLimit) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+function handleSafeDeposit(socket, player, data, worldName, safe) {
+  const itemId = clampString(data.item_id || data.item_type || "");
+  const itemCategory = resolveInventoryCategory(itemId, data.item_category || data.category || "");
+  const amount = clampInteger(data.amount || 0, 1, ItemDatabase.getStackLimit(itemId));
+
+  if (!canStoreItemInSafe(itemId, itemCategory)) {
+    rejectSafeTransaction(socket, data, "That item cannot be stored in a safe.");
+    return;
+  }
+
+  const mergeIndex = findSafeMergeSlot(safe, itemId, itemCategory, amount);
+  if (mergeIndex < 0 && safe.slots.length >= SAFE_SLOT_COUNT) {
+    rejectSafeTransaction(socket, data, "That safe is full.");
+    return;
+  }
+
+  const state = ensureWritablePlayerState(player.account_username);
+  if (!state) {
+    rejectSafeTransaction(socket, data, "Could not load your server inventory.");
+    return;
+  }
+
+  if (getInventoryCount(state, itemId, itemCategory) < amount) {
+    rejectSafeTransaction(socket, data, `Not enough ${itemId}.`);
+    return;
+  }
+
+  if (!spendItemFromState(state, itemId, itemCategory, amount)) {
+    rejectSafeTransaction(socket, data, "Server inventory changed. Try again.");
+    return;
+  }
+
+  if (mergeIndex >= 0) {
+    safe.slots[mergeIndex].amount = clampInteger(Number(safe.slots[mergeIndex].amount) + amount, 1, ItemDatabase.getStackLimit(itemId));
+  } else {
+    safe.slots.push({
+      item_id: itemId,
+      item_category: itemCategory,
+      amount,
+    });
+  }
+
+  const savedSafe = setSafeStateAt(worldName, safe);
+  persistPlayerInventoryChange(player.account_username, state);
+  queueWorldSave(worldName);
+  sendSafeStateUpdateToWorld(worldName, savedSafe);
+  sendSafeTransactionResult(socket, data, player, savedSafe, true, `Stored ${itemId} x${amount}.`, state);
+}
+
+function handleSafeWithdraw(socket, player, data, worldName, safe) {
+  const slotIndex = clampInteger(data.slot_index || data.slot || 0, 0, SAFE_SLOT_COUNT - 1);
+  if (slotIndex < 0 || slotIndex >= safe.slots.length) {
+    rejectSafeTransaction(socket, data, "That safe slot is empty.");
+    return;
+  }
+
+  const slot = sanitizeSafeSlot(safe.slots[slotIndex]);
+  if (!slot) {
+    safe.slots.splice(slotIndex, 1);
+    const savedSafe = setSafeStateAt(worldName, safe);
+    queueWorldSave(worldName);
+    sendSafeStateUpdateToWorld(worldName, savedSafe);
+    rejectSafeTransaction(socket, data, "That safe slot was invalid.");
+    return;
+  }
+
+  const amount = clampInteger(data.amount || slot.amount, 1, slot.amount);
+  const state = ensureWritablePlayerState(player.account_username);
+  if (!state) {
+    rejectSafeTransaction(socket, data, "Could not load your server inventory.");
+    return;
+  }
+
+  if (!canAddItemToState(state, slot.item_id, slot.item_category, amount)) {
+    rejectSafeTransaction(socket, data, "Your inventory cannot hold that item.");
+    return;
+  }
+
+  addItemToState(state, slot.item_id, slot.item_category, amount);
+  slot.amount -= amount;
+  if (slot.amount <= 0) {
+    safe.slots.splice(slotIndex, 1);
+  } else {
+    safe.slots[slotIndex] = slot;
+  }
+
+  const savedSafe = setSafeStateAt(worldName, safe);
+  persistPlayerInventoryChange(player.account_username, state);
+  queueWorldSave(worldName);
+  sendSafeStateUpdateToWorld(worldName, savedSafe);
+  sendSafeTransactionResult(socket, data, player, savedSafe, true, `Withdrew ${slot.item_id} x${amount}.`, state);
+}
+
+function prepareSafeBreakInventoryReturn(socket, player, worldName, update) {
+  const safe = getSafeStateAt(worldName, update.x, update.y, false);
+  const slots = Array.isArray(safe.slots) ? safe.slots.map(sanitizeSafeSlot).filter(Boolean) : [];
+
+  if (slots.length === 0) {
+    return { ok: true, playerState: null, message: "" };
+  }
+
+  if (!canPlayerManageSafe(player, safe, worldName)) {
+    sendActionRejected(socket, "world_block_update", "Only the world owner can break this safe.");
+    return { ok: false };
+  }
+
+  const state = ensureWritablePlayerState(player.account_username);
+  if (!state) {
+    sendActionRejected(socket, "world_block_update", "Could not load your server inventory.");
+    return { ok: false };
+  }
+
+  const stagedState = JSON.parse(JSON.stringify(state));
+  for (const slot of slots) {
+    if (!canAddItemToState(stagedState, slot.item_id, slot.item_category, slot.amount)) {
+      sendActionRejected(socket, "world_block_update", "Your inventory cannot hold the safe contents.");
+      return { ok: false };
+    }
+    addItemToState(stagedState, slot.item_id, slot.item_category, slot.amount);
+  }
+
+  safe.slots = [];
+  persistPlayerInventoryChange(player.account_username, stagedState);
+  setSafeStateAt(worldName, safe);
+
+  return {
+    ok: true,
+    playerState: stagedState,
+    message: "Returned safe contents.",
+  };
 }
 
 function normalizeInventoryAmountEntry(rawEntry) {
@@ -3546,6 +3929,21 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
         message: vendReturn.message || "",
       };
     }
+
+    if (isSafeBlockType(update.block_type)) {
+      if (!canPlayerBreakSafe(player, worldName, update)) {
+        sendActionRejected(socket, "world_block_update", "Only the world owner can break safes.");
+        return { ok: false };
+      }
+
+      const safeReturn = prepareSafeBreakInventoryReturn(socket, player, worldName, update);
+      if (!safeReturn.ok) return { ok: false };
+      return {
+        ok: true,
+        playerState: safeReturn.playerState || null,
+        message: safeReturn.message || "",
+      };
+    }
     return { ok: true };
   }
 
@@ -3556,6 +3954,11 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
 
   if (isVendBlockType(update.block_type) && !canPlayerPlaceVendingMachine(player, worldName)) {
     sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can place vending machines." : "You cannot place vending machines here.");
+    return { ok: false };
+  }
+
+  if (isSafeBlockType(update.block_type) && !canPlayerPlaceSafe(player, worldName)) {
+    sendActionRejected(socket, "world_block_update", "Only the world owner can place safes.");
     return { ok: false };
   }
 
@@ -4218,6 +4621,8 @@ function loadInteractionsIntoMap(target, rawEntries, worldName = "") {
       });
     } else if (action === "vend_state") {
       target.set(gridKey(gridX, gridY), sanitizeVendState(rawEntry, rawEntry.world || worldName, gridX, gridY));
+    } else if (action === "safe_state") {
+      target.set(gridKey(gridX, gridY), sanitizeSafeState(rawEntry, rawEntry.world || worldName, gridX, gridY));
     }
   }
 }
