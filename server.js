@@ -2202,30 +2202,34 @@ function isWorldLocked(worldName) {
   return Boolean(state.world_lock?.is_locked);
 }
 
-function canPlayerPlaceVendingMachine(player, worldName) {
-  if (!player || !player.authenticated) return false;
+function getWorldLockProtectedStorageBlocks(worldName) {
+  const state = ensureWorldState(worldName);
+  const protectedBlocks = [];
 
-  if (isWorldLocked(worldName)) {
-    return isPlayerWorldOwner(player, worldName);
+  for (const block of state.foreground.values()) {
+    const blockType = clampString(block?.block_type || "");
+    if (isVendBlockType(blockType) || isSafeBlockType(blockType)) {
+      protectedBlocks.push(block);
+    }
   }
 
-  return canPlayerBuildInWorld(player, worldName);
+  return protectedBlocks;
+}
+
+function hasWorldLockProtectedStorageBlocks(worldName) {
+  return getWorldLockProtectedStorageBlocks(worldName).length > 0;
+}
+
+function canPlayerPlaceVendingMachine(player, worldName) {
+  if (!player || !player.authenticated) return false;
+  return isWorldLocked(worldName) && isPlayerWorldOwner(player, worldName);
 }
 
 function canPlayerManageVend(player, vend, worldName = "") {
   if (!player || !player.authenticated) return false;
 
   const cleanWorldName = cleanWorld(worldName || vend?.world || "");
-  if (isWorldLocked(cleanWorldName)) {
-    return isPlayerWorldOwner(player, cleanWorldName);
-  }
-
-  const ownerKey = accountKey(vend?.owner_username || "");
-  if (ownerKey === "") {
-    return canPlayerPlaceVendingMachine(player, cleanWorldName);
-  }
-
-  return ownerKey === accountKey(player.account_username);
+  return isWorldLocked(cleanWorldName) && isPlayerWorldOwner(player, cleanWorldName);
 }
 
 function canPlayerBreakVendingMachine(player, worldName, update) {
@@ -2236,13 +2240,7 @@ function canPlayerBreakVendingMachine(player, worldName, update) {
   const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isVendBlockType(block.block_type)) return false;
 
-  if (isWorldLocked(worldName)) {
-    return isPlayerWorldOwner(player, worldName);
-  }
-
-  const vend = getVendStateAt(worldName, update.x, update.y, false);
-  const ownerKey = accountKey(vend.owner_username || "");
-  return ownerKey === "" ? canPlayerBuildInWorld(player, worldName) : ownerKey === accountKey(player.account_username);
+  return isWorldLocked(worldName) && isPlayerWorldOwner(player, worldName);
 }
 
 function canPlayerBreakOwnVendingMachine(player, worldName, update) {
@@ -2384,6 +2382,11 @@ function handleVendingTransaction(socket, player, data) {
 
   const grid = getTransactionGrid(data);
   if (!validateVendAccess(socket, player, data, worldName, grid)) return;
+
+  if (!isWorldLocked(worldName)) {
+    rejectVendTransaction(socket, data, "Lock the world before using vending machines.");
+    return;
+  }
 
   const vend = getVendStateAt(worldName, grid.x, grid.y, true);
 
@@ -2704,13 +2707,13 @@ function serializeSafeStateForClient(safe, player = null) {
 }
 
 function canPlayerPlaceSafe(player, worldName) {
-  return isPlayerWorldOwner(player, worldName);
+  return isWorldLocked(worldName) && isPlayerWorldOwner(player, worldName);
 }
 
 function canPlayerManageSafe(player, safe, worldName = "") {
   if (!player || !player.authenticated) return false;
   const cleanWorldName = cleanWorld(worldName || safe?.world || "");
-  return isPlayerWorldOwner(player, cleanWorldName);
+  return isWorldLocked(cleanWorldName) && isPlayerWorldOwner(player, cleanWorldName);
 }
 
 function canPlayerBreakSafe(player, worldName, update) {
@@ -2721,7 +2724,7 @@ function canPlayerBreakSafe(player, worldName, update) {
   const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isSafeBlockType(block.block_type)) return false;
 
-  return isPlayerWorldOwner(player, worldName);
+  return isWorldLocked(worldName) && isPlayerWorldOwner(player, worldName);
 }
 
 function getSafeStateAt(worldName, x, y, createIfMissing = false) {
@@ -2816,6 +2819,11 @@ function handleSafeTransaction(socket, player, data) {
 
   const grid = getTransactionGrid(data);
   if (!validateSafeAccess(socket, player, data, worldName, grid)) return;
+
+  if (!isWorldLocked(worldName)) {
+    rejectSafeTransaction(socket, data, "Lock the world before using safes.");
+    return;
+  }
 
   const safe = getSafeStateAt(worldName, grid.x, grid.y, true);
 
@@ -3915,9 +3923,14 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
       return { ok: false };
     }
 
+    if (update.block_type === "world_lock" && hasWorldLockProtectedStorageBlocks(worldName)) {
+      sendActionRejected(socket, "world_block_update", "Remove all Safes and vending machines before breaking the World Lock.");
+      return { ok: false };
+    }
+
     if (isVendBlockType(update.block_type)) {
       if (!canPlayerBreakVendingMachine(player, worldName, update)) {
-        sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can break vending machines." : "Only the vending machine owner can break it.");
+        sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can break vending machines." : "Lock the world before breaking vending machines.");
         return { ok: false };
       }
 
@@ -3932,7 +3945,7 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
 
     if (isSafeBlockType(update.block_type)) {
       if (!canPlayerBreakSafe(player, worldName, update)) {
-        sendActionRejected(socket, "world_block_update", "Only the world owner can break safes.");
+        sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can break safes." : "Lock the world before breaking safes.");
         return { ok: false };
       }
 
@@ -3953,12 +3966,12 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
   }
 
   if (isVendBlockType(update.block_type) && !canPlayerPlaceVendingMachine(player, worldName)) {
-    sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can place vending machines." : "You cannot place vending machines here.");
+    sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can place vending machines." : "Lock this world before placing vending machines.");
     return { ok: false };
   }
 
   if (isSafeBlockType(update.block_type) && !canPlayerPlaceSafe(player, worldName)) {
-    sendActionRejected(socket, "world_block_update", "Only the world owner can place safes.");
+    sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can place safes." : "Lock this world before placing safes.");
     return { ok: false };
   }
 
@@ -4048,6 +4061,11 @@ function prepareWorldLockStateUpdate(socket, player, worldName, update) {
 
   if (currentLock.is_locked && !canPlayerControlWorldLock(player, worldName)) {
     sendActionRejected(socket, "world_lock_state", "Only the world lock owner can change this lock.");
+    return false;
+  }
+
+  if (currentLock.is_locked && !nextLock.is_locked && hasWorldLockProtectedStorageBlocks(worldName)) {
+    sendActionRejected(socket, "world_lock_state", "Remove all Safes and vending machines before unlocking the World Lock.");
     return false;
   }
 
