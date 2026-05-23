@@ -4260,8 +4260,20 @@ function getDeveloperCommandName(command) {
   return String(parts[0] || "").toLowerCase();
 }
 
+function getDeveloperCommandWorldArgument(command) {
+  const parts = splitCommand(command);
+  if (parts.length < 2) return "";
+
+  const commandName = String(parts[0] || "").toLowerCase();
+  if (commandName !== "clear" && commandName !== "resetworld" && commandName !== "reset_world" && commandName !== "reworld") {
+    return "";
+  }
+
+  return cleanWorld(parts.slice(1).join("_"));
+}
+
 function getDeveloperCommandWorldName(player, data) {
-  return cleanWorld(data.world || data.world_name || player?.world || "START");
+  return cleanWorld(data.target_world || getDeveloperCommandWorldArgument(data.command || "") || data.world_name || data.world || player?.world || "START");
 }
 
 function isClearProtectedBlockType(blockType) {
@@ -4364,6 +4376,8 @@ function clearWorldByAdmin(worldName, data) {
   const clean = cleanWorld(worldName);
   const currentState = ensureWorldState(clean);
   const nextState = createEmptyWorldState();
+  nextState.cleared = true;
+
   const protectedEntries = getProtectedClearEntries(currentState, data);
 
   for (const [key, entry] of protectedEntries.entries()) {
@@ -4372,19 +4386,11 @@ function clearWorldByAdmin(worldName, data) {
 
   nextState.world_lock = sanitizeWorldLockState(currentState.world_lock || {});
 
-  let removedCount = 0;
-  for (let x = 0; x < WORLD_WIDTH; x += 1) {
-    for (let y = 0; y < WORLD_HEIGHT; y += 1) {
-      const key = gridKey(x, y);
-      if (protectedEntries.has(key)) continue;
-
-      if (y < BEDROCK_START_Y) {
-        nextState.removed_foreground.set(key, { x, y, block_type: "" });
-        nextState.removed_background.set(key, { x, y, block_type: "" });
-        removedCount += 1;
-      }
-    }
-  }
+  const removedCount =
+    Math.max(0, currentState.foreground.size - protectedEntries.size) +
+    currentState.background.size +
+    currentState.seeds.size +
+    currentState.drops.size;
 
   replaceWorldStateAndBroadcast(clean, nextState);
   return { removedCount, protectedCount: protectedEntries.size };
@@ -4632,7 +4638,7 @@ function handleDeveloperCommandRequest(socket, player, data) {
       socket,
       requestId,
       command,
-      `Server cleared ${commandWorld}. Removed ${result.removedCount} generated tiles and preserved ${result.protectedCount} protected blocks.`
+      `Server cleared ${commandWorld}. Removed ${result.removedCount} saved objects and preserved ${result.protectedCount} protected blocks.`
     );
     return;
   }
@@ -4730,6 +4736,7 @@ function ensureWorldState(worldName) {
 
 function createEmptyWorldState() {
   return {
+    cleared: false,
     foreground: new Map(),
     background: new Map(),
     removed_foreground: new Map(),
@@ -4749,6 +4756,8 @@ function loadWorldState(worldName) {
     return state;
   }
 
+  state.cleared = Boolean(data.cleared || data.world_cleared || data.clear_generated);
+
   loadGridArrayIntoMap(state.foreground, data.foreground || data.blocks, normalizeBlockEntry);
   loadGridArrayIntoMap(state.background, data.background || data.background_blocks, normalizeBlockEntry);
   loadGridArrayIntoMap(state.removed_foreground, data.removed_foreground, normalizeRemovedBlockEntry);
@@ -4756,6 +4765,12 @@ function loadWorldState(worldName) {
   loadGridArrayIntoMap(state.seeds, data.seeds || data.planted_seeds, normalizeSeedEntry);
   loadInteractionsIntoMap(state.interactions, data.interactions, worldName);
   loadDropsIntoMap(state.drops, data.drops || data.item_drops);
+
+  if (!state.cleared && state.removed_foreground.size > Math.floor((WORLD_WIDTH * BEDROCK_START_Y) / 2)) {
+    state.cleared = true;
+    state.removed_foreground.clear();
+    state.removed_background.clear();
+  }
 
   if (data.world_lock && typeof data.world_lock === "object" && !Array.isArray(data.world_lock)) {
     state.world_lock = sanitizeWorldLockState(data.world_lock);
@@ -5578,10 +5593,11 @@ function serializeWorldState(worldName) {
     world_state_version: 1,
     world_name: cleanWorld(worldName),
     saved_at: new Date().toISOString(),
+    cleared: Boolean(state.cleared),
     blocks: getForegroundBlocksForState(state),
     background_blocks: Array.from(state.background.values()),
-    removed_foreground: Array.from(state.removed_foreground.values()),
-    removed_background: Array.from(state.removed_background.values()),
+    removed_foreground: state.cleared ? [] : Array.from(state.removed_foreground.values()),
+    removed_background: state.cleared ? [] : Array.from(state.removed_background.values()),
     seeds: Array.from(state.seeds.values()).map(serializeSeedForMessage),
     interactions: Array.from(state.interactions.values()),
     world_lock: state.world_lock || {},
@@ -5594,10 +5610,11 @@ function buildWorldStateMessage(worldName) {
   return {
     type: "world_state",
     world: cleanWorld(worldName),
+    cleared: Boolean(state.cleared),
     foreground: getForegroundBlocksForState(state),
     background: Array.from(state.background.values()),
-    removed_foreground: Array.from(state.removed_foreground.values()),
-    removed_background: Array.from(state.removed_background.values()),
+    removed_foreground: state.cleared ? [] : Array.from(state.removed_foreground.values()),
+    removed_background: state.cleared ? [] : Array.from(state.removed_background.values()),
     seeds: Array.from(state.seeds.values()).map(serializeSeedForMessage),
     interactions: Array.from(state.interactions.values()),
     world_lock: state.world_lock || {},
