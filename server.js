@@ -337,7 +337,7 @@ wss.on("connection", (socket) => {
         players: getPlayersInWorld(player.world, playerId),
       }));
 
-      socket.send(JSON.stringify(buildWorldStateMessage(player.world)));
+      socket.send(JSON.stringify(buildWorldStateMessage(player.world, { respawn_player: true })));
 
       broadcastToWorld(player.world, {
         type: "player_joined",
@@ -4897,6 +4897,7 @@ function loadWorldState(worldName) {
     state.world_lock = sanitizeWorldLockState(data.world_lock);
   }
 
+  repairEntranceGateState(state);
   return state;
 }
 
@@ -5177,6 +5178,57 @@ function findEntranceGateInState(state) {
   return null;
 }
 
+function findEntranceGatesInState(state) {
+  const gates = [];
+  for (const block of state.foreground.values()) {
+    if (clampString(block?.block_type || "") === ENTRANCE_GATE_TYPE) {
+      gates.push({ x: block.x, y: block.y });
+    }
+  }
+  return gates;
+}
+
+function ensureEntranceGateSupportInState(state, gate) {
+  if (!state || !gate) return;
+
+  for (let x = gate.x - 1; x <= gate.x + 1; x += 1) {
+    const y = gate.y + 1;
+    if (!isGridInWorld(x, y)) continue;
+
+    const key = gridKey(x, y);
+    state.foreground.set(key, { x, y, block_type: "bedrock" });
+    state.removed_foreground.delete(key);
+    state.interactions.delete(key);
+    state.seeds.delete(key);
+  }
+}
+
+function repairEntranceGateState(state) {
+  if (!state) return null;
+
+  const gates = findEntranceGatesInState(state);
+  if (gates.length === 0) return null;
+
+  const keptGate = gates[gates.length - 1];
+  const keptKey = gridKey(keptGate.x, keptGate.y);
+
+  for (const gate of gates) {
+    const key = gridKey(gate.x, gate.y);
+    if (key === keptKey) continue;
+
+    state.foreground.delete(key);
+    state.interactions.delete(key);
+    state.removed_foreground.set(key, {
+      x: gate.x,
+      y: gate.y,
+      block_type: ENTRANCE_GATE_TYPE,
+    });
+  }
+
+  ensureEntranceGateSupportInState(state, keptGate);
+  return keptGate;
+}
+
 function isProtectedEntranceSupportBlock(blockType) {
   const clean = clampString(blockType || "");
   return (
@@ -5349,6 +5401,7 @@ function applyEntranceGateMoveToWorldState(worldName, state, oldGate, newGate) {
     world: cleanWorld(worldName),
   });
 
+  repairEntranceGateState(state);
   return updates;
 }
 
