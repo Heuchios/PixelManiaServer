@@ -115,10 +115,11 @@ const ITEMS = Object.freeze({
   cave_background: block({
     rarity: "common",
     block_health: 2,
+    seed: "cave_background_seed",
     place_layer: "background",
     background_block: true,
     no_collision: true,
-    drop_rules: { seed_chance: 0, gem_range: [0, 1] },
+    drop_rules: { seed_chance: 0.05, gem_range: [0, 1] },
   }),
   entrance_gate: block({
     rarity: "legendary",
@@ -269,6 +270,7 @@ const ITEMS = Object.freeze({
   lava_seed: seed("lava", { rarity: "rare" }),
   sand_seed: seed("sand", { rarity: "common" }),
   glass_seed: seed("glass", { rarity: "rare" }),
+  cave_background_seed: seed("cave_background", { rarity: "common" }),
   wood_plank_seed: seed("wood_plank", { rarity: "uncommon" }),
   wood_platform_seed: seed("wood_platform", { rarity: "uncommon" }),
   wooden_door_seed: seed("wooden_door", { rarity: "rare" }),
