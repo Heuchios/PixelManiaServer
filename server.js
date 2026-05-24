@@ -99,6 +99,7 @@ const SHOP_CATALOG = new Map([
   ["crafting_station", { item_id: "crafting_station", item_category: "block", amount: 1, price: 80 }],
   ["vend_empty", { item_id: "vend_empty", item_category: "block", amount: 1, price: 7500 }],
   ["safe", { item_id: "safe", item_category: "block", amount: 1, price: 7500 }],
+  ["purple_shirt", { item_id: "purple_shirt", item_category: "shirt", amount: 1, price: 50 }],
   ["entrance_mover", { item_id: "entrance_mover", item_category: "tool", amount: 1, price: 200 }],
   ["lure_pack", { item_id: "lure_pack", item_category: "lure", amount: 1, price: 25, pack_size: 5 }],
 ]);
@@ -4497,6 +4498,7 @@ function createDefaultPlayerState(username) {
     seed_inventory: {},
     tool_inventory: { pickaxe: 1 },
     back_inventory: {},
+    shirt_inventory: {},
     currency_inventory: {},
     material_inventory: {},
     lure_inventory: {},
@@ -4528,6 +4530,9 @@ function mergeClientPlayerStateIntoServerState(username, incomingState) {
     : "";
   merged.equipped_back_item = doesStateOwnEquippedItem(merged, incomingState.equipped_back_item || "", "back")
     ? clampString(incomingState.equipped_back_item || "")
+    : "";
+  merged.equipped_shirt_item = doesStateOwnEquippedItem(merged, incomingState.equipped_shirt_item || "", "shirt")
+    ? clampString(incomingState.equipped_shirt_item || "")
     : "";
 
   return merged;
@@ -5822,12 +5827,14 @@ function sanitizePlayerState(rawState, username) {
     seed_inventory: sanitizeCountDictionary(rawState.seed_inventory, MAX_PLAYER_INVENTORY_KEYS, "seed"),
     tool_inventory: sanitizeCountDictionary(rawState.tool_inventory, MAX_PLAYER_INVENTORY_KEYS, "tool"),
     back_inventory: sanitizeCountDictionary(rawState.back_inventory, MAX_PLAYER_INVENTORY_KEYS, "back"),
+    shirt_inventory: sanitizeCountDictionary(rawState.shirt_inventory, MAX_PLAYER_INVENTORY_KEYS, "shirt"),
     currency_inventory: sanitizeCountDictionary(rawState.currency_inventory, MAX_PLAYER_INVENTORY_KEYS, "currency"),
     material_inventory: sanitizeCountDictionary(rawState.material_inventory, MAX_PLAYER_INVENTORY_KEYS, "material"),
     lure_inventory: sanitizeCountDictionary(rawState.lure_inventory, MAX_PLAYER_INVENTORY_KEYS, "lure"),
     fish_inventory: sanitizeCountDictionary(rawState.fish_inventory, MAX_PLAYER_INVENTORY_KEYS, "fish"),
     equipped_tool: "",
     equipped_back_item: "",
+    equipped_shirt_item: "",
     saved_at: new Date().toISOString(),
   };
 
@@ -5839,6 +5846,11 @@ function sanitizePlayerState(rawState, username) {
   const equippedBack = clampString(rawState.equipped_back_item || "");
   if (doesStateOwnEquippedItem(state, equippedBack, "back")) {
     state.equipped_back_item = equippedBack;
+  }
+
+  const equippedShirt = clampString(rawState.equipped_shirt_item || "");
+  if (doesStateOwnEquippedItem(state, equippedShirt, "shirt")) {
+    state.equipped_shirt_item = equippedShirt;
   }
 
   return state;
