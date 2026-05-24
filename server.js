@@ -11,6 +11,9 @@ const ItemDatabase = require("./server_item_database");
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Math.max(1, Math.trunc(Number(process.env.PORT) || 8080));
 const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, "");
+const SERVER_CLIENT_VERSION = String(process.env.SERVER_CLIENT_VERSION || "1.0.0").trim() || "1.0.0";
+const MIN_CLIENT_VERSION = String(process.env.MIN_CLIENT_VERSION || SERVER_CLIENT_VERSION).trim() || SERVER_CLIENT_VERSION;
+const UPDATE_URL = String(process.env.UPDATE_URL || "https://pixelmaniagame.com").trim() || "https://pixelmaniagame.com";
 const DATA_FOLDER = process.env.PIXELMANIA_DATA_DIR ? path.resolve(process.env.PIXELMANIA_DATA_DIR) : __dirname;
 const WORLD_SAVE_FOLDER = process.env.WORLD_SAVE_FOLDER ? path.resolve(process.env.WORLD_SAVE_FOLDER) : path.join(DATA_FOLDER, "worlds");
 const PLAYER_SAVE_FOLDER = process.env.PLAYER_SAVE_FOLDER ? path.resolve(process.env.PLAYER_SAVE_FOLDER) : path.join(DATA_FOLDER, "players");
@@ -156,6 +159,7 @@ wss.on("connection", (socket) => {
     facing: 1,
     animation_state: "idle",
     equipment_slots: {},
+    client_version: "",
     last_position_at: 0,
     last_block_break_at: 0,
   });
@@ -189,6 +193,13 @@ wss.on("connection", (socket) => {
     if (!player) return;
 
     if (!checkMessageRateLimit(socket, String(data.type || "unknown"))) return;
+
+    const clientVersion = getClientVersion(data);
+    if (!isClientVersionAllowed(clientVersion)) {
+      sendClientUpdateRequired(socket, data, clientVersion);
+      return;
+    }
+    player.client_version = clientVersion || player.client_version;
 
     if (data.type === "login") {
       player.name = cleanName(data.name);
@@ -734,7 +745,12 @@ function handleHttpRequest(request, response) {
 
   if (request.method === "GET" && url.pathname === "/health") {
     response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
-    response.end(JSON.stringify({ ok: true, service: "PixelManiaServer" }));
+    response.end(JSON.stringify({
+      ok: true,
+      service: "PixelManiaServer",
+      server_client_version: SERVER_CLIENT_VERSION,
+      min_client_version: MIN_CLIENT_VERSION,
+    }));
     return;
   }
 
@@ -925,6 +941,57 @@ function getPlayerSavePath(username) {
 
 function makeRequestId(data) {
   return String(data.request_id || "").trim();
+}
+
+function getClientVersion(data) {
+  return String(data.client_version || data.version || "").trim();
+}
+
+function parseVersionParts(value) {
+  const clean = String(value || "").trim().replace(/^v/i, "");
+  if (clean === "") return null;
+
+  const core = clean.split(/[+-]/)[0];
+  const parts = core.split(".").map((part) => {
+    const match = String(part || "").match(/^\d+/);
+    return match ? Number(match[0]) : 0;
+  });
+
+  if (parts.length === 0 || parts.some((part) => !Number.isFinite(part))) return null;
+  while (parts.length < 3) parts.push(0);
+  return parts.slice(0, 3);
+}
+
+function compareVersions(a, b) {
+  const left = parseVersionParts(a);
+  const right = parseVersionParts(b);
+  if (!left || !right) return null;
+
+  for (let index = 0; index < 3; index += 1) {
+    if (left[index] > right[index]) return 1;
+    if (left[index] < right[index]) return -1;
+  }
+  return 0;
+}
+
+function isClientVersionAllowed(clientVersion) {
+  const comparison = compareVersions(clientVersion, MIN_CLIENT_VERSION);
+  return comparison !== null && comparison >= 0;
+}
+
+function sendClientUpdateRequired(socket, data, clientVersion = "") {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+
+  socket.send(JSON.stringify({
+    type: "client_update_required",
+    ok: false,
+    request_id: makeRequestId(data || {}),
+    client_version: String(clientVersion || ""),
+    server_client_version: SERVER_CLIENT_VERSION,
+    min_client_version: MIN_CLIENT_VERSION,
+    update_url: UPDATE_URL,
+    message: `This PixelMania version is out of date. Please update to version ${MIN_CLIENT_VERSION} or newer.`,
+  }));
 }
 
 function cloneJson(value) {
