@@ -2271,6 +2271,7 @@ function handleShopBuyTransaction(socket, player, data) {
     ok: true,
     request_id: requestId,
     action: "shop_buy",
+    item_id: itemId,
     message: itemId === "lure_pack" ? "Purchased and opened Lure Pack." : `Purchased ${listing.item_id}.`,
     username,
     rewards: combineRewardEntries(rewards),
