@@ -80,6 +80,7 @@ const MESSAGE_RATE_LIMITS = {
   player_state_save: { limit: 6, windowMs: 10000 },
   join_world: { limit: 12, windowMs: 10000 },
   chat: { limit: 8, windowMs: 5000 },
+  broadcast: { limit: 3, windowMs: 10000 },
   developer_command_request: { limit: 5, windowMs: 5000 },
   world_block_update: { limit: 35, windowMs: 1000 },
   world_seed_update: { limit: 25, windowMs: 1000 },
@@ -354,12 +355,40 @@ wss.on("connection", (socket) => {
       const message = String(data.message || "").trim().slice(0, MAX_CHAT_LENGTH);
       if (message.length === 0) return;
 
+      if (message.toLowerCase().startsWith("/bc ")) {
+        const broadcastMessage = message.slice(4).trim().slice(0, MAX_CHAT_LENGTH);
+        if (broadcastMessage.length > 0) {
+          broadcastToAuthenticatedPlayers({
+            type: "broadcast",
+            player_id: playerId,
+            name: player.name,
+            message: broadcastMessage,
+          });
+        }
+        return;
+      }
+
       broadcastToWorld(player.world, {
         type: "chat",
         player_id: playerId,
         name: player.name,
         message,
         world: player.world,
+      });
+      return;
+    }
+
+    if (data.type === "broadcast") {
+      if (!requireAuthenticated(socket, player, "broadcast")) return;
+
+      const message = String(data.message || "").trim().slice(0, MAX_CHAT_LENGTH);
+      if (message.length === 0) return;
+
+      broadcastToAuthenticatedPlayers({
+        type: "broadcast",
+        player_id: playerId,
+        name: player.name,
+        message,
       });
       return;
     }
@@ -5945,6 +5974,20 @@ function broadcastToWorld(worldName, message, excludePlayerId = "") {
     const player = players.get(client.playerId);
     if (!player) continue;
     if (player.world !== worldName) continue;
+
+    client.send(raw);
+  }
+}
+
+function broadcastToAuthenticatedPlayers(message, excludePlayerId = "") {
+  const raw = JSON.stringify(message);
+
+  for (const client of wss.clients) {
+    if (client.readyState !== WebSocket.OPEN) continue;
+    if (client.playerId === excludePlayerId) continue;
+
+    const player = players.get(client.playerId);
+    if (!player || !player.authenticated) continue;
 
     client.send(raw);
   }
