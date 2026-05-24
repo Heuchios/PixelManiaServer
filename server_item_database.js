@@ -191,6 +191,13 @@ const ITEMS = Object.freeze({
     interact_rules: { can_interact: true, interaction_message: "Open safe." },
     permissions: { world_owner_only: true },
   }),
+  crafting_station: block({
+    rarity: "uncommon",
+    block_health: 5,
+    placeable: false,
+    shop_price: 80,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
   crafting_station_left: block({
     rarity: "uncommon",
     block_health: 5,
