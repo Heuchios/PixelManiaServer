@@ -151,6 +151,7 @@ wss.on("connection", (socket) => {
     x: 0,
     y: 0,
     facing: 1,
+    animation_state: "idle",
     equipment_slots: {},
     last_position_at: 0,
   });
@@ -342,6 +343,7 @@ wss.on("connection", (socket) => {
         y: player.y,
         facing: player.facing,
         world: player.world,
+        animation_state: player.animation_state || "idle",
         equipment_slots: player.equipment_slots,
       }, playerId);
 
@@ -613,6 +615,7 @@ wss.on("connection", (socket) => {
       player.x = position.x;
       player.y = position.y;
       player.facing = position.facing;
+      player.animation_state = sanitizePlayerAnimationState(data.animation_state);
 
       if (data.equipment_slots && typeof data.equipment_slots === "object" && !Array.isArray(data.equipment_slots)) {
         player.equipment_slots = sanitizeEquipmentSlots(data.equipment_slots, player.account_username);
@@ -631,6 +634,7 @@ wss.on("connection", (socket) => {
         y: player.y,
         facing: player.facing,
         world: position.world,
+        animation_state: player.animation_state,
         equipment_slots: player.equipment_slots,
       }, playerId);
       return;
@@ -4223,6 +4227,12 @@ function sanitizePlayerPosition(data, player) {
   };
 }
 
+function sanitizePlayerAnimationState(value) {
+  const clean = String(value || "").trim().toLowerCase();
+  if (["idle", "walk", "jump"].includes(clean)) return clean;
+  return "idle";
+}
+
 function acceptPlayerMovement(socket, player, position) {
   const now = Date.now();
   const lastAt = Number(player.last_position_at || 0);
@@ -5947,6 +5957,7 @@ function getPlayersInWorld(worldName, excludePlayerId = "") {
       y: player.y,
       facing: player.facing,
       world: player.world,
+      animation_state: player.animation_state || "idle",
       equipment_slots: player.equipment_slots || {},
     });
   }
