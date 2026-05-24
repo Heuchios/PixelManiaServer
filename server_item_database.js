@@ -6,6 +6,7 @@ const CATEGORY_TO_FIELD = Object.freeze({
   tool: "tool_inventory",
   back: "back_inventory",
   shirt: "shirt_inventory",
+  pants: "pants_inventory",
   currency: "currency_inventory",
   material: "material_inventory",
   lure: "lure_inventory",
@@ -294,6 +295,13 @@ const ITEMS = Object.freeze({
   purple_shirt: item("shirt", {
     rarity: "common",
     equipment_slot: "shirt",
+    equipable: true,
+    shop_price: 50,
+  }),
+
+  purple_pants: item("pants", {
+    rarity: "common",
+    equipment_slot: "pants",
     equipable: true,
     shop_price: 50,
   }),
