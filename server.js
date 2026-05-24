@@ -11,7 +11,7 @@ const ItemDatabase = require("./server_item_database");
 const HOST = process.env.HOST || "0.0.0.0";
 const PORT = Math.max(1, Math.trunc(Number(process.env.PORT) || 8080));
 const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, "");
-const SERVER_CLIENT_VERSION = String(process.env.SERVER_CLIENT_VERSION || "1.0.0").trim() || "1.0.0";
+const SERVER_CLIENT_VERSION = String(process.env.SERVER_CLIENT_VERSION || "1.0.1").trim() || "1.0.1";
 const MIN_CLIENT_VERSION = String(process.env.MIN_CLIENT_VERSION || SERVER_CLIENT_VERSION).trim() || SERVER_CLIENT_VERSION;
 const UPDATE_URL = String(process.env.UPDATE_URL || "https://pixelmaniagame.com").trim() || "https://pixelmaniagame.com";
 const DATA_FOLDER = process.env.PIXELMANIA_DATA_DIR ? path.resolve(process.env.PIXELMANIA_DATA_DIR) : __dirname;
@@ -59,6 +59,7 @@ const SERVER_SEED_GROW_TIME_SECONDS = Math.max(1, Number(process.env.SEED_GROW_T
 const MATURE_SEED_EXTRA_DROP_CHANCE = Math.max(0, Math.min(1, Number(process.env.MATURE_SEED_EXTRA_DROP_CHANCE) || 0.65));
 const FISHING_SESSION_TTL_MS = Math.max(10000, Math.trunc(Number(process.env.FISHING_SESSION_TTL_MS) || 90000));
 const MIN_BLOCK_BREAK_INTERVAL_MS = Math.max(50, Math.trunc(Number(process.env.MIN_BLOCK_BREAK_INTERVAL_MS) || 125));
+const BLOCK_DAMAGE_RESET_MS = Math.max(500, Math.trunc(Number(process.env.BLOCK_DAMAGE_RESET_MS) || 3500));
 const EMAIL_VERIFICATION_TTL_MS = Math.max(5 * 60 * 1000, Math.trunc(Number(process.env.EMAIL_VERIFICATION_TTL_MINUTES) || 60) * 60 * 1000);
 const SMTP_HOST = String(process.env.SMTP_HOST || "").trim();
 const SMTP_PORT = Math.max(1, Math.trunc(Number(process.env.SMTP_PORT) || 587));
@@ -124,6 +125,7 @@ const activeAccountSessions = new Map();
 const activeTrades = new Map();
 const tradeByPlayerId = new Map();
 const activeFishingSessions = new Map();
+const blockDamage = new Map();
 const worldSaveTimers = new Map();
 const playerSaveTimers = new Map();
 let accountsSaveTimer = null;
@@ -427,7 +429,7 @@ wss.on("connection", (socket) => {
         sendActionRejected(socket, "world_block_update", "This world is locked.");
         return;
       }
-      if (update.action === "break" && update.block_type === "world_lock" && isWorldLocked(worldName) && !canPlayerControlWorldLock(player, worldName)) {
+      if ((update.action === "break" || update.action === "hit") && update.block_type === "world_lock" && isWorldLocked(worldName) && !canPlayerControlWorldLock(player, worldName)) {
         sendActionRejected(socket, "world_block_update", "Only the world lock owner can break the lock.");
         return;
       }
@@ -438,6 +440,7 @@ wss.on("connection", (socket) => {
 
       const validation = validateBlockUpdateAgainstServerState(socket, player, worldName, update);
       if (!validation.ok) return;
+      if (validation.pendingHit) return;
 
       applyBlockUpdateToWorldState(worldName, update);
       if (update.action === "place" && isVendBlockType(update.block_type)) {
@@ -2453,7 +2456,7 @@ function canPlayerManageVend(player, vend, worldName = "") {
 
 function canPlayerBreakVendingMachine(player, worldName, update) {
   if (!player || !player.authenticated) return false;
-  if (!update || update.action !== "break" || update.layer === "background") return false;
+  if (!update || (update.action !== "break" && update.action !== "hit") || update.layer === "background") return false;
 
   const state = ensureWorldState(worldName);
   const block = state.foreground.get(gridKey(update.x, update.y));
@@ -2937,7 +2940,7 @@ function canPlayerManageSafe(player, safe, worldName = "") {
 
 function canPlayerBreakSafe(player, worldName, update) {
   if (!player || !player.authenticated) return false;
-  if (!update || update.action !== "break" || update.layer === "background") return false;
+  if (!update || (update.action !== "break" && update.action !== "hit") || update.layer === "background") return false;
 
   const state = ensureWorldState(worldName);
   const block = state.foreground.get(gridKey(update.x, update.y));
@@ -3969,6 +3972,52 @@ function validateBlockBreakPace(socket, player) {
   return true;
 }
 
+function makeBlockDamageKey(worldName, update) {
+  return `${cleanWorld(worldName)}:${update.layer}:${Math.trunc(Number(update.x) || 0)},${Math.trunc(Number(update.y) || 0)}:${clampString(update.block_type || "")}`;
+}
+
+function clearServerBlockDamage(worldName, update) {
+  if (!update) return;
+  blockDamage.delete(makeBlockDamageKey(worldName, update));
+}
+
+function getPlayerBreakPower(player, blockType) {
+  const handItem = clampString(player?.equipment_slots?.hand || "");
+  return ItemDatabase.getBreakPower(handItem, blockType);
+}
+
+function applyServerBlockDamage(player, worldName, update) {
+  const key = makeBlockDamageKey(worldName, update);
+  const now = Date.now();
+  const requiredDamage = ItemDatabase.getBlockHealth(update.block_type);
+  const previous = blockDamage.get(key);
+  const currentDamage = previous && now - previous.updatedAt <= BLOCK_DAMAGE_RESET_MS
+    ? Math.max(0, Math.trunc(Number(previous.damage) || 0))
+    : 0;
+  const nextDamage = Math.min(requiredDamage, currentDamage + getPlayerBreakPower(player, update.block_type));
+
+  if (nextDamage < requiredDamage) {
+    blockDamage.set(key, {
+      damage: nextDamage,
+      updatedAt: now,
+    });
+    return {
+      ok: true,
+      shouldBreak: false,
+      damage: nextDamage,
+      required: requiredDamage,
+    };
+  }
+
+  blockDamage.delete(key);
+  return {
+    ok: true,
+    shouldBreak: true,
+    damage: requiredDamage,
+    required: requiredDamage,
+  };
+}
+
 function getGemDropRangeForRarity(rarity) {
   switch (String(rarity || "common")) {
     case "uncommon":
@@ -4127,7 +4176,7 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
     return { ok: false };
   }
 
-  if (update.action === "break") {
+  if (update.action === "break" || update.action === "hit") {
     const targetLayer = update.layer === "background" ? state.background : state.foreground;
     const removedLayer = update.layer === "background" ? state.removed_background : state.removed_foreground;
     const serverBlock = targetLayer.get(key);
@@ -4170,12 +4219,36 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
       return { ok: false };
     }
 
-    if (isVendBlockType(update.block_type)) {
+    const isVendBreak = isVendBlockType(update.block_type);
+    const isSafeBreak = isSafeBlockType(update.block_type);
+
+    if (isVendBreak) {
       if (!canPlayerBreakVendingMachine(player, worldName, update)) {
         sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can break vending machines." : "Lock the world before breaking vending machines.");
         return { ok: false };
       }
+    }
 
+    if (isSafeBreak) {
+      if (!canPlayerBreakSafe(player, worldName, update)) {
+        sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can break safes." : "Lock the world before breaking safes.");
+        return { ok: false };
+      }
+    }
+
+    const damageResult = applyServerBlockDamage(player, worldName, update);
+    if (!damageResult.ok) return { ok: false };
+    if (!damageResult.shouldBreak) {
+      if (update.action === "break") {
+        sendActionRejected(socket, "world_block_update", `Keep breaking that block (${damageResult.damage}/${damageResult.required}).`);
+        return { ok: false };
+      }
+      return { ok: true, pendingHit: true };
+    }
+
+    update.action = "break";
+
+    if (isVendBreak) {
       const vendReturn = prepareVendBreakInventoryReturn(socket, player, worldName, update);
       if (!vendReturn.ok) return { ok: false };
       return {
@@ -4185,12 +4258,7 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
       };
     }
 
-    if (isSafeBlockType(update.block_type)) {
-      if (!canPlayerBreakSafe(player, worldName, update)) {
-        sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can break safes." : "Lock the world before breaking safes.");
-        return { ok: false };
-      }
-
+    if (isSafeBreak) {
       const safeReturn = prepareSafeBreakInventoryReturn(socket, player, worldName, update);
       if (!safeReturn.ok) return { ok: false };
       return {
@@ -5136,7 +5204,7 @@ function loadDropsIntoMap(target, rawEntries) {
 
 function sanitizeBlockUpdate(data, worldName) {
   const action = String(data.action || "").trim();
-  if (action !== "place" && action !== "break") return null;
+  if (action !== "place" && action !== "break" && action !== "hit") return null;
 
   const layer = String(data.layer || "foreground").trim() === "background" ? "background" : "foreground";
   const x = Number(data.x);
@@ -5197,6 +5265,7 @@ function applyBlockUpdateToWorldState(worldName, update) {
   const removed = update.layer === "background" ? state.removed_background : state.removed_foreground;
 
   if (update.action === "place") {
+    clearServerBlockDamage(worldName, update);
     target.set(key, {
       x: update.x,
       y: update.y,
@@ -5210,6 +5279,7 @@ function applyBlockUpdateToWorldState(worldName, update) {
   }
 
   if (update.action === "break") {
+    clearServerBlockDamage(worldName, update);
     target.delete(key);
     state.interactions.delete(key);
     removed.set(key, {

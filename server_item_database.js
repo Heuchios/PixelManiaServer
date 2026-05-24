@@ -575,6 +575,28 @@ function canBreakBlock(itemId) {
   return Boolean(definition.breakable);
 }
 
+function getBlockHealth(itemId) {
+  const definition = getItemDefinition(itemId);
+  if (!definition || definition.category !== "block") return 1;
+  return Math.max(1, Math.trunc(Number(definition.block_health) || 1));
+}
+
+function getBreakPower(toolId, blockType = "") {
+  const definition = getItemDefinition(toolId);
+  if (!definition || definition.category !== "tool") return 1;
+
+  const basePower = Math.max(1, Math.trunc(Number(definition.break_power) || 1));
+  const effectiveBlocks = Array.isArray(definition.effective_blocks)
+    ? definition.effective_blocks.map(cleanItemId)
+    : [];
+
+  if (effectiveBlocks.includes(cleanItemId(blockType))) {
+    return Math.max(basePower, Math.trunc(Number(definition.effective_break_power) || basePower));
+  }
+
+  return basePower;
+}
+
 function getPlacementCost(itemId) {
   const definition = getItemDefinition(itemId);
   if (!definition || definition.category !== "block") return null;
@@ -617,6 +639,8 @@ module.exports = {
   getInventoryFieldForCategory,
   getInventoryFieldForItem,
   getItemDefinition,
+  getBlockHealth,
+  getBreakPower,
   getPlaceLayer,
   getPlacementCost,
   getSpliceKey,
