@@ -138,6 +138,7 @@ const ITEMS = Object.freeze({
     rarity: "legendary",
     block_health: 8,
     seed: "",
+    shop_price: 3500,
     tradeable: true,
     dropable: true,
     permissions: { owner_controls_lock: true },

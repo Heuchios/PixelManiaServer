@@ -101,6 +101,7 @@ const MESSAGE_RATE_LIMITS = {
   player_position: { limit: 75, windowMs: 1000 },
 };
 const SHOP_CATALOG = new Map([
+  ["world_lock", { item_id: "world_lock", item_category: "block", amount: 1, price: 3500 }],
   ["crafting_station", { item_id: "crafting_station", item_category: "block", amount: 1, price: 80 }],
   ["vend_empty", { item_id: "vend_empty", item_category: "block", amount: 1, price: 7500 }],
   ["safe", { item_id: "safe", item_category: "block", amount: 1, price: 7500 }],
