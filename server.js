@@ -55,6 +55,7 @@ const SAFE_SLOT_COUNT = 10;
 const SERVER_SEED_GROW_TIME_SECONDS = Math.max(1, Number(process.env.SEED_GROW_TIME_SECONDS) || 8);
 const MATURE_SEED_EXTRA_DROP_CHANCE = Math.max(0, Math.min(1, Number(process.env.MATURE_SEED_EXTRA_DROP_CHANCE) || 0.65));
 const FISHING_SESSION_TTL_MS = Math.max(10000, Math.trunc(Number(process.env.FISHING_SESSION_TTL_MS) || 90000));
+const MIN_BLOCK_BREAK_INTERVAL_MS = Math.max(50, Math.trunc(Number(process.env.MIN_BLOCK_BREAK_INTERVAL_MS) || 125));
 const EMAIL_VERIFICATION_TTL_MS = Math.max(5 * 60 * 1000, Math.trunc(Number(process.env.EMAIL_VERIFICATION_TTL_MINUTES) || 60) * 60 * 1000);
 const SMTP_HOST = String(process.env.SMTP_HOST || "").trim();
 const SMTP_PORT = Math.max(1, Math.trunc(Number(process.env.SMTP_PORT) || 587));
@@ -156,6 +157,7 @@ wss.on("connection", (socket) => {
     animation_state: "idle",
     equipment_slots: {},
     last_position_at: 0,
+    last_block_break_at: 0,
   });
 
   socket.playerId = playerId;
@@ -923,6 +925,10 @@ function getPlayerSavePath(username) {
 
 function makeRequestId(data) {
   return String(data.request_id || "").trim();
+}
+
+function cloneJson(value) {
+  return JSON.parse(JSON.stringify(value || {}));
 }
 
 function validateUsername(value) {
@@ -1954,12 +1960,14 @@ function handleTradeCancel(socket, player, data) {
 function validateFullTradeInventory(trade, stateA, stateB) {
   const offersA = getTradeOfferTotals(trade.offers[trade.requester_id] || makeTradeSlots());
   const offersB = getTradeOfferTotals(trade.offers[trade.target_id] || makeTradeSlots());
+  const stagedA = cloneJson(stateA);
+  const stagedB = cloneJson(stateB);
 
   for (const item of offersA) {
     if (!ItemDatabase.isTradeableItem(item.item_id)) {
       return { ok: false, message: `${item.item_id} cannot be traded.` };
     }
-    if (getInventoryCount(stateA, item.item_id, item.item_category) < item.amount) {
+    if (!spendItemFromState(stagedA, item.item_id, item.item_category, item.amount)) {
       return { ok: false, message: `${trade.requester_username} no longer has enough ${item.item_id}.` };
     }
   }
@@ -1968,23 +1976,51 @@ function validateFullTradeInventory(trade, stateA, stateB) {
     if (!ItemDatabase.isTradeableItem(item.item_id)) {
       return { ok: false, message: `${item.item_id} cannot be traded.` };
     }
-    if (getInventoryCount(stateB, item.item_id, item.item_category) < item.amount) {
+    if (!spendItemFromState(stagedB, item.item_id, item.item_category, item.amount)) {
       return { ok: false, message: `${trade.target_username} no longer has enough ${item.item_id}.` };
     }
+  }
+
+  for (const item of offersA) {
+    if (!canAddItemToState(stagedB, item.item_id, item.item_category, item.amount)) {
+      return { ok: false, message: `${trade.target_username} cannot hold ${item.item_id}.` };
+    }
+    addItemToState(stagedB, item.item_id, item.item_category, item.amount);
+  }
+
+  for (const item of offersB) {
+    if (!canAddItemToState(stagedA, item.item_id, item.item_category, item.amount)) {
+      return { ok: false, message: `${trade.requester_username} cannot hold ${item.item_id}.` };
+    }
+    addItemToState(stagedA, item.item_id, item.item_category, item.amount);
   }
 
   return { ok: true, offersA, offersB };
 }
 
-function applyTradeItems(fromState, toState, items) {
-  for (const item of items) {
-    if (!spendItemFromState(fromState, item.item_id, item.item_category, item.amount)) {
+function applyValidatedTrade(stateA, stateB, offersA, offersB) {
+  for (const item of offersA) {
+    if (!spendItemFromState(stateA, item.item_id, item.item_category, item.amount)) {
       return false;
     }
   }
 
-  for (const item of items) {
-    addItemToState(toState, item.item_id, item.item_category, item.amount);
+  for (const item of offersB) {
+    if (!spendItemFromState(stateB, item.item_id, item.item_category, item.amount)) {
+      return false;
+    }
+  }
+
+  for (const item of offersA) {
+    if (!addItemToState(stateB, item.item_id, item.item_category, item.amount)) {
+      return false;
+    }
+  }
+
+  for (const item of offersB) {
+    if (!addItemToState(stateA, item.item_id, item.item_category, item.amount)) {
+      return false;
+    }
   }
 
   return true;
@@ -2011,7 +2047,7 @@ function executeTrade(trade) {
     return;
   }
 
-  if (!applyTradeItems(stateA, stateB, validation.offersA) || !applyTradeItems(stateB, stateA, validation.offersB)) {
+  if (!applyValidatedTrade(stateA, stateB, validation.offersA, validation.offersB)) {
     cancelTrade(trade, "Trade canceled because inventory changed.");
     return;
   }
@@ -3295,6 +3331,11 @@ function rollFishingReward(lureId) {
   };
 }
 
+function getFishingServerCatchChance(difficulty) {
+  const safeDifficulty = clampInteger(difficulty || 1, 1, 10);
+  return Math.max(0.7, Math.min(0.98, 1.02 - safeDifficulty * 0.035));
+}
+
 function handleFishingStartTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
   const worldName = getTransactionWorldName(player, data);
@@ -3385,7 +3426,7 @@ function handleFishingCompleteTransaction(socket, player, data) {
     return;
   }
 
-  const success = Boolean(data.success);
+  const success = Boolean(data.success) && randomChance(getFishingServerCatchChance(session.difficulty));
   if (!success) {
     sendInventoryTransactionResult(socket, {
       ok: true,
@@ -3847,6 +3888,20 @@ function randomRangeInclusive(min, max) {
   return crypto.randomInt(safeMin, safeMax + 1);
 }
 
+function validateBlockBreakPace(socket, player) {
+  if (isAdmin(player)) return true;
+
+  const now = Date.now();
+  const lastBreakAt = Number(player.last_block_break_at || 0);
+  if (lastBreakAt > 0 && now - lastBreakAt < MIN_BLOCK_BREAK_INTERVAL_MS) {
+    sendActionRejected(socket, "world_block_update", "Slow down a little.");
+    return false;
+  }
+
+  player.last_block_break_at = now;
+  return true;
+}
+
 function getGemDropRangeForRarity(rarity) {
   switch (String(rarity || "common")) {
     case "uncommon":
@@ -4041,6 +4096,10 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
 
     if (update.block_type === "world_lock" && hasWorldLockProtectedStorageBlocks(worldName)) {
       sendActionRejected(socket, "world_block_update", "Remove all Safes and vending machines before breaking the World Lock.");
+      return { ok: false };
+    }
+
+    if (!validateBlockBreakPace(socket, player)) {
       return { ok: false };
     }
 
