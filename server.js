@@ -18,6 +18,7 @@ const DATA_FOLDER = process.env.PIXELMANIA_DATA_DIR ? path.resolve(process.env.P
 const WORLD_SAVE_FOLDER = process.env.WORLD_SAVE_FOLDER ? path.resolve(process.env.WORLD_SAVE_FOLDER) : path.join(DATA_FOLDER, "worlds");
 const PLAYER_SAVE_FOLDER = process.env.PLAYER_SAVE_FOLDER ? path.resolve(process.env.PLAYER_SAVE_FOLDER) : path.join(DATA_FOLDER, "players");
 const ACCOUNTS_SAVE_PATH = process.env.ACCOUNTS_SAVE_PATH ? path.resolve(process.env.ACCOUNTS_SAVE_PATH) : path.join(DATA_FOLDER, "accounts.json");
+const ADMIN_LOG_PATH = process.env.ADMIN_LOG_PATH ? path.resolve(process.env.ADMIN_LOG_PATH) : path.join(DATA_FOLDER, "admin_actions.log");
 const LEGACY_DATA_FOLDERS = [
   path.join(__dirname, "node_modules"),
 ];
@@ -61,6 +62,11 @@ const FISHING_SESSION_TTL_MS = Math.max(10000, Math.trunc(Number(process.env.FIS
 const MIN_BLOCK_BREAK_INTERVAL_MS = Math.max(50, Math.trunc(Number(process.env.MIN_BLOCK_BREAK_INTERVAL_MS) || 125));
 const BLOCK_DAMAGE_RESET_MS = Math.max(500, Math.trunc(Number(process.env.BLOCK_DAMAGE_RESET_MS) || 3500));
 const EMAIL_VERIFICATION_TTL_MS = Math.max(5 * 60 * 1000, Math.trunc(Number(process.env.EMAIL_VERIFICATION_TTL_MINUTES) || 60) * 60 * 1000);
+const SESSION_TOKEN_TTL_MS = Math.max(15 * 60 * 1000, Math.trunc(Number(process.env.SESSION_TOKEN_TTL_MINUTES) || 1440) * 60 * 1000);
+const DEV_PIN = String(process.env.DEV_PIN || "").trim();
+const DEV_PIN_HASH = String(process.env.DEV_PIN_HASH || "").trim().toLowerCase();
+const DEV_PIN_REQUIRED = String(process.env.DEV_PIN_REQUIRED || "false").trim().toLowerCase() === "true" && (DEV_PIN !== "" || DEV_PIN_HASH !== "");
+const DEV_PIN_UNLOCK_TTL_MS = Math.max(60 * 1000, Math.trunc(Number(process.env.DEV_PIN_UNLOCK_TTL_MINUTES) || 15) * 60 * 1000);
 const SMTP_HOST = String(process.env.SMTP_HOST || "").trim();
 const SMTP_PORT = Math.max(1, Math.trunc(Number(process.env.SMTP_PORT) || 587));
 const SMTP_SECURE = String(process.env.SMTP_SECURE || "").trim().toLowerCase() === "true";
@@ -86,6 +92,7 @@ const MESSAGE_RATE_LIMITS = {
   join_world: { limit: 12, windowMs: 10000 },
   chat: { limit: 8, windowMs: 5000 },
   broadcast: { limit: 3, windowMs: 10000 },
+  developer_pin_unlock: { limit: 5, windowMs: 15000 },
   developer_command_request: { limit: 5, windowMs: 5000 },
   world_block_update: { limit: 35, windowMs: 1000 },
   world_seed_update: { limit: 25, windowMs: 1000 },
@@ -166,6 +173,8 @@ wss.on("connection", (socket) => {
     client_version: "",
     last_position_at: 0,
     last_block_break_at: 0,
+    noclip_enabled: false,
+    developer_pin_unlocked_until: 0,
   });
 
   socket.playerId = playerId;
@@ -411,6 +420,11 @@ wss.on("connection", (socket) => {
         name: player.name,
         message,
       });
+      return;
+    }
+
+    if (data.type === "developer_pin_unlock") {
+      handleDeveloperPinUnlock(socket, player, data);
       return;
     }
 
@@ -771,6 +785,7 @@ function handleHttpRequest(request, response) {
 function ensureDataFolders() {
   fs.mkdirSync(WORLD_SAVE_FOLDER, { recursive: true });
   fs.mkdirSync(PLAYER_SAVE_FOLDER, { recursive: true });
+  fs.mkdirSync(path.dirname(ADMIN_LOG_PATH), { recursive: true });
   migrateLegacyDataFolders();
 }
 
@@ -1066,9 +1081,30 @@ function makeTokenHash(token) {
 function issueSessionToken(account) {
   const token = crypto.randomBytes(32).toString("hex");
   account.session_token_hash = makeTokenHash(token);
+  account.session_token_expires_at = new Date(Date.now() + SESSION_TOKEN_TTL_MS).toISOString();
   account.last_seen_at = new Date().toISOString();
   queueAccountsSave();
   return token;
+}
+
+function clearSessionToken(account) {
+  if (!account) return;
+  account.session_token_hash = "";
+  account.session_token_expires_at = "";
+  queueAccountsSave();
+}
+
+function isSessionTokenValid(account, token) {
+  if (!account || !account.session_token_hash) return false;
+  if (account.session_token_hash !== makeTokenHash(token)) return false;
+
+  const expiresAt = Date.parse(String(account.session_token_expires_at || ""));
+  if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) {
+    clearSessionToken(account);
+    return false;
+  }
+
+  return true;
 }
 
 function isAccountEmailVerified(account) {
@@ -1176,7 +1212,7 @@ function verifyEmailToken(token) {
     account.email_verified_at = new Date().toISOString();
     account.email_verification_token_hash = "";
     account.email_verification_expires_at = "";
-    account.session_token_hash = "";
+    clearSessionToken(account);
     queueAccountsSave();
     return { ok: true, message: "Your PixelMania email is verified. You can return to the game and sign on." };
   }
@@ -1294,6 +1330,7 @@ function sendAuthError(socket, requestId, action, message, extra = {}) {
 }
 
 function sendAuthOk(socket, requestId, action, account, token) {
+  const role = getAccountRole(account.username);
   socket.send(JSON.stringify({
     type: "account_auth_ok",
     ok: true,
@@ -1302,8 +1339,11 @@ function sendAuthOk(socket, requestId, action, account, token) {
     username: account.username,
     email: cleanEmail(account.email || ""),
     session_token: token,
-    role: getAccountRole(account.username),
+    session_token_expires_at: String(account.session_token_expires_at || ""),
+    role,
     email_verified: isAccountEmailVerified(account),
+    developer_pin_required: isDeveloperRole(role) && DEV_PIN_REQUIRED,
+    developer_pin_unlocked: !DEV_PIN_REQUIRED,
   }));
 }
 
@@ -1469,7 +1509,7 @@ function handleAccountTokenLogin(socket, player, data) {
   }
 
   const account = accounts.get(accountKey(username));
-  if (!account || !account.session_token_hash || account.session_token_hash !== makeTokenHash(token)) {
+  if (!isSessionTokenValid(account, token)) {
     sendAuthError(socket, requestId, "token_login", "Saved login expired. Sign on again.");
     return;
   }
@@ -4447,7 +4487,7 @@ function acceptPlayerMovement(socket, player, position) {
   const now = Date.now();
   const lastAt = Number(player.last_position_at || 0);
 
-  if (!lastAt || isAdmin(player)) {
+  if (!lastAt || (isAdmin(player) && player.noclip_enabled)) {
     player.last_position_at = now;
     return true;
   }
@@ -4465,23 +4505,69 @@ function acceptPlayerMovement(socket, player, position) {
   return true;
 }
 
-function sendDeveloperDenied(socket, requestId, command, message) {
-  socket.send(JSON.stringify({
+function getSocketAddress(socket) {
+  return String(socket?._socket?.remoteAddress || socket?.remoteAddress || "").replace(/^::ffff:/, "");
+}
+
+function logAdminAction(socket, player, action, details = {}, ok = true, message = "") {
+  const username = cleanAccountName(player?.account_username || player?.name || "");
+  const entry = {
+    at: new Date().toISOString(),
+    admin_username: username,
+    admin_role: getAccountRole(username),
+    player_id: String(player?.id || ""),
+    ip: getSocketAddress(socket),
+    action: String(action || "admin_action"),
+    ok: Boolean(ok),
+    message: String(message || ""),
+    ...details,
+  };
+
+  fs.appendFile(ADMIN_LOG_PATH, `${JSON.stringify(entry)}\n`, (error) => {
+    if (error) console.warn("Could not write admin action log:", error.message);
+  });
+
+  console.log(`[ADMIN] ${entry.at} ${entry.admin_username || "unknown"} ${entry.action} ${entry.ok ? "ok" : "denied"} ${entry.message}`);
+}
+
+function safeTimingEqualString(a, b) {
+  const left = Buffer.from(String(a || ""));
+  const right = Buffer.from(String(b || ""));
+  if (left.length !== right.length) return false;
+  return crypto.timingSafeEqual(left, right);
+}
+
+function verifyDeveloperPin(pin) {
+  const cleanPin = String(pin || "").trim();
+  if (cleanPin === "") return false;
+  if (DEV_PIN !== "" && safeTimingEqualString(cleanPin, DEV_PIN)) return true;
+  if (DEV_PIN_HASH !== "" && safeTimingEqualString(makeTokenHash(cleanPin), DEV_PIN_HASH)) return true;
+  return false;
+}
+
+function isDeveloperPinUnlocked(player) {
+  if (!DEV_PIN_REQUIRED) return true;
+  return Boolean(player && Number(player.developer_pin_unlocked_until || 0) > Date.now());
+}
+
+function sendDeveloperDenied(socket, requestId, command, message, extra = {}) {
+  sendJson(socket, {
     type: "developer_command_denied",
     request_id: requestId,
     command,
     message,
-  }));
+    ...extra,
+  });
 }
 
 function sendDeveloperApproved(socket, requestId, command, message = "Server approved developer command.", extra = {}) {
-  socket.send(JSON.stringify({
+  sendJson(socket, {
     type: "developer_command_approved",
     request_id: requestId,
     command,
     message,
     ...extra,
-  }));
+  });
 }
 
 function splitCommand(command) {
@@ -4950,6 +5036,63 @@ function findOnlinePlayerByUsername(username) {
   return null;
 }
 
+function handleDeveloperPinUnlock(socket, player, data) {
+  if (!requireAuthenticated(socket, player, "unlock developer tools")) return;
+
+  const requestId = makeRequestId(data);
+  if (!isAdmin(player)) {
+    logAdminAction(socket, player, "developer_pin_unlock", { request_id: requestId }, false, "Developer PIN is only for admins.");
+    sendJson(socket, {
+      type: "developer_pin_unlock_result",
+      ok: false,
+      request_id: requestId,
+      message: "Developer PIN is only for admins.",
+      developer_pin_required: DEV_PIN_REQUIRED,
+      developer_pin_unlocked: false,
+    });
+    return;
+  }
+
+  if (!DEV_PIN_REQUIRED) {
+    player.developer_pin_unlocked_until = Date.now() + DEV_PIN_UNLOCK_TTL_MS;
+    logAdminAction(socket, player, "developer_pin_unlock", { request_id: requestId, pin_required: false }, true, "Developer PIN not required.");
+    sendJson(socket, {
+      type: "developer_pin_unlock_result",
+      ok: true,
+      request_id: requestId,
+      message: "Developer PIN is not required on this server.",
+      developer_pin_required: false,
+      developer_pin_unlocked: true,
+    });
+    return;
+  }
+
+  if (!verifyDeveloperPin(data.pin)) {
+    logAdminAction(socket, player, "developer_pin_unlock", { request_id: requestId }, false, "Invalid developer PIN.");
+    sendJson(socket, {
+      type: "developer_pin_unlock_result",
+      ok: false,
+      request_id: requestId,
+      message: "Invalid developer PIN.",
+      developer_pin_required: true,
+      developer_pin_unlocked: false,
+    });
+    return;
+  }
+
+  player.developer_pin_unlocked_until = Date.now() + DEV_PIN_UNLOCK_TTL_MS;
+  logAdminAction(socket, player, "developer_pin_unlock", { request_id: requestId }, true, "Developer PIN unlocked.");
+  sendJson(socket, {
+    type: "developer_pin_unlock_result",
+    ok: true,
+    request_id: requestId,
+    message: "Developer panel unlocked.",
+    developer_pin_required: true,
+    developer_pin_unlocked: true,
+    unlocked_until: new Date(player.developer_pin_unlocked_until).toISOString(),
+  });
+}
+
 function handleDeveloperCommandRequest(socket, player, data) {
   if (!requireAuthenticated(socket, player, "use admin commands")) return;
 
@@ -4957,20 +5100,41 @@ function handleDeveloperCommandRequest(socket, player, data) {
   const command = String(data.command || "").trim();
   if (command === "") return;
 
+  const commandName = getDeveloperCommandName(command);
+  const commandLogBase = {
+    request_id: requestId,
+    command,
+    command_name: commandName,
+    world: cleanWorld(data.world || player.world || "START"),
+  };
+
+  const deny = (message, details = {}, extra = {}) => {
+    logAdminAction(socket, player, "developer_command_denied", { ...commandLogBase, ...details }, false, message);
+    sendDeveloperDenied(socket, requestId, command, message, extra);
+  };
+
+  const approve = (message, details = {}, extra = {}) => {
+    logAdminAction(socket, player, `developer_${commandName || "command"}`, { ...commandLogBase, ...details }, true, message);
+    sendDeveloperApproved(socket, requestId, command, message, extra);
+  };
+
   if (!isAdmin(player)) {
-    sendDeveloperDenied(socket, requestId, command, "Developer commands are only available to admins.");
+    deny("Developer commands are only available to admins.");
     return;
   }
 
-  const commandName = getDeveloperCommandName(command);
+  if (!isDeveloperPinUnlocked(player)) {
+    deny("Developer PIN required.", { reason: "developer_pin_required" }, { requires_developer_pin: true });
+    return;
+  }
+
   if (commandName === "clear") {
     const commandWorld = getDeveloperCommandWorldName(player, data);
     const result = clearWorldByAdmin(commandWorld, data);
-    sendDeveloperApproved(
-      socket,
-      requestId,
-      command,
-      `Server cleared ${commandWorld}. Removed ${result.removedCount} saved objects and preserved ${result.protectedCount} protected blocks.`
+    approve(
+      `Server cleared ${commandWorld}. Removed ${result.removedCount} saved objects and preserved ${result.protectedCount} protected blocks.`,
+      { target_world: commandWorld, removed_count: result.removedCount, protected_count: result.protectedCount },
+      { command_type: "clear_world", target_world: commandWorld, removed_count: result.removedCount, protected_count: result.protectedCount }
     );
     return;
   }
@@ -4978,29 +5142,29 @@ function handleDeveloperCommandRequest(socket, player, data) {
   if (commandName === "resetworld" || commandName === "reset_world" || commandName === "reworld") {
     const commandWorld = getDeveloperCommandWorldName(player, data);
     resetWorldByAdmin(commandWorld);
-    sendDeveloperApproved(socket, requestId, command, `Server reset ${commandWorld}.`);
+    approve(`Server reset ${commandWorld}.`, { target_world: commandWorld }, { command_type: "reset_world", target_world: commandWorld });
     return;
   }
 
   const giveCommand = parseGiveCommand(data, command);
   if (giveCommand) {
     if (!ItemDatabase.hasItem(giveCommand.itemId)) {
-      sendDeveloperDenied(socket, requestId, command, "That item does not exist on the server.");
+      deny("That item does not exist on the server.", { target_username: giveCommand.targetUsername, item_id: giveCommand.itemId, amount: giveCommand.amount });
       return;
     }
 
     if (!ItemDatabase.isGrantableItem(giveCommand.itemId)) {
-      sendDeveloperDenied(socket, requestId, command, "That item cannot be granted directly.");
+      deny("That item cannot be granted directly.", { target_username: giveCommand.targetUsername, item_id: giveCommand.itemId, amount: giveCommand.amount });
       return;
     }
 
     if (!ItemDatabase.canStoreItemInCategory(giveCommand.itemId, giveCommand.itemCategory)) {
-      sendDeveloperDenied(socket, requestId, command, "That item category does not match the server database.");
+      deny("That item category does not match the server database.", { target_username: giveCommand.targetUsername, item_id: giveCommand.itemId, item_category: giveCommand.itemCategory, amount: giveCommand.amount });
       return;
     }
 
     if (!doesAccountExist(giveCommand.targetUsername)) {
-      sendDeveloperDenied(socket, requestId, command, "Target account does not exist.");
+      deny("Target account does not exist.", { target_username: giveCommand.targetUsername, item_id: giveCommand.itemId, amount: giveCommand.amount });
       return;
     }
 
@@ -5011,7 +5175,7 @@ function handleDeveloperCommandRequest(socket, player, data) {
       giveCommand.amount
     );
     if (!grant) {
-      sendDeveloperDenied(socket, requestId, command, "Could not save target inventory.");
+      deny("Could not save target inventory.", { target_username: giveCommand.targetUsername, item_id: giveCommand.itemId, item_category: giveCommand.itemCategory, amount: giveCommand.amount });
       return;
     }
 
@@ -5035,14 +5199,21 @@ function handleDeveloperCommandRequest(socket, player, data) {
       }));
     }
 
-    sendDeveloperApproved(
-      socket,
-      requestId,
-      command,
+    approve(
       accountKey(giveCommand.targetUsername) === accountKey(player.account_username)
-        ? "Grant saved to your server inventory."
-        : (target ? "Grant delivered by server." : "Grant saved to offline account."),
+        ? "Item delivered by server."
+        : (target ? "Item delivered to online player." : "Item saved to offline account."),
       {
+        target_username: cleanAccountName(giveCommand.targetUsername),
+        item_id: giveCommand.itemId,
+        item_category: giveCommand.itemCategory,
+        amount: giveCommand.amount,
+        delivery: accountKey(giveCommand.targetUsername) === accountKey(player.account_username)
+          ? "self_saved"
+          : (target ? "online" : "offline_saved"),
+      },
+      {
+        command_type: "give",
         delivery: accountKey(giveCommand.targetUsername) === accountKey(player.account_username)
           ? "self_saved"
           : (target ? "online" : "offline_saved"),
@@ -5061,17 +5232,17 @@ function handleDeveloperCommandRequest(socket, player, data) {
   const removeCommand = parseRemoveCommand(data, command);
   if (removeCommand) {
     if (!ItemDatabase.hasItem(removeCommand.itemId)) {
-      sendDeveloperDenied(socket, requestId, command, "That item does not exist on the server.");
+      deny("That item does not exist on the server.", { target_username: removeCommand.targetUsername, item_id: removeCommand.itemId, amount: removeCommand.amount });
       return;
     }
 
     if (!ItemDatabase.canStoreItemInCategory(removeCommand.itemId, removeCommand.itemCategory)) {
-      sendDeveloperDenied(socket, requestId, command, "That item category does not match the server database.");
+      deny("That item category does not match the server database.", { target_username: removeCommand.targetUsername, item_id: removeCommand.itemId, item_category: removeCommand.itemCategory, amount: removeCommand.amount });
       return;
     }
 
     if (!doesAccountExist(removeCommand.targetUsername)) {
-      sendDeveloperDenied(socket, requestId, command, "Target account does not exist.");
+      deny("Target account does not exist.", { target_username: removeCommand.targetUsername, item_id: removeCommand.itemId, amount: removeCommand.amount });
       return;
     }
 
@@ -5082,12 +5253,12 @@ function handleDeveloperCommandRequest(socket, player, data) {
       removeCommand.amount
     );
     if (!removal) {
-      sendDeveloperDenied(socket, requestId, command, "Could not save target inventory.");
+      deny("Could not save target inventory.", { target_username: removeCommand.targetUsername, item_id: removeCommand.itemId, item_category: removeCommand.itemCategory, amount: removeCommand.amount });
       return;
     }
 
     if (removal.removed <= 0) {
-      sendDeveloperDenied(socket, requestId, command, "Target does not have that item.");
+      deny("Target does not have that item.", { target_username: removeCommand.targetUsername, item_id: removeCommand.itemId, item_category: removeCommand.itemCategory, requested: removal.requested, removed: removal.removed });
       return;
     }
 
@@ -5107,11 +5278,16 @@ function handleDeveloperCommandRequest(socket, player, data) {
       ? ` Removed ${removal.removed}/${removal.requested} because that was all the target had.`
       : ` Removed ${removal.removed}.`;
 
-    sendDeveloperApproved(
-      socket,
-      requestId,
-      command,
+    approve(
       target ? `Server updated ${cleanAccountName(removeCommand.targetUsername)}.${partialMessage}` : `Server updated offline account.${partialMessage}`,
+      {
+        target_username: cleanAccountName(removeCommand.targetUsername),
+        item_id: removeCommand.itemId,
+        item_category: removal.itemCategory,
+        requested: removal.requested,
+        removed: removal.removed,
+        delivery: target ? "online" : "offline_saved",
+      },
       {
         command_type: "remove",
         target_username: cleanAccountName(removeCommand.targetUsername),
@@ -5127,7 +5303,170 @@ function handleDeveloperCommandRequest(socket, player, data) {
     return;
   }
 
-  sendDeveloperApproved(socket, requestId, command);
+  const parts = splitCommand(command);
+
+  if (commandName === "heal" || commandName === "health") {
+    const targetUsername = cleanAccountName(data.target_username || data.target || player.account_username);
+    const requestedHealth = commandName === "health"
+      ? clampInteger(data.amount || parts[1] || 3, 1, 100)
+      : clampInteger(data.amount || 3, 1, 100);
+
+    if (!doesAccountExist(targetUsername)) {
+      deny("Target account does not exist.", { target_username: targetUsername, amount: requestedHealth });
+      return;
+    }
+
+    const state = ensureWritablePlayerState(targetUsername);
+    if (!state) {
+      deny("Could not load target player state.", { target_username: targetUsername, amount: requestedHealth });
+      return;
+    }
+
+    state.player_health = requestedHealth;
+    persistPlayerInventoryChange(targetUsername, state);
+
+    const target = findOnlinePlayerByUsername(targetUsername);
+    if (target) {
+      sendPlayerState(target.socket, target.player.account_username);
+    }
+
+    approve(
+      target ? `Health set to ${requestedHealth}.` : `Health saved for offline account.`,
+      { target_username: targetUsername, amount: requestedHealth, delivery: target ? "online" : "offline_saved" },
+      { command_type: "health", target_username: targetUsername, amount: requestedHealth, player_data: state }
+    );
+    return;
+  }
+
+  if (commandName === "tp" || commandName === "teleport") {
+    if (parts.length < 3 && (data.x === undefined || data.y === undefined)) {
+      deny("Use: /tp x y");
+      return;
+    }
+
+    const gridX = Math.trunc(Number(data.grid_x ?? data.x ?? parts[1]));
+    const gridY = Math.trunc(Number(data.grid_y ?? data.y ?? parts[2]));
+    if (!isGridInWorld(gridX, gridY)) {
+      deny("Outside world bounds.", { grid_x: gridX, grid_y: gridY });
+      return;
+    }
+
+    const pos = getGridCenterPixels(gridX, gridY);
+    player.x = pos.x;
+    player.y = pos.y;
+    player.last_position_at = Date.now();
+
+    broadcastToWorld(player.world, {
+      type: "player_position",
+      player_id: player.id,
+      name: player.name,
+      x: player.x,
+      y: player.y,
+      facing: player.facing,
+      world: player.world,
+      animation_state: player.animation_state || "idle",
+      equipment_slots: player.equipment_slots || {},
+    }, player.id);
+
+    approve(
+      `Teleported to ${gridX}, ${gridY}.`,
+      { target_username: player.account_username, grid_x: gridX, grid_y: gridY, x: player.x, y: player.y },
+      { command_type: "teleport", grid_x: gridX, grid_y: gridY, x: player.x, y: player.y }
+    );
+    return;
+  }
+
+  if (commandName === "noc" || commandName === "noclip") {
+    player.noclip_enabled = data.enabled === undefined ? !player.noclip_enabled : Boolean(data.enabled);
+    approve(
+      player.noclip_enabled ? "Noclip enabled by server." : "Noclip disabled by server.",
+      { target_username: player.account_username, noclip_enabled: player.noclip_enabled },
+      { command_type: "noclip", noclip_enabled: player.noclip_enabled }
+    );
+    return;
+  }
+
+  if (commandName === "clear_drops") {
+    const commandWorld = getDeveloperCommandWorldName(player, data);
+    const state = ensureWorldState(commandWorld);
+    const removedCount = state.drops.size;
+    state.drops.clear();
+    replaceWorldStateAndBroadcast(commandWorld, state);
+    approve(
+      `Cleared ${removedCount} drops in ${commandWorld}.`,
+      { target_world: commandWorld, removed_count: removedCount },
+      { command_type: "clear_drops", target_world: commandWorld, removed_count: removedCount }
+    );
+    return;
+  }
+
+  if (commandName === "save") {
+    const commandWorld = getDeveloperCommandWorldName(player, data);
+    saveWorldState(commandWorld);
+    savePlayerState(player.account_username);
+    flushPendingSaves();
+    approve(`Saved ${commandWorld} and pending player/account data.`, { target_world: commandWorld }, { command_type: "save_world", target_world: commandWorld });
+    return;
+  }
+
+  if (commandName === "load" || commandName === "reload") {
+    const commandWorld = getDeveloperCommandWorldName(player, data);
+    worldStates.delete(commandWorld);
+    ensureWorldState(commandWorld);
+    broadcastToWorld(commandWorld, buildWorldStateMessage(commandWorld, { respawn_player: true }));
+    approve(`Reloaded ${commandWorld} from server storage.`, { target_world: commandWorld }, { command_type: "reload_world", target_world: commandWorld });
+    return;
+  }
+
+  if (commandName === "spawn") {
+    if (parts.length < 4) {
+      deny("Use: /spawn block x y");
+      return;
+    }
+
+    const itemId = clampString(data.item_id || data.block_type || parts[1]);
+    const gridX = Math.trunc(Number(data.grid_x ?? data.x ?? parts[2]));
+    const gridY = Math.trunc(Number(data.grid_y ?? data.y ?? parts[3]));
+    const commandWorld = getDeveloperCommandWorldName(player, data);
+    const state = ensureWorldState(commandWorld);
+    const key = gridKey(gridX, gridY);
+
+    if (!ItemDatabase.hasItem(itemId) || resolveInventoryCategory(itemId) !== "block") {
+      deny("That block does not exist on the server.", { item_id: itemId, target_world: commandWorld, grid_x: gridX, grid_y: gridY });
+      return;
+    }
+
+    if (!isGridInWorld(gridX, gridY)) {
+      deny("Outside world bounds.", { item_id: itemId, target_world: commandWorld, grid_x: gridX, grid_y: gridY });
+      return;
+    }
+
+    if (state.foreground.has(key)) {
+      deny("That position already has a foreground block.", { item_id: itemId, target_world: commandWorld, grid_x: gridX, grid_y: gridY });
+      return;
+    }
+
+    const update = {
+      type: "world_block_update",
+      action: "place",
+      layer: "foreground",
+      x: gridX,
+      y: gridY,
+      block_type: itemId,
+      world: commandWorld,
+    };
+    applyBlockUpdateToWorldState(commandWorld, update);
+    queueWorldSave(commandWorld);
+    broadcastToWorld(commandWorld, update);
+    approve(
+      `Spawned ${itemId} in ${commandWorld}.`,
+      { target_world: commandWorld, item_id: itemId, grid_x: gridX, grid_y: gridY },
+      { command_type: "spawn", target_world: commandWorld, item_id: itemId, grid_x: gridX, grid_y: gridY }
+    );
+    return;
+  }
+
+  deny("That developer command is not enabled server-side yet.");
 }
 
 function gridKey(x, y) {
@@ -6136,6 +6475,7 @@ function sanitizeAccountState(rawAccount) {
     password_salt: String(rawAccount.password_salt || ""),
     password_hash: passwordHash,
     session_token_hash: String(rawAccount.session_token_hash || ""),
+    session_token_expires_at: String(rawAccount.session_token_expires_at || ""),
     email_verified: hasEmailVerifiedField ? Boolean(rawAccount.email_verified) : passwordHash !== "",
     email_verified_at: String(rawAccount.email_verified_at || ""),
     email_verification_token_hash: String(rawAccount.email_verification_token_hash || ""),
@@ -6162,6 +6502,7 @@ function upsertAccount(rawAccount) {
     password_salt: existing.password_salt || incoming.password_salt || "",
     password_hash: existing.password_hash || incoming.password_hash || "",
     session_token_hash: existing.session_token_hash || incoming.session_token_hash || "",
+    session_token_expires_at: existing.session_token_expires_at || incoming.session_token_expires_at || "",
     email_verified: Object.prototype.hasOwnProperty.call(existing, "email_verified") ? Boolean(existing.email_verified) : Boolean(incoming.email_verified),
     email_verified_at: existing.email_verified_at || incoming.email_verified_at || "",
     email_verification_token_hash: existing.email_verification_token_hash || incoming.email_verification_token_hash || "",

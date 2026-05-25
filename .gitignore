@@ -4,4 +4,5 @@ worlds/
 accounts.json
 server_out.log
 server_err.log
+admin_actions.log
 .env
