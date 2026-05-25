@@ -3730,15 +3730,16 @@ function handleSeedHarvestTransaction(socket, player, data) {
   const dropPosition = getGridCenterPixels(grid.x, grid.y);
   const drops = [];
   if (isSeedMature(seed)) {
-    const blockType = getBlockTypeForSeed(seed.seed_type);
-    if (blockType !== "") {
-      drops.push({ item_id: blockType, item_category: "block", amount: 1, y_offset: 0 });
-    }
-    if (randomChance(MATURE_SEED_EXTRA_DROP_CHANCE)) {
-      drops.push({ item_id: seed.seed_type, item_category: "seed", amount: 1, y_offset: -8 });
-    }
     if (Boolean(seed.mutated) && ItemDatabase.hasItem(SEED_MUTATION_REWARD_ITEM_ID)) {
       drops.push({ item_id: SEED_MUTATION_REWARD_ITEM_ID, item_category: "tool", amount: 1, y_offset: -16 });
+    } else {
+      const blockType = getBlockTypeForSeed(seed.seed_type);
+      if (blockType !== "") {
+        drops.push({ item_id: blockType, item_category: "block", amount: 1, y_offset: 0 });
+      }
+      if (randomChance(MATURE_SEED_EXTRA_DROP_CHANCE)) {
+        drops.push({ item_id: seed.seed_type, item_category: "seed", amount: 1, y_offset: -8 });
+      }
     }
   } else {
     drops.push({ item_id: seed.seed_type, item_category: "seed", amount: 1, y_offset: 0 });
