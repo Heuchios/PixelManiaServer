@@ -498,7 +498,7 @@ wss.on("connection", (socket) => {
 
       applySeedUpdateToWorldState(worldName, update);
       queueWorldSave(worldName);
-      broadcastToWorld(worldName, update, playerId);
+      broadcastToWorld(worldName, update);
 
       if (validation.playerState) {
         sendInventoryTransactionResult(socket, {
