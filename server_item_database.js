@@ -322,6 +322,12 @@ const ITEMS = Object.freeze({
     equipable: true,
     shop_price: 5000,
   }),
+  sakura_sword: item("tool", {
+    rarity: "legendary",
+    equipment_slot: "hand",
+    equipable: true,
+    shop_price: 0,
+  }),
   pickaxe: item("tool", {
     rarity: "rare",
     equipment_slot: "hand",

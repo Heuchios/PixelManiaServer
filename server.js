@@ -58,6 +58,8 @@ const ENTRANCE_GATE_TYPE = "entrance_gate";
 const SAFE_SLOT_COUNT = 10;
 const SERVER_SEED_GROW_TIME_SECONDS = Math.max(1, Number(process.env.SEED_GROW_TIME_SECONDS) || 8);
 const MATURE_SEED_EXTRA_DROP_CHANCE = Math.max(0, Math.min(1, Number(process.env.MATURE_SEED_EXTRA_DROP_CHANCE) || 0.65));
+const SEED_MUTATION_CHANCE = Math.max(0, Math.min(1, Number(process.env.SEED_MUTATION_CHANCE) || 0.10));
+const SEED_MUTATION_REWARD_ITEM_ID = "sakura_sword";
 const FISHING_SESSION_TTL_MS = Math.max(10000, Math.trunc(Number(process.env.FISHING_SESSION_TTL_MS) || 90000));
 const MIN_BLOCK_BREAK_INTERVAL_MS = Math.max(50, Math.trunc(Number(process.env.MIN_BLOCK_BREAK_INTERVAL_MS) || 125));
 const BLOCK_DAMAGE_RESET_MS = Math.max(500, Math.trunc(Number(process.env.BLOCK_DAMAGE_RESET_MS) || 3500));
@@ -3610,6 +3612,7 @@ function serializeSeedForMessage(seed) {
     grow_time: growTime,
     max_grow_time: maxGrowTime,
     mature: growTime <= 0,
+    mutated: Boolean(seed.mutated),
   };
 }
 
@@ -3621,6 +3624,7 @@ function makeServerSeedEntry(x, y, seedType) {
     grow_time: SERVER_SEED_GROW_TIME_SECONDS,
     max_grow_time: SERVER_SEED_GROW_TIME_SECONDS,
     planted_at: Date.now(),
+    mutated: randomChance(SEED_MUTATION_CHANCE),
   };
 }
 
@@ -3733,6 +3737,9 @@ function handleSeedHarvestTransaction(socket, player, data) {
     if (randomChance(MATURE_SEED_EXTRA_DROP_CHANCE)) {
       drops.push({ item_id: seed.seed_type, item_category: "seed", amount: 1, y_offset: -8 });
     }
+    if (Boolean(seed.mutated) && ItemDatabase.hasItem(SEED_MUTATION_REWARD_ITEM_ID)) {
+      drops.push({ item_id: SEED_MUTATION_REWARD_ITEM_ID, item_category: "tool", amount: 1, y_offset: -16 });
+    }
   } else {
     drops.push({ item_id: seed.seed_type, item_category: "seed", amount: 1, y_offset: 0 });
   }
@@ -3743,6 +3750,7 @@ function handleSeedHarvestTransaction(socket, player, data) {
     x: grid.x,
     y: grid.y,
     seed_type: seed.seed_type,
+    mutated: Boolean(seed.mutated),
     world: worldName,
   };
 
@@ -5623,6 +5631,7 @@ function normalizeSeedEntry(rawEntry) {
     grow_time: growTime,
     max_grow_time: maxGrowTime,
     planted_at: plantedAt,
+    mutated: Boolean(rawEntry.mutated),
   };
 }
 
@@ -5794,7 +5803,12 @@ function applySeedUpdateToWorldState(worldName, update) {
   const key = gridKey(update.x, update.y);
 
   if (update.action === "place" || update.action === "splice") {
-    state.seeds.set(key, makeServerSeedEntry(update.x, update.y, update.seed_type));
+    const seedEntry = makeServerSeedEntry(update.x, update.y, update.seed_type);
+    state.seeds.set(key, seedEntry);
+    update.grow_time = SERVER_SEED_GROW_TIME_SECONDS;
+    update.max_grow_time = SERVER_SEED_GROW_TIME_SECONDS;
+    update.mature = false;
+    update.mutated = Boolean(seedEntry.mutated);
   } else if (update.action === "remove") {
     state.seeds.delete(key);
   }
