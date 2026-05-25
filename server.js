@@ -5016,6 +5016,11 @@ function handleDeveloperCommandRequest(socket, player, data) {
     }
 
     const target = findOnlinePlayerByUsername(giveCommand.targetUsername);
+    const targetState = ensurePlayerState(giveCommand.targetUsername) || {};
+    if (target) {
+      sendPlayerState(target.socket, target.player.account_username);
+    }
+
     if (target && accountKey(target.player.account_username) !== accountKey(player.account_username)) {
       target.socket.send(JSON.stringify({
         type: "item_grant",
@@ -5026,6 +5031,7 @@ function handleDeveloperCommandRequest(socket, player, data) {
         item_category: giveCommand.itemCategory,
         amount: giveCommand.amount,
         granted_by: player.account_username,
+        player_data: targetState,
       }));
     }
 
@@ -5046,6 +5052,7 @@ function handleDeveloperCommandRequest(socket, player, data) {
         amount: giveCommand.amount,
         inventory_field: grant.inventoryField,
         count: grant.count,
+        player_data: targetState,
       }
     );
     return;
