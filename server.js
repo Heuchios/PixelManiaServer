@@ -108,6 +108,7 @@ const SHOP_CATALOG = new Map([
   ["purple_shirt", { item_id: "purple_shirt", item_category: "shirt", amount: 1, price: 50 }],
   ["purple_pants", { item_id: "purple_pants", item_category: "pants", amount: 1, price: 50 }],
   ["entrance_mover", { item_id: "entrance_mover", item_category: "tool", amount: 1, price: 200 }],
+  ["fishing_rod", { item_id: "fishing_rod", item_category: "tool", amount: 1, price: 5000 }],
   ["lure_pack", { item_id: "lure_pack", item_category: "lure", amount: 1, price: 25, pack_size: 5 }],
 ]);
 const LURE_PACK_TABLE = [
@@ -1188,12 +1189,23 @@ function hasPassword(account) {
 }
 
 function getAccountRole(username) {
-  if (ADMIN_USERNAMES.has(accountKey(username))) return "admin";
+  const key = accountKey(username);
+  const account = accounts.get(key);
+  const role = String(account?.role || "").trim().toLowerCase();
+
+  if (role === "admin" || role === "developer") return role;
+  if (role === "moderator" || role === "mod") return "moderator";
+  if (ADMIN_USERNAMES.has(key)) return "admin";
   return "player";
 }
 
+function isDeveloperRole(role) {
+  const cleanRole = String(role || "").trim().toLowerCase();
+  return cleanRole === "admin" || cleanRole === "developer";
+}
+
 function isAdmin(player) {
-  return Boolean(player && player.authenticated && getAccountRole(player.account_username) === "admin");
+  return Boolean(player && player.authenticated && isDeveloperRole(getAccountRole(player.account_username)));
 }
 
 function canActivateAccount(username, playerId) {
@@ -4672,6 +4684,32 @@ function parseGiveCommand(data, command) {
   };
 }
 
+function parseRemoveCommand(data, command) {
+  const parts = splitCommand(command);
+  if (parts.length === 0 || String(parts[0] || "").toLowerCase() !== "remove") return null;
+
+  const metadataTarget = cleanAccountName(data.target_username || data.target || "");
+  const metadataItemId = clampString(data.item_id || data.item_type || data.item || "");
+  if (metadataTarget !== "" && metadataItemId !== "") {
+    const metadataItemCategory = resolveInventoryCategory(metadataItemId, data.item_category || data.category || "");
+    return {
+      targetUsername: metadataTarget,
+      itemId: metadataItemId,
+      itemCategory: metadataItemCategory,
+      amount: clampInteger(data.amount || 1, 1, MAX_ITEM_STACK),
+    };
+  }
+
+  if (parts.length < 4) return null;
+
+  return {
+    targetUsername: cleanAccountName(parts[1]),
+    itemId: clampString(parts[2]),
+    itemCategory: resolveInventoryCategory(parts[2]),
+    amount: clampInteger(parts[3] || 1, 1, MAX_ITEM_STACK),
+  };
+}
+
 function cleanInventoryCategory(value) {
   return ItemDatabase.cleanCategory(value);
 }
@@ -4846,6 +4884,46 @@ function grantItemToPlayerState(username, itemId, itemCategory, amount) {
   return grant;
 }
 
+function removeItemFromPlayerState(username, itemId, itemCategory, amount) {
+  const state = ensureWritablePlayerState(username);
+  if (!state) return null;
+
+  const cleanItemId = clampString(itemId || "");
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
+  const available = getInventoryCount(state, cleanItemId, resolvedCategory);
+  const requested = clampInteger(amount || 0, 1, MAX_ITEM_STACK);
+  const removeAmount = Math.min(available, requested);
+  const inventoryField = getInventoryFieldForCategory(resolvedCategory, cleanItemId);
+
+  if (removeAmount <= 0) {
+    return {
+      removed: 0,
+      requested,
+      available,
+      itemCategory: resolvedCategory,
+      inventoryField,
+      count: available,
+    };
+  }
+
+  if (!spendItemFromState(state, cleanItemId, resolvedCategory, removeAmount)) {
+    return null;
+  }
+
+  state.saved_at = new Date().toISOString();
+  setPlayerState(username, state);
+  queuePlayerSave(username);
+
+  return {
+    removed: removeAmount,
+    requested,
+    available,
+    itemCategory: resolvedCategory,
+    inventoryField,
+    count: getInventoryCount(state, cleanItemId, resolvedCategory),
+  };
+}
+
 function getSocketByPlayerId(playerId) {
   for (const client of wss.clients) {
     if (client.readyState !== WebSocket.OPEN) continue;
@@ -4968,6 +5046,75 @@ function handleDeveloperCommandRequest(socket, player, data) {
         amount: giveCommand.amount,
         inventory_field: grant.inventoryField,
         count: grant.count,
+      }
+    );
+    return;
+  }
+
+  const removeCommand = parseRemoveCommand(data, command);
+  if (removeCommand) {
+    if (!ItemDatabase.hasItem(removeCommand.itemId)) {
+      sendDeveloperDenied(socket, requestId, command, "That item does not exist on the server.");
+      return;
+    }
+
+    if (!ItemDatabase.canStoreItemInCategory(removeCommand.itemId, removeCommand.itemCategory)) {
+      sendDeveloperDenied(socket, requestId, command, "That item category does not match the server database.");
+      return;
+    }
+
+    if (!doesAccountExist(removeCommand.targetUsername)) {
+      sendDeveloperDenied(socket, requestId, command, "Target account does not exist.");
+      return;
+    }
+
+    const removal = removeItemFromPlayerState(
+      removeCommand.targetUsername,
+      removeCommand.itemId,
+      removeCommand.itemCategory,
+      removeCommand.amount
+    );
+    if (!removal) {
+      sendDeveloperDenied(socket, requestId, command, "Could not save target inventory.");
+      return;
+    }
+
+    if (removal.removed <= 0) {
+      sendDeveloperDenied(socket, requestId, command, "Target does not have that item.");
+      return;
+    }
+
+    const target = findOnlinePlayerByUsername(removeCommand.targetUsername);
+    if (target) {
+      sendPlayerState(target.socket, target.player.account_username);
+      if (accountKey(target.player.account_username) !== accountKey(player.account_username)) {
+        target.socket.send(JSON.stringify({
+          type: "chat",
+          sender: "System",
+          message: `${player.account_username} removed ${removal.removed} ${removeCommand.itemId} from your inventory.`,
+        }));
+      }
+    }
+
+    const partialMessage = removal.removed < removal.requested
+      ? ` Removed ${removal.removed}/${removal.requested} because that was all the target had.`
+      : ` Removed ${removal.removed}.`;
+
+    sendDeveloperApproved(
+      socket,
+      requestId,
+      command,
+      target ? `Server updated ${cleanAccountName(removeCommand.targetUsername)}.${partialMessage}` : `Server updated offline account.${partialMessage}`,
+      {
+        command_type: "remove",
+        target_username: cleanAccountName(removeCommand.targetUsername),
+        item_id: removeCommand.itemId,
+        item_category: removal.itemCategory,
+        requested: removal.requested,
+        removed: removal.removed,
+        inventory_field: removal.inventoryField,
+        count: removal.count,
+        delivery: target ? "online" : "offline_saved",
       }
     );
     return;

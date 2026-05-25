@@ -320,6 +320,7 @@ const ITEMS = Object.freeze({
     rarity: "uncommon",
     equipment_slot: "hand",
     equipable: true,
+    shop_price: 5000,
   }),
   pickaxe: item("tool", {
     rarity: "rare",
