@@ -121,6 +121,12 @@ const ITEMS = Object.freeze({
     no_collision: true,
     drop_rules: { seed_chance: 0.05, gem_range: [0, 1] },
   }),
+  glowing_dirt: block({
+    rarity: "epic",
+    block_health: 4,
+    seed: "",
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
   entrance_gate: block({
     rarity: "legendary",
     block_health: 9999,
@@ -323,6 +329,12 @@ const ITEMS = Object.freeze({
     shop_price: 5000,
   }),
   sakura_sword: item("tool", {
+    rarity: "legendary",
+    equipment_slot: "hand",
+    equipable: true,
+    shop_price: 0,
+  }),
+  pulu_pulu: item("tool", {
     rarity: "legendary",
     equipment_slot: "hand",
     equipable: true,

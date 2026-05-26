@@ -58,8 +58,13 @@ const ENTRANCE_GATE_TYPE = "entrance_gate";
 const SAFE_SLOT_COUNT = 10;
 const SERVER_SEED_GROW_TIME_SECONDS = Math.max(1, Number(process.env.SEED_GROW_TIME_SECONDS) || 8);
 const MATURE_SEED_EXTRA_DROP_CHANCE = Math.max(0, Math.min(1, Number(process.env.MATURE_SEED_EXTRA_DROP_CHANCE) || 0.65));
-const SEED_MUTATION_CHANCE = Math.max(0, Math.min(1, Number(process.env.SEED_MUTATION_CHANCE) || 0.10));
-const SEED_MUTATION_REWARD_ITEM_ID = "sakura_sword";
+const CONFIGURED_SEED_MUTATION_CHANCE = Number(process.env.SEED_MUTATION_CHANCE);
+const SEED_MUTATION_CHANCE = Math.max(0, Math.min(1, Number.isFinite(CONFIGURED_SEED_MUTATION_CHANCE) ? CONFIGURED_SEED_MUTATION_CHANCE : 0.005));
+const SEED_MUTATION_REWARD_TABLE = Object.freeze([
+  { item_id: "glowing_dirt", item_category: "block", min_amount: 1, max_amount: 5, y_offset: -16, weight: 80 },
+  { item_id: "sakura_sword", item_category: "tool", min_amount: 1, max_amount: 1, y_offset: -16, weight: 10 },
+  { item_id: "pulu_pulu", item_category: "tool", min_amount: 1, max_amount: 1, y_offset: -16, weight: 10 },
+]);
 const FISHING_SESSION_TTL_MS = Math.max(10000, Math.trunc(Number(process.env.FISHING_SESSION_TTL_MS) || 90000));
 const MIN_BLOCK_BREAK_INTERVAL_MS = Math.max(50, Math.trunc(Number(process.env.MIN_BLOCK_BREAK_INTERVAL_MS) || 125));
 const BLOCK_DAMAGE_RESET_MS = Math.max(500, Math.trunc(Number(process.env.BLOCK_DAMAGE_RESET_MS) || 3500));
@@ -3730,8 +3735,20 @@ function handleSeedHarvestTransaction(socket, player, data) {
   const dropPosition = getGridCenterPixels(grid.x, grid.y);
   const drops = [];
   if (isSeedMature(seed)) {
-    if (Boolean(seed.mutated) && ItemDatabase.hasItem(SEED_MUTATION_REWARD_ITEM_ID)) {
-      drops.push({ item_id: SEED_MUTATION_REWARD_ITEM_ID, item_category: "tool", amount: 1, y_offset: -16 });
+    if (Boolean(seed.mutated)) {
+      const validRewardTable = SEED_MUTATION_REWARD_TABLE.filter((entry) => ItemDatabase.hasItem(entry.item_id));
+      const reward = rollWeightedReward(validRewardTable);
+      if (reward) {
+        const minAmount = Math.max(1, Math.trunc(Number(reward.min_amount) || 1));
+        const maxAmount = Math.max(minAmount, Math.trunc(Number(reward.max_amount) || minAmount));
+        const amount = crypto.randomInt(minAmount, maxAmount + 1);
+        drops.push({
+          item_id: reward.item_id,
+          item_category: reward.item_category,
+          amount,
+          y_offset: Number(reward.y_offset) || 0,
+        });
+      }
     } else {
       const blockType = getBlockTypeForSeed(seed.seed_type);
       if (blockType !== "") {
