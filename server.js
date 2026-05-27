@@ -171,6 +171,7 @@ wss.on("connection", (socket) => {
     account_username: "",
     account_email: "",
     authenticated: false,
+    role: "player",
     world: "START",
     x: 0,
     y: 0,
@@ -374,6 +375,7 @@ wss.on("connection", (socket) => {
         type: "player_joined",
         player_id: playerId,
         name: player.name,
+        role: getPublicPlayerRole(player),
         x: player.x,
         y: player.y,
         facing: player.facing,
@@ -671,6 +673,7 @@ wss.on("connection", (socket) => {
         type: "player_position",
         player_id: playerId,
         name: player.name,
+        role: getPublicPlayerRole(player),
         x: player.x,
         y: player.y,
         facing: player.facing,
@@ -1247,6 +1250,11 @@ function isDeveloperRole(role) {
   return cleanRole === "admin" || cleanRole === "developer";
 }
 
+function getPublicPlayerRole(player) {
+  if (!player || !player.authenticated) return "player";
+  return isDeveloperRole(getAccountRole(player.account_username || player.name)) ? "admin" : "player";
+}
+
 function isAdmin(player) {
   return Boolean(player && player.authenticated && isDeveloperRole(getAccountRole(player.account_username)));
 }
@@ -1316,6 +1324,7 @@ function activatePlayerAccount(socket, player, account, options = {}) {
   player.account_email = cleanEmail(account.email || "");
   player.authenticated = true;
   player.name = account.username;
+  player.role = getAccountRole(account.username);
   activeAccountSessions.set(accountKey(account.username), player.id);
 
   return { ok: true };
@@ -5386,6 +5395,7 @@ function handleDeveloperCommandRequest(socket, player, data) {
       type: "player_position",
       player_id: player.id,
       name: player.name,
+      role: getPublicPlayerRole(player),
       x: player.x,
       y: player.y,
       facing: player.facing,
@@ -6755,6 +6765,7 @@ function getPlayersInWorld(worldName, excludePlayerId = "") {
     result.push({
       player_id: player.id,
       name: player.name,
+      role: getPublicPlayerRole(player),
       x: player.x,
       y: player.y,
       facing: player.facing,
