@@ -19,6 +19,15 @@ const WORLD_SAVE_FOLDER = process.env.WORLD_SAVE_FOLDER ? path.resolve(process.e
 const PLAYER_SAVE_FOLDER = process.env.PLAYER_SAVE_FOLDER ? path.resolve(process.env.PLAYER_SAVE_FOLDER) : path.join(DATA_FOLDER, "players");
 const ACCOUNTS_SAVE_PATH = process.env.ACCOUNTS_SAVE_PATH ? path.resolve(process.env.ACCOUNTS_SAVE_PATH) : path.join(DATA_FOLDER, "accounts.json");
 const ADMIN_LOG_PATH = process.env.ADMIN_LOG_PATH ? path.resolve(process.env.ADMIN_LOG_PATH) : path.join(DATA_FOLDER, "admin_actions.log");
+const INTEGRITY_LOG_FOLDER = process.env.INTEGRITY_LOG_FOLDER ? path.resolve(process.env.INTEGRITY_LOG_FOLDER) : path.join(DATA_FOLDER, "integrity_logs");
+const WORLD_SNAPSHOT_FOLDER = process.env.WORLD_SNAPSHOT_FOLDER ? path.resolve(process.env.WORLD_SNAPSHOT_FOLDER) : path.join(DATA_FOLDER, "world_snapshots");
+const SECURITY_EVENT_LOG_PATH = process.env.SECURITY_EVENT_LOG_PATH ? path.resolve(process.env.SECURITY_EVENT_LOG_PATH) : path.join(INTEGRITY_LOG_FOLDER, "security_events.log");
+const ITEM_LEDGER_PATH = process.env.ITEM_LEDGER_PATH ? path.resolve(process.env.ITEM_LEDGER_PATH) : path.join(INTEGRITY_LOG_FOLDER, "item_ledger.log");
+const GEM_LEDGER_PATH = process.env.GEM_LEDGER_PATH ? path.resolve(process.env.GEM_LEDGER_PATH) : path.join(INTEGRITY_LOG_FOLDER, "gem_ledger.log");
+const SHOP_PURCHASE_LOG_PATH = process.env.SHOP_PURCHASE_LOG_PATH ? path.resolve(process.env.SHOP_PURCHASE_LOG_PATH) : path.join(INTEGRITY_LOG_FOLDER, "shop_purchases.log");
+const TRADE_TRANSACTION_LOG_PATH = process.env.TRADE_TRANSACTION_LOG_PATH ? path.resolve(process.env.TRADE_TRANSACTION_LOG_PATH) : path.join(INTEGRITY_LOG_FOLDER, "trade_transactions.log");
+const VENDING_TRANSACTION_LOG_PATH = process.env.VENDING_TRANSACTION_LOG_PATH ? path.resolve(process.env.VENDING_TRANSACTION_LOG_PATH) : path.join(INTEGRITY_LOG_FOLDER, "vending_transactions.log");
+const WORLD_CHANGE_JOURNAL_PATH = process.env.WORLD_CHANGE_JOURNAL_PATH ? path.resolve(process.env.WORLD_CHANGE_JOURNAL_PATH) : path.join(INTEGRITY_LOG_FOLDER, "world_change_journal.log");
 const LEGACY_DATA_FOLDERS = [
   path.join(__dirname, "node_modules"),
 ];
@@ -467,6 +476,7 @@ wss.on("connection", (socket) => {
       if (!validation.ok) return;
       if (validation.pendingHit) return;
 
+      const blockTransactionId = makeAuditId("block");
       applyBlockUpdateToWorldState(worldName, update);
       if (update.action === "place" && isVendBlockType(update.block_type)) {
         initializeVendOwnerOnPlace(worldName, update, player);
@@ -476,7 +486,46 @@ wss.on("connection", (socket) => {
       }
       queueWorldSave(worldName);
       broadcastToWorld(worldName, update, playerId);
-      emitBreakDrops(worldName, update);
+      const emittedDrops = emitBreakDrops(worldName, update);
+      logWorldChange(socket, player, {
+        source_type: "world_block_update",
+        source_id: blockTransactionId,
+        world: worldName,
+        action: update.action,
+        layer: update.layer,
+        x: update.x,
+        y: update.y,
+        block_type: update.block_type,
+      });
+      if (update.action === "place" && validation.playerState) {
+        const placementCost = ItemDatabase.getPlacementCost(update.block_type);
+        if (placementCost && Number(placementCost.amount) > 0) {
+          logItemLedgerForState(socket, player, player.account_username, validation.playerState, placementCost.item_id, placementCost.item_category, -placementCost.amount, "world_block_place", blockTransactionId, "placement_cost", worldName, {
+            x: update.x,
+            y: update.y,
+            placed_block: update.block_type,
+            layer: update.layer,
+          });
+        }
+      }
+      for (const drop of emittedDrops) {
+        logWorldChange(socket, player, {
+          source_type: "world_block_break",
+          source_id: blockTransactionId,
+          world: worldName,
+          action: "break_drop",
+          layer: update.layer,
+          x: update.x,
+          y: update.y,
+          block_type: drop.item_type,
+          details: {
+            drop_id: drop.drop_id,
+            item_category: drop.item_category,
+            amount: drop.amount,
+            source_block: update.block_type,
+          },
+        });
+      }
 
       if (validation.playerState) {
         sendInventoryTransactionResult(socket, {
@@ -503,9 +552,30 @@ wss.on("connection", (socket) => {
       const validation = validateSeedUpdateAgainstServerState(socket, player, worldName, update);
       if (!validation.ok) return;
 
+      const seedTransactionId = makeAuditId("seed");
       applySeedUpdateToWorldState(worldName, update);
       queueWorldSave(worldName);
       broadcastToWorld(worldName, update);
+      logWorldChange(socket, player, {
+        source_type: "world_seed_update",
+        source_id: seedTransactionId,
+        world: worldName,
+        action: update.action,
+        layer: "seed",
+        x: update.x,
+        y: update.y,
+        block_type: update.seed_type,
+        details: {
+          seed_type: update.seed_type,
+          mutated: Boolean(update.mutated),
+        },
+      });
+      if (update.action === "place" && validation.playerState) {
+        logItemLedgerForState(socket, player, player.account_username, validation.playerState, update.seed_type, "seed", -1, "world_seed_place", seedTransactionId, "seed_plant_cost", worldName, {
+          x: update.x,
+          y: update.y,
+        });
+      }
 
       if (validation.playerState) {
         sendInventoryTransactionResult(socket, {
@@ -543,6 +613,30 @@ wss.on("connection", (socket) => {
       applyInteractionUpdateToWorldState(worldName, update);
       queueWorldSave(worldName);
       broadcastToWorld(worldName, update, playerId);
+      const interactionDetails = {};
+      if (update.action === "world_lock_state" && update.state) {
+        interactionDetails.is_locked = Boolean(update.state.is_locked);
+        interactionDetails.owner_name = cleanName(update.state.owner_name || "");
+        interactionDetails.lock_grid_x = Number(update.state.lock_grid_x);
+        interactionDetails.lock_grid_y = Number(update.state.lock_grid_y);
+        interactionDetails.allowed_count = Array.isArray(update.state.allowed_players) ? update.state.allowed_players.length : 0;
+        interactionDetails.public_build = Boolean(update.state.public_build);
+      } else if (update.action === "sign_text") {
+        interactionDetails.text_length = String(update.text || "").length;
+      } else if (update.action === "door_state") {
+        interactionDetails.open = Boolean(update.open);
+      }
+      logWorldChange(socket, player, {
+        source_type: "world_interaction_update",
+        source_id: makeAuditId("interact"),
+        world: worldName,
+        action: update.action,
+        layer: "interaction",
+        x: update.x,
+        y: update.y,
+        block_type: update.block_type || "",
+        details: interactionDetails,
+      });
       return;
     }
 
@@ -566,9 +660,27 @@ wss.on("connection", (socket) => {
         return;
       }
 
+      const dropTransactionId = makeAuditId("drop");
       applyDropCreateToWorldState(worldName, update);
       queueWorldSave(worldName);
       broadcastToWorld(worldName, update, playerId);
+      logWorldChange(socket, player, {
+        source_type: "world_item_drop_create",
+        source_id: dropTransactionId,
+        world: worldName,
+        action: "drop_create",
+        x: update.x,
+        y: update.y,
+        block_type: update.item_type,
+        details: {
+          drop_id: update.drop_id,
+          item_category: update.item_category,
+          amount: update.amount,
+        },
+      });
+      logItemLedgerForState(socket, player, player.account_username, spendResult.state, update.item_type, update.item_category, -update.amount, "world_item_drop_create", dropTransactionId, "drop_from_inventory", worldName, {
+        drop_id: update.drop_id,
+      });
       sendInventoryTransactionResult(socket, {
         ok: true,
         action: "world_item_drop_create",
@@ -593,6 +705,15 @@ wss.on("connection", (socket) => {
       applyDropUpdateToWorldState(worldName, update);
       queueWorldSave(worldName);
       broadcastToWorld(worldName, update, playerId);
+      logWorldChange(socket, player, {
+        source_type: "world_item_drop_update",
+        source_id: makeAuditId("drop"),
+        world: worldName,
+        action: "drop_update",
+        details: {
+          drop_id: update.drop_id,
+        },
+      });
       return;
     }
 
@@ -610,6 +731,7 @@ wss.on("connection", (socket) => {
       const update = sanitizeDropPickup(data, worldName, player);
       if (!update) return;
 
+      const pickupTransactionId = makeAuditId("pickup");
       const pickedDrop = applyDropPickupToWorldState(worldName, update, player);
       if (!pickedDrop) {
         sendActionRejected(socket, "world_item_drop_pickup", "That drop is not available.");
@@ -623,6 +745,24 @@ wss.on("connection", (socket) => {
         pickedDrop.amount
       );
       if (grant) {
+        const pickupState = ensurePlayerState(player.account_username) || {};
+        logWorldChange(socket, player, {
+          source_type: "world_item_drop_pickup",
+          source_id: pickupTransactionId,
+          world: worldName,
+          action: "drop_pickup",
+          x: pickedDrop.x,
+          y: pickedDrop.y,
+          block_type: pickedDrop.item_type,
+          details: {
+            drop_id: pickedDrop.drop_id,
+            item_category: pickedDrop.item_category,
+            amount: pickedDrop.amount,
+          },
+        });
+        logItemLedgerForState(socket, player, player.account_username, pickupState, pickedDrop.item_type, pickedDrop.item_category, pickedDrop.amount, "world_item_drop_pickup", pickupTransactionId, "drop_pickup", worldName, {
+          drop_id: pickedDrop.drop_id,
+        });
         sendInventoryTransactionResult(socket, {
           ok: true,
           action: "drop_pickup",
@@ -633,7 +773,7 @@ wss.on("connection", (socket) => {
             item_category: pickedDrop.item_category,
             amount: pickedDrop.amount,
           }],
-          player_data: ensurePlayerState(player.account_username),
+          player_data: pickupState,
         });
       } else {
         sendActionRejected(socket, "world_item_drop_pickup", "Could not add that item to your server inventory.");
@@ -796,6 +936,8 @@ function ensureDataFolders() {
   fs.mkdirSync(WORLD_SAVE_FOLDER, { recursive: true });
   fs.mkdirSync(PLAYER_SAVE_FOLDER, { recursive: true });
   fs.mkdirSync(path.dirname(ADMIN_LOG_PATH), { recursive: true });
+  fs.mkdirSync(INTEGRITY_LOG_FOLDER, { recursive: true });
+  fs.mkdirSync(WORLD_SNAPSHOT_FOLDER, { recursive: true });
   migrateLegacyDataFolders();
 }
 
@@ -2199,6 +2341,25 @@ function executeTrade(trade) {
   queuePlayerSave(trade.requester_username);
   queuePlayerSave(trade.target_username);
 
+  const tradeTransactionId = makeAuditId("trade");
+  logTradeTransaction({
+    transaction_id: tradeTransactionId,
+    trade_id: trade.id,
+    status: "completed",
+    requester_username: trade.requester_username,
+    target_username: trade.target_username,
+    requester_offer: validation.offersA,
+    target_offer: validation.offersB,
+  });
+  for (const item of validation.offersA) {
+    logItemLedgerForState(requesterRecord.socket, requesterRecord.player, trade.requester_username, stateA, item.item_id, item.item_category, -item.amount, "trade", tradeTransactionId, "trade_sent", requesterRecord.player.world, { trade_id: trade.id, counterparty: trade.target_username });
+    logItemLedgerForState(targetRecord.socket, targetRecord.player, trade.target_username, stateB, item.item_id, item.item_category, item.amount, "trade", tradeTransactionId, "trade_received", targetRecord.player.world, { trade_id: trade.id, counterparty: trade.requester_username });
+  }
+  for (const item of validation.offersB) {
+    logItemLedgerForState(targetRecord.socket, targetRecord.player, trade.target_username, stateB, item.item_id, item.item_category, -item.amount, "trade", tradeTransactionId, "trade_sent", targetRecord.player.world, { trade_id: trade.id, counterparty: trade.requester_username });
+    logItemLedgerForState(requesterRecord.socket, requesterRecord.player, trade.requester_username, stateA, item.item_id, item.item_category, item.amount, "trade", tradeTransactionId, "trade_received", requesterRecord.player.world, { trade_id: trade.id, counterparty: trade.target_username });
+  }
+
   sendJson(requesterRecord.socket, {
     type: "trade_completed",
     trade_id: trade.id,
@@ -2335,6 +2496,34 @@ function handleShopBuyTransaction(socket, player, data) {
   setPlayerState(username, state);
   queuePlayerSave(username);
 
+  const purchaseId = makeAuditId("shop");
+  const combinedRewards = combineRewardEntries(rewards);
+  const gemBalanceAfter = getInventoryCount(state, "gem", "currency");
+  logShopPurchase(socket, player, {
+    purchase_id: purchaseId,
+    account_username: username,
+    listing_id: itemId,
+    item_id: listing.item_id,
+    price_gems: listing.price,
+    rewards: combinedRewards,
+    gem_balance_after: gemBalanceAfter,
+  });
+  logItemLedgerForState(
+    socket,
+    player,
+    username,
+    state,
+    "gem",
+    "currency",
+    -listing.price,
+    "shop_purchase",
+    purchaseId,
+    "shop_price",
+    player.world,
+    { listing_id: itemId }
+  );
+  logRewardLedgers(socket, player, username, state, combinedRewards, "shop_purchase", purchaseId, "shop_reward", player.world, { listing_id: itemId });
+
   sendInventoryTransactionResult(socket, {
     ok: true,
     request_id: requestId,
@@ -2342,7 +2531,7 @@ function handleShopBuyTransaction(socket, player, data) {
     item_id: itemId,
     message: itemId === "lure_pack" ? "Purchased and opened Lure Pack." : `Purchased ${listing.item_id}.`,
     username,
-    rewards: combineRewardEntries(rewards),
+    rewards: combinedRewards,
     player_data: state,
   });
 }
@@ -2779,6 +2968,28 @@ function handleVendSetListing(socket, player, data, worldName, vend) {
   const savedVend = setVendStateAt(worldName, vend);
   persistPlayerInventoryChange(player.account_username, state);
   queueWorldSave(worldName);
+  const vendTransactionId = makeAuditId("vend");
+  logVendingTransaction(socket, player, {
+    transaction_id: vendTransactionId,
+    action: "list",
+    world: worldName,
+    x: vend.x,
+    y: vend.y,
+    owner_username: player.account_username,
+    item_id: itemId,
+    item_category: itemCategory,
+    amount: stock,
+    price_wls: priceWls,
+    stock_after: stock,
+    pending_wls_after: 0,
+    details: { amount_per_sale: amountPerSale },
+  });
+  logItemLedgerForState(socket, player, player.account_username, state, itemId, itemCategory, -stock, "vending_list", vendTransactionId, "vend_listing", worldName, {
+    x: vend.x,
+    y: vend.y,
+    amount_per_sale: amountPerSale,
+    price_wls: priceWls,
+  });
   sendVendStateUpdateToWorld(worldName, savedVend);
   sendVendTransactionResult(socket, data, player, savedVend, true, "Vending machine listing saved.", state);
 }
@@ -2795,10 +3006,14 @@ function handleVendBuy(socket, player, data, worldName, vend) {
   }
 
   const listing = vend.listing;
+  const soldItemId = listing.item_id;
+  const soldItemCategory = listing.item_category;
+  const amountPerSale = Number(listing.amount_per_sale);
+  const pricePerSale = Number(listing.price_wls);
   const maxSaleCount = Math.max(1, Math.floor(Number(listing.stock) / Number(listing.amount_per_sale)));
   const saleCount = clampInteger(data.sale_count || 1, 1, maxSaleCount);
-  const itemAmount = Number(listing.amount_per_sale) * saleCount;
-  const priceWls = Number(listing.price_wls) * saleCount;
+  const itemAmount = amountPerSale * saleCount;
+  const priceWls = pricePerSale * saleCount;
   const pendingLimit = ItemDatabase.getStackLimit("world_lock");
 
   if (Number(vend.pending_wls) + priceWls > pendingLimit) {
@@ -2848,6 +3063,33 @@ function handleVendBuy(socket, player, data, worldName, vend) {
   const savedVend = setVendStateAt(worldName, vend);
   persistPlayerInventoryChange(player.account_username, buyerState);
   queueWorldSave(worldName);
+  const vendTransactionId = makeAuditId("vend");
+  logVendingTransaction(socket, player, {
+    transaction_id: vendTransactionId,
+    action: "buy",
+    world: worldName,
+    x: vend.x,
+    y: vend.y,
+    owner_username: vend.owner_username,
+    buyer_username: player.account_username,
+    item_id: soldItemId,
+    item_category: soldItemCategory,
+    amount: itemAmount,
+    price_wls: priceWls,
+    stock_after: Number(savedVend.listing?.stock || 0),
+    pending_wls_after: Number(savedVend.pending_wls || 0),
+    details: { amount_per_sale: amountPerSale, price_per_sale_wls: pricePerSale, sale_count: saleCount },
+  });
+  logItemLedgerForState(socket, player, player.account_username, buyerState, "world_lock", "block", -priceWls, "vending_buy", vendTransactionId, "vend_price", worldName, {
+    x: vend.x,
+    y: vend.y,
+    owner_username: vend.owner_username,
+  });
+  logItemLedgerForState(socket, player, player.account_username, buyerState, soldItemId, soldItemCategory, itemAmount, "vending_buy", vendTransactionId, "vend_purchase", worldName, {
+    x: vend.x,
+    y: vend.y,
+    owner_username: vend.owner_username,
+  });
   sendVendStateUpdateToWorld(worldName, savedVend);
   sendVendTransactionResult(socket, data, player, savedVend, true, "Purchase complete.", buyerState);
 }
@@ -2882,6 +3124,24 @@ function handleVendCollect(socket, player, data, worldName, vend) {
   const savedVend = setVendStateAt(worldName, vend);
   persistPlayerInventoryChange(player.account_username, state);
   queueWorldSave(worldName);
+  const vendTransactionId = makeAuditId("vend");
+  logVendingTransaction(socket, player, {
+    transaction_id: vendTransactionId,
+    action: "collect",
+    world: worldName,
+    x: vend.x,
+    y: vend.y,
+    owner_username: player.account_username,
+    item_id: "world_lock",
+    item_category: "block",
+    amount: pendingWls,
+    stock_after: Number(savedVend.listing?.stock || 0),
+    pending_wls_after: Number(savedVend.pending_wls || 0),
+  });
+  logItemLedgerForState(socket, player, player.account_username, state, "world_lock", "block", pendingWls, "vending_collect", vendTransactionId, "vend_collect", worldName, {
+    x: vend.x,
+    y: vend.y,
+  });
   sendVendStateUpdateToWorld(worldName, savedVend);
   sendVendTransactionResult(socket, data, player, savedVend, true, `Collected ${pendingWls} World Locks.`, state);
 }
@@ -2916,6 +3176,26 @@ function handleVendCancel(socket, player, data, worldName, vend) {
   const savedVend = setVendStateAt(worldName, vend);
   persistPlayerInventoryChange(player.account_username, state);
   queueWorldSave(worldName);
+  const vendTransactionId = makeAuditId("vend");
+  logVendingTransaction(socket, player, {
+    transaction_id: vendTransactionId,
+    action: "cancel",
+    world: worldName,
+    x: vend.x,
+    y: vend.y,
+    owner_username: player.account_username,
+    item_id: listing.item_id,
+    item_category: listing.item_category,
+    amount: listing.stock,
+    price_wls: listing.price_wls,
+    stock_after: Number(savedVend.listing?.stock || 0),
+    pending_wls_after: Number(savedVend.pending_wls || 0),
+    details: { amount_per_sale: listing.amount_per_sale },
+  });
+  logItemLedgerForState(socket, player, player.account_username, state, listing.item_id, listing.item_category, listing.stock, "vending_cancel", vendTransactionId, "vend_cancel", worldName, {
+    x: vend.x,
+    y: vend.y,
+  });
   sendVendStateUpdateToWorld(worldName, savedVend);
   sendVendTransactionResult(socket, data, player, savedVend, true, "Vending listing canceled.", state);
 }
@@ -3210,6 +3490,21 @@ function handleSafeDeposit(socket, player, data, worldName, safe) {
   const savedSafe = setSafeStateAt(worldName, safe);
   persistPlayerInventoryChange(player.account_username, state);
   queueWorldSave(worldName);
+  const safeTransactionId = makeAuditId("safe");
+  logWorldChange(socket, player, {
+    source_type: "safe_transaction",
+    source_id: safeTransactionId,
+    world: worldName,
+    action: "safe_deposit",
+    x: safe.x,
+    y: safe.y,
+    block_type: SAFE_BLOCK_TYPE,
+    details: { item_id: itemId, item_category: itemCategory, amount },
+  });
+  logItemLedgerForState(socket, player, player.account_username, state, itemId, itemCategory, -amount, "safe_deposit", safeTransactionId, "safe_storage", worldName, {
+    x: safe.x,
+    y: safe.y,
+  });
   sendSafeStateUpdateToWorld(worldName, savedSafe);
   sendSafeTransactionResult(socket, data, player, savedSafe, true, `Stored ${itemId} x${amount}.`, state);
 }
@@ -3254,6 +3549,21 @@ function handleSafeWithdraw(socket, player, data, worldName, safe) {
   const savedSafe = setSafeStateAt(worldName, safe);
   persistPlayerInventoryChange(player.account_username, state);
   queueWorldSave(worldName);
+  const safeTransactionId = makeAuditId("safe");
+  logWorldChange(socket, player, {
+    source_type: "safe_transaction",
+    source_id: safeTransactionId,
+    world: worldName,
+    action: "safe_withdraw",
+    x: safe.x,
+    y: safe.y,
+    block_type: SAFE_BLOCK_TYPE,
+    details: { item_id: slot.item_id, item_category: slot.item_category, amount },
+  });
+  logItemLedgerForState(socket, player, player.account_username, state, slot.item_id, slot.item_category, amount, "safe_withdraw", safeTransactionId, "safe_withdraw", worldName, {
+    x: safe.x,
+    y: safe.y,
+  });
   sendSafeStateUpdateToWorld(worldName, savedSafe);
   sendSafeTransactionResult(socket, data, player, savedSafe, true, `Withdrew ${slot.item_id} x${amount}.`, state);
 }
@@ -3289,6 +3599,23 @@ function prepareSafeBreakInventoryReturn(socket, player, worldName, update) {
   safe.slots = [];
   persistPlayerInventoryChange(player.account_username, stagedState);
   setSafeStateAt(worldName, safe);
+  const safeBreakTransactionId = makeAuditId("safe_break");
+  logWorldChange(socket, player, {
+    source_type: "safe_break_return",
+    source_id: safeBreakTransactionId,
+    world: worldName,
+    action: "safe_break_return",
+    x: safe.x,
+    y: safe.y,
+    block_type: SAFE_BLOCK_TYPE,
+    details: { slot_count: slots.length, returned_entries: slots },
+  });
+  for (const slot of slots) {
+    logItemLedgerForState(socket, player, player.account_username, stagedState, slot.item_id, slot.item_category, slot.amount, "safe_break_return", safeBreakTransactionId, "safe_break_return", worldName, {
+      x: safe.x,
+      y: safe.y,
+    });
+  }
 
   return {
     ok: true,
@@ -3514,9 +3841,12 @@ function handleFishingStartTransaction(socket, player, data) {
     return;
   }
 
-  persistPlayerInventoryChange(username, state);
-
   const sessionId = crypto.randomUUID();
+  persistPlayerInventoryChange(username, state);
+  logItemLedgerForState(socket, player, username, state, lureId, "lure", -1, "fishing_start", sessionId, "fishing_lure_cost", worldName, {
+    target_x: grid.x,
+    target_y: grid.y,
+  });
   activeFishingSessions.set(player.id, {
     session_id: sessionId,
     username,
@@ -3587,6 +3917,12 @@ function handleFishingCompleteTransaction(socket, player, data) {
   }
 
   persistPlayerInventoryChange(player.account_username, state);
+  logItemLedgerForState(socket, player, player.account_username, state, session.fish_id, "fish", 1, "fishing_complete", session.session_id, "fishing_reward", session.world, {
+    lure_id: session.lure_id,
+    difficulty: session.difficulty,
+    target_x: session.target_x,
+    target_y: session.target_y,
+  });
 
   sendInventoryTransactionResult(socket, {
     ok: true,
@@ -4181,10 +4517,11 @@ function getBreakDropsForBlock(blockType, layer) {
 }
 
 function emitBreakDrops(worldName, update) {
-  if (!update || update.action !== "break" || update.block_type === "") return;
+  if (!update || update.action !== "break" || update.block_type === "") return [];
 
   const position = getGridCenterPixels(update.x, update.y);
   const drops = getBreakDropsForBlock(update.block_type, update.layer);
+  const createdDrops = [];
   for (const drop of drops) {
     const payload = createServerDrop(
       worldName,
@@ -4197,7 +4534,9 @@ function emitBreakDrops(worldName, update) {
     );
     if (!payload) continue;
     broadcastToWorld(worldName, payload);
+    createdDrops.push(payload);
   }
+  return createdDrops;
 }
 
 function prepareVendBreakInventoryReturn(socket, player, worldName, update) {
@@ -4221,6 +4560,7 @@ function prepareVendBreakInventoryReturn(socket, player, worldName, update) {
   }
 
   const returned = [];
+  const returnedEntries = [];
   if (listing) {
     const itemId = clampString(listing.item_id || "");
     const itemCategory = resolveInventoryCategory(itemId, listing.item_category || "");
@@ -4232,6 +4572,7 @@ function prepareVendBreakInventoryReturn(socket, player, worldName, update) {
 
     addItemToState(state, itemId, itemCategory, stock);
     returned.push(`${itemId} x${stock}`);
+    returnedEntries.push({ item_id: itemId, item_category: itemCategory, amount: stock, reason: "vending_stock" });
     vend.listing = null;
   }
 
@@ -4243,11 +4584,41 @@ function prepareVendBreakInventoryReturn(socket, player, worldName, update) {
 
     addItemToState(state, "world_lock", "block", pendingWls);
     returned.push(`World Lock x${pendingWls}`);
+    returnedEntries.push({ item_id: "world_lock", item_category: "block", amount: pendingWls, reason: "vending_pending_wls" });
     vend.pending_wls = 0;
   }
 
   persistPlayerInventoryChange(player.account_username, state);
   setVendStateAt(worldName, vend);
+  const vendBreakTransactionId = makeAuditId("vend_break");
+  logVendingTransaction(socket, player, {
+    transaction_id: vendBreakTransactionId,
+    action: "break_return",
+    world: worldName,
+    x: vend.x,
+    y: vend.y,
+    owner_username: vend.owner_username,
+    amount: returnedEntries.reduce((total, entry) => total + Number(entry.amount || 0), 0),
+    stock_after: 0,
+    pending_wls_after: 0,
+    details: { returned_entries: returnedEntries },
+  });
+  logWorldChange(socket, player, {
+    source_type: "vending_break_return",
+    source_id: vendBreakTransactionId,
+    world: worldName,
+    action: "vending_break_return",
+    x: vend.x,
+    y: vend.y,
+    block_type: update.block_type,
+    details: { returned_entries: returnedEntries },
+  });
+  for (const entry of returnedEntries) {
+    logItemLedgerForState(socket, player, player.account_username, state, entry.item_id, entry.item_category, entry.amount, "vending_break_return", vendBreakTransactionId, entry.reason, worldName, {
+      x: vend.x,
+      y: vend.y,
+    });
+  }
 
   return {
     ok: true,
@@ -4544,6 +4915,225 @@ function getSocketAddress(socket) {
   return String(socket?._socket?.remoteAddress || socket?.remoteAddress || "").replace(/^::ffff:/, "");
 }
 
+function makeAuditId(prefix = "audit") {
+  const cleanPrefix = safeFileName(prefix, "audit");
+  return `${cleanPrefix}_${Date.now()}_${crypto.randomBytes(6).toString("hex")}`;
+}
+
+function appendJsonLine(filePath, entry, label = "audit") {
+  try {
+    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, (error) => {
+      if (error) console.warn(`Could not write ${label} log:`, error.message);
+    });
+  } catch (error) {
+    console.warn(`Could not queue ${label} log:`, error.message);
+  }
+}
+
+function getAuditActor(socket, player, usernameOverride = "") {
+  const username = cleanAccountName(usernameOverride || player?.account_username || player?.name || "");
+  return {
+    actor_username: username,
+    actor_role: username !== "" ? getAccountRole(username) : "unknown",
+    player_id: String(player?.id || ""),
+    ip: getSocketAddress(socket),
+    world: player?.world ? cleanWorld(player.world) : "",
+  };
+}
+
+function logSecurityEvent(socket, player, event, details = {}, severity = "info") {
+  appendJsonLine(SECURITY_EVENT_LOG_PATH, {
+    event_id: makeAuditId("security"),
+    at: new Date().toISOString(),
+    severity: String(severity || "info"),
+    event: String(event || "security_event"),
+    ...getAuditActor(socket, player),
+    details,
+  }, "security event");
+}
+
+function logGemLedger(socket, player, entry = {}) {
+  const actor = getAuditActor(socket, player);
+  const username = cleanAccountName(entry.account_username || actor.actor_username);
+  appendJsonLine(GEM_LEDGER_PATH, {
+    ledger_id: entry.ledger_id || makeAuditId("gem"),
+    at: new Date().toISOString(),
+    ...actor,
+    account_username: username,
+    quantity_delta: Math.trunc(Number(entry.quantity_delta) || 0),
+    balance_after: Math.max(0, Math.trunc(Number(entry.balance_after) || 0)),
+    source_type: String(entry.source_type || "unknown"),
+    source_id: String(entry.source_id || ""),
+    reason: String(entry.reason || ""),
+    world: entry.world ? cleanWorld(entry.world) : actor.world,
+    details: entry.details || {},
+  }, "gem ledger");
+}
+
+function logItemLedger(socket, player, entry = {}) {
+  const itemId = clampString(entry.item_id || "");
+  if (itemId === "") return;
+
+  const actor = getAuditActor(socket, player);
+  const username = cleanAccountName(entry.account_username || actor.actor_username);
+  const itemCategory = resolveInventoryCategory(itemId, entry.item_category || "");
+  const ledgerId = entry.ledger_id || makeAuditId("item");
+  const ledgerEntry = {
+    ledger_id: ledgerId,
+    at: new Date().toISOString(),
+    ...actor,
+    account_username: username,
+    item_id: itemId,
+    item_category: itemCategory,
+    quantity_delta: Math.trunc(Number(entry.quantity_delta) || 0),
+    balance_after: Math.max(0, Math.trunc(Number(entry.balance_after) || 0)),
+    source_type: String(entry.source_type || "unknown"),
+    source_id: String(entry.source_id || ""),
+    reason: String(entry.reason || ""),
+    world: entry.world ? cleanWorld(entry.world) : actor.world,
+    details: entry.details || {},
+  };
+
+  appendJsonLine(ITEM_LEDGER_PATH, ledgerEntry, "item ledger");
+  if (itemId === "gem") {
+    logGemLedger(socket, player, { ...ledgerEntry, ledger_id: makeAuditId("gem") });
+  }
+}
+
+function logItemLedgerForState(socket, actorPlayer, accountUsername, state, itemId, itemCategory, quantityDelta, sourceType, sourceId, reason, world = "", details = {}) {
+  logItemLedger(socket, actorPlayer, {
+    account_username: accountUsername,
+    item_id: itemId,
+    item_category: itemCategory,
+    quantity_delta: quantityDelta,
+    balance_after: getInventoryCount(state, itemId, itemCategory),
+    source_type: sourceType,
+    source_id: sourceId,
+    reason,
+    world,
+    details,
+  });
+}
+
+function logRewardLedgers(socket, actorPlayer, accountUsername, state, rewards, sourceType, sourceId, reason, world = "", details = {}) {
+  for (const reward of rewards) {
+    logItemLedgerForState(
+      socket,
+      actorPlayer,
+      accountUsername,
+      state,
+      reward.item_id,
+      reward.item_category,
+      reward.amount,
+      sourceType,
+      sourceId,
+      reason,
+      world,
+      details
+    );
+  }
+}
+
+function logShopPurchase(socket, player, entry = {}) {
+  appendJsonLine(SHOP_PURCHASE_LOG_PATH, {
+    purchase_id: entry.purchase_id || makeAuditId("shop"),
+    at: new Date().toISOString(),
+    ...getAuditActor(socket, player),
+    account_username: cleanAccountName(entry.account_username || player?.account_username || ""),
+    listing_id: clampString(entry.listing_id || ""),
+    item_id: clampString(entry.item_id || ""),
+    price_gems: Math.max(0, Math.trunc(Number(entry.price_gems) || 0)),
+    rewards: Array.isArray(entry.rewards) ? entry.rewards : [],
+    gem_balance_after: Math.max(0, Math.trunc(Number(entry.gem_balance_after) || 0)),
+  }, "shop purchase");
+}
+
+function logTradeTransaction(entry = {}) {
+  appendJsonLine(TRADE_TRANSACTION_LOG_PATH, {
+    transaction_id: entry.transaction_id || makeAuditId("trade"),
+    at: new Date().toISOString(),
+    trade_id: String(entry.trade_id || ""),
+    status: String(entry.status || "completed"),
+    requester_username: cleanAccountName(entry.requester_username || ""),
+    target_username: cleanAccountName(entry.target_username || ""),
+    requester_offer: Array.isArray(entry.requester_offer) ? entry.requester_offer : [],
+    target_offer: Array.isArray(entry.target_offer) ? entry.target_offer : [],
+    details: entry.details || {},
+  }, "trade transaction");
+}
+
+function logVendingTransaction(socket, player, entry = {}) {
+  appendJsonLine(VENDING_TRANSACTION_LOG_PATH, {
+    transaction_id: entry.transaction_id || makeAuditId("vend"),
+    at: new Date().toISOString(),
+    ...getAuditActor(socket, player),
+    action: String(entry.action || "vend"),
+    world: cleanWorld(entry.world || player?.world || "START"),
+    x: Math.trunc(Number(entry.x) || 0),
+    y: Math.trunc(Number(entry.y) || 0),
+    owner_username: cleanAccountName(entry.owner_username || ""),
+    buyer_username: cleanAccountName(entry.buyer_username || ""),
+    item_id: clampString(entry.item_id || ""),
+    item_category: String(entry.item_category || ""),
+    amount: Math.max(0, Math.trunc(Number(entry.amount) || 0)),
+    price_wls: Math.max(0, Math.trunc(Number(entry.price_wls) || 0)),
+    stock_after: Math.max(0, Math.trunc(Number(entry.stock_after) || 0)),
+    pending_wls_after: Math.max(0, Math.trunc(Number(entry.pending_wls_after) || 0)),
+    details: entry.details || {},
+  }, "vending transaction");
+}
+
+function logWorldChange(socket, player, entry = {}) {
+  appendJsonLine(WORLD_CHANGE_JOURNAL_PATH, {
+    journal_id: entry.journal_id || makeAuditId("world"),
+    at: new Date().toISOString(),
+    ...getAuditActor(socket, player),
+    source_type: String(entry.source_type || "world_change"),
+    source_id: String(entry.source_id || ""),
+    world: cleanWorld(entry.world || player?.world || "START"),
+    action: String(entry.action || ""),
+    layer: String(entry.layer || ""),
+    x: Number.isFinite(Number(entry.x)) ? Math.trunc(Number(entry.x)) : null,
+    y: Number.isFinite(Number(entry.y)) ? Math.trunc(Number(entry.y)) : null,
+    block_type: clampString(entry.block_type || ""),
+    details: entry.details || {},
+  }, "world change");
+}
+
+function createWorldSnapshot(worldName, reason, socket = null, player = null, details = {}) {
+  try {
+    const clean = cleanWorld(worldName);
+    const snapshotId = makeAuditId("snapshot");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const snapshotDir = path.join(WORLD_SNAPSHOT_FOLDER, safeFileName(clean, "START"));
+    const snapshotPath = path.join(snapshotDir, `${stamp}_${safeFileName(reason, "snapshot")}.json`);
+    fs.mkdirSync(snapshotDir, { recursive: true });
+
+    writeJsonFileAtomic(snapshotPath, {
+      snapshot_id: snapshotId,
+      created_at: new Date().toISOString(),
+      reason: String(reason || "snapshot"),
+      actor: getAuditActor(socket, player),
+      details,
+      world_state: serializeWorldState(clean),
+    });
+
+    logWorldChange(socket, player, {
+      journal_id: snapshotId,
+      source_type: "world_snapshot",
+      source_id: snapshotId,
+      world: clean,
+      action: "snapshot",
+      details: { reason, snapshot_path: snapshotPath, ...details },
+    });
+    return { snapshotId, snapshotPath };
+  } catch (error) {
+    console.warn("Could not create world snapshot:", error.message);
+    return null;
+  }
+}
+
 function logAdminAction(socket, player, action, details = {}, ok = true, message = "") {
   const username = cleanAccountName(player?.account_username || player?.name || "");
   const entry = {
@@ -4558,10 +5148,7 @@ function logAdminAction(socket, player, action, details = {}, ok = true, message
     ...details,
   };
 
-  fs.appendFile(ADMIN_LOG_PATH, `${JSON.stringify(entry)}\n`, (error) => {
-    if (error) console.warn("Could not write admin action log:", error.message);
-  });
-
+  appendJsonLine(ADMIN_LOG_PATH, entry, "admin action");
   console.log(`[ADMIN] ${entry.at} ${entry.admin_username || "unknown"} ${entry.action} ${entry.ok ? "ok" : "denied"} ${entry.message}`);
 }
 
@@ -4750,13 +5337,24 @@ function replaceWorldStateAndBroadcast(worldName, state, extraMessageData = {}) 
   broadcastToWorld(clean, buildWorldStateMessage(clean, extraMessageData));
 }
 
-function clearWorldByAdmin(worldName, data) {
+function clearWorldByAdmin(worldName, data, socket = null, player = null) {
   const clean = cleanWorld(worldName);
   const currentState = ensureWorldState(clean);
   const nextState = createEmptyWorldState();
   nextState.cleared = true;
 
   const protectedEntries = getProtectedClearEntries(currentState, data);
+  const removedCount =
+    Math.max(0, currentState.foreground.size - protectedEntries.size) +
+    currentState.background.size +
+    currentState.seeds.size +
+    currentState.drops.size;
+
+  createWorldSnapshot(clean, "before_clear_world", socket, player, {
+    removed_count: removedCount,
+    protected_count: protectedEntries.size,
+  });
+
   addBedrockFloorEntries(nextState.foreground);
 
   for (const [key, entry] of protectedEntries.entries()) {
@@ -4765,18 +5363,13 @@ function clearWorldByAdmin(worldName, data) {
 
   nextState.world_lock = sanitizeWorldLockState(currentState.world_lock || {});
 
-  const removedCount =
-    Math.max(0, currentState.foreground.size - protectedEntries.size) +
-    currentState.background.size +
-    currentState.seeds.size +
-    currentState.drops.size;
-
   replaceWorldStateAndBroadcast(clean, nextState, { respawn_player: true });
   return { removedCount, protectedCount: protectedEntries.size };
 }
 
-function resetWorldByAdmin(worldName) {
+function resetWorldByAdmin(worldName, socket = null, player = null) {
   const clean = cleanWorld(worldName);
+  createWorldSnapshot(clean, "before_reset_world", socket, player);
   replaceWorldStateAndBroadcast(clean, createEmptyWorldState(), { respawn_player: true });
 }
 
@@ -5145,6 +5738,7 @@ function handleDeveloperCommandRequest(socket, player, data) {
 
   const deny = (message, details = {}, extra = {}) => {
     logAdminAction(socket, player, "developer_command_denied", { ...commandLogBase, ...details }, false, message);
+    logSecurityEvent(socket, player, "developer_command_denied", { ...commandLogBase, ...details, message }, "warning");
     sendDeveloperDenied(socket, requestId, command, message, extra);
   };
 
@@ -5165,7 +5759,7 @@ function handleDeveloperCommandRequest(socket, player, data) {
 
   if (commandName === "clear") {
     const commandWorld = getDeveloperCommandWorldName(player, data);
-    const result = clearWorldByAdmin(commandWorld, data);
+    const result = clearWorldByAdmin(commandWorld, data, socket, player);
     approve(
       `Server cleared ${commandWorld}. Removed ${result.removedCount} saved objects and preserved ${result.protectedCount} protected blocks.`,
       { target_world: commandWorld, removed_count: result.removedCount, protected_count: result.protectedCount },
@@ -5176,7 +5770,7 @@ function handleDeveloperCommandRequest(socket, player, data) {
 
   if (commandName === "resetworld" || commandName === "reset_world" || commandName === "reworld") {
     const commandWorld = getDeveloperCommandWorldName(player, data);
-    resetWorldByAdmin(commandWorld);
+    resetWorldByAdmin(commandWorld, socket, player);
     approve(`Server reset ${commandWorld}.`, { target_world: commandWorld }, { command_type: "reset_world", target_world: commandWorld });
     return;
   }
@@ -5233,6 +5827,19 @@ function handleDeveloperCommandRequest(socket, player, data) {
         player_data: targetState,
       }));
     }
+
+    logItemLedger(socket, player, {
+      account_username: cleanAccountName(giveCommand.targetUsername),
+      item_id: giveCommand.itemId,
+      item_category: giveCommand.itemCategory,
+      quantity_delta: giveCommand.amount,
+      balance_after: grant.count,
+      source_type: "admin_give",
+      source_id: requestId,
+      reason: "developer_command",
+      world: player.world,
+      details: { command, delivery: target ? "online" : "offline_saved" },
+    });
 
     approve(
       accountKey(giveCommand.targetUsername) === accountKey(player.account_username)
@@ -5312,6 +5919,19 @@ function handleDeveloperCommandRequest(socket, player, data) {
     const partialMessage = removal.removed < removal.requested
       ? ` Removed ${removal.removed}/${removal.requested} because that was all the target had.`
       : ` Removed ${removal.removed}.`;
+
+    logItemLedger(socket, player, {
+      account_username: cleanAccountName(removeCommand.targetUsername),
+      item_id: removeCommand.itemId,
+      item_category: removal.itemCategory,
+      quantity_delta: -removal.removed,
+      balance_after: removal.count,
+      source_type: "admin_remove",
+      source_id: requestId,
+      reason: "developer_command",
+      world: player.world,
+      details: { command, requested: removal.requested, delivery: target ? "online" : "offline_saved" },
+    });
 
     approve(
       target ? `Server updated ${cleanAccountName(removeCommand.targetUsername)}.${partialMessage}` : `Server updated offline account.${partialMessage}`,
@@ -6083,6 +6703,7 @@ function handleEntranceGateMoveUpdate(socket, player, worldName, update) {
   const validation = validateEntranceGateMove(socket, player, worldName, update);
   if (!validation.ok) return false;
 
+  const moveTransactionId = makeAuditId("gate_move");
   const spendResult = spendServerInventoryCost(player.account_username, {
     item_id: "entrance_mover",
     item_category: "tool",
@@ -6101,7 +6722,40 @@ function handleEntranceGateMoveUpdate(socket, player, worldName, update) {
   );
 
   saveWorldState(worldName);
+  logItemLedgerForState(socket, player, player.account_username, spendResult.state, "entrance_mover", "tool", -1, "entrance_gate_move", moveTransactionId, "gate_move_cost", worldName, {
+    old_x: validation.oldGate.x,
+    old_y: validation.oldGate.y,
+    new_x: update.x,
+    new_y: update.y,
+  });
+  logWorldChange(socket, player, {
+    source_type: "entrance_gate_move",
+    source_id: moveTransactionId,
+    world: worldName,
+    action: "entrance_gate_move",
+    layer: "foreground",
+    x: update.x,
+    y: update.y,
+    block_type: ENTRANCE_GATE_TYPE,
+    details: {
+      old_x: validation.oldGate.x,
+      old_y: validation.oldGate.y,
+      new_x: update.x,
+      new_y: update.y,
+      update_count: updates.length,
+    },
+  });
   for (const blockUpdate of updates) {
+    logWorldChange(socket, player, {
+      source_type: "entrance_gate_move",
+      source_id: moveTransactionId,
+      world: worldName,
+      action: `entrance_gate_${blockUpdate.action}`,
+      layer: blockUpdate.layer,
+      x: blockUpdate.x,
+      y: blockUpdate.y,
+      block_type: blockUpdate.block_type,
+    });
     broadcastToWorld(worldName, blockUpdate);
   }
 
