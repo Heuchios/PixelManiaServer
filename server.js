@@ -1,4 +1,4 @@
-require("dotenv").config();
+require("dotenv").config({ quiet: true });
 
 const WebSocket = require("ws");
 const crypto = require("crypto");
