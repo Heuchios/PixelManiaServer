@@ -6485,15 +6485,30 @@ function findEntranceGatesInState(state) {
 function ensureEntranceGateSupportInState(state, gate) {
   if (!state || !gate) return;
 
-  for (let x = gate.x - 1; x <= gate.x + 1; x += 1) {
-    const y = gate.y + 1;
+  const x = gate.x;
+  const y = gate.y + 1;
+  if (!isGridInWorld(x, y)) return;
+
+  const key = gridKey(x, y);
+  state.foreground.set(key, { x, y, block_type: "bedrock" });
+  state.removed_foreground.delete(key);
+  state.interactions.delete(key);
+  state.seeds.delete(key);
+}
+
+function cleanupLegacyEntranceGateSupportInState(state, gate) {
+  if (!state || !gate) return;
+
+  const y = gate.y + 1;
+  for (const x of [gate.x - 1, gate.x + 1]) {
     if (!isGridInWorld(x, y)) continue;
 
     const key = gridKey(x, y);
-    state.foreground.set(key, { x, y, block_type: "bedrock" });
+    const blockType = clampString(state.foreground.get(key)?.block_type || "");
+    if (blockType !== "bedrock") continue;
+
+    state.foreground.set(key, { x, y, block_type: "dirt" });
     state.removed_foreground.delete(key);
-    state.interactions.delete(key);
-    state.seeds.delete(key);
   }
 }
 
@@ -6520,6 +6535,7 @@ function repairEntranceGateState(state) {
   }
 
   ensureEntranceGateSupportInState(state, keptGate);
+  cleanupLegacyEntranceGateSupportInState(state, keptGate);
   return keptGate;
 }
 
@@ -6587,35 +6603,25 @@ function validateEntranceGateMove(socket, player, worldName, update) {
     }
   }
 
-  for (let y = update.y - 3; y < update.y; y += 1) {
-    const checkKey = gridKey(update.x, y);
-    if (state.foreground.has(checkKey) || state.seeds.has(checkKey)) {
-      return rejectEntranceMove(socket, "Not enough clear space above the gate.");
-    }
+  const underY = update.y + 1;
+  if (!isGridInWorld(update.x, underY)) {
+    return rejectEntranceMove(socket, "Not enough space under the gate.");
   }
 
-  for (let x = update.x - 1; x <= update.x + 1; x += 1) {
-    const underY = update.y + 1;
-    if (!isGridInWorld(x, underY)) {
-      return rejectEntranceMove(socket, "Not enough space under the gate.");
-    }
+  const underKey = gridKey(update.x, underY);
+  if (state.seeds.has(underKey)) {
+    return rejectEntranceMove(socket, "A seed is under the gate spot.");
+  }
 
-    const underKey = gridKey(x, underY);
-    if (state.seeds.has(underKey)) {
-      return rejectEntranceMove(socket, "A seed is under the gate spot.");
-    }
+  const underBlock = state.foreground.get(underKey);
+  const underType = clampString(underBlock?.block_type || "");
 
-    const underBlock = state.foreground.get(underKey);
-    const underType = clampString(underBlock?.block_type || "");
-    if (underType === "") continue;
+  if (underType === ENTRANCE_GATE_TYPE || isProtectedEntranceSupportBlock(underType)) {
+    return rejectEntranceMove(socket, "A protected block is under that spot.");
+  }
 
-    if (underType === ENTRANCE_GATE_TYPE || isProtectedEntranceSupportBlock(underType)) {
-      return rejectEntranceMove(socket, "A protected block is under that spot.");
-    }
-
-    if (underType !== "bedrock" && !ItemDatabase.canBreakBlock(underType)) {
-      return rejectEntranceMove(socket, "Unbreakable block under gate spot.");
-    }
+  if (underType !== "" && underType !== "bedrock" && !ItemDatabase.canBreakBlock(underType)) {
+    return rejectEntranceMove(socket, "Unbreakable block under gate spot.");
   }
 
   return { ok: true, state, oldGate };
@@ -6660,22 +6666,21 @@ function applyEntranceGateMoveToWorldState(worldName, state, oldGate, newGate) {
     });
   }
 
-  for (let x = newGate.x - 1; x <= newGate.x + 1; x += 1) {
-    const y = newGate.y + 1;
-    const key = gridKey(x, y);
-    state.foreground.set(key, { x, y, block_type: "bedrock" });
-    state.removed_foreground.delete(key);
-    state.interactions.delete(key);
-    updates.push({
-      type: "world_block_update",
-      action: "place",
-      layer: "foreground",
-      x,
-      y,
-      block_type: "bedrock",
-      world: cleanWorld(worldName),
-    });
-  }
+  const supportX = newGate.x;
+  const supportY = newGate.y + 1;
+  const supportKey = gridKey(supportX, supportY);
+  state.foreground.set(supportKey, { x: supportX, y: supportY, block_type: "bedrock" });
+  state.removed_foreground.delete(supportKey);
+  state.interactions.delete(supportKey);
+  updates.push({
+    type: "world_block_update",
+    action: "place",
+    layer: "foreground",
+    x: supportX,
+    y: supportY,
+    block_type: "bedrock",
+    world: cleanWorld(worldName),
+  });
 
   const newGateKey = gridKey(newGate.x, newGate.y);
   state.foreground.set(newGateKey, {
