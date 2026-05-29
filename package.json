@@ -5,6 +5,8 @@
   "main": "server.js",
   "scripts": {
     "check:item-db": "node scripts/check_item_database_sync.js",
+    "integrity:admin": "node scripts/admin_integrity_report.js",
+    "integrity:admin-report": "node scripts/admin_integrity_report.js",
     "integrity:scan": "node scripts/integrity_scan.js",
     "integrity:report": "node scripts/integrity_scan.js --write-report",
     "logs:admin": "node scripts/read_integrity_log.js admin",
