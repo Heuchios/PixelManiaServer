@@ -3676,7 +3676,7 @@ function validateStationAccess(socket, player, worldName, stationId, grid) {
   const blockType = block ? String(block.block_type || "") : "";
 
   if (stationId === "crafting_station") {
-    if (blockType === "crafting_station_left" || blockType === "crafting_station_right") return true;
+    if (blockType === "crafting_station") return true;
     sendActionRejected(socket, "inventory_transaction_request", "Craft at a Crafting Station.");
     return false;
   }
@@ -4492,9 +4492,9 @@ function getBreakDropsForBlock(blockType, layer) {
   const drops = [];
   if (isVendBlockType(itemId)) {
     drops.push({ item_id: VEND_BLOCK_EMPTY, item_category: "block", amount: 1 });
-  } else if (itemId === "crafting_station_left") {
+  } else if (itemId === "crafting_station") {
     drops.push({ item_id: "crafting_station", item_category: "block", amount: 1 });
-  } else if (itemId !== "crafting_station_right" && ItemDatabase.isDropableItem(itemId)) {
+  } else if (itemId !== "crafting_station_left" && itemId !== "crafting_station_right" && ItemDatabase.isDropableItem(itemId)) {
     drops.push({ item_id: itemId, item_category: "block", amount: 1 });
   }
 
@@ -4730,6 +4730,11 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
     return { ok: true };
   }
 
+  if (update.block_type === "crafting_station_left" || update.block_type === "crafting_station_right") {
+    sendActionRejected(socket, "world_block_update", "Crafting Station is one block now. Please update your game.");
+    return { ok: false };
+  }
+
   if (!ItemDatabase.isPlaceableBlock(update.block_type)) {
     sendActionRejected(socket, "world_block_update", "That item cannot be placed.");
     return { ok: false };
@@ -4765,19 +4770,6 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
   if (update.layer === "foreground" && state.seeds.has(key)) {
     sendActionRejected(socket, "world_block_update", "A seed is already planted there.");
     return { ok: false };
-  }
-
-  if (update.block_type === "crafting_station_left" && state.foreground.has(gridKey(update.x + 1, update.y))) {
-    sendActionRejected(socket, "world_block_update", "Crafting Station needs 2 empty tiles.");
-    return { ok: false };
-  }
-
-  if (ItemDatabase.requiresLeftStationPart(update.block_type)) {
-    const leftPart = state.foreground.get(gridKey(update.x - 1, update.y));
-    if (!leftPart || leftPart.block_type !== "crafting_station_left") {
-      sendActionRejected(socket, "world_block_update", "Crafting Station right side needs its left side first.");
-      return { ok: false };
-    }
   }
 
   const cost = ItemDatabase.getPlacementCost(update.block_type);
@@ -6207,8 +6199,10 @@ function normalizeBlockEntry(rawEntry) {
   const gridY = Math.trunc(y);
   if (!isGridInWorld(gridX, gridY)) return null;
 
-  const blockType = clampString(rawEntry.block_type || rawEntry.type || "");
+  let blockType = clampString(rawEntry.block_type || rawEntry.type || "");
   if (blockType.length === 0) return null;
+  if (blockType === "crafting_station_right") return null;
+  if (blockType === "crafting_station_left") blockType = "crafting_station";
   if (!ItemDatabase.hasItem(blockType) || resolveInventoryCategory(blockType) !== "block") return null;
 
   const entry = {
@@ -6546,8 +6540,6 @@ function isProtectedEntranceSupportBlock(blockType) {
     clean === SAFE_BLOCK_TYPE ||
     isVendBlockType(clean) ||
     clean === "crafting_station" ||
-    clean === "crafting_station_left" ||
-    clean === "crafting_station_right" ||
     clean === "furnace" ||
     clean === "wooden_door" ||
     clean === "sign"
@@ -6653,6 +6645,9 @@ function applyEntranceGateMoveToWorldState(worldName, state, oldGate, newGate) {
     if (!isGridInWorld(x, y)) continue;
 
     const key = gridKey(x, y);
+    const oldSupportType = clampString(state.foreground.get(key)?.block_type || "");
+    if (oldSupportType !== "bedrock") continue;
+
     state.foreground.set(key, { x, y, block_type: "dirt" });
     state.removed_foreground.delete(key);
     updates.push({

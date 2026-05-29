@@ -201,7 +201,8 @@ const ITEMS = Object.freeze({
   crafting_station: block({
     rarity: "uncommon",
     block_health: 5,
-    placeable: false,
+    placeable: true,
+    placement_cost: { item_id: "crafting_station", item_category: "block", amount: 1 },
     shop_price: 80,
     drop_rules: { seed_chance: 0, gem_range: [0, 0] },
   }),
@@ -212,9 +213,8 @@ const ITEMS = Object.freeze({
     tradeable: false,
     dropable: false,
     admin_grantable: false,
-    placeable: true,
-    placement_cost: { item_id: "crafting_station", item_category: "block", amount: 1 },
-    station_part: "left",
+    placeable: false,
+    legacy_station_part: "left",
   }),
   crafting_station_right: block({
     rarity: "uncommon",
@@ -223,10 +223,8 @@ const ITEMS = Object.freeze({
     tradeable: false,
     dropable: false,
     admin_grantable: false,
-    placeable: true,
-    placement_cost: { amount: 0 },
-    station_part: "right",
-    requires_left_part: true,
+    placeable: false,
+    legacy_station_part: "right",
   }),
   furnace: block({
     rarity: "rare",
@@ -642,16 +640,6 @@ function getPlacementCost(itemId) {
   return { item_id: itemId, item_category: definition.category, amount: 1 };
 }
 
-function getStationPart(itemId) {
-  const definition = getItemDefinition(itemId);
-  return definition ? String(definition.station_part || "") : "";
-}
-
-function requiresLeftStationPart(itemId) {
-  const definition = getItemDefinition(itemId);
-  return Boolean(definition && definition.requires_left_part);
-}
-
 module.exports = {
   DEFAULT_STACK_LIMIT,
   CATEGORY_TO_FIELD,
@@ -676,12 +664,10 @@ module.exports = {
   getSpliceResult,
   getStationRecipe,
   getStackLimit,
-  getStationPart,
   hasItem,
   isDropableItem,
   isGrantableItem,
   isPlaceableBlock,
   isTradeableItem,
   canBreakBlock,
-  requiresLeftStationPart,
 };
