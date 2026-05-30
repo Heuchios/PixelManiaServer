@@ -248,7 +248,7 @@ const ITEMS = Object.freeze({
       "res://Assets/items/special items/fish_monger/fish_monger_1.png",
       "res://Assets/items/special items/fish_monger/fish_monger_2.png",
     ],
-    animation_frame_seconds: 0.28,
+    animation_frame_seconds: 0.5,
     requires_world_lock: true,
     requires_full_area_clear: true,
     occupies_collision_area: true,
