@@ -63,6 +63,7 @@ const VEND_BLOCK_SOLD = "vend_sold";
 const VEND_BLOCK_TYPES = new Set([VEND_BLOCK_EMPTY, VEND_BLOCK_PENDING, VEND_BLOCK_SOLD]);
 const VEND_LOG_LIMIT = 30;
 const SAFE_BLOCK_TYPE = "safe";
+const FISH_MONGER_BLOCK_TYPE = "fish_monger";
 const ENTRANCE_GATE_TYPE = "entrance_gate";
 const SAFE_SLOT_COUNT = 10;
 const SERVER_SEED_GROW_TIME_SECONDS = Math.max(1, Number(process.env.SEED_GROW_TIME_SECONDS) || 8);
@@ -128,6 +129,7 @@ const SHOP_CATALOG = new Map([
   ["crafting_station", { item_id: "crafting_station", item_category: "block", amount: 1, price: 80 }],
   ["vend_empty", { item_id: "vend_empty", item_category: "block", amount: 1, price: 7500 }],
   ["safe", { item_id: "safe", item_category: "block", amount: 1, price: 7500 }],
+  ["fish_monger", { item_id: "fish_monger", item_category: "block", amount: 1, price: 15000 }],
   ["purple_shirt", { item_id: "purple_shirt", item_category: "shirt", amount: 1, price: 50 }],
   ["purple_pants", { item_id: "purple_pants", item_category: "pants", amount: 1, price: 50 }],
   ["entrance_mover", { item_id: "entrance_mover", item_category: "tool", amount: 1, price: 200 }],
@@ -459,7 +461,11 @@ wss.on("connection", (socket) => {
 
       const update = sanitizeBlockUpdate(data, worldName);
       if (!update) return;
-      if (!canPlayerBuildInWorld(player, worldName) && !canPlayerBreakOwnVendingMachine(player, worldName, update)) {
+      if (
+        !canPlayerBuildInWorld(player, worldName) &&
+        !canPlayerBreakOwnVendingMachine(player, worldName, update) &&
+        !isFishMongerBreakAttempt(worldName, update)
+      ) {
         sendActionRejected(socket, "world_block_update", "This world is locked.");
         return;
       }
@@ -2415,6 +2421,11 @@ function handleInventoryTransactionRequest(socket, player, data) {
     return;
   }
 
+  if (action === "fish_monger_sell" || action === "fish_monger_sell_all") {
+    handleFishMongerTransaction(socket, player, data);
+    return;
+  }
+
   if (action === "seed_splice") {
     handleSeedSpliceTransaction(socket, player, data);
     return;
@@ -2689,7 +2700,7 @@ function getWorldLockProtectedStorageBlocks(worldName) {
 
   for (const block of state.foreground.values()) {
     const blockType = clampString(block?.block_type || "");
-    if (isVendBlockType(blockType) || isSafeBlockType(blockType)) {
+    if (isVendBlockType(blockType) || isSafeBlockType(blockType) || isFishMongerBlockType(blockType)) {
       protectedBlocks.push(block);
     }
   }
@@ -2699,6 +2710,22 @@ function getWorldLockProtectedStorageBlocks(worldName) {
 
 function hasWorldLockProtectedStorageBlocks(worldName) {
   return getWorldLockProtectedStorageBlocks(worldName).length > 0;
+}
+
+function canPlayerUseWorldLockAccess(player, worldName) {
+  if (isAdmin(player)) return true;
+  if (!player || !player.authenticated) return false;
+
+  const state = ensureWorldState(worldName);
+  const lock = state.world_lock || {};
+  if (!lock.is_locked) return false;
+
+  const playerKey = accountKey(player.account_username);
+  if (playerKey === "") return false;
+  if (accountKey(lock.owner_name || lock.owner_username || "") === playerKey) return true;
+
+  const allowedPlayers = Array.isArray(lock.allowed_players) ? lock.allowed_players : [];
+  return allowedPlayers.some((name) => accountKey(name) === playerKey);
 }
 
 function canPlayerPlaceVendingMachine(player, worldName) {
@@ -2726,6 +2753,65 @@ function canPlayerBreakVendingMachine(player, worldName, update) {
 
 function canPlayerBreakOwnVendingMachine(player, worldName, update) {
   return canPlayerBreakVendingMachine(player, worldName, update);
+}
+
+function isFishMongerBlockType(blockType) {
+  return clampString(blockType || "") === FISH_MONGER_BLOCK_TYPE;
+}
+
+function getCollisionAreaAnchorInState(state, x, y) {
+  if (!state) return null;
+
+  const directKey = gridKey(x, y);
+  const directBlock = state.foreground.get(directKey);
+  if (directBlock) return directBlock;
+
+  const tileRect = {
+    x: (Number(x) || 0) * TILE_SIZE - TILE_SIZE * 0.5 + 0.01,
+    y: (Number(y) || 0) * TILE_SIZE - TILE_SIZE * 0.5 + 0.01,
+    width: TILE_SIZE - 0.02,
+    height: TILE_SIZE - 0.02,
+  };
+
+  for (const block of state.foreground.values()) {
+    const blockType = clampString(block?.block_type || "");
+    if (!blockOccupiesCollisionArea(blockType)) continue;
+
+    const blockRect = getBlockCollisionRectForGrid(block.x, block.y, blockType);
+    if (rectsIntersect(blockRect, tileRect)) {
+      return block;
+    }
+  }
+
+  return null;
+}
+
+function getFishMongerAnchorAt(worldName, x, y) {
+  const state = ensureWorldState(worldName);
+  const anchor = getCollisionAreaAnchorInState(state, x, y);
+  if (!anchor || !isFishMongerBlockType(anchor.block_type)) return null;
+  return anchor;
+}
+
+function isFishMongerBreakAttempt(worldName, update) {
+  if (!update || (update.action !== "break" && update.action !== "hit") || update.layer === "background") return false;
+  if (isFishMongerBlockType(update.block_type)) return true;
+  return getFishMongerAnchorAt(worldName, update.x, update.y) !== null;
+}
+
+function canPlayerPlaceFishMonger(player, worldName) {
+  if (!player || !player.authenticated) return false;
+  return (isWorldLocked(worldName) || hasWorldLockBlock(worldName)) && canPlayerBuildInWorld(player, worldName);
+}
+
+function canPlayerBreakFishMonger(player, worldName, update) {
+  if (!player || !player.authenticated) return false;
+  if (!update || (update.action !== "break" && update.action !== "hit") || update.layer === "background") return false;
+
+  const block = getFishMongerAnchorAt(worldName, update.x, update.y);
+  if (!block) return false;
+
+  return canPlayerUseWorldLockAccess(player, worldName);
 }
 
 function canListItemInVend(itemId, itemCategory) {
@@ -3936,6 +4022,196 @@ function handleFishingCompleteTransaction(socket, player, data) {
   });
 }
 
+function isSellableFishItem(itemId) {
+  const definition = ItemDatabase.getItemDefinition(itemId);
+  return Boolean(definition && definition.category === "fish" && !definition.hidden);
+}
+
+function getFishSellValue(itemId) {
+  const definition = ItemDatabase.getItemDefinition(itemId);
+  if (!definition || definition.category !== "fish") return 0;
+
+  for (const field of ["sell_value", "fish_sell_value", "sell_price"]) {
+    const configuredValue = Math.trunc(Number(definition[field]));
+    if (Number.isFinite(configuredValue) && configuredValue > 0) {
+      return configuredValue;
+    }
+  }
+
+  switch (String(definition.rarity || "common")) {
+    case "legendary":
+      return 1000;
+    case "epic":
+      return 300;
+    case "rare":
+      return 125;
+    case "uncommon":
+      return 50;
+    default:
+      return 25;
+  }
+}
+
+function validateFishMongerAccess(socket, player, data, worldName, grid) {
+  if (!grid) {
+    sendInventoryTransactionRejected(socket, data, "Fish Monger position is missing.");
+    return null;
+  }
+
+  if (!isPlayerNearGrid(player, grid.x, grid.y)) {
+    sendInventoryTransactionRejected(socket, data, "Too far away from the Fish Monger.");
+    return null;
+  }
+
+  const anchor = getFishMongerAnchorAt(worldName, grid.x, grid.y);
+  if (!anchor) {
+    sendInventoryTransactionRejected(socket, data, "That is not a Fish Monger.");
+    return null;
+  }
+
+  return { x: anchor.x, y: anchor.y };
+}
+
+function handleFishMongerTransaction(socket, player, data) {
+  const requestId = makeRequestId(data);
+  const action = String(data.action || "").trim();
+  const worldName = getTransactionWorldName(player, data);
+  if (cleanWorld(player.world || "START") !== worldName) {
+    sendInventoryTransactionRejected(socket, data, "Join that world before selling fish.");
+    return;
+  }
+
+  const grid = getTransactionGrid(data);
+  const fishMongerGrid = validateFishMongerAccess(socket, player, data, worldName, grid);
+  if (!fishMongerGrid) return;
+
+  if (tradeByPlayerId.has(player.id)) {
+    sendInventoryTransactionRejected(socket, data, "Finish or cancel your trade before selling fish.");
+    return;
+  }
+
+  const username = player.account_username;
+  const state = ensureWritablePlayerState(username);
+  if (!state) {
+    sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
+    return;
+  }
+
+  const sales = [];
+  if (action === "fish_monger_sell_all") {
+    const fishInventory = state.fish_inventory && typeof state.fish_inventory === "object" && !Array.isArray(state.fish_inventory)
+      ? state.fish_inventory
+      : {};
+
+    for (const itemId of Object.keys(fishInventory)) {
+      const cleanItemId = clampString(itemId || "");
+      if (!isSellableFishItem(cleanItemId)) continue;
+
+      const amount = getInventoryCount(state, cleanItemId, "fish");
+      const sellValue = getFishSellValue(cleanItemId);
+      if (amount <= 0 || sellValue <= 0) continue;
+
+      sales.push({
+        item_id: cleanItemId,
+        item_category: "fish",
+        amount,
+        sell_value: sellValue,
+      });
+    }
+  } else {
+    const itemId = clampString(data.item_id || data.item_type || data.item || "");
+    if (!isSellableFishItem(itemId)) {
+      sendInventoryTransactionRejected(socket, data, "That item cannot be sold here.");
+      return;
+    }
+
+    const requestedAmount = Math.trunc(Number(data.amount) || 0);
+    if (requestedAmount <= 0 || requestedAmount > ItemDatabase.getStackLimit(itemId)) {
+      sendInventoryTransactionRejected(socket, data, "Choose a valid fish quantity.");
+      return;
+    }
+
+    const amount = requestedAmount;
+    const owned = getInventoryCount(state, itemId, "fish");
+    if (owned < amount) {
+      sendInventoryTransactionRejected(socket, data, "You do not have that many fish.");
+      return;
+    }
+
+    const sellValue = getFishSellValue(itemId);
+    if (sellValue <= 0) {
+      sendInventoryTransactionRejected(socket, data, "That fish has no sell value yet.");
+      return;
+    }
+
+    sales.push({
+      item_id: itemId,
+      item_category: "fish",
+      amount,
+      sell_value: sellValue,
+    });
+  }
+
+  if (sales.length === 0) {
+    sendInventoryTransactionRejected(socket, data, "You don't have any fish to sell.");
+    return;
+  }
+
+  const totalFish = sales.reduce((total, sale) => total + sale.amount, 0);
+  const totalGems = sales.reduce((total, sale) => total + sale.amount * sale.sell_value, 0);
+  if (totalFish <= 0 || totalGems <= 0) {
+    sendInventoryTransactionRejected(socket, data, "That fish has no sell value yet.");
+    return;
+  }
+
+  const gemCapacity = ItemDatabase.getStackLimit("gem") - getInventoryCount(state, "gem", "currency");
+  if (totalGems > gemCapacity) {
+    sendInventoryTransactionRejected(socket, data, "Your gem balance is full.");
+    return;
+  }
+
+  const stagedState = cloneJson(state);
+  for (const sale of sales) {
+    if (!spendItemFromState(stagedState, sale.item_id, sale.item_category, sale.amount)) {
+      sendInventoryTransactionRejected(socket, data, "Server inventory changed. Try again.");
+      return;
+    }
+  }
+
+  if (!addItemToState(stagedState, "gem", "currency", totalGems)) {
+    sendInventoryTransactionRejected(socket, data, "Could not add gems.");
+    return;
+  }
+
+  persistPlayerInventoryChange(username, stagedState);
+
+  const saleId = makeAuditId("fish_monger");
+  for (const sale of sales) {
+    logItemLedgerForState(socket, player, username, stagedState, sale.item_id, sale.item_category, -sale.amount, "fish_monger_sell", saleId, "fish_sold", worldName, {
+      x: fishMongerGrid.x,
+      y: fishMongerGrid.y,
+      sell_value: sale.sell_value,
+    });
+  }
+  logItemLedgerForState(socket, player, username, stagedState, "gem", "currency", totalGems, "fish_monger_sell", saleId, "fish_sale_reward", worldName, {
+    x: fishMongerGrid.x,
+    y: fishMongerGrid.y,
+    total_fish: totalFish,
+  });
+
+  sendInventoryTransactionResult(socket, {
+    ok: true,
+    request_id: requestId,
+    action,
+    message: action === "fish_monger_sell_all"
+      ? `Sold ${totalFish} fish for ${totalGems} gems.`
+      : `Sold ${sales[0].item_id} x${sales[0].amount} for ${totalGems} gems.`,
+    username,
+    rewards: [{ item_id: "gem", item_category: "currency", amount: totalGems }],
+    player_data: stagedState,
+  });
+}
+
 function getSeedGrowthRemaining(seed) {
   if (!seed) return SERVER_SEED_GROW_TIME_SECONDS;
   const maxGrowTime = Math.max(1, Number(seed.max_grow_time) || SERVER_SEED_GROW_TIME_SECONDS);
@@ -4256,6 +4532,124 @@ function isPositionInWorldBounds(x, y) {
   const maxX = WORLD_WIDTH * TILE_SIZE + POSITION_MARGIN_PIXELS;
   const maxY = WORLD_HEIGHT * TILE_SIZE + POSITION_MARGIN_PIXELS;
   return Number.isFinite(x) && Number.isFinite(y) && x >= min && x <= maxX && y >= min && y <= maxY;
+}
+
+function parseBlockVector2(value, fallbackX, fallbackY) {
+  if (Array.isArray(value) && value.length >= 2) {
+    return {
+      x: Number.isFinite(Number(value[0])) ? Number(value[0]) : fallbackX,
+      y: Number.isFinite(Number(value[1])) ? Number(value[1]) : fallbackY,
+    };
+  }
+
+  if (value && typeof value === "object" && !Array.isArray(value)) {
+    return {
+      x: Number.isFinite(Number(value.x)) ? Number(value.x) : fallbackX,
+      y: Number.isFinite(Number(value.y)) ? Number(value.y) : fallbackY,
+    };
+  }
+
+  return { x: fallbackX, y: fallbackY };
+}
+
+function blockOccupiesCollisionArea(blockType) {
+  const definition = ItemDatabase.getItemDefinition(blockType);
+  return Boolean(definition?.occupies_collision_area);
+}
+
+function blockRequiresFullAreaClear(blockType) {
+  const definition = ItemDatabase.getItemDefinition(blockType);
+  return Boolean(definition?.requires_full_area_clear);
+}
+
+function blockRequiresWorldLock(blockType) {
+  const definition = ItemDatabase.getItemDefinition(blockType);
+  return Boolean(definition?.requires_world_lock);
+}
+
+function getBlockCollisionRectForGrid(x, y, blockType) {
+  const definition = ItemDatabase.getItemDefinition(blockType) || {};
+  const size = parseBlockVector2(definition.collision_size || definition.visual_size, TILE_SIZE, TILE_SIZE);
+  const offset = parseBlockVector2(definition.collision_offset || definition.visual_offset, 0, 0);
+  const centerX = (Number(x) || 0) * TILE_SIZE + offset.x;
+  const centerY = (Number(y) || 0) * TILE_SIZE + offset.y;
+
+  return {
+    x: centerX - size.x * 0.5,
+    y: centerY - size.y * 0.5,
+    width: size.x,
+    height: size.y,
+  };
+}
+
+function getGridPositionsOverlappingRect(rect) {
+  const positions = [];
+  const halfTile = TILE_SIZE * 0.5;
+  const epsilon = 0.01;
+  const minX = Math.floor((rect.x + halfTile + epsilon) / TILE_SIZE);
+  const minY = Math.floor((rect.y + halfTile + epsilon) / TILE_SIZE);
+  const maxX = Math.floor((rect.x + rect.width - epsilon + halfTile) / TILE_SIZE);
+  const maxY = Math.floor((rect.y + rect.height - epsilon + halfTile) / TILE_SIZE);
+
+  for (let y = minY; y <= maxY; y += 1) {
+    for (let x = minX; x <= maxX; x += 1) {
+      positions.push({ x, y });
+    }
+  }
+
+  return positions;
+}
+
+function rectsIntersect(a, b) {
+  if (!a || !b) return false;
+  return (
+    a.x < b.x + b.width &&
+    a.x + a.width > b.x &&
+    a.y < b.y + b.height &&
+    a.y + a.height > b.y
+  );
+}
+
+function doesPlacementOverlapReservedObject(state, x, y, blockType) {
+  if (!state) return false;
+
+  const proposedRect = getBlockCollisionRectForGrid(x, y, blockType);
+  for (const block of state.foreground.values()) {
+    const existingType = clampString(block?.block_type || "");
+    if (!blockOccupiesCollisionArea(existingType)) continue;
+
+    const existingRect = getBlockCollisionRectForGrid(block.x, block.y, existingType);
+    if (rectsIntersect(proposedRect, existingRect)) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+function validateFullCollisionAreaPlacement(socket, state, update) {
+  const collisionRect = getBlockCollisionRectForGrid(update.x, update.y, update.block_type);
+  const occupiedPositions = getGridPositionsOverlappingRect(collisionRect);
+
+  for (const position of occupiedPositions) {
+    if (!isGridInWorld(position.x, position.y)) {
+      sendActionRejected(socket, "world_block_update", "Need enough empty space.");
+      return false;
+    }
+
+    const key = gridKey(position.x, position.y);
+    if (state.foreground.has(key) || state.seeds.has(key)) {
+      sendActionRejected(socket, "world_block_update", "Need enough empty space.");
+      return false;
+    }
+  }
+
+  if (doesPlacementOverlapReservedObject(state, update.x, update.y, update.block_type)) {
+    sendActionRejected(socket, "world_block_update", "Need enough empty space.");
+    return false;
+  }
+
+  return true;
 }
 
 function clampInteger(value, min, max) {
@@ -4629,7 +5023,7 @@ function prepareVendBreakInventoryReturn(socket, player, worldName, update) {
 
 function validateBlockUpdateAgainstServerState(socket, player, worldName, update) {
   const state = ensureWorldState(worldName);
-  const key = gridKey(update.x, update.y);
+  let key = gridKey(update.x, update.y);
 
   if (!isPlayerNearGrid(player, update.x, update.y)) {
     sendActionRejected(socket, "world_block_update", "Too far away.");
@@ -4639,7 +5033,16 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
   if (update.action === "break" || update.action === "hit") {
     const targetLayer = update.layer === "background" ? state.background : state.foreground;
     const removedLayer = update.layer === "background" ? state.removed_background : state.removed_foreground;
-    const serverBlock = targetLayer.get(key);
+    let serverBlock = targetLayer.get(key);
+    if (!serverBlock && update.layer !== "background") {
+      const anchorBlock = getCollisionAreaAnchorInState(state, update.x, update.y);
+      if (anchorBlock) {
+        update.x = anchorBlock.x;
+        update.y = anchorBlock.y;
+        key = gridKey(update.x, update.y);
+        serverBlock = targetLayer.get(key);
+      }
+    }
     const blockType = serverBlock ? serverBlock.block_type : update.block_type;
 
     if (removedLayer.has(key) && !serverBlock) {
@@ -4671,16 +5074,22 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
     }
 
     if (update.block_type === "world_lock" && hasWorldLockProtectedStorageBlocks(worldName)) {
-      sendActionRejected(socket, "world_block_update", "Remove all Safes and vending machines before breaking the World Lock.");
+      sendActionRejected(socket, "world_block_update", "Remove all Safes, vending machines, and Fish Mongers before breaking the World Lock.");
+      return { ok: false };
+    }
+
+    const isVendBreak = isVendBlockType(update.block_type);
+    const isSafeBreak = isSafeBlockType(update.block_type);
+    const isFishMongerBreak = isFishMongerBlockType(update.block_type);
+
+    if (isFishMongerBreak && !canPlayerBreakFishMonger(player, worldName, update)) {
+      sendActionRejected(socket, "world_block_update", "Only the world owner or players with access can break the Fish Monger.");
       return { ok: false };
     }
 
     if (!validateBlockBreakPace(socket, player)) {
       return { ok: false };
     }
-
-    const isVendBreak = isVendBlockType(update.block_type);
-    const isSafeBreak = isSafeBlockType(update.block_type);
 
     if (isVendBreak) {
       if (!canPlayerBreakVendingMachine(player, worldName, update)) {
@@ -4745,6 +5154,14 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
     return { ok: false };
   }
 
+  if (isFishMongerBlockType(update.block_type) && blockRequiresWorldLock(update.block_type) && !canPlayerPlaceFishMonger(player, worldName)) {
+    const message = isWorldLocked(worldName) || hasWorldLockBlock(worldName)
+      ? "This world is locked."
+      : "You need a World Lock in this world before placing a Fish Monger.";
+    sendActionRejected(socket, "world_block_update", message);
+    return { ok: false };
+  }
+
   if (isVendBlockType(update.block_type) && !canPlayerPlaceVendingMachine(player, worldName)) {
     sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can place vending machines." : "Lock this world before placing vending machines.");
     return { ok: false };
@@ -4770,6 +5187,15 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
   if (update.layer === "foreground" && state.seeds.has(key)) {
     sendActionRejected(socket, "world_block_update", "A seed is already planted there.");
     return { ok: false };
+  }
+
+  if (update.layer === "foreground") {
+    if (blockRequiresFullAreaClear(update.block_type)) {
+      if (!validateFullCollisionAreaPlacement(socket, state, update)) return { ok: false };
+    } else if (doesPlacementOverlapReservedObject(state, update.x, update.y, update.block_type)) {
+      sendActionRejected(socket, "world_block_update", "Need enough empty space.");
+      return { ok: false };
+    }
   }
 
   const cost = ItemDatabase.getPlacementCost(update.block_type);
@@ -4832,7 +5258,7 @@ function prepareWorldLockStateUpdate(socket, player, worldName, update) {
   }
 
   if (currentLock.is_locked && !nextLock.is_locked && hasWorldLockProtectedStorageBlocks(worldName)) {
-    sendActionRejected(socket, "world_lock_state", "Remove all Safes and vending machines before unlocking the World Lock.");
+    sendActionRejected(socket, "world_lock_state", "Remove all Safes, vending machines, and Fish Mongers before unlocking the World Lock.");
     return false;
   }
 
@@ -6538,6 +6964,7 @@ function isProtectedEntranceSupportBlock(blockType) {
   return (
     clean === "world_lock" ||
     clean === SAFE_BLOCK_TYPE ||
+    clean === FISH_MONGER_BLOCK_TYPE ||
     isVendBlockType(clean) ||
     clean === "crafting_station" ||
     clean === "furnace" ||
