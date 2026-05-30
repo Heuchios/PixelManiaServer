@@ -491,7 +491,7 @@ wss.on("connection", (socket) => {
         initializeSafeOwnerOnPlace(worldName, update, player);
       }
       queueWorldSave(worldName);
-      broadcastToWorld(worldName, update, playerId);
+      broadcastToWorld(worldName, update);
       const emittedDrops = emitBreakDrops(worldName, update);
       logWorldChange(socket, player, {
         source_type: "world_block_update",
@@ -618,7 +618,7 @@ wss.on("connection", (socket) => {
 
       applyInteractionUpdateToWorldState(worldName, update);
       queueWorldSave(worldName);
-      broadcastToWorld(worldName, update, playerId);
+      broadcastToWorld(worldName, update);
       const interactionDetails = {};
       if (update.action === "world_lock_state" && update.state) {
         interactionDetails.is_locked = Boolean(update.state.is_locked);
@@ -669,7 +669,7 @@ wss.on("connection", (socket) => {
       const dropTransactionId = makeAuditId("drop");
       applyDropCreateToWorldState(worldName, update);
       queueWorldSave(worldName);
-      broadcastToWorld(worldName, update, playerId);
+      broadcastToWorld(worldName, update);
       logWorldChange(socket, player, {
         source_type: "world_item_drop_create",
         source_id: dropTransactionId,
@@ -710,7 +710,7 @@ wss.on("connection", (socket) => {
 
       applyDropUpdateToWorldState(worldName, update);
       queueWorldSave(worldName);
-      broadcastToWorld(worldName, update, playerId);
+      broadcastToWorld(worldName, update);
       logWorldChange(socket, player, {
         source_type: "world_item_drop_update",
         source_id: makeAuditId("drop"),
@@ -787,7 +787,7 @@ wss.on("connection", (socket) => {
       }
 
       queueWorldSave(worldName);
-      broadcastToWorld(worldName, update, playerId);
+      broadcastToWorld(worldName, update);
       return;
     }
 
@@ -2423,6 +2423,21 @@ function handleInventoryTransactionRequest(socket, player, data) {
 
   if (action === "fish_monger_sell" || action === "fish_monger_sell_all") {
     handleFishMongerTransaction(socket, player, data);
+    return;
+  }
+
+  if (action === "drop_inventory_item") {
+    handleDropInventoryItemTransaction(socket, player, data);
+    return;
+  }
+
+  if (action === "trash_inventory_item") {
+    handleTrashInventoryItemTransaction(socket, player, data);
+    return;
+  }
+
+  if (action === "seed_place") {
+    handleSeedPlaceTransaction(socket, player, data);
     return;
   }
 
@@ -4212,6 +4227,166 @@ function handleFishMongerTransaction(socket, player, data) {
   });
 }
 
+function getTransactionDropPosition(player, data) {
+  const x = Number(data.x);
+  const y = Number(data.y);
+  if (isPositionInWorldBounds(x, y)) {
+    return { x, y };
+  }
+
+  const stackGrid = getTransactionGrid(data, "stack_grid_x", "stack_grid_y") || getTransactionGrid(data);
+  if (stackGrid && isGridInWorld(stackGrid.x, stackGrid.y)) {
+    return getGridCenterPixels(stackGrid.x, stackGrid.y);
+  }
+
+  return {
+    x: Number(player?.x) || 0,
+    y: Number(player?.y) || 0,
+  };
+}
+
+function handleDropInventoryItemTransaction(socket, player, data) {
+  const requestId = makeRequestId(data);
+  const worldName = getTransactionWorldName(player, data);
+  if (!requireSameWorld(socket, player, worldName, "drop items in that world")) return;
+
+  if (tradeByPlayerId.has(player.id)) {
+    sendInventoryTransactionRejected(socket, data, "Finish or cancel your trade before dropping items.");
+    return;
+  }
+
+  const itemId = clampString(data.item_type || data.item_id || data.item || "");
+  if (!ItemDatabase.hasItem(itemId)) {
+    sendInventoryTransactionRejected(socket, data, "That item does not exist on the server.");
+    return;
+  }
+
+  if (!ItemDatabase.isDropableItem(itemId)) {
+    sendInventoryTransactionRejected(socket, data, "That item cannot be dropped.");
+    return;
+  }
+
+  const itemCategory = resolveInventoryCategory(itemId, data.item_category || data.category || "");
+  if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) {
+    sendInventoryTransactionRejected(socket, data, "That item category does not match the server.");
+    return;
+  }
+
+  const amount = clampInteger(data.amount || 1, 1, Math.min(MAX_DROP_AMOUNT, ItemDatabase.getStackLimit(itemId)));
+  const position = getTransactionDropPosition(player, data);
+  if (!isPositionInWorldBounds(position.x, position.y) || !isPlayerNearPoint(player, position.x, position.y, MAX_DROP_CREATE_DISTANCE_PIXELS)) {
+    sendInventoryTransactionRejected(socket, data, "Drop closer to your player.");
+    return;
+  }
+
+  const state = ensureWritablePlayerState(player.account_username);
+  if (!state) {
+    sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
+    return;
+  }
+
+  if (getInventoryCount(state, itemId, itemCategory) < amount) {
+    sendInventoryTransactionRejected(socket, data, `Not enough ${itemId}.`);
+    return;
+  }
+
+  if (!spendItemFromState(state, itemId, itemCategory, amount)) {
+    sendInventoryTransactionRejected(socket, data, "Server inventory changed. Try again.");
+    return;
+  }
+
+  const payload = createServerDrop(worldName, itemId, itemCategory, amount, position.x, position.y, SERVER_DROP_PICKUP_DELAY);
+  if (!payload) {
+    addItemToState(state, itemId, itemCategory, amount);
+    sendInventoryTransactionRejected(socket, data, "Could not create that drop.");
+    return;
+  }
+
+  persistPlayerInventoryChange(player.account_username, state);
+  queueWorldSave(worldName);
+  broadcastToWorld(worldName, payload);
+
+  const dropTransactionId = makeAuditId("drop");
+  logWorldChange(socket, player, {
+    source_type: "drop_inventory_item",
+    source_id: dropTransactionId,
+    world: worldName,
+    action: "drop_create",
+    x: payload.x,
+    y: payload.y,
+    block_type: itemId,
+    details: {
+      drop_id: payload.drop_id,
+      item_category: itemCategory,
+      amount,
+    },
+  });
+  logItemLedgerForState(socket, player, player.account_username, state, itemId, itemCategory, -amount, "drop_inventory_item", dropTransactionId, "drop_from_inventory", worldName, {
+    drop_id: payload.drop_id,
+  });
+
+  sendInventoryTransactionResult(socket, {
+    ok: true,
+    request_id: requestId,
+    action: "drop_inventory_item",
+    message: `Dropped ${amount} ${itemId}.`,
+    username: player.account_username,
+    player_data: state,
+  });
+}
+
+function handleTrashInventoryItemTransaction(socket, player, data) {
+  const requestId = makeRequestId(data);
+
+  if (tradeByPlayerId.has(player.id)) {
+    sendInventoryTransactionRejected(socket, data, "Finish or cancel your trade before trashing items.");
+    return;
+  }
+
+  const itemId = clampString(data.item_type || data.item_id || data.item || "");
+  if (!ItemDatabase.hasItem(itemId)) {
+    sendInventoryTransactionRejected(socket, data, "That item does not exist on the server.");
+    return;
+  }
+
+  const itemCategory = resolveInventoryCategory(itemId, data.item_category || data.category || "");
+  if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) {
+    sendInventoryTransactionRejected(socket, data, "That item category does not match the server.");
+    return;
+  }
+
+  const amount = clampInteger(data.amount || 1, 1, ItemDatabase.getStackLimit(itemId));
+  const state = ensureWritablePlayerState(player.account_username);
+  if (!state) {
+    sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
+    return;
+  }
+
+  if (getInventoryCount(state, itemId, itemCategory) < amount) {
+    sendInventoryTransactionRejected(socket, data, `Not enough ${itemId}.`);
+    return;
+  }
+
+  if (!spendItemFromState(state, itemId, itemCategory, amount)) {
+    sendInventoryTransactionRejected(socket, data, "Server inventory changed. Try again.");
+    return;
+  }
+
+  persistPlayerInventoryChange(player.account_username, state);
+
+  const trashTransactionId = makeAuditId("trash");
+  logItemLedgerForState(socket, player, player.account_username, state, itemId, itemCategory, -amount, "trash_inventory_item", trashTransactionId, "inventory_trash", player.world, {});
+
+  sendInventoryTransactionResult(socket, {
+    ok: true,
+    request_id: requestId,
+    action: "trash_inventory_item",
+    message: `Trashed ${amount} ${itemId}.`,
+    username: player.account_username,
+    player_data: state,
+  });
+}
+
 function getSeedGrowthRemaining(seed) {
   if (!seed) return SERVER_SEED_GROW_TIME_SECONDS;
   const maxGrowTime = Math.max(1, Number(seed.max_grow_time) || SERVER_SEED_GROW_TIME_SECONDS);
@@ -4252,6 +4427,90 @@ function makeServerSeedEntry(x, y, seedType) {
     planted_at: Date.now(),
     mutated: randomChance(SEED_MUTATION_CHANCE),
   };
+}
+
+function handleSeedPlaceTransaction(socket, player, data) {
+  const requestId = makeRequestId(data);
+  const worldName = getTransactionWorldName(player, data);
+  if (!requireSameWorld(socket, player, worldName, "plant seeds in that world")) return;
+  if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) return;
+
+  const grid = getTransactionGrid(data);
+  if (!grid || !isPlayerNearGrid(player, grid.x, grid.y)) {
+    sendInventoryTransactionRejected(socket, data, "Too far away.");
+    return;
+  }
+
+  const seedType = clampString(data.seed_type || data.item_id || "");
+  if (!ItemDatabase.hasItem(seedType) || resolveInventoryCategory(seedType) !== "seed") {
+    sendInventoryTransactionRejected(socket, data, "Select a valid seed to plant.");
+    return;
+  }
+
+  const worldState = ensureWorldState(worldName);
+  const key = gridKey(grid.x, grid.y);
+  if (worldState.foreground.has(key)) {
+    sendInventoryTransactionRejected(socket, data, "Need an empty tile.");
+    return;
+  }
+
+  if (worldState.seeds.has(key)) {
+    sendInventoryTransactionRejected(socket, data, "A seed is already planted there.");
+    return;
+  }
+
+  const state = ensureWritablePlayerState(player.account_username);
+  if (!state || !spendItemFromState(state, seedType, "seed", 1)) {
+    sendInventoryTransactionRejected(socket, data, `Not enough ${seedType}.`);
+    return;
+  }
+
+  persistPlayerInventoryChange(player.account_username, state);
+
+  const update = {
+    type: "world_seed_update",
+    action: "place",
+    x: grid.x,
+    y: grid.y,
+    seed_type: seedType,
+    grow_time: SERVER_SEED_GROW_TIME_SECONDS,
+    max_grow_time: SERVER_SEED_GROW_TIME_SECONDS,
+    world: worldName,
+  };
+
+  applySeedUpdateToWorldState(worldName, update);
+  queueWorldSave(worldName);
+  broadcastToWorld(worldName, update);
+
+  const seedTransactionId = makeAuditId("seed");
+  logWorldChange(socket, player, {
+    source_type: "seed_place",
+    source_id: seedTransactionId,
+    world: worldName,
+    action: "place",
+    layer: "seed",
+    x: grid.x,
+    y: grid.y,
+    block_type: seedType,
+    details: {
+      seed_type: seedType,
+      mutated: Boolean(update.mutated),
+    },
+  });
+  logItemLedgerForState(socket, player, player.account_username, state, seedType, "seed", -1, "seed_place", seedTransactionId, "seed_plant_cost", worldName, {
+    x: grid.x,
+    y: grid.y,
+  });
+
+  sendInventoryTransactionResult(socket, {
+    ok: true,
+    request_id: requestId,
+    action: "seed_place",
+    message: `Planted ${seedType}.`,
+    username: player.account_username,
+    seed_type: seedType,
+    player_data: state,
+  });
 }
 
 function getBlockTypeForSeed(seedType) {
