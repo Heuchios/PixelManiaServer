@@ -201,6 +201,8 @@ wss.on("connection", (socket) => {
     authenticated: false,
     role: "player",
     world: "START",
+    current_world: "START",
+    current_world_id: "START",
     joined_world: false,
     x: 0,
     y: 0,
@@ -398,6 +400,8 @@ wss.on("connection", (socket) => {
       }
 
       player.world = newWorld;
+      player.current_world = newWorld;
+      player.current_world_id = newWorld;
       player.joined_world = true;
       player.last_position_at = 0;
       ensureWorldState(player.world);
@@ -487,8 +491,7 @@ wss.on("connection", (socket) => {
     if (data.type === "world_block_update") {
       if (!requireAuthenticated(socket, player, "edit worlds")) return;
 
-      const worldName = cleanWorld(data.world || player.world || "START");
-      if (!requireSameWorld(socket, player, worldName, "edit that world")) return;
+      const worldName = getPlayerCurrentWorldName(player);
 
       const update = sanitizeBlockUpdate(data, worldName);
       if (!update) return;
@@ -789,8 +792,7 @@ wss.on("connection", (socket) => {
     ) {
       if (!requireAuthenticated(socket, player, "pick up drops")) return;
 
-      const worldName = cleanWorld(data.world || player.world || "START");
-      if (!requireSameWorld(socket, player, worldName, "pick up drops in that world")) return;
+      const worldName = getPlayerCurrentWorldName(player);
 
       const update = sanitizeDropPickup(data, worldName, player);
       if (!update) return;
@@ -799,57 +801,74 @@ wss.on("connection", (socket) => {
       });
 
       const pickupTransactionId = makeAuditId("pickup");
-      const pickedDrop = applyDropPickupToWorldState(worldName, update, player);
-      if (!pickedDrop) {
-        sendActionRejected(socket, "world_item_drop_pickup", "That drop is not available.");
+      const pickupResult = applyDropPickupToWorldState(worldName, update, player);
+      if (!pickupResult.ok) {
+        if (pickupResult.reason === "inventory_full") {
+          sendActionRejected(socket, "world_item_drop_pickup", "Inventory full.", {
+            drop_id: update.drop_id,
+            world: worldName,
+          });
+          return;
+        }
+        if (pickupResult.reason === "inventory_unavailable") {
+          sendActionRejected(socket, "world_item_drop_pickup", "Could not add that item to your server inventory.", {
+            drop_id: update.drop_id,
+            world: worldName,
+          });
+          return;
+        }
+        if (pickupResult.reason === "too_far") {
+          logDropPickupTooFar(player, worldName, update.drop_id, pickupResult.drop);
+          sendActionRejected(socket, "world_item_drop_pickup", "Too far away from that drop.", {
+            drop_id: update.drop_id,
+            world: worldName,
+          });
+          return;
+        }
+        logDropPickupNotAvailable(player, worldName, update.drop_id);
+        sendActionRejected(socket, "world_item_drop_pickup", "That drop is not available.", {
+          drop_id: update.drop_id,
+          world: worldName,
+        });
         return;
       }
 
-      const grant = grantItemToPlayerState(
-        player.account_username,
-        pickedDrop.item_type,
-        pickedDrop.item_category,
-        pickedDrop.amount
-      );
-      let pickupState = null;
-      if (grant) {
-        pickupState = ensurePlayerState(player.account_username) || {};
-        logWorldChange(socket, player, {
-          source_type: "world_item_drop_pickup",
-          source_id: pickupTransactionId,
-          world: worldName,
-          action: "drop_pickup",
-          x: pickedDrop.x,
-          y: pickedDrop.y,
-          block_type: pickedDrop.item_type,
-          details: {
-            drop_id: pickedDrop.drop_id,
-            item_category: pickedDrop.item_category,
-            amount: pickedDrop.amount,
-          },
-        });
-        logItemLedgerForState(socket, player, player.account_username, pickupState, pickedDrop.item_type, pickedDrop.item_category, pickedDrop.amount, "world_item_drop_pickup", pickupTransactionId, "drop_pickup", worldName, {
+      const pickedDrop = pickupResult.drop;
+      const pickupState = pickupResult.playerState;
+      const pickupUpdate = pickupResult.update;
+      logWorldChange(socket, player, {
+        source_type: "world_item_drop_pickup",
+        source_id: pickupTransactionId,
+        world: worldName,
+        action: "drop_pickup",
+        x: pickedDrop.x,
+        y: pickedDrop.y,
+        block_type: pickedDrop.item_type,
+        details: {
           drop_id: pickedDrop.drop_id,
-        });
-        sendInventoryTransactionResult(socket, {
-          ok: true,
-          action: "drop_pickup",
-          message: `Picked up ${pickedDrop.amount} ${pickedDrop.item_type}.`,
-          username: player.account_username,
-          rewards: [{
-            item_id: pickedDrop.item_type,
-            item_category: pickedDrop.item_category,
-            amount: pickedDrop.amount,
-          }],
-          player_data: pickupState,
-        });
-      } else {
-        sendActionRejected(socket, "world_item_drop_pickup", "Could not add that item to your server inventory.");
-        return;
-      }
+          item_category: pickedDrop.item_category,
+          amount: pickedDrop.amount,
+          remaining: pickupResult.remaining,
+        },
+      });
+      logItemLedgerForState(socket, player, player.account_username, pickupState, pickedDrop.item_type, pickedDrop.item_category, pickedDrop.amount, "world_item_drop_pickup", pickupTransactionId, "drop_pickup", worldName, {
+        drop_id: pickedDrop.drop_id,
+      });
+      sendInventoryTransactionResult(socket, {
+        ok: true,
+        action: "drop_pickup",
+        message: `Picked up ${pickedDrop.amount} ${pickedDrop.item_type}.`,
+        username: player.account_username,
+        rewards: [{
+          item_id: pickedDrop.item_type,
+          item_category: pickedDrop.item_category,
+          amount: pickedDrop.amount,
+        }],
+        player_data: pickupState,
+      });
 
       queueWorldSave(worldName);
-      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update, {
+      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, pickupUpdate, {
         username: player.account_username,
         player_data: pickupState,
       });
@@ -942,6 +961,11 @@ function cleanWorld(value) {
   const clean = String(value || "START").trim().toUpperCase().replace(/\s+/g, "_");
   const safe = clean.replace(/[^A-Z0-9_-]/g, "").slice(0, MAX_WORLD_NAME_LENGTH);
   return safe.length > 0 ? safe : "START";
+}
+
+function getPlayerCurrentWorldName(player) {
+  if (!player) return "START";
+  return cleanWorld(player.current_world_id || player.current_world || player.world || "START");
 }
 
 function safeFileName(value, fallback = "data") {
@@ -4862,14 +4886,23 @@ function checkMessageRateLimit(socket, messageType) {
   return false;
 }
 
-function sendActionRejected(socket, action, message) {
+function sendActionRejected(socket, action, message, extra = null) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
 
-  socket.send(JSON.stringify({
+  const payload = {
     type: "action_rejected",
     action,
     message,
-  }));
+  };
+  if (extra && typeof extra === "object" && !Array.isArray(extra)) {
+    for (const [key, value] of Object.entries(extra)) {
+      if (value !== undefined) {
+        payload[key] = value;
+      }
+    }
+  }
+
+  socket.send(JSON.stringify(payload));
 }
 
 function requireSameWorld(socket, player, worldName, action) {
@@ -5229,7 +5262,7 @@ function createServerDrop(worldName, itemType, itemCategory, amount, x, y, picku
 
   const safeAmount = clampInteger(amount || 1, 1, Math.min(MAX_DROP_AMOUNT, ItemDatabase.getStackLimit(itemId)));
   const payload = {
-    type: "world_item_drop_create",
+    type: "drop_spawned",
     world: cleanWorld(worldName),
     drop_id: makeServerDropId(worldName, itemId),
     item_type: itemId,
@@ -7778,9 +7811,6 @@ function applyInteractionUpdateToWorldState(worldName, update) {
 }
 
 function sanitizeDropCreate(data, worldName) {
-  const dropId = clampString(data.drop_id || "", MAX_DROP_ID_LENGTH);
-  if (dropId.length === 0) return null;
-
   const itemType = clampString(data.item_type || data.type_id || data.item || "");
   if (itemType.length === 0) return null;
   if (!ItemDatabase.hasItem(itemType)) return null;
@@ -7794,9 +7824,9 @@ function sanitizeDropCreate(data, worldName) {
   if (!ItemDatabase.canStoreItemInCategory(itemType, itemCategory)) return null;
 
   return {
-    type: "world_item_drop_create",
+    type: "drop_spawned",
     world: cleanWorld(worldName),
-    drop_id: dropId,
+    drop_id: makeServerDropId(worldName, itemType),
     item_type: itemType,
     item_category: itemCategory,
     is_seed: itemCategory === "seed",
@@ -7930,13 +7960,165 @@ function applyDropUpdateToWorldState(worldName, update) {
 }
 
 function applyDropPickupToWorldState(worldName, update, player) {
-  const state = ensureWorldState(worldName);
-  const drop = state.drops.get(update.drop_id);
-  if (!drop) return false;
-  if (!isPlayerNearDrop(player, drop)) return false;
+  const found = findDropForPickup(worldName, update.drop_id);
+  const state = found.state;
+  const drop = found.drop;
+  const authoritativeDropId = found.publicDropId;
+  const dropStateKey = found.key;
+  if (!drop) return { ok: false, reason: "not_available" };
+  if (!isPlayerNearDrop(player, drop)) return { ok: false, reason: "too_far", drop };
 
-  state.drops.delete(update.drop_id);
-  return drop;
+  const itemId = clampString(drop.item_type || "");
+  if (!ItemDatabase.hasItem(itemId)) return { ok: false, reason: "not_available" };
+  const itemCategory = resolveInventoryCategory(itemId, drop.item_category || "");
+  if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) return { ok: false, reason: "not_available" };
+
+  const playerState = ensureWritablePlayerState(player.account_username);
+  if (!playerState) return { ok: false, reason: "inventory_unavailable" };
+
+  const stackLimit = ItemDatabase.getStackLimit(itemId);
+  const dropAmount = clampInteger(drop.amount || 0, 0, Math.min(MAX_DROP_AMOUNT, stackLimit));
+  if (dropAmount <= 0) {
+    state.drops.delete(dropStateKey);
+    return { ok: false, reason: "not_available" };
+  }
+
+  const currentCount = getInventoryCount(playerState, itemId, itemCategory);
+  const availableSpace = Math.max(0, stackLimit - currentCount);
+  if (availableSpace <= 0) return { ok: false, reason: "inventory_full" };
+
+  const pickedAmount = Math.min(dropAmount, availableSpace);
+  const remaining = Math.max(0, dropAmount - pickedAmount);
+  const pickedDrop = {
+    ...drop,
+    drop_id: authoritativeDropId,
+    item_type: itemId,
+    item_category: itemCategory,
+    amount: pickedAmount,
+  };
+
+  const addResult = addItemToState(playerState, itemId, itemCategory, pickedAmount);
+  if (!addResult) return { ok: false, reason: "inventory_unavailable" };
+
+  playerState.saved_at = new Date().toISOString();
+  setPlayerState(player.account_username, playerState);
+  queuePlayerSave(player.account_username);
+
+  let pickupUpdate;
+  if (remaining <= 0) {
+    state.drops.delete(dropStateKey);
+    pickupUpdate = {
+      type: "world_item_drop_remove",
+      world: cleanWorld(worldName),
+      drop_id: authoritativeDropId,
+      remaining: 0,
+      removed: true,
+      requested_by: player.id,
+      requested_by_name: cleanName(player.name),
+    };
+  } else {
+    drop.amount = remaining;
+    pickupUpdate = {
+      type: "world_item_drop_update",
+      world: cleanWorld(worldName),
+      drop_id: authoritativeDropId,
+      item_type: itemId,
+      item_category: itemCategory,
+      amount: remaining,
+      remaining,
+      requested_by: player.id,
+      requested_by_name: cleanName(player.name),
+    };
+  }
+
+  return {
+    ok: true,
+    drop: pickedDrop,
+    playerState,
+    update: pickupUpdate,
+    remaining,
+  };
+}
+
+function findDropForPickup(worldName, dropId) {
+  const cleanWorldName = cleanWorld(worldName);
+  const cleanDropId = clampString(dropId || "", MAX_DROP_ID_LENGTH);
+  const state = ensureWorldState(cleanWorldName);
+
+  if (state.drops.has(cleanDropId)) {
+    return {
+      state,
+      drop: state.drops.get(cleanDropId),
+      key: cleanDropId,
+      publicDropId: cleanDropId,
+      world: cleanWorldName,
+    };
+  }
+
+  for (const [candidateId, candidateDrop] of state.drops.entries()) {
+    const candidateDropId = clampString(candidateDrop?.drop_id || candidateId || "", MAX_DROP_ID_LENGTH);
+    if (candidateDropId === cleanDropId) {
+      return {
+        state,
+        drop: candidateDrop,
+        key: candidateId,
+        publicDropId: candidateDropId,
+        world: cleanWorldName,
+      };
+    }
+  }
+
+  return {
+    state,
+    drop: null,
+    key: cleanDropId,
+    publicDropId: cleanDropId,
+    world: cleanWorldName,
+  };
+}
+
+function logDropPickupNotAvailable(player, worldName, dropId) {
+  const cleanWorldName = cleanWorld(worldName);
+  const state = ensureWorldState(cleanWorldName);
+  const cleanDropId = clampString(dropId || "", MAX_DROP_ID_LENGTH);
+  const loadedWorldsWithDrop = [];
+  for (const [loadedWorldName, loadedState] of worldStates.entries()) {
+    if (!loadedState || !loadedState.drops) continue;
+    if (loadedState.drops.has(cleanDropId)) {
+      loadedWorldsWithDrop.push(loadedWorldName);
+      continue;
+    }
+    for (const [candidateId, candidateDrop] of loadedState.drops.entries()) {
+      const candidateDropId = clampString(candidateDrop?.drop_id || candidateId || "", MAX_DROP_ID_LENGTH);
+      if (candidateDropId === cleanDropId) {
+        loadedWorldsWithDrop.push(loadedWorldName);
+        break;
+      }
+    }
+  }
+  console.warn("[drop_pickup_missing]", {
+    username: cleanAccountName(player?.account_username || player?.name || ""),
+    current_world: cleanWorldName,
+    player_world: cleanWorld(player?.world || "START"),
+    requested_drop_id: cleanDropId,
+    world_drop_count: state.drops.size,
+    has_drop_key: state.drops.has(cleanDropId),
+    loaded_worlds_with_drop: loadedWorldsWithDrop,
+  });
+}
+
+function logDropPickupTooFar(player, worldName, dropId, drop) {
+  console.warn("[drop_pickup_too_far]", {
+    username: cleanAccountName(player?.account_username || player?.name || ""),
+    current_world: cleanWorld(worldName),
+    requested_drop_id: clampString(dropId || "", MAX_DROP_ID_LENGTH),
+    player_x: Number(player?.x || 0),
+    player_y: Number(player?.y || 0),
+    drop_x: Number(drop?.x || 0),
+    drop_y: Number(drop?.y || 0),
+    distance: Math.hypot(Number(player?.x || 0) - Number(drop?.x || 0), Number(player?.y || 0) - Number(drop?.y || 0)),
+    max_distance: MAX_PICKUP_DISTANCE_PIXELS,
+  });
 }
 
 function isPlayerNearDrop(player, drop) {
