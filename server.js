@@ -125,6 +125,7 @@ const MESSAGE_RATE_LIMITS = {
   world_drop_remove: { limit: 30, windowMs: 1000 },
   player_position: { limit: 75, windowMs: 1000 },
 };
+const DEBUG_ACTION_POSITION_FLOW = true;
 const SHOP_CATALOG = new Map([
   ["world_lock", { item_id: "world_lock", item_category: "block", amount: 1, price: 3500 }],
   ["crafting_station", { item_id: "crafting_station", item_category: "block", amount: 1, price: 80 }],
@@ -158,6 +159,20 @@ const worldSaveTimers = new Map();
 const playerSaveTimers = new Map();
 let accountsSaveTimer = null;
 let mailTransporter = null;
+
+function debugActionPositionFlow(label, player, extra = {}) {
+  if (!DEBUG_ACTION_POSITION_FLOW) return;
+
+  console.log("[PM_FLOW][Server]", label, {
+    player_id: player?.id || "",
+    username: player?.account_username || player?.name || "",
+    world: player?.world || "",
+    x: Number(player?.x || 0),
+    y: Number(player?.y || 0),
+    ...extra,
+  });
+}
+
 const periodicSaveTimer = setInterval(() => {
   flushPendingSaves();
 }, PERIODIC_SAVE_MS);
@@ -390,7 +405,10 @@ wss.on("connection", (socket) => {
         players: getPlayersInWorld(player.world, playerId),
       }));
 
-      socket.send(JSON.stringify(buildWorldStateMessage(player.world, { respawn_player: true })));
+      socket.send(JSON.stringify(buildWorldStateMessage(player.world, {
+        respawn_player: true,
+        world_state_reason: "join_world",
+      })));
 
       broadcastToWorld(player.world, {
         type: "player_joined",
@@ -471,6 +489,15 @@ wss.on("connection", (socket) => {
 
       const update = sanitizeBlockUpdate(data, worldName);
       if (!update) return;
+      if (update.action === "break" || update.action === "hit") {
+        debugActionPositionFlow("world_block_update break request start", player, {
+          action: update.action,
+          layer: update.layer,
+          x: update.x,
+          y: update.y,
+          block_type: update.block_type,
+        });
+      }
       if (
         !canPlayerBuildInWorld(player, worldName) &&
         !canPlayerBreakOwnVendingMachine(player, worldName, update) &&
@@ -506,6 +533,15 @@ wss.on("connection", (socket) => {
         player_data: validation.playerState,
       } : null);
       const emittedDrops = emitBreakDrops(worldName, update, socket, player);
+      if (update.action === "break") {
+        debugActionPositionFlow("world_block_update break request end", player, {
+          layer: update.layer,
+          x: update.x,
+          y: update.y,
+          block_type: update.block_type,
+          emitted_drops: emittedDrops.length,
+        });
+      }
       logWorldChange(socket, player, {
         source_type: "world_block_update",
         source_id: blockTransactionId,
@@ -755,6 +791,9 @@ wss.on("connection", (socket) => {
 
       const update = sanitizeDropPickup(data, worldName, player);
       if (!update) return;
+      debugActionPositionFlow("world_item_drop_pickup request start", player, {
+        drop_id: update.drop_id,
+      });
 
       const pickupTransactionId = makeAuditId("pickup");
       const pickedDrop = applyDropPickupToWorldState(worldName, update, player);
@@ -769,8 +808,9 @@ wss.on("connection", (socket) => {
         pickedDrop.item_category,
         pickedDrop.amount
       );
+      let pickupState = null;
       if (grant) {
-        const pickupState = ensurePlayerState(player.account_username) || {};
+        pickupState = ensurePlayerState(player.account_username) || {};
         logWorldChange(socket, player, {
           source_type: "world_item_drop_pickup",
           source_id: pickupTransactionId,
@@ -809,6 +849,11 @@ wss.on("connection", (socket) => {
       sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update, {
         username: player.account_username,
         player_data: pickupState,
+      });
+      debugActionPositionFlow("world_item_drop_pickup request end", player, {
+        drop_id: update.drop_id,
+        item_type: pickedDrop.item_type,
+        amount: pickedDrop.amount,
       });
       return;
     }
@@ -6091,14 +6136,22 @@ function clearWorldByAdmin(worldName, data, socket = null, player = null) {
 
   nextState.world_lock = sanitizeWorldLockState(currentState.world_lock || {});
 
-  replaceWorldStateAndBroadcast(clean, nextState, { respawn_player: true });
+  replaceWorldStateAndBroadcast(clean, nextState, {
+    respawn_player: true,
+    force_respawn: true,
+    world_state_reason: "admin_clear",
+  });
   return { removedCount, protectedCount: protectedEntries.size };
 }
 
 function resetWorldByAdmin(worldName, socket = null, player = null) {
   const clean = cleanWorld(worldName);
   createWorldSnapshot(clean, "before_reset_world", socket, player);
-  replaceWorldStateAndBroadcast(clean, createEmptyWorldState(), { respawn_player: true });
+  replaceWorldStateAndBroadcast(clean, createEmptyWorldState(), {
+    respawn_player: true,
+    force_respawn: true,
+    world_state_reason: "admin_reset",
+  });
 }
 
 function parseGiveCommand(data, command) {
@@ -6853,7 +6906,11 @@ function handleDeveloperCommandRequest(socket, player, data) {
     const commandWorld = getDeveloperCommandWorldName(player, data);
     worldStates.delete(commandWorld);
     ensureWorldState(commandWorld);
-    broadcastToWorld(commandWorld, buildWorldStateMessage(commandWorld, { respawn_player: true }));
+    broadcastToWorld(commandWorld, buildWorldStateMessage(commandWorld, {
+      respawn_player: true,
+      force_respawn: true,
+      world_state_reason: "admin_reload",
+    }));
     approve(`Reloaded ${commandWorld} from server storage.`, { target_world: commandWorld }, { command_type: "reload_world", target_world: commandWorld });
     return;
   }
