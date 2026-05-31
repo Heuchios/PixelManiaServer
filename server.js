@@ -126,7 +126,7 @@ const MESSAGE_RATE_LIMITS = {
   world_drop_remove: { limit: 30, windowMs: 1000 },
   player_position: { limit: 75, windowMs: 1000 },
 };
-const DEBUG_ACTION_POSITION_FLOW = true;
+const DEBUG_ACTION_POSITION_FLOW = ["1", "true", "yes"].includes(String(process.env.DEBUG_ACTION_POSITION_FLOW || "false").trim().toLowerCase());
 const SHOP_CATALOG = new Map([
   ["world_lock", { item_id: "world_lock", item_category: "block", amount: 1, price: 3500 }],
   ["crafting_station", { item_id: "crafting_station", item_category: "block", amount: 1, price: 80 }],
