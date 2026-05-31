@@ -340,6 +340,7 @@ wss.on("connection", (socket) => {
       if (!state) return;
       const serverState = mergeClientPlayerStateIntoServerState(username, state, {
         legacyImportRequested: Boolean(data.legacy_client_inventory_import),
+        legacyImportRevision: clampInteger(data.legacy_client_inventory_import_revision || 1, 1, 1000),
       });
       if (!serverState) return;
 
@@ -349,6 +350,12 @@ wss.on("connection", (socket) => {
       });
       setPlayerState(username, serverState);
       queuePlayerSave(username);
+      sendJson(socket, {
+        type: "player_state",
+        found: true,
+        username,
+        player_data: serverState,
+      });
       return;
     }
 
@@ -6177,17 +6184,21 @@ function mergeClientPlayerStateIntoServerState(username, incomingState, options 
     ? clampString(incomingState.equipped_pants_item || "")
     : "";
 
+  const requestedLegacyImportRevision = clampInteger(options.legacyImportRevision || 0, 0, 1000);
+  const currentLegacyImportRevision = clampInteger(serverState.legacy_client_inventory_import_revision || 0, 0, 1000);
   const didLegacyImport = (
     ALLOW_LEGACY_PLAYER_STATE_IMPORT &&
     Boolean(options.legacyImportRequested) &&
-    !serverState.legacy_client_inventory_imported_at
+    requestedLegacyImportRevision > currentLegacyImportRevision
   );
 
   if (didLegacyImport) {
     mergeLegacyClientInventoriesIntoServerState(merged, incomingState);
     merged.legacy_client_inventory_imported_at = new Date().toISOString();
+    merged.legacy_client_inventory_import_revision = requestedLegacyImportRevision;
   } else if (serverState.legacy_client_inventory_imported_at) {
     merged.legacy_client_inventory_imported_at = serverState.legacy_client_inventory_imported_at;
+    merged.legacy_client_inventory_import_revision = currentLegacyImportRevision;
   }
 
   if (didLegacyImport) {
@@ -8035,6 +8046,7 @@ function sanitizePlayerState(rawState, username) {
     equipped_shirt_item: "",
     equipped_pants_item: "",
     legacy_client_inventory_imported_at: String(rawState.legacy_client_inventory_imported_at || "").slice(0, 64),
+    legacy_client_inventory_import_revision: clampInteger(rawState.legacy_client_inventory_import_revision || 0, 0, 1000),
     saved_at: new Date().toISOString(),
   };
 
