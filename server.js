@@ -67,6 +67,11 @@ const VEND_LOG_LIMIT = 30;
 const SAFE_BLOCK_TYPE = "safe";
 const FISH_MONGER_BLOCK_TYPE = "fish_monger";
 const ENTRANCE_GATE_TYPE = "entrance_gate";
+const WORLD_LOCK_GRID_SENTINEL = 999999;
+const DEFAULT_TRUSTED_BUILDER_SLOT_LIMIT = 6;
+const MIN_TRUSTED_BUILDER_SLOT_LIMIT = 0;
+const MAX_TRUSTED_BUILDER_SLOT_LIMIT = 50;
+const WORLD_LOCK_ACCESS_ROLES = new Set(["admin", "builder", "visitor"]);
 const SAFE_SLOT_COUNT = 10;
 const SERVER_SEED_GROW_TIME_SECONDS = Math.max(1, Number(process.env.SEED_GROW_TIME_SECONDS) || 8);
 const MATURE_SEED_EXTRA_DROP_CHANCE = Math.max(0, Math.min(1, Number(process.env.MATURE_SEED_EXTRA_DROP_CHANCE) || 0.65));
@@ -526,7 +531,9 @@ wss.on("connection", (socket) => {
       if (validation.pendingHit) return;
 
       const blockTransactionId = makeAuditId("block");
+      const shouldBroadcastWorldLockState = shouldApplyWorldLockStateForBlockUpdate(worldName, update);
       applyBlockUpdateToWorldState(worldName, update);
+      const worldLockStatePayload = applyWorldLockStateForBlockUpdate(worldName, update, player, shouldBroadcastWorldLockState);
       if (update.action === "place" && isVendBlockType(update.block_type)) {
         initializeVendOwnerOnPlace(worldName, update, player);
       }
@@ -538,6 +545,9 @@ wss.on("connection", (socket) => {
         username: player.account_username,
         player_data: validation.playerState,
       } : null);
+      if (worldLockStatePayload) {
+        sendWorldUpdateToRequesterAndWorld(socket, player, worldName, worldLockStatePayload);
+      }
       const emittedDrops = emitBreakDrops(worldName, update, socket, player);
       if (update.action === "break") {
         debugActionPositionFlow("world_block_update break request end", player, {
@@ -2832,6 +2842,54 @@ function isActiveWorldLockGrid(state, x, y) {
   return lockGridX === Math.trunc(Number(x) || 0) && lockGridY === Math.trunc(Number(y) || 0);
 }
 
+function shouldApplyWorldLockStateForBlockUpdate(worldName, update) {
+  if (!update || update.layer !== "foreground" || update.block_type !== "world_lock") return false;
+  if (update.action === "place") return true;
+  if (update.action !== "break") return false;
+
+  const state = ensureWorldState(worldName);
+  return isActiveWorldLockGrid(state, update.x, update.y);
+}
+
+function makeWorldLockStateForPlacement(player, update) {
+  return sanitizeWorldLockState({
+    is_locked: true,
+    owner_name: cleanAccountName(player?.account_username || player?.name || "").toUpperCase(),
+    lock_grid_x: update.x,
+    lock_grid_y: update.y,
+    allowed_players: [],
+    player_roles: {},
+    public_build: false,
+    trusted_builder_slot_limit: DEFAULT_TRUSTED_BUILDER_SLOT_LIMIT,
+  });
+}
+
+function makeWorldLockStatePayload(worldName, state) {
+  return {
+    type: "world_interaction_update",
+    world: cleanWorld(worldName),
+    action: "world_lock_state",
+    state: sanitizeWorldLockState(state || {}),
+  };
+}
+
+function applyWorldLockStateForBlockUpdate(worldName, update, player, shouldApplyState) {
+  if (!shouldApplyState) return null;
+
+  const state = ensureWorldState(worldName);
+  if (update.action === "place") {
+    state.world_lock = makeWorldLockStateForPlacement(player, update);
+    return makeWorldLockStatePayload(worldName, state.world_lock);
+  }
+
+  if (update.action === "break") {
+    state.world_lock = {};
+    return makeWorldLockStatePayload(worldName, state.world_lock);
+  }
+
+  return null;
+}
+
 function getWorldLockProtectedStorageBlocks(worldName) {
   const state = ensureWorldState(worldName);
   const protectedBlocks = [];
@@ -2939,7 +2997,7 @@ function isFishMongerBreakAttempt(worldName, update) {
 
 function canPlayerPlaceFishMonger(player, worldName) {
   if (!player || !player.authenticated) return false;
-  return (isWorldLocked(worldName) || hasWorldLockBlock(worldName)) && canPlayerBuildInWorld(player, worldName);
+  return isWorldLocked(worldName) && canPlayerBuildInWorld(player, worldName);
 }
 
 function canPlayerBreakFishMonger(player, worldName, update) {
@@ -5093,8 +5151,7 @@ function canPlayerBuildInWorld(player, worldName) {
   if (accountKey(lock.owner_name || "") === playerKey) return true;
   if (Boolean(lock.public_build)) return true;
 
-  const allowedPlayers = Array.isArray(lock.allowed_players) ? lock.allowed_players : [];
-  return allowedPlayers.some((name) => accountKey(name) === playerKey);
+  return canWorldLockRoleBuild(getWorldLockRoleForAccount(lock, player.account_username));
 }
 
 function requireBuildPermission(socket, player, worldName, action) {
@@ -5690,6 +5747,39 @@ function prepareWorldLockStateUpdate(socket, player, worldName, update) {
 
   update.state = nextLock;
   return true;
+}
+
+function normalizeWorldLockAccessRole(value, fallback = "builder") {
+  const role = String(value || "").trim().toLowerCase();
+  if (role === "access") return "builder";
+  if (WORLD_LOCK_ACCESS_ROLES.has(role)) return role;
+  return fallback;
+}
+
+function canWorldLockRoleBuild(role) {
+  const cleanRole = normalizeWorldLockAccessRole(role, "");
+  return cleanRole === "admin" || cleanRole === "builder";
+}
+
+function getWorldLockRoleForAccount(lock, username) {
+  const playerKey = accountKey(username);
+  if (playerKey === "") return "";
+
+  const roles = lock && typeof lock.player_roles === "object" && !Array.isArray(lock.player_roles)
+    ? lock.player_roles
+    : {};
+  for (const [name, role] of Object.entries(roles)) {
+    if (accountKey(name) === playerKey) {
+      return normalizeWorldLockAccessRole(role, "builder");
+    }
+  }
+
+  const allowedPlayers = Array.isArray(lock?.allowed_players) ? lock.allowed_players : [];
+  if (allowedPlayers.some((name) => accountKey(name) === playerKey)) {
+    return "builder";
+  }
+
+  return "";
 }
 
 function sanitizePlayerPosition(data, player) {
@@ -7760,19 +7850,48 @@ function sanitizeWorldLockState(state) {
   const rawState = state && typeof state === "object" && !Array.isArray(state) ? state : {};
   const allowedPlayers = Array.isArray(rawState.allowed_players) ? rawState.allowed_players : [];
   const isLocked = Boolean(rawState.is_locked);
-  const lockGridX = Math.trunc(Number(rawState.lock_grid_x) || 999999);
-  const lockGridY = Math.trunc(Number(rawState.lock_grid_y) || 999999);
+  const lockGridX = Math.trunc(Number(rawState.lock_grid_x) || WORLD_LOCK_GRID_SENTINEL);
+  const lockGridY = Math.trunc(Number(rawState.lock_grid_y) || WORLD_LOCK_GRID_SENTINEL);
+  const ownerName = cleanAccountName(rawState.owner_name || "").toUpperCase();
+  const allowedSet = new Set();
+  const playerRoles = {};
+
+  for (const rawName of allowedPlayers) {
+    const cleanAllowedName = cleanAccountName(rawName).toUpperCase();
+    if (cleanAllowedName.length === 0 || cleanAllowedName === ownerName) continue;
+    allowedSet.add(cleanAllowedName);
+  }
+
+  const rawRoles = rawState.player_roles && typeof rawState.player_roles === "object" && !Array.isArray(rawState.player_roles)
+    ? rawState.player_roles
+    : {};
+  for (const [rawName, rawRole] of Object.entries(rawRoles)) {
+    const cleanRoleName = cleanAccountName(rawName).toUpperCase();
+    if (cleanRoleName.length === 0 || cleanRoleName === ownerName) continue;
+    allowedSet.add(cleanRoleName);
+    playerRoles[cleanRoleName] = normalizeWorldLockAccessRole(rawRole, "builder");
+  }
+
+  const cleanAllowedPlayers = Array.from(allowedSet).slice(0, 100);
+  for (const cleanAllowedName of cleanAllowedPlayers) {
+    if (!playerRoles[cleanAllowedName]) {
+      playerRoles[cleanAllowedName] = "builder";
+    }
+  }
+  const rawTrustedBuilderSlotLimit = Number(rawState.trusted_builder_slot_limit);
+  const trustedBuilderSlotLimit = Number.isFinite(rawTrustedBuilderSlotLimit)
+    ? clampInteger(rawTrustedBuilderSlotLimit, MIN_TRUSTED_BUILDER_SLOT_LIMIT, MAX_TRUSTED_BUILDER_SLOT_LIMIT)
+    : DEFAULT_TRUSTED_BUILDER_SLOT_LIMIT;
 
   return {
     is_locked: isLocked,
-    owner_name: cleanAccountName(rawState.owner_name || "").toUpperCase(),
+    owner_name: ownerName,
     lock_grid_x: lockGridX,
     lock_grid_y: lockGridY,
-    allowed_players: allowedPlayers
-      .map((name) => cleanAccountName(name).toUpperCase())
-      .filter((name, index, list) => name.length > 0 && list.indexOf(name) === index)
-      .slice(0, 100),
+    allowed_players: cleanAllowedPlayers,
+    player_roles: playerRoles,
     public_build: Boolean(rawState.public_build),
+    trusted_builder_slot_limit: trustedBuilderSlotLimit,
   };
 }
 
