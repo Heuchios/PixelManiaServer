@@ -50,6 +50,7 @@ const MAX_ITEM_STACK = ItemDatabase.DEFAULT_STACK_LIMIT;
 const MAX_PLAYER_INVENTORY_KEYS = 500;
 const MAX_ITEM_ID_LENGTH = 64;
 const MAX_DROP_ID_LENGTH = 96;
+const ALLOW_LEGACY_PLAYER_STATE_IMPORT = !["0", "false", "no"].includes(String(process.env.ALLOW_LEGACY_PLAYER_STATE_IMPORT || "true").trim().toLowerCase());
 const MAX_MOVE_PIXELS_PER_SECOND = 900;
 const MAX_PICKUP_DISTANCE_PIXELS = TILE_SIZE * 6;
 const MAX_GRID_ACTION_DISTANCE_PIXELS = TILE_SIZE * 6;
@@ -337,7 +338,9 @@ wss.on("connection", (socket) => {
 
       const state = sanitizePlayerState(data, username);
       if (!state) return;
-      const serverState = mergeClientPlayerStateIntoServerState(username, state);
+      const serverState = mergeClientPlayerStateIntoServerState(username, state, {
+        legacyImportRequested: Boolean(data.legacy_client_inventory_import),
+      });
       if (!serverState) return;
 
       upsertAccount({
@@ -6144,7 +6147,7 @@ function createDefaultPlayerState(username) {
   return state;
 }
 
-function mergeClientPlayerStateIntoServerState(username, incomingState) {
+function mergeClientPlayerStateIntoServerState(username, incomingState, options = {}) {
   const serverState = ensureWritablePlayerState(username) || createDefaultPlayerState(username);
   if (!serverState || !incomingState) return null;
 
@@ -6174,7 +6177,59 @@ function mergeClientPlayerStateIntoServerState(username, incomingState) {
     ? clampString(incomingState.equipped_pants_item || "")
     : "";
 
+  const didLegacyImport = (
+    ALLOW_LEGACY_PLAYER_STATE_IMPORT &&
+    Boolean(options.legacyImportRequested) &&
+    !serverState.legacy_client_inventory_imported_at
+  );
+
+  if (didLegacyImport) {
+    mergeLegacyClientInventoriesIntoServerState(merged, incomingState);
+    merged.legacy_client_inventory_imported_at = new Date().toISOString();
+  } else if (serverState.legacy_client_inventory_imported_at) {
+    merged.legacy_client_inventory_imported_at = serverState.legacy_client_inventory_imported_at;
+  }
+
+  if (didLegacyImport) {
+    merged.equipped_tool = doesStateOwnEquippedItem(merged, incomingState.equipped_tool || "", "hand")
+      ? clampString(incomingState.equipped_tool || "")
+      : merged.equipped_tool;
+    merged.equipped_back_item = doesStateOwnEquippedItem(merged, incomingState.equipped_back_item || "", "back")
+      ? clampString(incomingState.equipped_back_item || "")
+      : merged.equipped_back_item;
+    merged.equipped_shirt_item = doesStateOwnEquippedItem(merged, incomingState.equipped_shirt_item || "", "shirt")
+      ? clampString(incomingState.equipped_shirt_item || "")
+      : merged.equipped_shirt_item;
+    merged.equipped_pants_item = doesStateOwnEquippedItem(merged, incomingState.equipped_pants_item || "", "pants")
+      ? clampString(incomingState.equipped_pants_item || "")
+      : merged.equipped_pants_item;
+  }
+
   return merged;
+}
+
+function mergeLegacyClientInventoriesIntoServerState(serverState, incomingState) {
+  for (const field of Object.values(ItemDatabase.CATEGORY_TO_FIELD)) {
+    const serverInventory = serverState[field] && typeof serverState[field] === "object" && !Array.isArray(serverState[field])
+      ? serverState[field]
+      : {};
+    const incomingInventory = incomingState[field] && typeof incomingState[field] === "object" && !Array.isArray(incomingState[field])
+      ? incomingState[field]
+      : {};
+
+    for (const [itemId, incomingCountRaw] of Object.entries(incomingInventory)) {
+      if (!ItemDatabase.hasItem(itemId)) continue;
+
+      const category = ItemDatabase.FIELD_TO_CATEGORY[field] || resolveInventoryCategory(itemId);
+      if (!ItemDatabase.canStoreItemInCategory(itemId, category)) continue;
+
+      const incomingCount = clampInteger(incomingCountRaw || 0, 0, ItemDatabase.getStackLimit(itemId));
+      const serverCount = clampInteger(serverInventory[itemId] || 0, 0, ItemDatabase.getStackLimit(itemId));
+      serverInventory[itemId] = Math.max(serverCount, incomingCount);
+    }
+
+    serverState[field] = serverInventory;
+  }
 }
 
 function getInventoryCount(state, itemId, itemCategory) {
@@ -7979,6 +8034,7 @@ function sanitizePlayerState(rawState, username) {
     equipped_back_item: "",
     equipped_shirt_item: "",
     equipped_pants_item: "",
+    legacy_client_inventory_imported_at: String(rawState.legacy_client_inventory_imported_at || "").slice(0, 64),
     saved_at: new Date().toISOString(),
   };
 
