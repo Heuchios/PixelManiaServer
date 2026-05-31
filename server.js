@@ -1807,7 +1807,7 @@ function sendPlayerState(socket, username) {
 function sendInventoryTransactionResult(socket, payload) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
 
-  socket.send(JSON.stringify({
+  const response = {
     ...payload,
     type: "inventory_transaction_result",
     ok: Boolean(payload.ok),
@@ -1816,8 +1816,19 @@ function sendInventoryTransactionResult(socket, payload) {
     message: String(payload.message || ""),
     username: cleanAccountName(payload.username || ""),
     rewards: Array.isArray(payload.rewards) ? payload.rewards : [],
-    player_data: payload.player_data || {},
-  }));
+  };
+  if (
+    payload.player_data &&
+    typeof payload.player_data === "object" &&
+    !Array.isArray(payload.player_data) &&
+    Object.keys(payload.player_data).length > 0
+  ) {
+    response.player_data = payload.player_data;
+  } else {
+    delete response.player_data;
+  }
+
+  socket.send(JSON.stringify(response));
 }
 
 function sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload, requesterFields = null) {
