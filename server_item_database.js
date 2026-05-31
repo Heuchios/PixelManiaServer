@@ -1,6 +1,5 @@
 const DEFAULT_STACK_LIMIT = 200;
-const INFINITE_CURRENCY_STACK_LIMIT = Number.MAX_SAFE_INTEGER;
-const INFINITE_CURRENCY_ITEM_IDS = Object.freeze(["gem"]);
+const GEM_CURRENCY_STACK_LIMIT = 100000000000;
 
 const CATEGORY_TO_FIELD = Object.freeze({
   block: "inventory",
@@ -358,7 +357,7 @@ const ITEMS = Object.freeze({
 
   gem: item("currency", {
     rarity: "currency",
-    stack_limit: INFINITE_CURRENCY_STACK_LIMIT,
+    stack_limit: GEM_CURRENCY_STACK_LIMIT,
     tradeable: false,
     dropable: false,
     admin_grantable: false,
@@ -625,12 +624,6 @@ function canStoreItemInCategory(itemId, category) {
   return Boolean(definition && definition.category === cleanCategory(category));
 }
 
-function isInfiniteCurrencyItem(itemId) {
-  const clean = String(itemId || "").trim();
-  const definition = getItemDefinition(clean);
-  return Boolean(definition && definition.category === "currency" && INFINITE_CURRENCY_ITEM_IDS.includes(clean));
-}
-
 function getInventoryFieldForCategory(category) {
   return CATEGORY_TO_FIELD[cleanCategory(category)] || "";
 }
@@ -717,7 +710,7 @@ function getPlacementCost(itemId) {
 
 module.exports = {
   DEFAULT_STACK_LIMIT,
-  INFINITE_CURRENCY_STACK_LIMIT,
+  GEM_CURRENCY_STACK_LIMIT,
   CATEGORY_TO_FIELD,
   FIELD_TO_CATEGORY,
   ALLOWED_CATEGORIES,
@@ -741,7 +734,6 @@ module.exports = {
   getStationRecipe,
   getStackLimit,
   hasItem,
-  isInfiniteCurrencyItem,
   isDropableItem,
   isGrantableItem,
   isPlaceableBlock,

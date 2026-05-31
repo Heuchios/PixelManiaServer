@@ -48,7 +48,6 @@ const MAX_SIGN_TEXT_LENGTH = 500;
 const MAX_DROP_AMOUNT = 9999;
 const MAX_ITEM_STACK = ItemDatabase.DEFAULT_STACK_LIMIT;
 const MAX_SHOP_PRICE = 999999;
-const INFINITE_CURRENCY_COUNT = ItemDatabase.INFINITE_CURRENCY_STACK_LIMIT;
 const MAX_PLAYER_INVENTORY_KEYS = 500;
 const MAX_ITEM_ID_LENGTH = 64;
 const MAX_DROP_ID_LENGTH = 96;
@@ -4268,12 +4267,10 @@ function handleFishMongerTransaction(socket, player, data) {
     return;
   }
 
-  if (!isInfiniteCurrencyItem("gem", "currency")) {
-    const gemCapacity = ItemDatabase.getStackLimit("gem") - getInventoryCount(state, "gem", "currency");
-    if (totalGems > gemCapacity) {
-      sendInventoryTransactionRejected(socket, data, "Your gem balance is full.");
-      return;
-    }
+  const gemCapacity = ItemDatabase.getStackLimit("gem") - getInventoryCount(state, "gem", "currency");
+  if (totalGems > gemCapacity) {
+    sendInventoryTransactionRejected(socket, data, "Your gem balance is full.");
+    return;
   }
 
   const stagedState = cloneJson(state);
@@ -5258,7 +5255,7 @@ function getBreakDropsForBlock(blockType, layer) {
     drops.push({ item_id: seedId, item_category: "seed", amount: 1 });
   }
 
-  if (layer === "foreground" && ItemDatabase.hasItem("gem") && ItemDatabase.isDropableItem("gem")) {
+  if (layer === "foreground" && ItemDatabase.hasItem("gem")) {
     const configuredRange = Array.isArray(rules.gem_range) ? rules.gem_range : getGemDropRangeForRarity(definition.rarity);
     const gemAmount = randomRangeInclusive(configuredRange[0], configuredRange[1]);
     if (gemAmount > 0) {
@@ -6225,13 +6222,6 @@ function resolveInventoryCategory(itemId, requestedCategory = "") {
   return ItemDatabase.resolveItemCategory(itemId, requestedCategory);
 }
 
-function isInfiniteCurrencyItem(itemId, itemCategory = "") {
-  const cleanItemId = clampString(itemId || "");
-  if (!ItemDatabase.isInfiniteCurrencyItem(cleanItemId)) return false;
-  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
-  return resolvedCategory === "currency";
-}
-
 function getInventoryFieldForCategory(category, itemId) {
   return ItemDatabase.getInventoryFieldForItem(itemId, category) || "inventory";
 }
@@ -6330,7 +6320,6 @@ function mergeLegacyClientInventoriesIntoServerState(serverState, incomingState)
 
     for (const [itemId, incomingCountRaw] of Object.entries(incomingInventory)) {
       if (!ItemDatabase.hasItem(itemId)) continue;
-      if (ItemDatabase.isInfiniteCurrencyItem(itemId)) continue;
 
       const category = ItemDatabase.FIELD_TO_CATEGORY[field] || resolveInventoryCategory(itemId);
       if (!ItemDatabase.canStoreItemInCategory(itemId, category)) continue;
@@ -6352,7 +6341,6 @@ function getInventoryCount(state, itemId, itemCategory) {
   const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
   const inventoryField = getInventoryFieldForCategory(resolvedCategory, cleanItemId);
   const inventory = state[inventoryField];
-  if (isInfiniteCurrencyItem(cleanItemId, resolvedCategory)) return INFINITE_CURRENCY_COUNT;
   if (!inventory || typeof inventory !== "object" || Array.isArray(inventory)) return 0;
   return clampInteger(inventory[cleanItemId] || 0, 0, ItemDatabase.getStackLimit(cleanItemId));
 }
@@ -6364,7 +6352,6 @@ function canAddItemToState(state, itemId, itemCategory, amount) {
 
   const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
   if (!ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory)) return false;
-  if (isInfiniteCurrencyItem(cleanItemId, resolvedCategory)) return true;
 
   const stackLimit = ItemDatabase.getStackLimit(cleanItemId);
   const safeAmount = clampInteger(amount || 0, 0, stackLimit);
@@ -6382,14 +6369,6 @@ function addItemToState(state, itemId, itemCategory, amount) {
   if (!ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory)) return null;
 
   const inventoryField = getInventoryFieldForCategory(resolvedCategory, cleanItemId);
-  if (isInfiniteCurrencyItem(cleanItemId, resolvedCategory)) {
-    return {
-      inventoryField,
-      count: INFINITE_CURRENCY_COUNT,
-      itemCategory: resolvedCategory,
-    };
-  }
-
   if (!state[inventoryField] || typeof state[inventoryField] !== "object" || Array.isArray(state[inventoryField])) {
     state[inventoryField] = {};
   }
@@ -6415,7 +6394,6 @@ function spendItemFromState(state, itemId, itemCategory, amount) {
 
   const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
   if (!ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory)) return false;
-  if (isInfiniteCurrencyItem(cleanItemId, resolvedCategory)) return true;
 
   const inventoryField = getInventoryFieldForCategory(resolvedCategory, cleanItemId);
   if (!state[inventoryField] || typeof state[inventoryField] !== "object" || Array.isArray(state[inventoryField])) {
@@ -6473,17 +6451,6 @@ function removeItemFromPlayerState(username, itemId, itemCategory, amount) {
   const requested = clampInteger(amount || 0, 1, MAX_ITEM_STACK);
   const removeAmount = Math.min(available, requested);
   const inventoryField = getInventoryFieldForCategory(resolvedCategory, cleanItemId);
-
-  if (isInfiniteCurrencyItem(cleanItemId, resolvedCategory)) {
-    return {
-      removed: 0,
-      requested,
-      available,
-      itemCategory: resolvedCategory,
-      inventoryField,
-      count: INFINITE_CURRENCY_COUNT,
-    };
-  }
 
   if (removeAmount <= 0) {
     return {
@@ -8130,7 +8097,6 @@ function sanitizeCountDictionary(rawValue, limit = MAX_PLAYER_INVENTORY_KEYS, ex
     const itemId = clampString(rawKey || "");
     if (itemId.length === 0) continue;
     if (!ItemDatabase.hasItem(itemId)) continue;
-    if (ItemDatabase.isInfiniteCurrencyItem(itemId)) continue;
 
     const resolvedCategory = resolveInventoryCategory(itemId, expectedCategory);
     if (!ItemDatabase.canStoreItemInCategory(itemId, resolvedCategory)) continue;
