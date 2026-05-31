@@ -5983,10 +5983,18 @@ function parseTargetedGiveCommand(command) {
 
   const targetUsername = cleanAccountName(parts[1]);
   const itemId = clampString(parts[2] || "");
-  const amount = clampInteger(parts[3] || 1, 1, MAX_ITEM_STACK);
+  const amount = clampInteger(parts[3] || 1, 1, getDeveloperItemAmountLimit(itemId));
   if (targetUsername === "" || itemId === "") return null;
 
   return { targetUsername, itemId, amount };
+}
+
+function getDeveloperItemAmountLimit(itemId) {
+  const cleanItemId = clampString(itemId || "");
+  if (cleanItemId !== "" && ItemDatabase.hasItem(cleanItemId)) {
+    return ItemDatabase.getStackLimit(cleanItemId);
+  }
+  return MAX_ITEM_STACK;
 }
 
 function getDeveloperCommandName(command) {
@@ -6171,7 +6179,7 @@ function parseGiveCommand(data, command) {
       targetUsername: metadataTarget,
       itemId: metadataItemId,
       itemCategory: metadataItemCategory,
-      amount: clampInteger(data.amount || 1, 1, MAX_ITEM_STACK),
+      amount: clampInteger(data.amount || 1, 1, getDeveloperItemAmountLimit(metadataItemId)),
     };
   }
 
@@ -6196,7 +6204,7 @@ function parseRemoveCommand(data, command) {
       targetUsername: metadataTarget,
       itemId: metadataItemId,
       itemCategory: metadataItemCategory,
-      amount: clampInteger(data.amount || 1, 1, MAX_ITEM_STACK),
+      amount: clampInteger(data.amount || 1, 1, getDeveloperItemAmountLimit(metadataItemId)),
     };
   }
 
@@ -6206,7 +6214,7 @@ function parseRemoveCommand(data, command) {
     targetUsername: cleanAccountName(parts[1]),
     itemId: clampString(parts[2]),
     itemCategory: resolveInventoryCategory(parts[2]),
-    amount: clampInteger(parts[3] || 1, 1, MAX_ITEM_STACK),
+    amount: clampInteger(parts[3] || 1, 1, getDeveloperItemAmountLimit(parts[2])),
   };
 }
 

@@ -360,7 +360,7 @@ const ITEMS = Object.freeze({
     stack_limit: GEM_CURRENCY_STACK_LIMIT,
     tradeable: false,
     dropable: false,
-    admin_grantable: false,
+    admin_grantable: true,
     hidden: true,
   }),
 
