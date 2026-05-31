@@ -501,7 +501,10 @@ wss.on("connection", (socket) => {
         initializeSafeOwnerOnPlace(worldName, update, player);
       }
       queueWorldSave(worldName);
-      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
+      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update, validation.playerState ? {
+        username: player.account_username,
+        player_data: validation.playerState,
+      } : null);
       const emittedDrops = emitBreakDrops(worldName, update, socket, player);
       logWorldChange(socket, player, {
         source_type: "world_block_update",
@@ -571,7 +574,10 @@ wss.on("connection", (socket) => {
       const seedTransactionId = makeAuditId("seed");
       applySeedUpdateToWorldState(worldName, update);
       queueWorldSave(worldName);
-      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
+      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update, validation.playerState ? {
+        username: player.account_username,
+        player_data: validation.playerState,
+      } : null);
       logWorldChange(socket, player, {
         source_type: "world_seed_update",
         source_id: seedTransactionId,
@@ -679,7 +685,10 @@ wss.on("connection", (socket) => {
       const dropTransactionId = makeAuditId("drop");
       applyDropCreateToWorldState(worldName, update);
       queueWorldSave(worldName);
-      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
+      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update, {
+        username: player.account_username,
+        player_data: spendResult.state,
+      });
       logWorldChange(socket, player, {
         source_type: "world_item_drop_create",
         source_id: dropTransactionId,
@@ -797,7 +806,10 @@ wss.on("connection", (socket) => {
       }
 
       queueWorldSave(worldName);
-      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
+      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update, {
+        username: player.account_username,
+        player_data: pickupState,
+      });
       return;
     }
 
@@ -935,6 +947,10 @@ function handleHttpRequest(request, response) {
       service: "PixelManiaServer",
       server_client_version: SERVER_CLIENT_VERSION,
       min_client_version: MIN_CLIENT_VERSION,
+      features: {
+        world_update_requester_echo: true,
+        world_update_requester_player_data: true,
+      },
     }));
     return;
   }
@@ -1754,9 +1770,16 @@ function sendInventoryTransactionResult(socket, payload) {
   }));
 }
 
-function sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload) {
-  sendJson(socket, payload);
-  broadcastToWorld(worldName, payload, String(player?.id || socket?.playerId || ""));
+function sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload, requesterFields = null) {
+  const publicPayload = payload && typeof payload === "object" && !Array.isArray(payload)
+    ? { ...payload }
+    : payload;
+  const requesterPayload = requesterFields && typeof requesterFields === "object" && !Array.isArray(requesterFields)
+    ? { ...publicPayload, ...requesterFields }
+    : publicPayload;
+
+  sendJson(socket, requesterPayload);
+  broadcastToWorld(worldName, publicPayload, String(player?.id || socket?.playerId || ""));
 }
 
 function sendInventoryTransactionRejected(socket, data, message) {
@@ -4319,7 +4342,10 @@ function handleDropInventoryItemTransaction(socket, player, data) {
 
   persistPlayerInventoryChange(player.account_username, state);
   queueWorldSave(worldName);
-  sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload);
+  sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload, {
+    username: player.account_username,
+    player_data: state,
+  });
 
   const dropTransactionId = makeAuditId("drop");
   logWorldChange(socket, player, {
@@ -4495,7 +4521,10 @@ function handleSeedPlaceTransaction(socket, player, data) {
 
   applySeedUpdateToWorldState(worldName, update);
   queueWorldSave(worldName);
-  sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
+  sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update, {
+    username: player.account_username,
+    player_data: state,
+  });
 
   const seedTransactionId = makeAuditId("seed");
   logWorldChange(socket, player, {
@@ -4593,7 +4622,10 @@ function handleSeedSpliceTransaction(socket, player, data) {
 
   applySeedUpdateToWorldState(worldName, update);
   queueWorldSave(worldName);
-  sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
+  sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update, {
+    username: player.account_username,
+    player_data: state,
+  });
 
   sendInventoryTransactionResult(socket, {
     ok: true,
@@ -7517,7 +7549,10 @@ function handleEntranceGateMoveUpdate(socket, player, worldName, update) {
       y: blockUpdate.y,
       block_type: blockUpdate.block_type,
     });
-    sendWorldUpdateToRequesterAndWorld(socket, player, worldName, blockUpdate);
+    sendWorldUpdateToRequesterAndWorld(socket, player, worldName, blockUpdate, {
+      username: player.account_username,
+      player_data: spendResult.state || {},
+    });
   }
 
   sendInventoryTransactionResult(socket, {
