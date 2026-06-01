@@ -7,10 +7,12 @@ const http = require("http");
 const nodemailer = require("nodemailer");
 const path = require("path");
 const ItemDatabase = require("./server_item_database");
+const PostgresStore = require("./postgres_store");
 
-const HOST = process.env.HOST || "0.0.0.0";
+const HOST = String(process.env.HOST || "127.0.0.1").trim() || "127.0.0.1";
 const PORT = Math.max(1, Math.trunc(Number(process.env.PORT) || 8080));
 const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, "");
+const PUBLIC_WS_URL = String(process.env.PUBLIC_WS_URL || PUBLIC_BASE_URL.replace(/^http/i, "ws") + "/ws").trim();
 const SERVER_CLIENT_VERSION = String(process.env.SERVER_CLIENT_VERSION || "1.0.1").trim() || "1.0.1";
 const MIN_CLIENT_VERSION = String(process.env.MIN_CLIENT_VERSION || SERVER_CLIENT_VERSION).trim() || SERVER_CLIENT_VERSION;
 const UPDATE_URL = String(process.env.UPDATE_URL || "https://pixelmaniagame.com").trim() || "https://pixelmaniagame.com";
@@ -97,6 +99,23 @@ const SMTP_SECURE = String(process.env.SMTP_SECURE || "").trim().toLowerCase() =
 const SMTP_USER = String(process.env.SMTP_USER || "").trim();
 const SMTP_PASS = String(process.env.SMTP_PASS || "");
 const SMTP_FROM = String(process.env.SMTP_FROM || SMTP_USER || "PixelMania <no-reply@pixelmania.local>").trim();
+const POSTGRES_ENABLED = String(process.env.POSTGRES_ENABLED || "false").trim().toLowerCase() === "true";
+const POSTGRES_AUTO_BOOTSTRAP = String(process.env.POSTGRES_AUTO_BOOTSTRAP || "false").trim().toLowerCase() === "true";
+const POSTGRES_CONNECTION_STRING = String(process.env.POSTGRES_CONNECTION_STRING || process.env.DATABASE_URL || "").trim();
+const POSTGRES_HOST = String(process.env.POSTGRES_HOST || "").trim();
+const POSTGRES_PORT = Math.max(1, Math.trunc(Number(process.env.POSTGRES_PORT) || 5432));
+const POSTGRES_DATABASE = String(process.env.POSTGRES_DATABASE || "").trim();
+const POSTGRES_USER = String(process.env.POSTGRES_USER || "").trim();
+const POSTGRES_PASSWORD = String(process.env.POSTGRES_PASSWORD || "");
+const POSTGRES_SSL = String(process.env.POSTGRES_SSL || "false").trim().toLowerCase() === "true";
+const POSTGRES_SCHEMA = String(process.env.POSTGRES_SCHEMA || "pixelmania").trim() || "pixelmania";
+const POSTGRES_POOL_MAX = Math.max(1, Math.trunc(Number(process.env.POSTGRES_POOL_MAX) || 10));
+const POSTGRES_IDLE_TIMEOUT_MS = Math.max(1000, Math.trunc(Number(process.env.POSTGRES_IDLE_TIMEOUT_MS) || 30000));
+const POSTGRES_CONNECT_TIMEOUT_MS = Math.max(1000, Math.trunc(Number(process.env.POSTGRES_CONNECT_TIMEOUT_MS) || 8000));
+const POSTGRES_BOOTSTRAP_SQL_PATH = String(
+  process.env.POSTGRES_BOOTSTRAP_SQL_PATH ||
+  path.join(__dirname, "..", "docs", "postgres_security_foundation.sql")
+).trim();
 const ADMIN_USERNAMES = new Set(["uso"]);
 const MESSAGE_RATE_LIMITS = {
   login: { limit: 10, windowMs: 10000 },
@@ -159,12 +178,31 @@ const accounts = new Map();
 const activeAccountSessions = new Map();
 const activeTrades = new Map();
 const tradeByPlayerId = new Map();
+const worldDropActionLocks = new Set();
+const worldVendActionLocks = new Set();
 const activeFishingSessions = new Map();
 const blockDamage = new Map();
 const worldSaveTimers = new Map();
 const playerSaveTimers = new Map();
 let accountsSaveTimer = null;
 let mailTransporter = null;
+const postgresStore = new PostgresStore({
+  enabled: POSTGRES_ENABLED,
+  autoBootstrap: POSTGRES_AUTO_BOOTSTRAP,
+  bootstrapSqlPath: POSTGRES_BOOTSTRAP_SQL_PATH,
+  connectionString: POSTGRES_CONNECTION_STRING,
+  host: POSTGRES_HOST,
+  port: POSTGRES_PORT,
+  database: POSTGRES_DATABASE,
+  user: POSTGRES_USER,
+  password: POSTGRES_PASSWORD,
+  ssl: POSTGRES_SSL,
+  schema: POSTGRES_SCHEMA,
+  poolMax: POSTGRES_POOL_MAX,
+  idleTimeoutMs: POSTGRES_IDLE_TIMEOUT_MS,
+  connectTimeoutMs: POSTGRES_CONNECT_TIMEOUT_MS,
+  logger: (...args) => console.warn(...args),
+});
 
 function debugActionPositionFlow(label, player, extra = {}) {
   if (!DEBUG_ACTION_POSITION_FLOW) return;
@@ -186,10 +224,18 @@ if (typeof periodicSaveTimer.unref === "function") periodicSaveTimer.unref();
 
 ensureDataFolders();
 loadAccounts();
+postgresStore.init().catch((error) => {
+  console.warn("[postgres] failed to initialize:", error.message);
+});
 
 httpServer.listen(PORT, HOST, () => {
-  console.log(`PixelMania server running on ws://${HOST}:${PORT}`);
+  console.log(`PixelMania server listening privately at ws://${HOST}:${PORT}`);
+  console.log(`PixelMania public HTTPS base: ${PUBLIC_BASE_URL}`);
+  console.log(`PixelMania public WSS endpoint: ${PUBLIC_WS_URL}`);
   console.log(`PixelMania email verification running at ${PUBLIC_BASE_URL}/verify-email`);
+  if (HOST === "0.0.0.0" || HOST === "::") {
+    console.warn("HOST is bound to all interfaces. Keep port 8080 blocked by firewall unless this is intentional.");
+  }
   if (!SMTP_HOST) {
     console.warn("SMTP_HOST is not set. Verification links will be printed to the server console instead of emailed.");
   }
@@ -230,33 +276,38 @@ wss.on("connection", (socket) => {
     player_id: playerId,
   }));
 
-  socket.on("message", (raw) => {
-    if (getRawLength(raw) > MAX_PACKET_BYTES) {
-      socket.close(1009, "Packet too large");
-      return;
-    }
-
-    let data;
-
+  socket.on("message", async (raw) => {
     try {
-      data = JSON.parse(raw);
-    } catch {
-      return;
-    }
+      if (getRawLength(raw) > MAX_PACKET_BYTES) {
+        socket.close(1009, "Packet too large");
+        return;
+      }
 
-    if (!data || typeof data !== "object" || Array.isArray(data)) return;
+      let data;
 
-    const player = players.get(playerId);
-    if (!player) return;
+      try {
+        data = JSON.parse(raw);
+      } catch {
+        return;
+      }
 
-    if (!checkMessageRateLimit(socket, String(data.type || "unknown"))) return;
+      if (!data || typeof data !== "object" || Array.isArray(data)) return;
 
-    const clientVersion = getClientVersion(data);
-    if (!isClientVersionAllowed(clientVersion)) {
-      sendClientUpdateRequired(socket, data, clientVersion);
-      return;
-    }
-    player.client_version = clientVersion || player.client_version;
+      const player = players.get(playerId);
+      if (!player) return;
+
+      if (!checkMessageRateLimit(socket, String(data.type || "unknown"))) return;
+
+      const clientVersion = getClientVersion(data);
+      if (!isClientVersionAllowed(clientVersion)) {
+        sendClientUpdateRequired(socket, data, clientVersion);
+        return;
+      }
+      player.client_version = clientVersion || player.client_version;
+
+      if (!(await enforceMessageIdempotency(socket, player, data))) {
+        return;
+      }
 
     if (data.type === "login") {
       player.name = cleanName(data.name);
@@ -297,7 +348,7 @@ wss.on("connection", (socket) => {
     }
 
     if (data.type === "inventory_transaction_request") {
-      handleInventoryTransactionRequest(socket, player, data);
+      await handleInventoryTransactionRequest(socket, player, data);
       return;
     }
 
@@ -322,7 +373,7 @@ wss.on("connection", (socket) => {
     }
 
     if (data.type === "trade_final_confirm") {
-      handleTradeFinalConfirm(socket, player, data);
+      await handleTradeFinalConfirm(socket, player, data);
       return;
     }
 
@@ -426,6 +477,7 @@ wss.on("connection", (socket) => {
       player.joined_world = true;
       player.last_position_at = 0;
       ensureWorldState(player.world);
+      postgresStore.mirrorPlayerWorld(player.account_username, player.world);
 
       socket.send(JSON.stringify({
         type: "join_world_ok",
@@ -822,36 +874,8 @@ wss.on("connection", (socket) => {
 
       const update = sanitizeDropPickup(data, worldName, player);
       if (!update) return;
-      debugActionPositionFlow("world_item_drop_pickup request start", player, {
-        drop_id: update.drop_id,
-      });
-
-      const pickupTransactionId = makeAuditId("pickup");
-      const pickupResult = applyDropPickupToWorldState(worldName, update, player);
-      if (!pickupResult.ok) {
-        if (pickupResult.reason === "inventory_full") {
-          sendActionRejected(socket, "world_item_drop_pickup", "Inventory full.", {
-            drop_id: update.drop_id,
-            world: worldName,
-          });
-          return;
-        }
-        if (pickupResult.reason === "inventory_unavailable") {
-          sendActionRejected(socket, "world_item_drop_pickup", "Could not add that item to your server inventory.", {
-            drop_id: update.drop_id,
-            world: worldName,
-          });
-          return;
-        }
-        if (pickupResult.reason === "too_far") {
-          logDropPickupTooFar(player, worldName, update.drop_id, pickupResult.drop);
-          sendActionRejected(socket, "world_item_drop_pickup", "Too far away from that drop.", {
-            drop_id: update.drop_id,
-            world: worldName,
-          });
-          return;
-        }
-        logDropPickupNotAvailable(player, worldName, update.drop_id);
+      const dropActionKey = `${worldName}:${update.drop_id}`;
+      if (worldDropActionLocks.has(dropActionKey)) {
         sendActionRejected(socket, "world_item_drop_pickup", "That drop is not available.", {
           drop_id: update.drop_id,
           world: worldName,
@@ -859,90 +883,185 @@ wss.on("connection", (socket) => {
         return;
       }
 
-      const pickedDrop = pickupResult.drop;
-      const pickupState = pickupResult.playerState;
-      const pickupUpdate = pickupResult.update;
-      logWorldChange(socket, player, {
-        source_type: "world_item_drop_pickup",
-        source_id: pickupTransactionId,
-        world: worldName,
-        action: "drop_pickup",
-        x: pickedDrop.x,
-        y: pickedDrop.y,
-        block_type: pickedDrop.item_type,
-        details: {
-          drop_id: pickedDrop.drop_id,
-          item_category: pickedDrop.item_category,
-          amount: pickedDrop.amount,
-          remaining: pickupResult.remaining,
-        },
-      });
-      logItemLedgerForState(socket, player, player.account_username, pickupState, pickedDrop.item_type, pickedDrop.item_category, pickedDrop.amount, "world_item_drop_pickup", pickupTransactionId, "drop_pickup", worldName, {
-        drop_id: pickedDrop.drop_id,
-      });
-      sendInventoryTransactionResult(socket, {
-        ok: true,
-        action: "drop_pickup",
-        message: `Picked up ${pickedDrop.amount} ${pickedDrop.item_type}.`,
-        username: player.account_username,
-        rewards: [{
-          item_id: pickedDrop.item_type,
-          item_category: pickedDrop.item_category,
-          amount: pickedDrop.amount,
-        }],
-        player_data: pickupState,
+      debugActionPositionFlow("world_item_drop_pickup request start", player, {
+        drop_id: update.drop_id,
       });
 
-      queueWorldSave(worldName);
-      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, pickupUpdate, {
-        username: player.account_username,
-        player_data: pickupState,
-      });
-      debugActionPositionFlow("world_item_drop_pickup request end", player, {
-        drop_id: update.drop_id,
-        item_type: pickedDrop.item_type,
-        amount: pickedDrop.amount,
-      });
+      worldDropActionLocks.add(dropActionKey);
+      try {
+        const pickupPlan = prepareDropPickup(worldName, player, update);
+        if (!pickupPlan.ok) {
+          if (pickupPlan.reason === "inventory_full") {
+            sendActionRejected(socket, "world_item_drop_pickup", "Inventory full.", {
+              drop_id: update.drop_id,
+              world: worldName,
+            });
+            return;
+          }
+          if (pickupPlan.reason === "inventory_unavailable") {
+            sendActionRejected(socket, "world_item_drop_pickup", "Could not add that item to your server inventory.", {
+              drop_id: update.drop_id,
+              world: worldName,
+            });
+            return;
+          }
+          if (pickupPlan.reason === "too_far") {
+            logDropPickupTooFar(player, worldName, update.drop_id, pickupPlan.drop);
+            sendActionRejected(socket, "world_item_drop_pickup", "Too far away from that drop.", {
+              drop_id: update.drop_id,
+              world: worldName,
+            });
+            return;
+          }
+          logDropPickupNotAvailable(player, worldName, update.drop_id);
+          sendActionRejected(socket, "world_item_drop_pickup", "That drop is not available.", {
+            drop_id: update.drop_id,
+            world: worldName,
+          });
+          return;
+        }
+
+        const pickupTransactionId = makeAuditId("pickup");
+        const pickupTransaction = await postgresStore.applyDropPickupTransaction({
+          account_username: player.account_username,
+          item_type: pickupPlan.item_type,
+          item_category: pickupPlan.item_category,
+          amount: pickupPlan.pickedAmount,
+          world: worldName,
+          drop_id: update.drop_id,
+          source_id: pickupTransactionId,
+          request_id: makeRequestId(data),
+          correlation_id: makeAuditId("pickup"),
+          at: new Date().toISOString(),
+        });
+        if (!pickupTransaction.ok) {
+          if (pickupTransaction.reason === "insufficient_capacity") {
+            sendActionRejected(socket, "world_item_drop_pickup", "Could not add that item to your server inventory.", {
+              drop_id: update.drop_id,
+              world: worldName,
+            });
+            return;
+          }
+          logDropPickupNotAvailable(player, worldName, update.drop_id);
+          sendActionRejected(socket, "world_item_drop_pickup", "That drop is not available.", {
+            drop_id: update.drop_id,
+            world: worldName,
+          });
+          return;
+        }
+
+        const pickupState = pickupPlan.playerState;
+        if (!setInventoryCountInState(pickupState, pickupTransaction.item_type, pickupTransaction.item_category, pickupTransaction.after_amount)) {
+          sendActionRejected(socket, "world_item_drop_pickup", "Could not add that item to your server inventory.", {
+            drop_id: update.drop_id,
+            world: worldName,
+          });
+          return;
+        }
+
+        const pickupUpdate = applyDropPickupWorldState(worldName, pickupPlan);
+        if (!pickupUpdate.ok) {
+          // If world state drifted between planning and update, keep the inventory change.
+          // We still let the server stay authoritative on inventory and avoid dropping state transitions into a bad path.
+          console.warn("[world_drop_pickup_world_state_miss]", {
+            username: cleanAccountName(player?.account_username || player?.name || ""),
+            world: worldName,
+            drop_id: update.drop_id,
+            reason: pickupUpdate.reason || "not_available",
+          });
+        }
+
+        persistPlayerInventoryChange(player.account_username, pickupState);
+        logWorldChange(socket, player, {
+          source_type: "world_item_drop_pickup",
+          source_id: pickupTransactionId,
+          world: worldName,
+          action: "drop_pickup",
+          x: pickupPlan.drop.x,
+          y: pickupPlan.drop.y,
+          block_type: pickupPlan.item_type,
+          details: {
+            drop_id: pickupPlan.dropId || pickupPlan.drop?.drop_id || "",
+            item_category: pickupPlan.item_category,
+            amount: pickupPlan.pickedAmount,
+            remaining: pickupPlan.remaining,
+          },
+        });
+        logItemLedgerForState(socket, player, player.account_username, pickupState, pickupPlan.item_type, pickupPlan.item_category, pickupPlan.pickedAmount, "world_item_drop_pickup", pickupTransactionId, "drop_pickup", worldName, {
+          drop_id: pickupPlan.dropId || pickupPlan.drop?.drop_id || "",
+        });
+        sendInventoryTransactionResult(socket, {
+          ok: true,
+          action: "drop_pickup",
+          message: `Picked up ${pickupPlan.pickedAmount} ${pickupPlan.item_type}.`,
+          username: player.account_username,
+          rewards: [{
+            item_id: pickupPlan.item_type,
+            item_category: pickupPlan.item_category,
+            amount: pickupPlan.pickedAmount,
+          }],
+          player_data: pickupState,
+        });
+
+        queueWorldSave(worldName);
+        if (pickupUpdate.ok && pickupUpdate.payload) {
+          sendWorldUpdateToRequesterAndWorld(socket, player, worldName, pickupUpdate.payload, {
+            username: player.account_username,
+            player_data: pickupState,
+          });
+        }
+        debugActionPositionFlow("world_item_drop_pickup request end", player, {
+          drop_id: update.drop_id,
+          item_type: pickupPlan.item_type,
+          amount: pickupPlan.pickedAmount,
+        });
+      } finally {
+        worldDropActionLocks.delete(dropActionKey);
+      }
       return;
     }
 
-    if (data.type === "player_position") {
-      if (!requireAuthenticated(socket, player, "move online")) return;
 
-      player.name = player.account_username || player.name;
+      if (data.type === "player_position") {
+        if (!requireAuthenticated(socket, player, "move online")) return;
 
-      const position = sanitizePlayerPosition(data, player);
-      if (!position) return;
-      if (!requireSameWorld(socket, player, position.world, "move in that world")) return;
-      if (!acceptPlayerMovement(socket, player, position)) return;
+        player.name = player.account_username || player.name;
 
-      player.x = position.x;
-      player.y = position.y;
-      player.facing = position.facing;
-      player.animation_state = sanitizePlayerAnimationState(data.animation_state);
+        const position = sanitizePlayerPosition(data, player);
+        if (!position) return;
+        if (!requireSameWorld(socket, player, position.world, "move in that world")) return;
+        if (!acceptPlayerMovement(socket, player, position)) return;
 
-      if (data.equipment_slots && typeof data.equipment_slots === "object" && !Array.isArray(data.equipment_slots)) {
-        player.equipment_slots = sanitizeEquipmentSlots(data.equipment_slots, player.account_username);
-      } else {
-        player.equipment_slots = sanitizeEquipmentSlots({
-          hand: data.equipped_tool || "",
-          back: data.equipped_back || "",
-        }, player.account_username);
+        player.x = position.x;
+        player.y = position.y;
+        player.facing = position.facing;
+        player.animation_state = sanitizePlayerAnimationState(data.animation_state);
+
+        if (data.equipment_slots && typeof data.equipment_slots === "object" && !Array.isArray(data.equipment_slots)) {
+          player.equipment_slots = sanitizeEquipmentSlots(data.equipment_slots, player.account_username);
+        } else {
+          player.equipment_slots = sanitizeEquipmentSlots({
+            hand: data.equipped_tool || "",
+            back: data.equipped_back || "",
+          }, player.account_username);
+        }
+
+        broadcastToWorld(player.world, {
+          type: "player_position",
+          player_id: playerId,
+          name: player.name,
+          role: getPublicPlayerRole(player),
+          x: player.x,
+          y: player.y,
+          facing: player.facing,
+          world: position.world,
+          animation_state: player.animation_state,
+          equipment_slots: player.equipment_slots,
+        }, playerId);
+        return;
       }
-
-      broadcastToWorld(player.world, {
-        type: "player_position",
-        player_id: playerId,
-        name: player.name,
-        role: getPublicPlayerRole(player),
-        x: player.x,
-        y: player.y,
-        facing: player.facing,
-        world: position.world,
-        animation_state: player.animation_state,
-        equipment_slots: player.equipment_slots,
-      }, playerId);
-      return;
+    } catch (error) {
+      console.warn("[socket_message_error]", error.message);
     }
   });
 
@@ -1248,6 +1367,122 @@ function makeRequestId(data) {
   return String(data.request_id || "").trim();
 }
 
+function makeMessageIdempotencyScope(data) {
+  const type = String(data?.type || "").trim();
+  if (type === "") return "";
+
+  if (type === "inventory_transaction_request") {
+    const action = String(data?.action || "").trim().toLowerCase() || "unknown";
+    return `${type}:${action}`;
+  }
+  if (type === "world_block_update") {
+    const action = String(data?.action || "").trim().toLowerCase() || "unknown";
+    return `${type}:${action}`;
+  }
+  if (type === "world_seed_update" || type === "world_interaction_update") {
+    const action = String(data?.action || "").trim().toLowerCase() || "unknown";
+    return `${type}:${action}`;
+  }
+  if (
+    type === "world_item_drop_create" ||
+    type === "world_drop_create" ||
+    type === "world_item_drop_update" ||
+    type === "world_drop_update" ||
+    type === "world_item_drop_pickup" ||
+    type === "world_drop_pickup" ||
+    type === "world_item_drop_remove" ||
+    type === "world_drop_remove"
+  ) {
+    return type;
+  }
+  if (
+    type === "trade_request" ||
+    type === "trade_response" ||
+    type === "trade_offer_update" ||
+    type === "trade_confirm" ||
+    type === "trade_final_confirm" ||
+    type === "trade_cancel"
+  ) {
+    return type;
+  }
+  if (type === "account_register" || type === "account_login" || type === "account_token_login") {
+    return type;
+  }
+  return "";
+}
+
+function makeMessageIdempotencyKey(player, data, scope) {
+  const requestId = makeRequestId(data);
+  if (requestId === "") return "";
+
+  const username = cleanAccountName(player?.account_username || data?.username || data?.account_username || "");
+  if (username === "") return "";
+
+  const worldName = cleanWorld(data?.world || player?.world || "START");
+  return `${username}:${scope}:${worldName}:${requestId}`;
+}
+
+function sendDuplicateRequestNotice(socket, data) {
+  const type = String(data?.type || "").trim();
+  const requestId = makeRequestId(data);
+
+  if (type === "inventory_transaction_request") {
+    sendInventoryTransactionRejected(socket, data, "Duplicate request ignored.");
+    return;
+  }
+
+  if (
+    type === "trade_request" ||
+    type === "trade_response" ||
+    type === "trade_offer_update" ||
+    type === "trade_confirm" ||
+    type === "trade_final_confirm" ||
+    type === "trade_cancel"
+  ) {
+    sendJson(socket, {
+      type: "trade_error",
+      trade_id: String(data?.trade_id || ""),
+      message: "Duplicate request ignored.",
+      request_id: requestId,
+    });
+    return;
+  }
+
+  sendActionRejected(socket, type || "request", "Duplicate request ignored.", {
+    request_id: requestId,
+  });
+}
+
+async function enforceMessageIdempotency(socket, player, data) {
+  if (!postgresStore.isReady()) return true;
+
+  const scope = makeMessageIdempotencyScope(data);
+  if (scope === "") return true;
+
+  const key = makeMessageIdempotencyKey(player, data, scope);
+  if (key === "") return true;
+
+  const claim = await postgresStore.claimIdempotency(
+    scope,
+    key,
+    cleanAccountName(player?.account_username || data?.username || data?.account_username || ""),
+    {
+      type: String(data?.type || ""),
+      action: String(data?.action || ""),
+      request_id: makeRequestId(data),
+      world: cleanWorld(data?.world || player?.world || "START"),
+      trade_id: String(data?.trade_id || ""),
+      drop_id: String(data?.drop_id || ""),
+    }
+  );
+
+  if (!claim.ok) return true;
+  if (!claim.duplicate) return true;
+
+  sendDuplicateRequestNotice(socket, data);
+  return false;
+}
+
 function getClientVersion(data) {
   return String(data.client_version || data.version || "").trim();
 }
@@ -1374,9 +1609,13 @@ function issueSessionToken(account) {
 
 function clearSessionToken(account) {
   if (!account) return;
+  const username = cleanAccountName(account.username || "");
   account.session_token_hash = "";
   account.session_token_expires_at = "";
   queueAccountsSave();
+  if (username !== "") {
+    postgresStore.revokeSessionsByUsername(username);
+  }
 }
 
 function isSessionTokenValid(account, token) {
@@ -1581,6 +1820,7 @@ function releaseActiveAccountSession(player) {
   const key = accountKey(player.account_username);
   if (activeAccountSessions.get(key) === player.id) {
     activeAccountSessions.delete(key);
+    postgresStore.revokeSessionsByUsername(player.account_username);
   }
 }
 
@@ -1726,6 +1966,7 @@ function handleAccountRegister(socket, player, data) {
   const verificationToken = makeEmailVerificationToken(account);
   accounts.set(key, account);
   queueAccountsSave();
+  postgresStore.mirrorAccount(account, { touchLogin: false });
   queueVerificationEmail(account, verificationToken);
   sendVerificationRequired(socket, requestId, "register", account, "Account created. Check your email to verify before signing on.");
 }
@@ -1787,6 +2028,11 @@ function handleAccountLogin(socket, player, data) {
 
   account.last_seen_at = new Date().toISOString();
   const token = issueSessionToken(account);
+  postgresStore.mirrorAccount(account, { touchLogin: true });
+  postgresStore.mirrorSession(account, {
+    ip: getSocketAddress(socket),
+    userAgent: String(data.user_agent || data.userAgent || ""),
+  });
   sendAuthOk(socket, requestId, "login", account, token);
 }
 
@@ -1821,6 +2067,11 @@ function handleAccountTokenLogin(socket, player, data) {
 
   account.last_seen_at = new Date().toISOString();
   const nextToken = issueSessionToken(account);
+  postgresStore.mirrorAccount(account, { touchLogin: true });
+  postgresStore.mirrorSession(account, {
+    ip: getSocketAddress(socket),
+    userAgent: String(data.user_agent || data.userAgent || ""),
+  });
   sendAuthOk(socket, requestId, "token_login", account, nextToken);
 }
 
@@ -2357,7 +2608,7 @@ function handleTradeConfirm(socket, player, data) {
   sendTradeState(trade, `${player.account_username} accepted the trade.`);
 }
 
-function handleTradeFinalConfirm(socket, player, data) {
+async function handleTradeFinalConfirm(socket, player, data) {
   if (!requireAuthenticated(socket, player, "trade")) return;
 
   const trade = activeTrades.get(String(data.trade_id || tradeByPlayerId.get(player.id) || ""));
@@ -2375,7 +2626,7 @@ function handleTradeFinalConfirm(socket, player, data) {
   trade.updated_at = Date.now();
 
   if (getTradePartyIds(trade).every((playerId) => Boolean(trade.final_accepted[playerId]))) {
-    executeTrade(trade);
+    await executeTrade(trade);
     return;
   }
 
@@ -2463,7 +2714,12 @@ function applyValidatedTrade(stateA, stateB, offersA, offersB) {
   return true;
 }
 
-function executeTrade(trade) {
+async function executeTrade(trade) {
+  if (!trade || !trade.id) return;
+  if (trade._finalizing) {
+    return;
+  }
+
   const requesterRecord = getTradeParticipantRecord(trade.requester_id);
   const targetRecord = getTradeParticipantRecord(trade.target_id);
   if (!requesterRecord || !targetRecord) {
@@ -2484,60 +2740,80 @@ function executeTrade(trade) {
     return;
   }
 
-  if (!applyValidatedTrade(stateA, stateB, validation.offersA, validation.offersB)) {
-    cancelTrade(trade, "Trade canceled because inventory changed.");
-    return;
-  }
-
-  const savedAt = new Date().toISOString();
-  stateA.saved_at = savedAt;
-  stateB.saved_at = savedAt;
-  setPlayerState(trade.requester_username, stateA);
-  setPlayerState(trade.target_username, stateB);
-  queuePlayerSave(trade.requester_username);
-  queuePlayerSave(trade.target_username);
-
+  trade._finalizing = true;
   const tradeTransactionId = makeAuditId("trade");
-  logTradeTransaction({
-    transaction_id: tradeTransactionId,
-    trade_id: trade.id,
-    status: "completed",
-    requester_username: trade.requester_username,
-    target_username: trade.target_username,
-    requester_offer: validation.offersA,
-    target_offer: validation.offersB,
-  });
-  for (const item of validation.offersA) {
-    logItemLedgerForState(requesterRecord.socket, requesterRecord.player, trade.requester_username, stateA, item.item_id, item.item_category, -item.amount, "trade", tradeTransactionId, "trade_sent", requesterRecord.player.world, { trade_id: trade.id, counterparty: trade.target_username });
-    logItemLedgerForState(targetRecord.socket, targetRecord.player, trade.target_username, stateB, item.item_id, item.item_category, item.amount, "trade", tradeTransactionId, "trade_received", targetRecord.player.world, { trade_id: trade.id, counterparty: trade.requester_username });
+
+  try {
+    const tradeResult = await postgresStore.applyTradeFinalizationTransaction({
+      requester_username: trade.requester_username,
+      target_username: trade.target_username,
+      trade_id: trade.id,
+      world: trade.world || "START",
+      requester_offers: validation.offersA,
+      target_offers: validation.offersB,
+      request_id: tradeTransactionId,
+    });
+
+    if (!tradeResult.ok) {
+      cancelTrade(trade, "Trade was canceled because server inventory changed. Try again.");
+      return;
+    }
+
+    if (!applyInventoryLedgerToState(stateA, tradeResult.request_ledgers?.requester)) {
+      cancelTrade(trade, "Trade was canceled because inventory reconciliation failed.");
+      return;
+    }
+    if (!applyInventoryLedgerToState(stateB, tradeResult.request_ledgers?.target)) {
+      cancelTrade(trade, "Trade was canceled because inventory reconciliation failed.");
+      return;
+    }
+
+    persistPlayerInventoryChange(trade.requester_username, stateA);
+    persistPlayerInventoryChange(trade.target_username, stateB);
+
+    logTradeTransaction({
+      transaction_id: tradeTransactionId,
+      trade_id: trade.id,
+      status: "completed",
+      requester_username: trade.requester_username,
+      target_username: trade.target_username,
+      requester_offer: validation.offersA,
+      target_offer: validation.offersB,
+    });
+    for (const item of validation.offersA) {
+      logItemLedgerForState(requesterRecord.socket, requesterRecord.player, trade.requester_username, stateA, item.item_id, item.item_category, -item.amount, "trade", tradeTransactionId, "trade_sent", requesterRecord.player.world, { trade_id: trade.id, counterparty: trade.target_username });
+      logItemLedgerForState(targetRecord.socket, targetRecord.player, trade.target_username, stateB, item.item_id, item.item_category, item.amount, "trade", tradeTransactionId, "trade_received", targetRecord.player.world, { trade_id: trade.id, counterparty: trade.requester_username });
+    }
+    for (const item of validation.offersB) {
+      logItemLedgerForState(targetRecord.socket, targetRecord.player, trade.target_username, stateB, item.item_id, item.item_category, -item.amount, "trade", tradeTransactionId, "trade_sent", targetRecord.player.world, { trade_id: trade.id, counterparty: trade.requester_username });
+      logItemLedgerForState(requesterRecord.socket, requesterRecord.player, trade.requester_username, stateA, item.item_id, item.item_category, item.amount, "trade", tradeTransactionId, "trade_received", requesterRecord.player.world, { trade_id: trade.id, counterparty: trade.target_username });
+    }
+
+    sendJson(requesterRecord.socket, {
+      type: "trade_completed",
+      trade_id: trade.id,
+      message: "Trade completed.",
+      username: trade.requester_username,
+      player_data: stateA,
+    });
+
+    sendJson(targetRecord.socket, {
+      type: "trade_completed",
+      trade_id: trade.id,
+      message: "Trade completed.",
+      username: trade.target_username,
+      player_data: stateB,
+    });
+
+    sendTradeChat(trade.requester_id, "Trade completed.");
+    sendTradeChat(trade.target_id, "Trade completed.");
+    clearTrade(trade);
+  } finally {
+    trade._finalizing = false;
   }
-  for (const item of validation.offersB) {
-    logItemLedgerForState(targetRecord.socket, targetRecord.player, trade.target_username, stateB, item.item_id, item.item_category, -item.amount, "trade", tradeTransactionId, "trade_sent", targetRecord.player.world, { trade_id: trade.id, counterparty: trade.requester_username });
-    logItemLedgerForState(requesterRecord.socket, requesterRecord.player, trade.requester_username, stateA, item.item_id, item.item_category, item.amount, "trade", tradeTransactionId, "trade_received", requesterRecord.player.world, { trade_id: trade.id, counterparty: trade.target_username });
-  }
-
-  sendJson(requesterRecord.socket, {
-    type: "trade_completed",
-    trade_id: trade.id,
-    message: "Trade completed.",
-    username: trade.requester_username,
-    player_data: stateA,
-  });
-
-  sendJson(targetRecord.socket, {
-    type: "trade_completed",
-    trade_id: trade.id,
-    message: "Trade completed.",
-    username: trade.target_username,
-    player_data: stateB,
-  });
-
-  sendTradeChat(trade.requester_id, "Trade completed.");
-  sendTradeChat(trade.target_id, "Trade completed.");
-  clearTrade(trade);
 }
 
-function handleInventoryTransactionRequest(socket, player, data) {
+async function handleInventoryTransactionRequest(socket, player, data) {
   if (!requireAuthenticated(socket, player, "change inventory")) return;
 
   const action = String(data.action || "").trim();
@@ -2547,7 +2823,7 @@ function handleInventoryTransactionRequest(socket, player, data) {
   }
 
   if (action === "vend_get_state" || action === "vend_set_listing" || action === "vend_buy" || action === "vend_collect" || action === "vend_cancel") {
-    handleVendingTransaction(socket, player, data);
+    await handleVendingTransaction(socket, player, data);
     return;
   }
 
@@ -3155,7 +3431,7 @@ function rejectVendTransaction(socket, data, message) {
   });
 }
 
-function handleVendingTransaction(socket, player, data) {
+async function handleVendingTransaction(socket, player, data) {
   const action = String(data.action || "").trim();
   const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "use that vending machine")) return;
@@ -3186,7 +3462,7 @@ function handleVendingTransaction(socket, player, data) {
   }
 
   if (action === "vend_buy") {
-    handleVendBuy(socket, player, data, worldName, vend);
+    await handleVendBuy(socket, player, data, worldName, vend);
     return;
   }
 
@@ -3293,7 +3569,7 @@ function handleVendSetListing(socket, player, data, worldName, vend) {
   sendVendTransactionResult(socket, data, player, savedVend, true, "Vending machine listing saved.", state);
 }
 
-function handleVendBuy(socket, player, data, worldName, vend) {
+async function handleVendBuy(socket, player, data, worldName, vend) {
   if (!vend.listing || Number(vend.listing.stock) <= 0) {
     rejectVendTransaction(socket, data, "This vending machine is empty.");
     return;
@@ -3336,61 +3612,102 @@ function handleVendBuy(socket, player, data, worldName, vend) {
     return;
   }
 
-  if (!spendItemFromState(buyerState, "world_lock", "block", priceWls)) {
-    rejectVendTransaction(socket, data, "Server inventory changed. Try again.");
+  const vendActionKey = `${worldName}:${vend.x},${vend.y}`;
+  if (worldVendActionLocks.has(vendActionKey)) {
+    rejectVendTransaction(socket, data, "That vending machine is busy.");
     return;
   }
 
-  addItemToState(buyerState, listing.item_id, listing.item_category, itemAmount);
+  worldVendActionLocks.add(vendActionKey);
+  try {
+    const vendTransactionId = makeAuditId("vend");
+    const transaction = await postgresStore.applyVendBuyTransaction({
+      owner_username: String(vend.owner_username || ""),
+      buyer_username: player.account_username,
+      world: worldName,
+      item_type: soldItemId,
+      item_category: soldItemCategory,
+      amount: itemAmount,
+      price_wls: priceWls,
+      x: Number(vend.x || 0),
+      y: Number(vend.y || 0),
+      request_id: makeRequestId(data),
+      transaction_id: vendTransactionId,
+      at: new Date().toISOString(),
+    });
 
-  listing.stock = Math.max(0, Number(listing.stock) - itemAmount);
-  vend.pending_wls = clampInteger(Number(vend.pending_wls) + priceWls, 0, pendingLimit);
-  vend.logs.push({
-    buyer_username: player.account_username,
-    item_id: listing.item_id,
-    item_category: listing.item_category,
-    amount: itemAmount,
-    price_wls: priceWls,
-    date: new Date().toISOString(),
-  });
-  vend.logs = vend.logs.slice(-VEND_LOG_LIMIT);
+    if (!transaction.ok) {
+      if (transaction.reason === "insufficient_inventory") {
+        rejectVendTransaction(socket, data, "You no longer have enough World Locks.");
+        return;
+      }
+      if (transaction.reason === "insufficient_capacity") {
+        rejectVendTransaction(socket, data, "Your inventory cannot hold that item.");
+        return;
+      }
+      rejectVendTransaction(socket, data, "Server inventory changed. Try again.");
+      return;
+    }
 
-  if (listing.stock <= 0) {
-    vend.listing = null;
+    if (!setInventoryCountInState(buyerState, "world_lock", "block", transaction.buyer?.after_world_lock)) {
+      rejectVendTransaction(socket, data, "Could not synchronize your World Lock balance.");
+      return;
+    }
+    if (!setInventoryCountInState(buyerState, transaction.buyer?.item_type, transaction.buyer?.item_category, transaction.buyer?.after_item)) {
+      rejectVendTransaction(socket, data, "Could not synchronize your purchased item balance.");
+      return;
+    }
+
+    listing.stock = Math.max(0, Number(listing.stock) - itemAmount);
+    vend.pending_wls = clampInteger(Number(vend.pending_wls) + priceWls, 0, pendingLimit);
+    vend.logs.push({
+      buyer_username: player.account_username,
+      item_id: listing.item_id,
+      item_category: listing.item_category,
+      amount: itemAmount,
+      price_wls: priceWls,
+      date: new Date().toISOString(),
+    });
+    vend.logs = vend.logs.slice(-VEND_LOG_LIMIT);
+
+    if (listing.stock <= 0) {
+      vend.listing = null;
+    }
+
+    const savedVend = setVendStateAt(worldName, vend);
+    persistPlayerInventoryChange(player.account_username, buyerState);
+    queueWorldSave(worldName);
+    logVendingTransaction(socket, player, {
+      transaction_id: vendTransactionId,
+      action: "buy",
+      world: worldName,
+      x: vend.x,
+      y: vend.y,
+      owner_username: vend.owner_username,
+      buyer_username: player.account_username,
+      item_id: soldItemId,
+      item_category: soldItemCategory,
+      amount: itemAmount,
+      price_wls: priceWls,
+      stock_after: Number(savedVend.listing?.stock || 0),
+      pending_wls_after: Number(savedVend.pending_wls || 0),
+      details: { amount_per_sale: amountPerSale, price_per_sale_wls: pricePerSale, sale_count: saleCount },
+    });
+    logItemLedgerForState(socket, player, player.account_username, buyerState, "world_lock", "block", -priceWls, "vending_buy", vendTransactionId, "vend_price", worldName, {
+      x: vend.x,
+      y: vend.y,
+      owner_username: vend.owner_username,
+    });
+    logItemLedgerForState(socket, player, player.account_username, buyerState, soldItemId, soldItemCategory, itemAmount, "vending_buy", vendTransactionId, "vend_purchase", worldName, {
+      x: vend.x,
+      y: vend.y,
+      owner_username: vend.owner_username,
+    });
+    sendVendStateUpdateToWorld(worldName, savedVend);
+    sendVendTransactionResult(socket, data, player, savedVend, true, "Purchase complete.", buyerState);
+  } finally {
+    worldVendActionLocks.delete(vendActionKey);
   }
-
-  const savedVend = setVendStateAt(worldName, vend);
-  persistPlayerInventoryChange(player.account_username, buyerState);
-  queueWorldSave(worldName);
-  const vendTransactionId = makeAuditId("vend");
-  logVendingTransaction(socket, player, {
-    transaction_id: vendTransactionId,
-    action: "buy",
-    world: worldName,
-    x: vend.x,
-    y: vend.y,
-    owner_username: vend.owner_username,
-    buyer_username: player.account_username,
-    item_id: soldItemId,
-    item_category: soldItemCategory,
-    amount: itemAmount,
-    price_wls: priceWls,
-    stock_after: Number(savedVend.listing?.stock || 0),
-    pending_wls_after: Number(savedVend.pending_wls || 0),
-    details: { amount_per_sale: amountPerSale, price_per_sale_wls: pricePerSale, sale_count: saleCount },
-  });
-  logItemLedgerForState(socket, player, player.account_username, buyerState, "world_lock", "block", -priceWls, "vending_buy", vendTransactionId, "vend_price", worldName, {
-    x: vend.x,
-    y: vend.y,
-    owner_username: vend.owner_username,
-  });
-  logItemLedgerForState(socket, player, player.account_username, buyerState, soldItemId, soldItemCategory, itemAmount, "vending_buy", vendTransactionId, "vend_purchase", worldName, {
-    x: vend.x,
-    y: vend.y,
-    owner_username: vend.owner_username,
-  });
-  sendVendStateUpdateToWorld(worldName, savedVend);
-  sendVendTransactionResult(socket, data, player, savedVend, true, "Purchase complete.", buyerState);
 }
 
 function handleVendCollect(socket, player, data, worldName, vend) {
@@ -5905,20 +6222,22 @@ function getAuditActor(socket, player, usernameOverride = "") {
 }
 
 function logSecurityEvent(socket, player, event, details = {}, severity = "info") {
-  appendJsonLine(SECURITY_EVENT_LOG_PATH, {
+  const entry = {
     event_id: makeAuditId("security"),
     at: new Date().toISOString(),
     severity: String(severity || "info"),
     event: String(event || "security_event"),
     ...getAuditActor(socket, player),
     details,
-  }, "security event");
+  };
+  appendJsonLine(SECURITY_EVENT_LOG_PATH, entry, "security event");
+  postgresStore.mirrorSecurityEvent(entry);
 }
 
 function logGemLedger(socket, player, entry = {}) {
   const actor = getAuditActor(socket, player);
   const username = cleanAccountName(entry.account_username || actor.actor_username);
-  appendJsonLine(GEM_LEDGER_PATH, {
+  const ledgerEntry = {
     ledger_id: entry.ledger_id || makeAuditId("gem"),
     at: new Date().toISOString(),
     ...actor,
@@ -5930,7 +6249,9 @@ function logGemLedger(socket, player, entry = {}) {
     reason: String(entry.reason || ""),
     world: entry.world ? cleanWorld(entry.world) : actor.world,
     details: entry.details || {},
-  }, "gem ledger");
+  };
+  appendJsonLine(GEM_LEDGER_PATH, ledgerEntry, "gem ledger");
+  postgresStore.mirrorGemLedger(ledgerEntry);
 }
 
 function logItemLedger(socket, player, entry = {}) {
@@ -5958,6 +6279,7 @@ function logItemLedger(socket, player, entry = {}) {
   };
 
   appendJsonLine(ITEM_LEDGER_PATH, ledgerEntry, "item ledger");
+  postgresStore.mirrorItemLedger(ledgerEntry);
   if (itemId === "gem") {
     logGemLedger(socket, player, { ...ledgerEntry, ledger_id: makeAuditId("gem") });
   }
@@ -5998,7 +6320,7 @@ function logRewardLedgers(socket, actorPlayer, accountUsername, state, rewards, 
 }
 
 function logShopPurchase(socket, player, entry = {}) {
-  appendJsonLine(SHOP_PURCHASE_LOG_PATH, {
+  const logEntry = {
     purchase_id: entry.purchase_id || makeAuditId("shop"),
     at: new Date().toISOString(),
     ...getAuditActor(socket, player),
@@ -6008,11 +6330,13 @@ function logShopPurchase(socket, player, entry = {}) {
     price_gems: Math.max(0, Math.trunc(Number(entry.price_gems) || 0)),
     rewards: Array.isArray(entry.rewards) ? entry.rewards : [],
     gem_balance_after: Math.max(0, Math.trunc(Number(entry.gem_balance_after) || 0)),
-  }, "shop purchase");
+  };
+  appendJsonLine(SHOP_PURCHASE_LOG_PATH, logEntry, "shop purchase");
+  postgresStore.mirrorShopPurchase(logEntry);
 }
 
 function logTradeTransaction(entry = {}) {
-  appendJsonLine(TRADE_TRANSACTION_LOG_PATH, {
+  const logEntry = {
     transaction_id: entry.transaction_id || makeAuditId("trade"),
     at: new Date().toISOString(),
     trade_id: String(entry.trade_id || ""),
@@ -6022,11 +6346,13 @@ function logTradeTransaction(entry = {}) {
     requester_offer: Array.isArray(entry.requester_offer) ? entry.requester_offer : [],
     target_offer: Array.isArray(entry.target_offer) ? entry.target_offer : [],
     details: entry.details || {},
-  }, "trade transaction");
+  };
+  appendJsonLine(TRADE_TRANSACTION_LOG_PATH, logEntry, "trade transaction");
+  postgresStore.mirrorTradeTransaction(logEntry);
 }
 
 function logVendingTransaction(socket, player, entry = {}) {
-  appendJsonLine(VENDING_TRANSACTION_LOG_PATH, {
+  const logEntry = {
     transaction_id: entry.transaction_id || makeAuditId("vend"),
     at: new Date().toISOString(),
     ...getAuditActor(socket, player),
@@ -6043,11 +6369,13 @@ function logVendingTransaction(socket, player, entry = {}) {
     stock_after: Math.max(0, Math.trunc(Number(entry.stock_after) || 0)),
     pending_wls_after: Math.max(0, Math.trunc(Number(entry.pending_wls_after) || 0)),
     details: entry.details || {},
-  }, "vending transaction");
+  };
+  appendJsonLine(VENDING_TRANSACTION_LOG_PATH, logEntry, "vending transaction");
+  postgresStore.mirrorVendingTransaction(logEntry);
 }
 
 function logWorldChange(socket, player, entry = {}) {
-  appendJsonLine(WORLD_CHANGE_JOURNAL_PATH, {
+  const logEntry = {
     journal_id: entry.journal_id || makeAuditId("world"),
     at: new Date().toISOString(),
     ...getAuditActor(socket, player),
@@ -6060,7 +6388,9 @@ function logWorldChange(socket, player, entry = {}) {
     y: Number.isFinite(Number(entry.y)) ? Math.trunc(Number(entry.y)) : null,
     block_type: clampString(entry.block_type || ""),
     details: entry.details || {},
-  }, "world change");
+  };
+  appendJsonLine(WORLD_CHANGE_JOURNAL_PATH, logEntry, "world change");
+  postgresStore.mirrorWorldChange(logEntry);
 }
 
 function createWorldSnapshot(worldName, reason, socket = null, player = null, details = {}) {
@@ -6600,6 +6930,61 @@ function spendItemFromState(state, itemId, itemCategory, amount) {
   return true;
 }
 
+function setInventoryCountInState(state, itemId, itemCategory, amount) {
+  if (!state) return false;
+
+  const cleanItemId = clampString(itemId || "");
+  if (cleanItemId === "" || !ItemDatabase.hasItem(cleanItemId)) return false;
+
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory || "block");
+  if (!ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory)) return false;
+
+  const inventoryField = getInventoryFieldForCategory(resolvedCategory, cleanItemId);
+  if (!state[inventoryField] || typeof state[inventoryField] !== "object" || Array.isArray(state[inventoryField])) {
+    state[inventoryField] = {};
+  }
+
+  const stackLimit = ItemDatabase.getStackLimit(cleanItemId);
+  const requestedRaw = Number(amount);
+  if (!Number.isFinite(requestedRaw)) return false;
+  if (!Number.isInteger(requestedRaw)) return false;
+  const requestedAmount = Math.trunc(requestedRaw);
+  if (requestedAmount < 0 || requestedAmount > stackLimit) return false;
+
+  state[inventoryField][cleanItemId] = requestedAmount;
+  return {
+    inventoryField,
+    itemId: cleanItemId,
+    itemCategory: resolvedCategory,
+    count: requestedAmount,
+  };
+}
+
+function applyInventoryLedgerToState(state, ledgerEntries) {
+  if (!state) return false;
+  if (!Array.isArray(ledgerEntries) || ledgerEntries.length === 0) return true;
+
+  const stagedState = cloneJson(state);
+  if (!stagedState || typeof stagedState !== "object" || Array.isArray(stagedState)) return false;
+
+  for (const entry of ledgerEntries) {
+    const cleanItemId = clampString(entry?.item_type || "");
+    if (cleanItemId === "" || !ItemDatabase.hasItem(cleanItemId)) return false;
+
+    const itemCategory = entry?.item_category || "block";
+    const afterAmount = Number(entry?.after_amount);
+    if (!Number.isFinite(afterAmount) || !Number.isInteger(afterAmount)) return false;
+
+    if (!setInventoryCountInState(stagedState, cleanItemId, itemCategory, afterAmount)) {
+      return false;
+    }
+  }
+
+  Object.assign(state, stagedState);
+  state.saved_at = new Date().toISOString();
+  return true;
+}
+
 function ensureWritablePlayerState(username) {
   const clean = cleanAccountName(username);
   if (clean === "") return null;
@@ -6628,6 +7013,7 @@ function markAccountSeen(username) {
 
   account.last_seen_at = new Date().toISOString();
   queueAccountsSave();
+  postgresStore.mirrorAccount(account, { touchLogin: false });
 }
 
 function buildPublicPlayerData(state) {
@@ -8198,84 +8584,128 @@ function applyDropUpdateToWorldState(worldName, update) {
   }
 }
 
-function applyDropPickupToWorldState(worldName, update, player) {
+function prepareDropPickup(worldName, player, update) {
   const found = findDropForPickup(worldName, update.drop_id);
-  const state = found.state;
-  const drop = found.drop;
-  const authoritativeDropId = found.publicDropId;
-  const dropStateKey = found.key;
-  if (!drop) return { ok: false, reason: "not_available" };
-  if (!isPlayerNearDrop(player, drop)) return { ok: false, reason: "too_far", drop };
+  if (!found.drop) return { ok: false, reason: "not_available" };
 
-  const itemId = clampString(drop.item_type || "");
-  if (!ItemDatabase.hasItem(itemId)) return { ok: false, reason: "not_available" };
-  const itemCategory = resolveInventoryCategory(itemId, drop.item_category || "");
-  if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) return { ok: false, reason: "not_available" };
+  const drop = found.drop;
+  const dropId = found.publicDropId;
+  const dropStateKey = found.key;
+  const cleanWorldName = cleanWorld(found.world || worldName);
+  if (!isPlayerNearDrop(player, drop)) return { ok: false, reason: "too_far", drop, world: cleanWorldName };
+
+  const itemType = clampString(drop.item_type || "");
+  if (!ItemDatabase.hasItem(itemType)) return { ok: false, reason: "not_available", drop, world: cleanWorldName };
+  const itemCategory = resolveInventoryCategory(itemType, drop.item_category || "");
+  if (!ItemDatabase.canStoreItemInCategory(itemType, itemCategory)) return { ok: false, reason: "not_available", drop, world: cleanWorldName };
 
   const playerState = ensureWritablePlayerState(player.account_username);
-  if (!playerState) return { ok: false, reason: "inventory_unavailable" };
+  if (!playerState) return { ok: false, reason: "inventory_unavailable", drop, world: cleanWorldName };
 
-  const stackLimit = ItemDatabase.getStackLimit(itemId);
+  const stackLimit = ItemDatabase.getStackLimit(itemType);
   const dropAmount = clampInteger(drop.amount || 0, 0, Math.min(MAX_DROP_AMOUNT, stackLimit));
-  if (dropAmount <= 0) {
-    state.drops.delete(dropStateKey);
-    return { ok: false, reason: "not_available" };
-  }
+  if (dropAmount <= 0) return { ok: false, reason: "not_available", world: cleanWorldName };
 
-  const currentCount = getInventoryCount(playerState, itemId, itemCategory);
+  const currentCount = getInventoryCount(playerState, itemType, itemCategory);
   const availableSpace = Math.max(0, stackLimit - currentCount);
-  if (availableSpace <= 0) return { ok: false, reason: "inventory_full" };
+  if (availableSpace <= 0) return { ok: false, reason: "inventory_full", drop, world: cleanWorldName };
 
   const pickedAmount = Math.min(dropAmount, availableSpace);
-  const remaining = Math.max(0, dropAmount - pickedAmount);
-  const pickedDrop = {
-    ...drop,
-    drop_id: authoritativeDropId,
-    item_type: itemId,
-    item_category: itemCategory,
-    amount: pickedAmount,
-  };
-
-  const addResult = addItemToState(playerState, itemId, itemCategory, pickedAmount);
-  if (!addResult) return { ok: false, reason: "inventory_unavailable" };
-
-  playerState.saved_at = new Date().toISOString();
-  setPlayerState(player.account_username, playerState);
-  queuePlayerSave(player.account_username);
-
-  let pickupUpdate;
-  if (remaining <= 0) {
-    state.drops.delete(dropStateKey);
-    pickupUpdate = {
-      type: "world_item_drop_remove",
-      world: cleanWorld(worldName),
-      drop_id: authoritativeDropId,
-      remaining: 0,
-      removed: true,
-      requested_by: player.id,
-      requested_by_name: cleanName(player.name),
-    };
-  } else {
-    drop.amount = remaining;
-    pickupUpdate = {
-      type: "world_item_drop_update",
-      world: cleanWorld(worldName),
-      drop_id: authoritativeDropId,
-      item_type: itemId,
-      item_category: itemCategory,
-      amount: remaining,
-      remaining,
-      requested_by: player.id,
-      requested_by_name: cleanName(player.name),
-    };
-  }
+  if (pickedAmount <= 0) return { ok: false, reason: "inventory_full", drop, world: cleanWorldName };
 
   return {
     ok: true,
-    drop: pickedDrop,
+    player: player,
+    world: cleanWorldName,
+    dropId,
+    dropStateKey,
+    drop: {
+      ...drop,
+      drop_id: dropId,
+      item_type: itemType,
+      item_category: itemCategory,
+    },
     playerState,
-    update: pickupUpdate,
-    remaining,
+    item_type: itemType,
+    item_category: itemCategory,
+    dropAmount,
+    pickedAmount,
+    remaining: Math.max(0, dropAmount - pickedAmount),
+  };
+}
+
+function applyDropPickupWorldState(worldName, pickupPlan) {
+  if (!pickupPlan) return { ok: false, reason: "not_available" };
+  const state = ensureWorldState(worldName);
+  const dropId = clampString(pickupPlan.dropId || "", MAX_DROP_ID_LENGTH);
+  const targetDropId = clampString(pickupPlan.drop?.drop_id || dropId, MAX_DROP_ID_LENGTH);
+  let dropStateKey = clampString(pickupPlan.dropStateKey || "", MAX_DROP_ID_LENGTH);
+  let drop = null;
+
+  if (dropStateKey && state.drops.has(dropStateKey)) {
+    drop = state.drops.get(dropStateKey);
+  } else {
+    for (const [candidateKey, candidateDrop] of state.drops.entries()) {
+      const candidateDropId = clampString(candidateDrop?.drop_id || candidateKey || "", MAX_DROP_ID_LENGTH);
+      if (candidateDropId === targetDropId) {
+        drop = candidateDrop;
+        dropStateKey = candidateKey;
+        break;
+      }
+    }
+  }
+
+  if (!drop) {
+    const found = findDropForPickup(worldName, dropId);
+    if (found && found.drop) {
+      drop = found.drop;
+      dropStateKey = found.key;
+    }
+  }
+
+  if (!drop || !dropStateKey) {
+    return { ok: false, reason: "not_available" };
+  }
+
+  if (pickupPlan.remaining <= 0) {
+    for (const [candidateKey, candidateDrop] of state.drops.entries()) {
+      if (candidateKey === dropStateKey || candidateDrop === drop || clampString(candidateDrop?.drop_id || "", MAX_DROP_ID_LENGTH) === dropId) {
+        state.drops.delete(candidateKey);
+      }
+    }
+    return {
+      ok: true,
+      payload: {
+        type: "world_item_drop_remove",
+        world: cleanWorld(worldName),
+        drop_id: dropId,
+        remaining: 0,
+        removed: true,
+        requested_by: pickupPlan.player?.id || "",
+        requested_by_name: cleanName(pickupPlan.player?.name || ""),
+      },
+    };
+  }
+
+  const remainingAmount = Math.max(0, Number(pickupPlan.remaining) || 0);
+  if (!state.drops.has(dropStateKey)) {
+    return { ok: false, reason: "not_available" };
+  }
+  drop.amount = remainingAmount;
+
+  return {
+    ok: true,
+    payload: {
+      type: "world_item_drop_update",
+      world: cleanWorld(worldName),
+      drop_id: dropId,
+      item_type: pickupPlan.item_type,
+      item_category: pickupPlan.item_category,
+      amount: Math.max(0, Number(drop.amount || 0)),
+      remaining: pickupPlan.remaining,
+      requested_by: pickupPlan.player?.id || "",
+      requested_by_name: cleanName(pickupPlan.player?.name || ""),
+    },
   };
 }
 
@@ -8509,6 +8939,7 @@ function upsertAccount(rawAccount) {
 
   accounts.set(key, account);
   queueAccountsSave();
+  postgresStore.mirrorAccount(account, { touchLogin: false });
   return account;
 }
 
@@ -8665,6 +9096,7 @@ function savePlayerState(username) {
     saved_at: new Date().toISOString(),
     player_data: state,
   });
+  postgresStore.mirrorInventorySnapshot(clean, state);
 }
 
 function sanitizeEquipmentSlots(rawSlots, username = "") {
@@ -8795,12 +9227,12 @@ function flushPendingSaves() {
 
 process.on("SIGINT", () => {
   flushPendingSaves();
-  process.exit(0);
+  Promise.resolve(postgresStore.close()).finally(() => process.exit(0));
 });
 
 process.on("SIGTERM", () => {
   flushPendingSaves();
-  process.exit(0);
+  Promise.resolve(postgresStore.close()).finally(() => process.exit(0));
 });
 
 process.on("exit", () => {
