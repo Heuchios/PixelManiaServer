@@ -120,6 +120,7 @@ const POSTGRES_BOOTSTRAP_SQL_PATH = String(
   process.env.POSTGRES_BOOTSTRAP_SQL_PATH ||
   path.join(__dirname, "docs", "postgres_security_foundation.sql")
 ).trim();
+const POSTGRES_AUTHORITATIVE = String(process.env.POSTGRES_AUTHORITATIVE || "true").trim().toLowerCase() !== "false";
 const ADMIN_USERNAMES = new Set(["uso"]);
 const MESSAGE_RATE_LIMITS = {
   login: { limit: 10, windowMs: 10000 },
@@ -192,6 +193,7 @@ const activeFishingSessions = new Map();
 const blockDamage = new Map();
 const worldSaveTimers = new Map();
 const playerSaveTimers = new Map();
+const pendingPersistenceWrites = new Set();
 let accountsSaveTimer = null;
 let mailTransporter = null;
 const postgresStore = new PostgresStore({
@@ -231,22 +233,9 @@ const periodicSaveTimer = setInterval(() => {
 if (typeof periodicSaveTimer.unref === "function") periodicSaveTimer.unref();
 
 ensureDataFolders();
-loadAccounts();
-postgresStore.init().catch((error) => {
-  console.warn("[postgres] failed to initialize:", error.message);
-});
-
-httpServer.listen(PORT, HOST, () => {
-  console.log(`PixelMania server listening privately at ws://${HOST}:${PORT}`);
-  console.log(`PixelMania public HTTPS base: ${PUBLIC_BASE_URL}`);
-  console.log(`PixelMania public WSS endpoint: ${PUBLIC_WS_URL}`);
-  console.log(`PixelMania email verification running at ${PUBLIC_BASE_URL}/verify-email`);
-  if (HOST === "0.0.0.0" || HOST === "::") {
-    console.warn("HOST is bound to all interfaces. Keep port 8080 blocked by firewall unless this is intentional.");
-  }
-  if (!SMTP_HOST) {
-    console.warn("SMTP_HOST is not set. Verification links will be printed to the server console instead of emailed.");
-  }
+bootstrapServer().catch((error) => {
+  console.error("PixelMania server failed to start:", error);
+  process.exit(1);
 });
 
 wss.on("connection", (socket) => {
@@ -1249,6 +1238,34 @@ function handleHttpRequest(request, response) {
   sendHtml(response, 404, "PixelMania Server", "This server endpoint is for PixelMania account verification.");
 }
 
+async function bootstrapServer() {
+  await postgresStore.init();
+  await loadPersistentState();
+  startHttpServer();
+}
+
+function startHttpServer() {
+  httpServer.listen(PORT, HOST, () => {
+    console.log(`PixelMania server listening privately at ws://${HOST}:${PORT}`);
+    console.log(`PixelMania public HTTPS base: ${PUBLIC_BASE_URL}`);
+    console.log(`PixelMania public WSS endpoint: ${PUBLIC_WS_URL}`);
+    console.log(`PixelMania email verification running at ${PUBLIC_BASE_URL}/verify-email`);
+    if (postgresStore.isReady() && POSTGRES_AUTHORITATIVE) {
+      console.log(`PixelMania persistence: PostgreSQL authoritative (schema=${POSTGRES_SCHEMA}).`);
+    } else if (POSTGRES_ENABLED) {
+      console.warn("PixelMania persistence: PostgreSQL is enabled but not ready; using JSON fallback.");
+    } else {
+      console.warn("PixelMania persistence: JSON fallback is active because POSTGRES_ENABLED=false.");
+    }
+    if (HOST === "0.0.0.0" || HOST === "::") {
+      console.warn("HOST is bound to all interfaces. Keep port 8080 blocked by firewall unless this is intentional.");
+    }
+    if (!SMTP_HOST) {
+      console.warn("SMTP_HOST is not set. Verification links will be printed to the server console instead of emailed.");
+    }
+  });
+}
+
 function ensureDataFolders() {
   fs.mkdirSync(WORLD_SAVE_FOLDER, { recursive: true });
   fs.mkdirSync(PLAYER_SAVE_FOLDER, { recursive: true });
@@ -1284,6 +1301,26 @@ function writeJsonFileAtomic(filePath, data) {
   const tempPath = `${filePath}.tmp`;
   fs.writeFileSync(tempPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
   fs.renameSync(tempPath, filePath);
+}
+
+function trackPersistenceWrite(promise, label = "persistence write") {
+  if (!promise || typeof promise.then !== "function") return promise;
+
+  const tracked = Promise.resolve(promise)
+    .catch((error) => {
+      console.warn(`[persistence] ${label} failed:`, error.message);
+    })
+    .finally(() => {
+      pendingPersistenceWrites.delete(tracked);
+    });
+
+  pendingPersistenceWrites.add(tracked);
+  return tracked;
+}
+
+async function waitForPersistenceWrites() {
+  if (pendingPersistenceWrites.size === 0) return;
+  await Promise.allSettled(Array.from(pendingPersistenceWrites));
 }
 
 function getJsonSavedAtTime(filePath) {
@@ -1426,6 +1463,110 @@ function getWorldSavePath(worldName) {
 
 function getPlayerSavePath(username) {
   return path.join(PLAYER_SAVE_FOLDER, `${safeFileName(cleanAccountName(username).toLowerCase(), "guest")}.json`);
+}
+
+function isPostgresAuthoritativeReady() {
+  return Boolean(POSTGRES_AUTHORITATIVE && postgresStore.isReady());
+}
+
+async function loadPersistentState() {
+  loadAccountsFromJson();
+
+  if (!isPostgresAuthoritativeReady()) {
+    return;
+  }
+
+  const dbAccounts = await postgresStore.loadAccountStates();
+  if (dbAccounts.length > 0) {
+    accounts.clear();
+    for (const rawAccount of dbAccounts) {
+      const account = sanitizeAccountState(rawAccount);
+      if (account) accounts.set(accountKey(account.username), account);
+    }
+    console.log(`[postgres] loaded ${accounts.size} account(s) from PostgreSQL.`);
+  } else if (accounts.size > 0) {
+    await postgresStore.saveAccountStates(Array.from(accounts.values()));
+    console.log(`[postgres] imported ${accounts.size} JSON account(s) into PostgreSQL.`);
+  }
+
+  const dbPlayers = await postgresStore.loadPlayerStates();
+  if (dbPlayers.length > 0) {
+    playerStates.clear();
+    for (const entry of dbPlayers) {
+      const state = sanitizePlayerState(entry.state || {}, entry.username || "");
+      if (state) playerStates.set(accountKey(state.account_username), state);
+    }
+    console.log(`[postgres] loaded ${playerStates.size} player state(s) from PostgreSQL.`);
+  } else {
+    const importedPlayers = loadPlayerStatesFromJsonFolder();
+    if (importedPlayers > 0) {
+      await postgresStore.savePlayerStates(Array.from(playerStates.values()).map((state) => ({
+        username: state.account_username,
+        state,
+      })));
+      console.log(`[postgres] imported ${importedPlayers} JSON player state(s) into PostgreSQL.`);
+    }
+  }
+
+  const dbWorlds = await postgresStore.loadWorldStates();
+  if (dbWorlds.length > 0) {
+    worldStates.clear();
+    for (const entry of dbWorlds) {
+      const cleanWorldName = cleanWorld(entry.world_name || entry.state?.world_name || "START");
+      worldStates.set(cleanWorldName, deserializeWorldState(cleanWorldName, entry.state || {}));
+    }
+    console.log(`[postgres] loaded ${worldStates.size} world state(s) from PostgreSQL.`);
+  } else {
+    const importedWorlds = loadWorldStatesFromJsonFolder();
+    for (const [worldName] of worldStates.entries()) {
+      const serialized = serializeWorldState(worldName);
+      await postgresStore.saveWorldState(worldName, serialized);
+    }
+    if (importedWorlds > 0) {
+      console.log(`[postgres] imported ${importedWorlds} JSON world state(s) into PostgreSQL.`);
+    }
+  }
+}
+
+function listJsonFiles(folder) {
+  try {
+    if (!fs.existsSync(folder)) return [];
+    return fs.readdirSync(folder, { withFileTypes: true })
+      .filter((entry) => entry.isFile() && path.extname(entry.name).toLowerCase() === ".json")
+      .map((entry) => path.join(folder, entry.name));
+  } catch (error) {
+    console.warn(`Could not scan ${folder}:`, error.message);
+    return [];
+  }
+}
+
+function loadPlayerStatesFromJsonFolder() {
+  let loaded = 0;
+  for (const filePath of listJsonFiles(PLAYER_SAVE_FOLDER)) {
+    const data = readJsonFile(filePath);
+    if (!data || typeof data !== "object" || Array.isArray(data)) continue;
+
+    const fallbackUsername = path.basename(filePath, ".json");
+    const state = sanitizePlayerState(data.player_data || data, data.username || fallbackUsername);
+    if (!state) continue;
+
+    playerStates.set(accountKey(state.account_username), state);
+    loaded += 1;
+  }
+  return loaded;
+}
+
+function loadWorldStatesFromJsonFolder() {
+  let loaded = 0;
+  for (const filePath of listJsonFiles(WORLD_SAVE_FOLDER)) {
+    const data = readJsonFile(filePath);
+    if (!data || typeof data !== "object" || Array.isArray(data)) continue;
+
+    const worldName = cleanWorld(data.world_name || path.basename(filePath, ".json"));
+    worldStates.set(worldName, deserializeWorldState(worldName, data));
+    loaded += 1;
+  }
+  return loaded;
 }
 
 function makeRequestId(data) {
@@ -6808,14 +6949,23 @@ function createWorldSnapshot(worldName, reason, socket = null, player = null, de
     const snapshotPath = path.join(snapshotDir, `${stamp}_${safeFileName(reason, "snapshot")}.json`);
     fs.mkdirSync(snapshotDir, { recursive: true });
 
-    writeJsonFileAtomic(snapshotPath, {
+    const snapshotPayload = {
       snapshot_id: snapshotId,
       created_at: new Date().toISOString(),
       reason: String(reason || "snapshot"),
       actor: getAuditActor(socket, player),
       details,
       world_state: serializeWorldState(clean),
-    });
+    };
+
+    writeJsonFileAtomic(snapshotPath, snapshotPayload);
+    if (postgresStore.isReady()) {
+      trackPersistenceWrite(postgresStore.saveWorldSnapshot(clean, snapshotPayload.world_state, {
+        reason: String(reason || "snapshot"),
+        storageUri: snapshotPath,
+        createdBy: cleanAccountName(player?.account_username || player?.name || "system") || "system",
+      }), `world snapshot ${clean}`);
+    }
 
     logWorldChange(socket, player, {
       journal_id: snapshotId,
@@ -6847,6 +6997,7 @@ function logAdminAction(socket, player, action, details = {}, ok = true, message
   };
 
   appendJsonLine(ADMIN_LOG_PATH, entry, "admin action");
+  postgresStore.mirrorAdminAction(entry);
   console.log(`[ADMIN] ${entry.at} ${entry.admin_username || "unknown"} ${entry.action} ${entry.ok ? "ok" : "denied"} ${entry.message}`);
 }
 
@@ -7677,7 +7828,7 @@ function ensureWritablePlayerState(username) {
 function doesAccountExist(username) {
   const clean = cleanAccountName(username);
   if (clean === "") return false;
-  return accounts.has(accountKey(clean)) || fs.existsSync(getPlayerSavePath(clean));
+  return accounts.has(accountKey(clean)) || (!isPostgresAuthoritativeReady() && fs.existsSync(getPlayerSavePath(clean)));
 }
 
 function markAccountSeen(username) {
@@ -7712,7 +7863,7 @@ function buildPublicPlayerProfilePayload(username, requestId = "", purpose = "")
   const key = accountKey(clean);
   const account = accounts.get(key) || null;
   const state = ensurePlayerState(clean);
-  const found = clean !== "" && (Boolean(account) || Boolean(state) || fs.existsSync(getPlayerSavePath(clean)));
+  const found = clean !== "" && (Boolean(account) || Boolean(state) || (!isPostgresAuthoritativeReady() && fs.existsSync(getPlayerSavePath(clean))));
   const onlineEntry = findOnlinePlayerByUsername(clean);
   const onlinePlayer = onlineEntry ? onlineEntry.player : null;
   const publicData = buildPublicPlayerData(state);
@@ -8315,8 +8466,15 @@ function createEmptyWorldState() {
 }
 
 function loadWorldState(worldName) {
+  if (isPostgresAuthoritativeReady()) {
+    return createEmptyWorldState();
+  }
+
+  return deserializeWorldState(worldName, readJsonFile(getWorldSavePath(worldName)));
+}
+
+function deserializeWorldState(worldName, data) {
   const state = createEmptyWorldState();
-  const data = readJsonFile(getWorldSavePath(worldName));
 
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     return state;
@@ -9584,10 +9742,14 @@ function queueWorldSave(worldName) {
 
 function saveWorldState(worldName) {
   const clean = cleanWorld(worldName);
-  writeJsonFileAtomic(getWorldSavePath(clean), serializeWorldState(clean));
+  const serialized = serializeWorldState(clean);
+  writeJsonFileAtomic(getWorldSavePath(clean), serialized);
+  if (postgresStore.isReady()) {
+    trackPersistenceWrite(postgresStore.saveWorldState(clean, serialized), `world state ${clean}`);
+  }
 }
 
-function loadAccounts() {
+function loadAccountsFromJson() {
   accounts.clear();
   const data = readJsonFile(ACCOUNTS_SAVE_PATH);
 
@@ -9676,11 +9838,15 @@ function queueAccountsSave() {
 }
 
 function saveAccounts() {
-  writeJsonFileAtomic(ACCOUNTS_SAVE_PATH, {
+  const payload = {
     account_state_version: 1,
     saved_at: new Date().toISOString(),
     accounts: Array.from(accounts.values()),
-  });
+  };
+  writeJsonFileAtomic(ACCOUNTS_SAVE_PATH, payload);
+  if (postgresStore.isReady()) {
+    trackPersistenceWrite(postgresStore.saveAccountStates(payload.accounts), "account states");
+  }
 }
 
 function sanitizeCountDictionary(rawValue, limit = MAX_PLAYER_INVENTORY_KEYS, expectedCategory = "") {
@@ -9781,6 +9947,10 @@ function ensurePlayerState(username) {
     return playerStates.get(key);
   }
 
+  if (isPostgresAuthoritativeReady()) {
+    return null;
+  }
+
   const data = readJsonFile(getPlayerSavePath(clean));
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     return null;
@@ -9827,7 +9997,11 @@ function savePlayerState(username) {
     saved_at: new Date().toISOString(),
     player_data: state,
   });
-  postgresStore.mirrorInventorySnapshot(clean, state);
+  if (postgresStore.isReady()) {
+    trackPersistenceWrite(postgresStore.savePlayerState(clean, state), `player state ${clean}`);
+  } else {
+    postgresStore.mirrorInventorySnapshot(clean, state);
+  }
 }
 
 function sanitizeEquipmentSlots(rawSlots, username = "") {
@@ -9956,14 +10130,32 @@ function flushPendingSaves() {
   }
 }
 
-process.on("SIGINT", () => {
+let shutdownStarted = false;
+async function shutdown(signal = "") {
+  if (shutdownStarted) return;
+  shutdownStarted = true;
+  if (signal !== "") {
+    console.log(`PixelMania server shutting down (${signal}).`);
+  }
+  clearInterval(periodicSaveTimer);
   flushPendingSaves();
-  Promise.resolve(postgresStore.close()).finally(() => process.exit(0));
+  await waitForPersistenceWrites();
+  await postgresStore.close();
+  process.exit(0);
+}
+
+process.on("SIGINT", () => {
+  shutdown("SIGINT").catch((error) => {
+    console.error("Shutdown failed:", error);
+    process.exit(1);
+  });
 });
 
 process.on("SIGTERM", () => {
-  flushPendingSaves();
-  Promise.resolve(postgresStore.close()).finally(() => process.exit(0));
+  shutdown("SIGTERM").catch((error) => {
+    console.error("Shutdown failed:", error);
+    process.exit(1);
+  });
 });
 
 process.on("exit", () => {

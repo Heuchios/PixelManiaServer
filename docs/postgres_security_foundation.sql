@@ -21,10 +21,16 @@ CREATE TABLE IF NOT EXISTS accounts (
 	account_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
 	username citext NOT NULL UNIQUE,
 	email citext NOT NULL UNIQUE,
+	password_salt text NOT NULL DEFAULT '',
 	password_hash text NOT NULL,
 	role text NOT NULL DEFAULT 'player' CHECK (role IN ('player', 'moderator', 'admin', 'owner')),
 	is_active boolean NOT NULL DEFAULT true,
 	last_login_at timestamptz,
+	email_verified boolean NOT NULL DEFAULT false,
+	email_verified_at timestamptz,
+	email_verification_token_hash text NOT NULL DEFAULT '',
+	email_verification_expires_at timestamptz,
+	account_state jsonb NOT NULL DEFAULT '{}'::jsonb,
 	created_at timestamptz NOT NULL DEFAULT now(),
 	updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -41,6 +47,7 @@ CREATE TABLE IF NOT EXISTS players (
 	player_title text NOT NULL DEFAULT 'Explorer',
 	last_level_up_at timestamptz,
 	current_world_name text,
+	player_state jsonb NOT NULL DEFAULT '{}'::jsonb,
 	created_at timestamptz NOT NULL DEFAULT now(),
 	updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -72,9 +79,18 @@ CREATE TABLE IF NOT EXISTS worlds (
 	last_saved_at timestamptz,
 	is_active boolean NOT NULL DEFAULT true,
 	world_checksum text,
+	world_state jsonb NOT NULL DEFAULT '{}'::jsonb,
 	created_at timestamptz NOT NULL DEFAULT now(),
 	updated_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE accounts
+ADD COLUMN IF NOT EXISTS password_salt text NOT NULL DEFAULT '',
+ADD COLUMN IF NOT EXISTS email_verified boolean NOT NULL DEFAULT false,
+ADD COLUMN IF NOT EXISTS email_verified_at timestamptz,
+ADD COLUMN IF NOT EXISTS email_verification_token_hash text NOT NULL DEFAULT '',
+ADD COLUMN IF NOT EXISTS email_verification_expires_at timestamptz,
+ADD COLUMN IF NOT EXISTS account_state jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 ALTER TABLE players
 ADD COLUMN IF NOT EXISTS current_world_id uuid REFERENCES worlds(world_id) ON DELETE SET NULL;
@@ -85,7 +101,11 @@ ADD COLUMN IF NOT EXISTS player_xp bigint NOT NULL DEFAULT 0,
 ADD COLUMN IF NOT EXISTS player_xp_needed bigint NOT NULL DEFAULT 100,
 ADD COLUMN IF NOT EXISTS player_total_xp bigint NOT NULL DEFAULT 0,
 ADD COLUMN IF NOT EXISTS player_title text NOT NULL DEFAULT 'Explorer',
-ADD COLUMN IF NOT EXISTS last_level_up_at timestamptz;
+ADD COLUMN IF NOT EXISTS last_level_up_at timestamptz,
+ADD COLUMN IF NOT EXISTS player_state jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE worlds
+ADD COLUMN IF NOT EXISTS world_state jsonb NOT NULL DEFAULT '{}'::jsonb;
 
 CREATE TABLE IF NOT EXISTS player_progression_events (
 	player_progression_event_id bigserial PRIMARY KEY,
@@ -148,7 +168,7 @@ CREATE TABLE IF NOT EXISTS inventory (
 	item_type text NOT NULL,
 	item_category text NOT NULL,
 	amount bigint NOT NULL DEFAULT 0 CHECK (amount >= 0),
-	stack_limit integer NOT NULL DEFAULT 200 CHECK (stack_limit > 0),
+	stack_limit bigint NOT NULL DEFAULT 200 CHECK (stack_limit > 0),
 	row_version bigint NOT NULL DEFAULT 0,
 	updated_at timestamptz NOT NULL DEFAULT now(),
 	PRIMARY KEY (player_id, item_type, item_category)
@@ -368,6 +388,7 @@ CREATE TABLE IF NOT EXISTS world_snapshots (
 	checksum text,
 	storage_uri text,
 	snapshot_data jsonb,
+	reason text NOT NULL DEFAULT 'snapshot',
 	created_by text NOT NULL DEFAULT 'system',
 	created_at timestamptz NOT NULL DEFAULT now(),
 	UNIQUE (world_id, snapshot_version)

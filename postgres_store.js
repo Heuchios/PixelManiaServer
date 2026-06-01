@@ -1,8 +1,10 @@
 "use strict";
 
 const fs = require("fs");
+const crypto = require("crypto");
 const net = require("net");
 const path = require("path");
+const ItemDatabase = require("./server_item_database");
 
 let PoolClass = null;
 try {
@@ -29,6 +31,8 @@ const PLAYER_LEVEL_MAX = 100;
 const PLAYER_XP_FIRST_LEVEL = 100;
 const POSTGRES_TRANSACTION_MAX_ATTEMPTS = 3;
 const POSTGRES_TRANSACTION_RETRY_BASE_DELAY_MS = 35;
+const DEFAULT_INVENTORY_STACK_LIMIT = ItemDatabase.DEFAULT_STACK_LIMIT || 200;
+const MAX_INVENTORY_STACK_LIMIT = ItemDatabase.GEM_CURRENCY_STACK_LIMIT || 100000000000;
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -51,6 +55,39 @@ function toInt(value, fallback = 0) {
 
 function cleanName(value) {
   return String(value || "").trim();
+}
+
+function normalizeDbRole(value) {
+  const role = cleanName(value).toLowerCase();
+  if (role === "developer") return "admin";
+  if (role === "mod") return "moderator";
+  if (role === "player" || role === "moderator" || role === "admin" || role === "owner") return role;
+  return "player";
+}
+
+function normalizeOptionalTimestamp(value) {
+  const raw = cleanName(value);
+  if (raw === "") return null;
+  const time = Date.parse(raw);
+  if (!Number.isFinite(time)) return null;
+  return new Date(time).toISOString();
+}
+
+function jsonChecksum(value) {
+  return crypto.createHash("sha256").update(JSON.stringify(value || {})).digest("hex");
+}
+
+function clampStackLimit(value, fallback = DEFAULT_INVENTORY_STACK_LIMIT) {
+  const fallbackLimit = Math.max(1, toInt(fallback, DEFAULT_INVENTORY_STACK_LIMIT));
+  return Math.min(MAX_INVENTORY_STACK_LIMIT, Math.max(1, toInt(value, fallbackLimit)));
+}
+
+function getInventoryStackLimitForItem(itemType, fallback = DEFAULT_INVENTORY_STACK_LIMIT) {
+  const cleanItemType = cleanName(itemType);
+  if (cleanItemType !== "" && ItemDatabase.hasItem(cleanItemType)) {
+    return clampStackLimit(ItemDatabase.getStackLimit(cleanItemType), fallback);
+  }
+  return clampStackLimit(fallback);
 }
 
 function defaultEmailForUsername(username) {
@@ -235,6 +272,20 @@ class PostgresStore {
         return;
       }
       try {
+        await this.ensureInventorySchema();
+      } catch (error) {
+        this.degraded = true;
+        this.logger("[postgres] inventory schema upgrade failed. DB mirrors are disabled.", error.message);
+        return;
+      }
+      try {
+        await this.ensurePersistenceSchema();
+      } catch (error) {
+        this.degraded = true;
+        this.logger("[postgres] persistence schema upgrade failed. DB authority is disabled.", error.message);
+        return;
+      }
+      try {
         await this.ensureProgressionSchema();
       } catch (error) {
         this.progressionReady = false;
@@ -258,6 +309,49 @@ class PostgresStore {
     if (sql === "") return;
     await this.pool.query(sql);
     this.logger(`[postgres] applied bootstrap SQL: ${resolved}`);
+  }
+
+  async ensureInventorySchema() {
+    const inventoryTable = await this.pool.query("SELECT to_regclass($1) AS oid", [`${this.schema}.inventory`]);
+    if (!inventoryTable.rows[0] || !inventoryTable.rows[0].oid) {
+      throw new Error(`table '${this.schema}.inventory' is missing`);
+    }
+
+    await this.pool.query(`
+      ALTER TABLE ${this.table("inventory")}
+        ALTER COLUMN amount TYPE bigint USING amount::bigint,
+        ALTER COLUMN stack_limit TYPE bigint USING stack_limit::bigint,
+        ALTER COLUMN stack_limit SET DEFAULT 200;
+    `);
+  }
+
+  async ensurePersistenceSchema() {
+    const requiredTables = ["players", "worlds", "world_snapshots", "world_locks", "world_members", "world_lock_access", "admin_actions"];
+    for (const tableName of requiredTables) {
+      const tableResult = await this.pool.query("SELECT to_regclass($1) AS oid", [`${this.schema}.${tableName}`]);
+      if (!tableResult.rows[0] || !tableResult.rows[0].oid) {
+        throw new Error(`table '${this.schema}.${tableName}' is missing`);
+      }
+    }
+
+    await this.pool.query(`
+      ALTER TABLE ${this.table("accounts")}
+        ADD COLUMN IF NOT EXISTS password_salt text NOT NULL DEFAULT '',
+        ADD COLUMN IF NOT EXISTS email_verified boolean NOT NULL DEFAULT false,
+        ADD COLUMN IF NOT EXISTS email_verified_at timestamptz,
+        ADD COLUMN IF NOT EXISTS email_verification_token_hash text NOT NULL DEFAULT '',
+        ADD COLUMN IF NOT EXISTS email_verification_expires_at timestamptz,
+        ADD COLUMN IF NOT EXISTS account_state jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+      ALTER TABLE ${this.table("players")}
+        ADD COLUMN IF NOT EXISTS player_state jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+      ALTER TABLE ${this.table("worlds")}
+        ADD COLUMN IF NOT EXISTS world_state jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+      ALTER TABLE ${this.table("world_snapshots")}
+        ADD COLUMN IF NOT EXISTS reason text NOT NULL DEFAULT 'snapshot';
+    `);
   }
 
   async ensureProgressionSchema() {
@@ -350,7 +444,7 @@ class PostgresStore {
     if (cleanUsername === "") return null;
     const providedEmail = cleanName(email || "");
     const cleanEmail = providedEmail || defaultEmailForUsername(cleanUsername);
-    const cleanRole = cleanName(role || "player") || "player";
+    const cleanRole = normalizeDbRole(role || "player");
     const cleanWorld = cleanName(world || "");
 
     const accountResult = await client.query(
@@ -413,6 +507,653 @@ class PostgresStore {
     }
   }
 
+  async upsertAccountState(client, account, options = {}) {
+    const accountData = toObject(account);
+    const username = cleanName(accountData.username || accountData.account_username || accountData.name || "");
+    if (username === "") return null;
+
+    const fallbackEmail = defaultEmailForUsername(username);
+    const email = cleanName(accountData.email || "") || fallbackEmail;
+    const role = normalizeDbRole(accountData.role || "player");
+    const touchLogin = Boolean(options.touchLogin);
+    const lastSeenAt = normalizeOptionalTimestamp(accountData.last_seen_at || "");
+    const lastLoginAt = touchLogin ? new Date().toISOString() : lastSeenAt;
+
+    const result = await client.query(
+      `
+      INSERT INTO ${this.table("accounts")} (
+        username,
+        email,
+        password_salt,
+        password_hash,
+        role,
+        is_active,
+        last_login_at,
+        created_at,
+        updated_at,
+        email_verified,
+        email_verified_at,
+        email_verification_token_hash,
+        email_verification_expires_at,
+        account_state
+      )
+      VALUES (
+        $1,
+        COALESCE(NULLIF($2, ''), $13),
+        $3,
+        $4,
+        $5,
+        true,
+        $6::timestamptz,
+        COALESCE($7::timestamptz, now()),
+        now(),
+        $8,
+        $9::timestamptz,
+        $10,
+        $11::timestamptz,
+        $12::jsonb
+      )
+      ON CONFLICT (username) DO UPDATE
+        SET email = COALESCE(NULLIF(EXCLUDED.email::text, ''), ${this.table("accounts")}.email),
+            password_salt = CASE
+              WHEN EXCLUDED.password_salt <> '' THEN EXCLUDED.password_salt
+              ELSE ${this.table("accounts")}.password_salt
+            END,
+            password_hash = CASE
+              WHEN EXCLUDED.password_hash <> '' THEN EXCLUDED.password_hash
+              ELSE ${this.table("accounts")}.password_hash
+            END,
+            role = EXCLUDED.role,
+            is_active = true,
+            last_login_at = COALESCE(EXCLUDED.last_login_at, ${this.table("accounts")}.last_login_at),
+            email_verified = EXCLUDED.email_verified,
+            email_verified_at = EXCLUDED.email_verified_at,
+            email_verification_token_hash = EXCLUDED.email_verification_token_hash,
+            email_verification_expires_at = EXCLUDED.email_verification_expires_at,
+            account_state = EXCLUDED.account_state,
+            updated_at = now()
+      RETURNING account_id
+      `,
+      [
+        username,
+        email,
+        cleanName(accountData.password_salt || ""),
+        String(accountData.password_hash || ""),
+        role,
+        lastLoginAt,
+        normalizeOptionalTimestamp(accountData.created_at || ""),
+        Boolean(accountData.email_verified),
+        normalizeOptionalTimestamp(accountData.email_verified_at || ""),
+        cleanName(accountData.email_verification_token_hash || ""),
+        normalizeOptionalTimestamp(accountData.email_verification_expires_at || ""),
+        JSON.stringify(safeJson({ ...accountData, username, email, role: accountData.role || role })),
+        fallbackEmail,
+      ]
+    );
+
+    const accountId = result.rows[0]?.account_id || null;
+    if (!accountId) return null;
+
+    await client.query(
+      `
+      INSERT INTO ${this.table("players")} (account_id, display_name, current_world_name, created_at, updated_at)
+      VALUES ($1, $2, NULLIF($3, ''), now(), now())
+      ON CONFLICT (account_id) DO UPDATE
+        SET display_name = EXCLUDED.display_name,
+            updated_at = now()
+      `,
+      [accountId, username, cleanName(accountData.current_world_name || "")]
+    );
+
+    return accountId;
+  }
+
+  async saveAccountState(account, options = {}) {
+    if (!this.isReady()) return false;
+    try {
+      await this.withTransaction(async (client) => {
+        await this.upsertAccountState(client, account, options);
+      });
+      return true;
+    } catch (error) {
+      this.logger("[postgres] account save failed:", error.message);
+      return false;
+    }
+  }
+
+  async saveAccountStates(accountStates = []) {
+    if (!this.isReady()) return false;
+    const states = Array.isArray(accountStates) ? accountStates : [];
+    if (states.length === 0) return true;
+
+    try {
+      await this.withTransaction(async (client) => {
+        for (const account of states) {
+          await this.upsertAccountState(client, account);
+        }
+      });
+      return true;
+    } catch (error) {
+      this.logger("[postgres] accounts snapshot save failed:", error.message);
+      return false;
+    }
+  }
+
+  async loadAccountStates() {
+    if (!this.isReady()) return [];
+
+    try {
+      const result = await this.pool.query(`
+        SELECT
+          a.username::text AS username,
+          a.email::text AS email,
+          a.password_salt,
+          a.password_hash,
+          a.role,
+          a.email_verified,
+          a.email_verified_at,
+          a.email_verification_token_hash,
+          a.email_verification_expires_at,
+          a.account_state,
+          a.created_at,
+          a.last_login_at,
+          s.session_token_hash,
+          s.expires_at AS session_token_expires_at
+        FROM ${this.table("accounts")} a
+        LEFT JOIN LATERAL (
+          SELECT session_token_hash, expires_at
+            FROM ${this.table("sessions")}
+           WHERE account_id = a.account_id
+             AND revoked_at IS NULL
+             AND expires_at > now()
+           ORDER BY last_seen_at DESC
+           LIMIT 1
+        ) s ON true
+        WHERE a.is_active = true
+        ORDER BY a.created_at ASC
+      `);
+
+      return result.rows.map((row) => {
+        const accountState = toObject(row.account_state);
+        return {
+          ...accountState,
+          username: cleanName(accountState.username || row.username),
+          email: cleanName(accountState.email || row.email),
+          password_salt: cleanName(accountState.password_salt || row.password_salt || ""),
+          password_hash: String(accountState.password_hash || row.password_hash || ""),
+          session_token_hash: cleanName(accountState.session_token_hash || row.session_token_hash || ""),
+          session_token_expires_at: cleanName(accountState.session_token_expires_at || normalizeOptionalTimestamp(row.session_token_expires_at) || ""),
+          email_verified: Object.prototype.hasOwnProperty.call(accountState, "email_verified") ? Boolean(accountState.email_verified) : Boolean(row.email_verified),
+          email_verified_at: cleanName(accountState.email_verified_at || normalizeOptionalTimestamp(row.email_verified_at) || ""),
+          email_verification_token_hash: cleanName(accountState.email_verification_token_hash || row.email_verification_token_hash || ""),
+          email_verification_expires_at: cleanName(accountState.email_verification_expires_at || normalizeOptionalTimestamp(row.email_verification_expires_at) || ""),
+          role: cleanName(accountState.role || row.role || "player") || "player",
+          created_at: cleanName(accountState.created_at || normalizeOptionalTimestamp(row.created_at) || ""),
+          last_seen_at: cleanName(accountState.last_seen_at || normalizeOptionalTimestamp(row.last_login_at) || ""),
+        };
+      });
+    } catch (error) {
+      this.logger("[postgres] account load failed:", error.message);
+      return [];
+    }
+  }
+
+  async replaceInventorySnapshot(client, playerId, playerState) {
+    if (!playerId) return;
+
+    await client.query(
+      `DELETE FROM ${this.table("inventory")} WHERE player_id = $1`,
+      [playerId]
+    );
+
+    for (const [field, fallbackCategory] of INVENTORY_FIELD_CATEGORY) {
+      const bucket = toObject(playerState[field]);
+      for (const [itemType, rawAmount] of Object.entries(bucket)) {
+        const cleanItemType = cleanName(itemType);
+        const amount = Math.max(0, toInt(rawAmount, 0));
+        if (cleanItemType === "" || amount <= 0) continue;
+        const stackLimit = getInventoryStackLimitForItem(cleanItemType);
+        await client.query(
+          `
+          INSERT INTO ${this.table("inventory")} (
+            player_id,
+            item_type,
+            item_category,
+            amount,
+            stack_limit,
+            row_version,
+            updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, 0, now())
+          `,
+          [playerId, cleanItemType, fallbackCategory, amount, stackLimit]
+        );
+      }
+    }
+  }
+
+  async savePlayerState(username, state) {
+    if (!this.isReady()) return false;
+    const cleanUsername = cleanName(username || state?.account_username || state?.username || "");
+    const playerState = safeJson({ ...toObject(state), account_username: cleanUsername });
+    if (cleanUsername === "") return false;
+
+    try {
+      await this.withTransaction(async (client) => {
+        const playerId = await this.ensurePlayerIdentity(client, cleanUsername);
+        if (!playerId) return;
+
+        const progression = await this.updatePlayerProgression(client, playerId, playerState);
+        await client.query(
+          `
+          UPDATE ${this.table("players")}
+             SET player_health = $2,
+                 player_state = $3::jsonb,
+                 updated_at = now()
+           WHERE player_id = $1
+          `,
+          [
+            playerId,
+            Math.max(0, toInt(playerState.player_health, 100)),
+            JSON.stringify({
+              ...playerState,
+              ...(progression || {}),
+              account_username: cleanUsername,
+            }),
+          ]
+        );
+
+        await this.replaceInventorySnapshot(client, playerId, playerState);
+      });
+      return true;
+    } catch (error) {
+      this.logger("[postgres] player state save failed:", error.message);
+      return false;
+    }
+  }
+
+  async savePlayerStates(playerEntries = []) {
+    if (!this.isReady()) return false;
+    const entries = Array.isArray(playerEntries) ? playerEntries : [];
+    for (const entry of entries) {
+      const parsed = toObject(entry);
+      const username = cleanName(parsed.username || parsed.account_username || parsed.state?.account_username || "");
+      const state = toObject(parsed.state || parsed.player_data || parsed);
+      if (username === "") continue;
+      await this.savePlayerState(username, state);
+    }
+    return true;
+  }
+
+  async loadPlayerStates() {
+    if (!this.isReady()) return [];
+
+    try {
+      const result = await this.pool.query(`
+        SELECT
+          a.username::text AS username,
+          p.player_health,
+          p.player_level,
+          p.player_xp,
+          p.player_xp_needed,
+          p.player_total_xp,
+          p.player_title,
+          p.last_level_up_at,
+          p.player_state
+        FROM ${this.table("players")} p
+        JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
+        WHERE p.player_state IS NOT NULL
+          AND p.player_state <> '{}'::jsonb
+        ORDER BY a.username ASC
+      `);
+
+      return result.rows.map((row) => {
+        const state = toObject(row.player_state);
+        return {
+          username: cleanName(row.username),
+          state: {
+            ...state,
+            account_username: cleanName(state.account_username || row.username),
+            player_health: toInt(state.player_health, toInt(row.player_health, 100)),
+            player_level: toInt(state.player_level, toInt(row.player_level, 1)),
+            player_xp: toInt(state.player_xp, toInt(row.player_xp, 0)),
+            player_xp_needed: toInt(state.player_xp_needed, toInt(row.player_xp_needed, 100)),
+            player_total_xp: toInt(state.player_total_xp, toInt(row.player_total_xp, 0)),
+            player_title: cleanName(state.player_title || row.player_title || "Explorer") || "Explorer",
+            last_level_up_at: cleanName(state.last_level_up_at || normalizeOptionalTimestamp(row.last_level_up_at) || ""),
+          },
+        };
+      });
+    } catch (error) {
+      this.logger("[postgres] player state load failed:", error.message);
+      return [];
+    }
+  }
+
+  async upsertWorldState(client, worldName, worldState) {
+    const cleanWorldName = cleanName(worldName || worldState?.world_name || "START") || "START";
+    const state = safeJson({ ...toObject(worldState), world_name: cleanWorldName });
+    const checksum = jsonChecksum(state);
+
+    const result = await client.query(
+      `
+      INSERT INTO ${this.table("worlds")} (
+        world_name,
+        width,
+        height,
+        world_data_version,
+        last_saved_at,
+        is_active,
+        world_checksum,
+        world_state,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, now(), true, $5, $6::jsonb, now(), now())
+      ON CONFLICT (world_name) DO UPDATE
+        SET width = EXCLUDED.width,
+            height = EXCLUDED.height,
+            world_data_version = EXCLUDED.world_data_version,
+            last_saved_at = now(),
+            is_active = true,
+            world_checksum = EXCLUDED.world_checksum,
+            world_state = EXCLUDED.world_state,
+            updated_at = now()
+      RETURNING world_id
+      `,
+      [
+        cleanWorldName,
+        Math.max(1, toInt(state.width || state.world_width, 100)),
+        Math.max(1, toInt(state.height || state.world_height, 70)),
+        Math.max(1, toInt(state.world_state_version || state.world_data_version, 1)),
+        checksum,
+        JSON.stringify(state),
+      ]
+    );
+
+    return result.rows[0]?.world_id || null;
+  }
+
+  async mirrorWorldLockState(client, worldId, worldState) {
+    if (!worldId) return;
+    const state = toObject(worldState);
+    const lock = toObject(state.world_lock);
+    const isLocked = Boolean(lock.is_locked);
+
+    if (!isLocked) {
+      await client.query(`DELETE FROM ${this.table("world_lock_access")} WHERE world_id = $1`, [worldId]);
+      await client.query(`DELETE FROM ${this.table("world_members")} WHERE world_id = $1 AND role <> 'owner'`, [worldId]);
+    }
+
+    const ownerName = cleanName(lock.owner_username || lock.owner_name || "");
+    let ownerPlayerId = null;
+    if (ownerName !== "") {
+      ownerPlayerId = await this.ensurePlayerIdentity(client, ownerName);
+    }
+
+    await client.query(
+      `
+      INSERT INTO ${this.table("world_locks")} (
+        world_id,
+        lock_type,
+        owner_player_id,
+        is_locked,
+        lock_x,
+        lock_y,
+        metadata,
+        created_at,
+        updated_at
+      )
+      VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, now(), now())
+      ON CONFLICT (world_id) DO UPDATE
+        SET lock_type = EXCLUDED.lock_type,
+            owner_player_id = EXCLUDED.owner_player_id,
+            is_locked = EXCLUDED.is_locked,
+            lock_x = EXCLUDED.lock_x,
+            lock_y = EXCLUDED.lock_y,
+            metadata = EXCLUDED.metadata,
+            updated_at = now()
+      `,
+      [
+        worldId,
+        isLocked ? "world_lock" : "none",
+        ownerPlayerId,
+        isLocked,
+        Number.isFinite(Number(lock.lock_grid_x)) ? Math.trunc(Number(lock.lock_grid_x)) : null,
+        Number.isFinite(Number(lock.lock_grid_y)) ? Math.trunc(Number(lock.lock_grid_y)) : null,
+        JSON.stringify(safeJson(lock)),
+      ]
+    );
+
+    if (ownerPlayerId) {
+      await client.query(
+        `
+        INSERT INTO ${this.table("world_members")} (world_id, player_id, role, granted_by_player_id, created_at)
+        VALUES ($1, $2, 'owner', $2, now())
+        ON CONFLICT (world_id, player_id) DO UPDATE
+          SET role = 'owner',
+              granted_by_player_id = EXCLUDED.granted_by_player_id
+        `,
+        [worldId, ownerPlayerId]
+      );
+    }
+
+    const allowedPlayers = Array.isArray(lock.allowed_players) ? lock.allowed_players : [];
+    const roles = toObject(lock.player_roles);
+    for (const rawName of allowedPlayers) {
+      const memberName = cleanName(rawName);
+      if (memberName === "" || (ownerName !== "" && memberName.toLowerCase() === ownerName.toLowerCase())) continue;
+      const memberPlayerId = await this.ensurePlayerIdentity(client, memberName);
+      if (!memberPlayerId) continue;
+
+      const rawRole = cleanName(roles[memberName] || roles[memberName.toUpperCase()] || "member").toLowerCase();
+      const memberRole = rawRole === "admin" || rawRole === "builder" ? rawRole : "member";
+      const canBuild = memberRole === "admin" || memberRole === "builder" || Boolean(lock.public_build);
+      const canManage = memberRole === "admin";
+
+      await client.query(
+        `
+        INSERT INTO ${this.table("world_members")} (world_id, player_id, role, granted_by_player_id, created_at)
+        VALUES ($1, $2, $3, $4, now())
+        ON CONFLICT (world_id, player_id) DO UPDATE
+          SET role = EXCLUDED.role,
+              granted_by_player_id = EXCLUDED.granted_by_player_id
+        `,
+        [worldId, memberPlayerId, memberRole, ownerPlayerId]
+      );
+
+      await client.query(
+        `
+        INSERT INTO ${this.table("world_lock_access")} (
+          world_id,
+          player_id,
+          granted_by_player_id,
+          can_build,
+          can_break,
+          can_manage_vending,
+          can_manage_lock,
+          created_at,
+          updated_at
+        )
+        VALUES ($1, $2, $3, $4, $4, $5, $5, now(), now())
+        ON CONFLICT (world_id, player_id) DO UPDATE
+          SET granted_by_player_id = EXCLUDED.granted_by_player_id,
+              can_build = EXCLUDED.can_build,
+              can_break = EXCLUDED.can_break,
+              can_manage_vending = EXCLUDED.can_manage_vending,
+              can_manage_lock = EXCLUDED.can_manage_lock,
+              updated_at = now()
+        `,
+        [worldId, memberPlayerId, ownerPlayerId, canBuild, canManage]
+      );
+    }
+  }
+
+  async saveWorldState(worldName, state) {
+    if (!this.isReady()) return false;
+    const cleanWorldName = cleanName(worldName || state?.world_name || "START") || "START";
+
+    try {
+      await this.withTransaction(async (client) => {
+        const worldId = await this.upsertWorldState(client, cleanWorldName, state);
+        await this.mirrorWorldLockState(client, worldId, state);
+      });
+      return true;
+    } catch (error) {
+      this.logger("[postgres] world state save failed:", error.message);
+      return false;
+    }
+  }
+
+  async loadWorldStates() {
+    if (!this.isReady()) return [];
+
+    try {
+      const result = await this.pool.query(`
+        SELECT world_name::text AS world_name, world_state, updated_at, last_saved_at
+          FROM ${this.table("worlds")}
+         WHERE is_active = true
+           AND world_state IS NOT NULL
+           AND world_state <> '{}'::jsonb
+         ORDER BY world_name ASC
+      `);
+
+      return result.rows.map((row) => ({
+        world_name: cleanName(row.world_name),
+        state: {
+          ...toObject(row.world_state),
+          world_name: cleanName(toObject(row.world_state).world_name || row.world_name),
+        },
+        updated_at: normalizeOptionalTimestamp(row.updated_at),
+        last_saved_at: normalizeOptionalTimestamp(row.last_saved_at),
+      }));
+    } catch (error) {
+      this.logger("[postgres] world state load failed:", error.message);
+      return [];
+    }
+  }
+
+  async saveWorldSnapshot(worldName, snapshot, options = {}) {
+    if (!this.isReady()) return false;
+    const cleanWorldName = cleanName(worldName || snapshot?.world_name || "START") || "START";
+    const snapshotData = safeJson(snapshot);
+    const checksum = jsonChecksum(snapshotData);
+
+    try {
+      await this.withTransaction(async (client) => {
+        const worldId = await this.upsertWorldState(client, cleanWorldName, snapshotData);
+        if (!worldId) return;
+
+        await client.query(
+          `
+          INSERT INTO ${this.table("world_snapshots")} (
+            world_id,
+            snapshot_version,
+            checksum,
+            storage_uri,
+            snapshot_data,
+            reason,
+            created_by,
+            created_at
+          )
+          SELECT
+            $1,
+            COALESCE(MAX(snapshot_version), 0) + 1,
+            $2,
+            NULLIF($3, ''),
+            $4::jsonb,
+            COALESCE(NULLIF($5, ''), 'snapshot'),
+            COALESCE(NULLIF($6, ''), 'system'),
+            now()
+          FROM ${this.table("world_snapshots")}
+          WHERE world_id = $1
+          `,
+          [
+            worldId,
+            checksum,
+            cleanName(options.storageUri || ""),
+            JSON.stringify(snapshotData),
+            cleanName(options.reason || "snapshot"),
+            cleanName(options.createdBy || "system"),
+          ]
+        );
+      });
+      return true;
+    } catch (error) {
+      this.logger("[postgres] world snapshot save failed:", error.message);
+      return false;
+    }
+  }
+
+  mirrorAdminAction(entry) {
+    if (!this.isReady()) return;
+    const e = toObject(entry);
+
+    this.runDetached("mirror admin action", async () => {
+      await this.withTransaction(async (client) => {
+        let adminPlayerId = null;
+        const adminUsername = cleanName(e.admin_username || e.actor_username || "");
+        if (adminUsername !== "") {
+          adminPlayerId = await this.ensurePlayerIdentity(client, adminUsername, "", normalizeDbRole(e.admin_role || "admin"));
+        }
+
+        let worldId = null;
+        const worldName = cleanName(e.world || e.target_world || e.details?.world || "");
+        if (worldName !== "") {
+          const worldResult = await client.query(
+            `
+            INSERT INTO ${this.table("worlds")} (world_name, width, height, world_data_version, is_active, created_at, updated_at)
+            VALUES ($1, 100, 70, 1, true, now(), now())
+            ON CONFLICT (world_name) DO UPDATE
+              SET updated_at = now()
+            RETURNING world_id
+            `,
+            [worldName]
+          );
+          worldId = worldResult.rows[0]?.world_id || null;
+        }
+
+        const targetType = cleanName(e.target_type || (e.target_username ? "player" : (worldName ? "world" : "server"))) || "server";
+        const targetId = cleanName(e.target_id || e.target_username || worldName || "");
+
+        await client.query(
+          `
+          INSERT INTO ${this.table("admin_actions")} (
+            admin_player_id,
+            action_type,
+            target_type,
+            target_id,
+            world_id,
+            request_id,
+            metadata,
+            created_at
+          )
+          VALUES (
+            $1,
+            COALESCE(NULLIF($2, ''), 'admin_action'),
+            $3,
+            NULLIF($4, ''),
+            $5,
+            NULLIF($6, ''),
+            $7::jsonb,
+            COALESCE($8::timestamptz, now())
+          )
+          `,
+          [
+            adminPlayerId,
+            cleanName(e.action || "admin_action"),
+            targetType,
+            targetId,
+            worldId,
+            cleanName(e.request_id || ""),
+            JSON.stringify(safeJson(e)),
+            normalizeOptionalTimestamp(e.at || ""),
+          ]
+        );
+      });
+    });
+  }
+
   mirrorAccount(account, options = {}) {
     if (!this.isReady()) return;
     const accountData = toObject(account);
@@ -421,7 +1162,7 @@ class PostgresStore {
 
     const email = cleanName(accountData.email || "");
     const fallbackEmail = defaultEmailForUsername(username);
-    const role = cleanName(accountData.role || "player") || "player";
+    const role = normalizeDbRole(accountData.role || "player");
     const passwordHash = String(accountData.password_hash || "");
     const emailVerified = Boolean(accountData.email_verified);
     const createdAt = cleanName(accountData.created_at || "");
@@ -523,7 +1264,7 @@ class PostgresStore {
     if (username === "") return;
 
     const email = cleanName(accountData.email || "") || defaultEmailForUsername(username);
-    const role = cleanName(accountData.role || "player") || "player";
+    const role = normalizeDbRole(accountData.role || "player");
     const sessionHash = cleanName(accountData.session_token_hash || "");
     const expiresAt = cleanName(accountData.session_token_expires_at || "");
     const ipAddress = normalizeIp(details.ip || "");
@@ -719,8 +1460,10 @@ class PostgresStore {
         for (const [field, fallbackCategory] of INVENTORY_FIELD_CATEGORY) {
           const bucket = toObject(playerState[field]);
           for (const [itemType, rawAmount] of Object.entries(bucket)) {
+            const cleanItemType = cleanName(itemType);
             const amount = Math.max(0, toInt(rawAmount, 0));
-            if (amount <= 0) continue;
+            if (cleanItemType === "" || amount <= 0) continue;
+            const stackLimit = getInventoryStackLimitForItem(cleanItemType);
             await client.query(
               `
               INSERT INTO ${this.table("inventory")} (
@@ -732,9 +1475,9 @@ class PostgresStore {
                 row_version,
                 updated_at
               )
-              VALUES ($1, $2, $3, $4, 200, 0, now())
+              VALUES ($1, $2, $3, $4, $5, 0, now())
               `,
-              [playerId, cleanName(itemType), fallbackCategory, amount]
+              [playerId, cleanItemType, fallbackCategory, amount, stackLimit]
             );
           }
         }
@@ -822,13 +1565,20 @@ class PostgresStore {
             row_version,
             updated_at
           )
-          VALUES ($1, $2, $3, $4, 200, 0, now())
+          VALUES ($1, $2, $3, $4, $5, 0, now())
           ON CONFLICT (player_id, item_type, item_category) DO UPDATE
             SET amount = EXCLUDED.amount,
+                stack_limit = GREATEST(${this.table("inventory")}.stack_limit, EXCLUDED.stack_limit),
                 row_version = ${this.table("inventory")}.row_version + 1,
                 updated_at = now()
           `,
-          [playerId, itemType, itemCategory || "block", Math.max(0, toInt(e.balance_after, 0))]
+          [
+            playerId,
+            itemType,
+            itemCategory || "block",
+            Math.max(0, toInt(e.balance_after, 0)),
+            getInventoryStackLimitForItem(itemType, e.stack_limit || DEFAULT_INVENTORY_STACK_LIMIT),
+          ]
         );
       });
     });
@@ -1154,7 +1904,7 @@ class PostgresStore {
     const expectedBeforeRaw = Number(e.expected_before_amount);
     const hasExpectedBefore = Number.isFinite(expectedBeforeRaw) && expectedBeforeRaw >= 0;
     const expectedBeforeAmount = hasExpectedBefore ? Math.max(0, toInt(expectedBeforeRaw, 0)) : 0;
-    const requestedStackLimit = Math.min(2147483647, Math.max(1, toInt(e.stack_limit || 200, 200)));
+    const requestedStackLimit = getInventoryStackLimitForItem(itemType, e.stack_limit || DEFAULT_INVENTORY_STACK_LIMIT);
     const allowStateRepair = Boolean(e.allow_state_repair);
     const requestId = cleanName(e.request_id);
     const worldName = cleanName(e.world || "START") || "START";
@@ -1199,8 +1949,8 @@ class PostgresStore {
         const storedBeforeAmount = Math.max(0, toInt(existing?.amount || 0, 0));
         let beforeAmount = storedBeforeAmount;
         let repairedFromAmount = null;
-        const existingStackLimit = Math.max(1, toInt(existing?.stack_limit || requestedStackLimit, requestedStackLimit));
-        const stackLimit = Math.min(2147483647, Math.max(existingStackLimit, requestedStackLimit));
+        const existingStackLimit = clampStackLimit(existing?.stack_limit || requestedStackLimit, requestedStackLimit);
+        const stackLimit = Math.max(existingStackLimit, requestedStackLimit);
         if (allowStateRepair && hasExpectedBefore && storedBeforeAmount !== expectedBeforeAmount) {
           repairedFromAmount = storedBeforeAmount;
           beforeAmount = expectedBeforeAmount;
@@ -1357,9 +2107,10 @@ class PostgresStore {
         const itemType = cleanName(parsed.item_id || parsed.item_type || "");
         const itemCategory = cleanName(parsed.item_category || parsed.category || "block");
         if (itemType === "" || itemCategory === "") continue;
+        const itemStackLimit = getInventoryStackLimitForItem(itemType, parsed.stack_limit || DEFAULT_INVENTORY_STACK_LIMIT);
         baseline.set(`${itemType}\u0000${itemCategory}`, {
           amount: Math.max(0, toInt(parsed.amount, 0)),
-          stack_limit: Math.min(2147483647, Math.max(1, toInt(parsed.stack_limit || 200, 200))),
+          stack_limit: itemStackLimit,
         });
       }
       return baseline;
@@ -1424,9 +2175,10 @@ class PostgresStore {
         const storedBeforeAmount = Math.max(0, toInt(inventoryRow?.amount || 0, 0));
         let beforeAmount = storedBeforeAmount;
         let repairedFromAmount = null;
-        const existingStackLimit = Math.max(1, toInt(inventoryRow?.stack_limit || 200, 200));
-        const baselineStackLimit = baselineEntry ? Math.max(1, toInt(baselineEntry.stack_limit || 200, 200)) : 200;
-        const stackLimit = Math.min(2147483647, Math.max(existingStackLimit, baselineStackLimit));
+        const itemDefaultStackLimit = getInventoryStackLimitForItem(safeItemType);
+        const existingStackLimit = clampStackLimit(inventoryRow?.stack_limit || itemDefaultStackLimit, itemDefaultStackLimit);
+        const baselineStackLimit = baselineEntry ? clampStackLimit(baselineEntry.stack_limit, itemDefaultStackLimit) : itemDefaultStackLimit;
+        const stackLimit = Math.max(existingStackLimit, baselineStackLimit);
         if (baselineEntry) {
           const expectedBeforeAmount = Math.max(0, toInt(baselineEntry.amount, 0));
           if (storedBeforeAmount !== expectedBeforeAmount) {
@@ -1898,9 +2650,10 @@ class PostgresStore {
         const baselineItemType = cleanName(parsed.item_id || parsed.item_type || "");
         const baselineCategory = cleanName(parsed.item_category || parsed.category || "block");
         if (baselineItemType === "" || baselineCategory === "") continue;
+        const itemStackLimit = getInventoryStackLimitForItem(baselineItemType, parsed.stack_limit || DEFAULT_INVENTORY_STACK_LIMIT);
         baseline.set(`${baselineItemType}\u0000${baselineCategory}`, {
           amount: Math.max(0, toInt(parsed.amount, 0)),
-          stack_limit: Math.min(2147483647, Math.max(1, toInt(parsed.stack_limit || 200, 200))),
+          stack_limit: itemStackLimit,
         });
       }
       return baseline;
@@ -1943,10 +2696,11 @@ class PostgresStore {
         const storedBeforeLock = Math.max(0, toInt(lockInventory?.amount || 0, 0));
         let beforeLock = storedBeforeLock;
         let repairedBeforeLock = null;
-        const lockStack = Math.min(2147483647, Math.max(
-          Math.max(1, toInt(lockInventory?.stack_limit || 200, 200)),
-          lockBaseline ? Math.max(1, toInt(lockBaseline.stack_limit || 200, 200)) : 200
-        ));
+        const lockDefaultStackLimit = getInventoryStackLimitForItem("world_lock");
+        const lockStack = Math.max(
+          clampStackLimit(lockInventory?.stack_limit || lockDefaultStackLimit, lockDefaultStackLimit),
+          lockBaseline ? clampStackLimit(lockBaseline.stack_limit, lockDefaultStackLimit) : lockDefaultStackLimit
+        );
         if (lockBaseline) {
           const expectedBeforeLock = Math.max(0, toInt(lockBaseline.amount, 0));
           if (storedBeforeLock !== expectedBeforeLock) {
@@ -2006,10 +2760,11 @@ class PostgresStore {
         const storedBeforeItem = Math.max(0, toInt(itemInventory?.amount || 0, 0));
         let beforeItem = storedBeforeItem;
         let repairedBeforeItem = null;
-        const itemStack = Math.min(2147483647, Math.max(
-          Math.max(1, toInt(itemInventory?.stack_limit || 200, 200)),
-          itemBaseline ? Math.max(1, toInt(itemBaseline.stack_limit || 200, 200)) : 200
-        ));
+        const itemDefaultStackLimit = getInventoryStackLimitForItem(itemType);
+        const itemStack = Math.max(
+          clampStackLimit(itemInventory?.stack_limit || itemDefaultStackLimit, itemDefaultStackLimit),
+          itemBaseline ? clampStackLimit(itemBaseline.stack_limit, itemDefaultStackLimit) : itemDefaultStackLimit
+        );
         if (itemBaseline) {
           const expectedBeforeItem = Math.max(0, toInt(itemBaseline.amount, 0));
           if (storedBeforeItem !== expectedBeforeItem) {
