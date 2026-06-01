@@ -525,6 +525,7 @@ wss.on("connection", (socket) => {
       }, playerId);
 
       broadcastSystemToWorld(player.world, `${player.name} joined ${player.world}`, playerId);
+      notifyOnlineFriendsOfFriendState(player.account_username);
       return;
     }
 
