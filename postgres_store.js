@@ -945,6 +945,11 @@ class PostgresStore {
     const itemType = cleanName(e.item_type);
     const itemCategory = cleanName(e.item_category || "block");
     const amount = toInt(e.amount, 0);
+    const expectedBeforeRaw = Number(e.expected_before_amount);
+    const hasExpectedBefore = Number.isFinite(expectedBeforeRaw) && expectedBeforeRaw >= 0;
+    const expectedBeforeAmount = hasExpectedBefore ? Math.max(0, toInt(expectedBeforeRaw, 0)) : 0;
+    const requestedStackLimit = Math.min(2147483647, Math.max(1, toInt(e.stack_limit || 200, 200)));
+    const allowStateRepair = Boolean(e.allow_state_repair);
     const requestId = cleanName(e.request_id);
     const worldName = cleanName(e.world || "START") || "START";
     const dropId = cleanName(e.drop_id || "");
@@ -985,8 +990,15 @@ class PostgresStore {
           [playerId, itemType, itemCategory]
         );
         const existing = itemInventory.rows[0];
-        const beforeAmount = Math.max(0, toInt(existing?.amount || 0, 0));
-        const stackLimit = Math.max(1, toInt(existing?.stack_limit || 200, 200));
+        const storedBeforeAmount = Math.max(0, toInt(existing?.amount || 0, 0));
+        let beforeAmount = storedBeforeAmount;
+        let repairedFromAmount = null;
+        const existingStackLimit = Math.max(1, toInt(existing?.stack_limit || requestedStackLimit, requestedStackLimit));
+        const stackLimit = Math.min(2147483647, Math.max(existingStackLimit, requestedStackLimit));
+        if (allowStateRepair && hasExpectedBefore && storedBeforeAmount !== expectedBeforeAmount) {
+          repairedFromAmount = storedBeforeAmount;
+          beforeAmount = expectedBeforeAmount;
+        }
         const afterAmount = beforeAmount + amount;
 
         if (!existing && amount > stackLimit) {
@@ -1001,13 +1013,14 @@ class PostgresStore {
             `
             UPDATE ${this.table("inventory")}
                SET amount = $4,
+                   stack_limit = $5,
                    row_version = ${this.table("inventory")}.row_version + 1,
                    updated_at = now()
              WHERE player_id = $1
                AND item_type = $2
                AND item_category = $3
             `,
-            [playerId, itemType, itemCategory, afterAmount]
+            [playerId, itemType, itemCategory, afterAmount, stackLimit]
           );
         } else {
           await client.query(
@@ -1021,9 +1034,9 @@ class PostgresStore {
               row_version,
               updated_at
             )
-            VALUES ($1, $2, $3, $4, 200, 1, now())
+            VALUES ($1, $2, $3, $4, $5, 1, now())
             `,
-            [playerId, itemType, itemCategory, afterAmount]
+            [playerId, itemType, itemCategory, afterAmount, stackLimit]
           );
         }
 
@@ -1072,6 +1085,8 @@ class PostgresStore {
             correlationId,
             JSON.stringify({
               drop_id: dropId,
+              repaired_inventory_before_amount: repairedFromAmount,
+              expected_before_amount: hasExpectedBefore ? expectedBeforeAmount : null,
             }),
             at,
           ]
@@ -1083,6 +1098,7 @@ class PostgresStore {
           after_amount: afterAmount,
           item_type: itemType,
           item_category: itemCategory,
+          repaired_inventory_before_amount: repairedFromAmount,
         };
       });
     } catch (error) {
