@@ -24,6 +24,10 @@ const INVENTORY_FIELD_CATEGORY = Object.freeze([
   ["fish_inventory", "fish"],
 ]);
 
+const PLAYER_LEVEL_MIN = 1;
+const PLAYER_LEVEL_MAX = 100;
+const PLAYER_XP_FIRST_LEVEL = 100;
+
 function toObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
@@ -41,6 +45,66 @@ function cleanName(value) {
 function defaultEmailForUsername(username) {
   const base = cleanName(username).toLowerCase().replace(/[^a-z0-9_]/g, "");
   return `${base || "player"}@pixelmania.local`;
+}
+
+function getXpNeededForLevel(level) {
+  const safeLevel = Math.min(PLAYER_LEVEL_MAX, Math.max(PLAYER_LEVEL_MIN, toInt(level, PLAYER_LEVEL_MIN)));
+  if (safeLevel >= PLAYER_LEVEL_MAX) return 0;
+
+  const levelIndex = safeLevel - PLAYER_LEVEL_MIN;
+  return PLAYER_XP_FIRST_LEVEL + (levelIndex * 45) + Math.floor(Math.pow(levelIndex, 1.45) * 18);
+}
+
+function getCumulativeXpAtLevel(level) {
+  const safeLevel = Math.min(PLAYER_LEVEL_MAX, Math.max(PLAYER_LEVEL_MIN, toInt(level, PLAYER_LEVEL_MIN)));
+  let total = 0;
+  for (let currentLevel = PLAYER_LEVEL_MIN; currentLevel < safeLevel; currentLevel += 1) {
+    total += getXpNeededForLevel(currentLevel);
+  }
+  return total;
+}
+
+function getPlayerTitleForLevel(level) {
+  const safeLevel = Math.min(PLAYER_LEVEL_MAX, Math.max(PLAYER_LEVEL_MIN, toInt(level, PLAYER_LEVEL_MIN)));
+  if (safeLevel >= 100) return "Pixel Legend";
+  if (safeLevel >= 80) return "Worldsmith";
+  if (safeLevel >= 60) return "Architect";
+  if (safeLevel >= 40) return "Trailblazer";
+  if (safeLevel >= 25) return "Crafter";
+  if (safeLevel >= 10) return "Builder";
+  return "Explorer";
+}
+
+function normalizeProgressionState(state) {
+  const source = toObject(state);
+  let level = Math.min(PLAYER_LEVEL_MAX, Math.max(PLAYER_LEVEL_MIN, toInt(source.player_level || source.level, PLAYER_LEVEL_MIN)));
+  let xp = Math.max(0, toInt(source.player_xp || source.xp, 0));
+  let totalXp = Math.max(0, toInt(source.player_total_xp || source.total_xp, 0));
+
+  if (totalXp <= 0 && (level > PLAYER_LEVEL_MIN || xp > 0)) {
+    totalXp = getCumulativeXpAtLevel(level) + xp;
+  }
+
+  while (level < PLAYER_LEVEL_MAX) {
+    const needed = getXpNeededForLevel(level);
+    if (needed <= 0 || xp < needed) break;
+    xp -= needed;
+    level += 1;
+  }
+
+  if (level >= PLAYER_LEVEL_MAX) {
+    level = PLAYER_LEVEL_MAX;
+    xp = 0;
+  }
+
+  return {
+    player_level: level,
+    player_xp: xp,
+    player_xp_needed: getXpNeededForLevel(level),
+    player_total_xp: totalXp,
+    player_title: cleanName(source.player_title || getPlayerTitleForLevel(level)) || getPlayerTitleForLevel(level),
+    last_level_up_at: cleanName(source.last_level_up_at || ""),
+  };
 }
 
 function safeJson(value) {
@@ -103,6 +167,7 @@ class PostgresStore {
     this.ready = false;
     this.degraded = false;
     this.initialized = false;
+    this.progressionReady = false;
     this.pool = null;
     this.bootstrapSqlPath = cleanName(options.bootstrapSqlPath || "");
     this.autoBootstrap = Boolean(options.autoBootstrap);
@@ -158,6 +223,12 @@ class PostgresStore {
         this.logger(`[postgres] table '${this.schema}.accounts' is missing. DB mirrors are disabled.`);
         return;
       }
+      try {
+        await this.ensureProgressionSchema();
+      } catch (error) {
+        this.progressionReady = false;
+        this.logger("[postgres] progression schema upgrade failed. Level mirrors are disabled.", error.message);
+      }
       this.ready = true;
       this.logger(`[postgres] connected (schema=${this.schema}).`);
     } catch (error) {
@@ -176,6 +247,36 @@ class PostgresStore {
     if (sql === "") return;
     await this.pool.query(sql);
     this.logger(`[postgres] applied bootstrap SQL: ${resolved}`);
+  }
+
+  async ensureProgressionSchema() {
+    await this.pool.query(`
+      ALTER TABLE ${this.table("players")}
+        ADD COLUMN IF NOT EXISTS player_level integer NOT NULL DEFAULT 1,
+        ADD COLUMN IF NOT EXISTS player_xp bigint NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS player_xp_needed bigint NOT NULL DEFAULT 100,
+        ADD COLUMN IF NOT EXISTS player_total_xp bigint NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS player_title text NOT NULL DEFAULT 'Explorer',
+        ADD COLUMN IF NOT EXISTS last_level_up_at timestamptz;
+
+      CREATE TABLE IF NOT EXISTS ${this.table("player_progression_events")} (
+        player_progression_event_id bigserial PRIMARY KEY,
+        player_id uuid NOT NULL REFERENCES ${this.table("players")}(player_id) ON DELETE CASCADE,
+        source text NOT NULL,
+        xp_delta bigint NOT NULL CHECK (xp_delta >= 0),
+        level_before integer NOT NULL CHECK (level_before BETWEEN 1 AND 100),
+        level_after integer NOT NULL CHECK (level_after BETWEEN 1 AND 100),
+        xp_before bigint NOT NULL CHECK (xp_before >= 0),
+        xp_after bigint NOT NULL CHECK (xp_after >= 0),
+        total_xp_after bigint NOT NULL CHECK (total_xp_after >= 0),
+        metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_player_progression_events_player_time
+      ON ${this.table("player_progression_events")}(player_id, created_at DESC);
+    `);
+    this.progressionReady = true;
   }
 
   async close() {
@@ -494,6 +595,82 @@ class PostgresStore {
     });
   }
 
+  async updatePlayerProgression(client, playerId, state) {
+    if (!this.progressionReady || !playerId) return null;
+    const progression = normalizeProgressionState(state);
+    await client.query(
+      `
+      UPDATE ${this.table("players")}
+         SET player_level = $2,
+             player_xp = $3,
+             player_xp_needed = $4,
+             player_total_xp = $5,
+             player_title = $6,
+             last_level_up_at = COALESCE(NULLIF($7, '')::timestamptz, last_level_up_at),
+             updated_at = now()
+       WHERE player_id = $1
+      `,
+      [
+        playerId,
+        progression.player_level,
+        progression.player_xp,
+        progression.player_xp_needed,
+        progression.player_total_xp,
+        progression.player_title,
+        progression.last_level_up_at,
+      ]
+    );
+    return progression;
+  }
+
+  mirrorPlayerProgression(username, state, event = {}) {
+    if (!this.isReady() || !this.progressionReady) return;
+    const cleanUsername = cleanName(username);
+    if (cleanUsername === "") return;
+    const playerState = toObject(state);
+    const progressionEvent = toObject(event);
+
+    this.runDetached("mirror player progression", async () => {
+      await this.withTransaction(async (client) => {
+        const playerId = await this.ensurePlayerIdentity(client, cleanUsername);
+        if (!playerId) return;
+        await this.updatePlayerProgression(client, playerId, playerState);
+
+        const xpDelta = Math.max(0, toInt(progressionEvent.xp_gained, 0));
+        if (xpDelta <= 0) return;
+
+        await client.query(
+          `
+          INSERT INTO ${this.table("player_progression_events")} (
+            player_id,
+            source,
+            xp_delta,
+            level_before,
+            level_after,
+            xp_before,
+            xp_after,
+            total_xp_after,
+            metadata,
+            created_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9::jsonb, now())
+          `,
+          [
+            playerId,
+            cleanName(progressionEvent.source || "system") || "system",
+            xpDelta,
+            Math.min(PLAYER_LEVEL_MAX, Math.max(PLAYER_LEVEL_MIN, toInt(progressionEvent.level_before, 1))),
+            Math.min(PLAYER_LEVEL_MAX, Math.max(PLAYER_LEVEL_MIN, toInt(progressionEvent.level_after, 1))),
+            Math.max(0, toInt(progressionEvent.xp_before, 0)),
+            Math.max(0, toInt(progressionEvent.xp_after, 0)),
+            Math.max(0, toInt(progressionEvent.total_xp_after, playerState.player_total_xp || 0)),
+            JSON.stringify(safeJson(progressionEvent.details)),
+          ]
+        );
+      });
+    });
+  }
+
   mirrorInventorySnapshot(username, state) {
     if (!this.isReady()) return;
     const cleanUsername = cleanName(username);
@@ -504,6 +681,8 @@ class PostgresStore {
       await this.withTransaction(async (client) => {
         const playerId = await this.ensurePlayerIdentity(client, cleanUsername);
         if (!playerId) return;
+
+        await this.updatePlayerProgression(client, playerId, playerState);
 
         await client.query(
           `DELETE FROM ${this.table("inventory")} WHERE player_id = $1`,
@@ -1143,6 +1322,25 @@ class PostgresStore {
     const normalizedRequesterOffers = sanitizeOfferEntries(requesterOffers);
     const normalizedTargetOffers = sanitizeOfferEntries(targetOffers);
 
+    const buildBaselineMap = (baselineItems) => {
+      const baseline = new Map();
+      const entries = Array.isArray(baselineItems) ? baselineItems : [];
+      for (const item of entries) {
+        const parsed = toObject(item);
+        const itemType = cleanName(parsed.item_id || parsed.item_type || "");
+        const itemCategory = cleanName(parsed.item_category || parsed.category || "block");
+        if (itemType === "" || itemCategory === "") continue;
+        baseline.set(`${itemType}\u0000${itemCategory}`, {
+          amount: Math.max(0, toInt(parsed.amount, 0)),
+          stack_limit: Math.min(2147483647, Math.max(1, toInt(parsed.stack_limit || 200, 200))),
+        });
+      }
+      return baseline;
+    };
+
+    const requesterBaseline = buildBaselineMap(e.requester_inventory_baseline);
+    const targetBaseline = buildBaselineMap(e.target_inventory_baseline);
+
     const buildDeltaMap = (offerItems) => {
       const deltas = new Map();
       for (const item of offerItems) {
@@ -1171,7 +1369,7 @@ class PostgresStore {
     const netRequester = buildNetMap(outgoingRequester, incomingRequester);
     const netTarget = buildNetMap(outgoingTarget, incomingTarget);
 
-    const applyInventoryDeltas = async (client, playerId, deltas) => {
+    const applyInventoryDeltas = async (client, playerId, deltas, baselineMap) => {
       const ledgerEntries = [];
       for (const [key, delta] of deltas.entries()) {
         if (!Number.isFinite(delta) || delta === 0) continue;
@@ -1195,8 +1393,20 @@ class PostgresStore {
         );
 
         const inventoryRow = inventoryResult.rows[0];
-        const beforeAmount = Math.max(0, toInt(inventoryRow?.amount || 0, 0));
-        const stackLimit = Math.max(1, toInt(inventoryRow?.stack_limit || 200, 200));
+        const baselineEntry = baselineMap instanceof Map ? baselineMap.get(`${safeItemType}\u0000${safeCategory}`) : null;
+        const storedBeforeAmount = Math.max(0, toInt(inventoryRow?.amount || 0, 0));
+        let beforeAmount = storedBeforeAmount;
+        let repairedFromAmount = null;
+        const existingStackLimit = Math.max(1, toInt(inventoryRow?.stack_limit || 200, 200));
+        const baselineStackLimit = baselineEntry ? Math.max(1, toInt(baselineEntry.stack_limit || 200, 200)) : 200;
+        const stackLimit = Math.min(2147483647, Math.max(existingStackLimit, baselineStackLimit));
+        if (baselineEntry) {
+          const expectedBeforeAmount = Math.max(0, toInt(baselineEntry.amount, 0));
+          if (storedBeforeAmount !== expectedBeforeAmount) {
+            repairedFromAmount = storedBeforeAmount;
+            beforeAmount = expectedBeforeAmount;
+          }
+        }
         const afterAmount = beforeAmount + delta;
 
         if (!inventoryRow && delta > 0 && delta > stackLimit) {
@@ -1232,13 +1442,14 @@ class PostgresStore {
             `
             UPDATE ${this.table("inventory")}
                SET amount = $4,
+                   stack_limit = $5,
                    row_version = ${this.table("inventory")}.row_version + 1,
                    updated_at = now()
              WHERE player_id = $1
                AND item_type = $2
                AND item_category = $3
             `,
-            [playerId, safeItemType, safeCategory, afterAmount]
+            [playerId, safeItemType, safeCategory, afterAmount, stackLimit]
           );
         } else {
           await client.query(
@@ -1252,9 +1463,9 @@ class PostgresStore {
               row_version,
               updated_at
             )
-            VALUES ($1, $2, $3, $4, 200, 1, now())
+            VALUES ($1, $2, $3, $4, $5, 1, now())
             `,
-            [playerId, safeItemType, safeCategory, afterAmount]
+            [playerId, safeItemType, safeCategory, afterAmount, stackLimit]
           );
         }
 
@@ -1264,6 +1475,7 @@ class PostgresStore {
           delta,
           before_amount: beforeAmount,
           after_amount: afterAmount,
+          repaired_inventory_before_amount: repairedFromAmount,
         });
       }
       return { ok: true, ledgerEntries };
@@ -1287,9 +1499,9 @@ class PostgresStore {
         );
         const worldId = worldResult.rows[0]?.world_id || null;
 
-        const requesterInventory = await applyInventoryDeltas(client, requesterId, netRequester);
+        const requesterInventory = await applyInventoryDeltas(client, requesterId, netRequester, requesterBaseline);
         if (!requesterInventory || requesterInventory.ok === false) return requesterInventory;
-        const targetInventory = await applyInventoryDeltas(client, targetId, netTarget);
+        const targetInventory = await applyInventoryDeltas(client, targetId, netTarget, targetBaseline);
         if (!targetInventory || targetInventory.ok === false) return targetInventory;
 
         const tradeResult = await client.query(
@@ -1381,6 +1593,7 @@ class PostgresStore {
               item_category,
               amount
             )
+            VALUES ($1, $2, $3, $4, $5, $6)
             ON CONFLICT (trade_id, from_player_id, slot_index) DO UPDATE
               SET item_type = EXCLUDED.item_type,
                   item_category = EXCLUDED.item_category,
@@ -1644,10 +1857,29 @@ class PostgresStore {
     const y = toInt(e.y, 0);
     const at = cleanName(e.at || "");
     const transactionId = cleanName(e.transaction_id || "");
+    const correlationId = isUuid(transactionId) ? transactionId : null;
 
     if (owner === "" || buyer === "" || itemType === "" || amount <= 0 || priceWls <= 0) {
       return { ok: false, reason: "invalid_payload" };
     }
+
+    const buildBaselineMap = (baselineItems) => {
+      const baseline = new Map();
+      const entries = Array.isArray(baselineItems) ? baselineItems : [];
+      for (const item of entries) {
+        const parsed = toObject(item);
+        const baselineItemType = cleanName(parsed.item_id || parsed.item_type || "");
+        const baselineCategory = cleanName(parsed.item_category || parsed.category || "block");
+        if (baselineItemType === "" || baselineCategory === "") continue;
+        baseline.set(`${baselineItemType}\u0000${baselineCategory}`, {
+          amount: Math.max(0, toInt(parsed.amount, 0)),
+          stack_limit: Math.min(2147483647, Math.max(1, toInt(parsed.stack_limit || 200, 200))),
+        });
+      }
+      return baseline;
+    };
+
+    const buyerBaseline = buildBaselineMap(e.buyer_inventory_baseline);
 
     try {
       return await this.withTransaction(async (client) => {
@@ -1680,8 +1912,21 @@ class PostgresStore {
           [buyerId]
         );
         const lockInventory = lockRow.rows[0];
-        const beforeLock = Math.max(0, toInt(lockInventory?.amount || 0, 0));
-        const lockStack = Math.max(1, toInt(lockInventory?.stack_limit || 200, 200));
+        const lockBaseline = buyerBaseline.get("world_lock\u0000block");
+        const storedBeforeLock = Math.max(0, toInt(lockInventory?.amount || 0, 0));
+        let beforeLock = storedBeforeLock;
+        let repairedBeforeLock = null;
+        const lockStack = Math.min(2147483647, Math.max(
+          Math.max(1, toInt(lockInventory?.stack_limit || 200, 200)),
+          lockBaseline ? Math.max(1, toInt(lockBaseline.stack_limit || 200, 200)) : 200
+        ));
+        if (lockBaseline) {
+          const expectedBeforeLock = Math.max(0, toInt(lockBaseline.amount, 0));
+          if (storedBeforeLock !== expectedBeforeLock) {
+            repairedBeforeLock = storedBeforeLock;
+            beforeLock = expectedBeforeLock;
+          }
+        }
         const afterLock = beforeLock - priceWls;
         if (beforeLock < priceWls || afterLock < 0) {
           return { ok: false, reason: "insufficient_inventory", item_type: "world_lock", item_category: "block" };
@@ -1690,14 +1935,15 @@ class PostgresStore {
           await client.query(
             `
             UPDATE ${this.table("inventory")}
-               SET amount = $3,
+               SET amount = $2,
+                   stack_limit = $3,
                    row_version = ${this.table("inventory")}.row_version + 1,
                    updated_at = now()
              WHERE player_id = $1
                AND item_type = 'world_lock'
                AND item_category = 'block'
             `,
-            [buyerId, beforeLock, afterLock]
+            [buyerId, afterLock, lockStack]
           );
         } else {
           await client.query(
@@ -1711,9 +1957,9 @@ class PostgresStore {
               row_version,
               updated_at
             )
-            VALUES ($1, 'world_lock', 'block', $2, 200, 1, now())
+            VALUES ($1, 'world_lock', 'block', $2, $3, 1, now())
             `,
-            [buyerId, afterLock]
+            [buyerId, afterLock, lockStack]
           );
         }
 
@@ -1729,8 +1975,21 @@ class PostgresStore {
           [buyerId, itemType, itemCategory]
         );
         const itemInventory = itemRow.rows[0];
-        const beforeItem = Math.max(0, toInt(itemInventory?.amount || 0, 0));
-        const itemStack = Math.max(1, toInt(itemInventory?.stack_limit || 200, 200));
+        const itemBaseline = buyerBaseline.get(`${itemType}\u0000${itemCategory}`);
+        const storedBeforeItem = Math.max(0, toInt(itemInventory?.amount || 0, 0));
+        let beforeItem = storedBeforeItem;
+        let repairedBeforeItem = null;
+        const itemStack = Math.min(2147483647, Math.max(
+          Math.max(1, toInt(itemInventory?.stack_limit || 200, 200)),
+          itemBaseline ? Math.max(1, toInt(itemBaseline.stack_limit || 200, 200)) : 200
+        ));
+        if (itemBaseline) {
+          const expectedBeforeItem = Math.max(0, toInt(itemBaseline.amount, 0));
+          if (storedBeforeItem !== expectedBeforeItem) {
+            repairedBeforeItem = storedBeforeItem;
+            beforeItem = expectedBeforeItem;
+          }
+        }
         const afterItem = beforeItem + amount;
 
         if (afterItem > itemStack) {
@@ -1742,13 +2001,14 @@ class PostgresStore {
             `
             UPDATE ${this.table("inventory")}
                SET amount = $4,
+                   stack_limit = $5,
                    row_version = ${this.table("inventory")}.row_version + 1,
                    updated_at = now()
              WHERE player_id = $1
                AND item_type = $2
                AND item_category = $3
             `,
-            [buyerId, itemType, itemCategory, afterItem]
+            [buyerId, itemType, itemCategory, afterItem, itemStack]
           );
         } else {
           await client.query(
@@ -1762,9 +2022,9 @@ class PostgresStore {
               row_version,
               updated_at
             )
-            VALUES ($1, $2, $3, $4, 200, 1, now())
+            VALUES ($1, $2, $3, $4, $5, 1, now())
             `,
-            [buyerId, itemType, itemCategory, afterItem]
+            [buyerId, itemType, itemCategory, afterItem, itemStack]
           );
         }
 
@@ -1861,12 +2121,14 @@ class PostgresStore {
             beforeLock,
             afterLock,
             requestId,
-            transactionId,
+            correlationId,
             JSON.stringify({
               kind: "vend_buy",
               world_x: x,
               world_y: y,
               lock_spent: priceWls,
+              transaction_id: transactionId,
+              repaired_inventory_before_amount: repairedBeforeLock,
             }),
             at,
           ]
@@ -1914,12 +2176,14 @@ class PostgresStore {
             beforeItem,
             afterItem,
             requestId,
-            transactionId,
+            correlationId,
             JSON.stringify({
               kind: "vend_buy",
+              transaction_id: transactionId,
               item_id: itemType,
               world_x: x,
               world_y: y,
+              repaired_inventory_before_amount: repairedBeforeItem,
             }),
             at,
           ]

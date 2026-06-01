@@ -34,6 +34,12 @@ CREATE TABLE IF NOT EXISTS players (
 	account_id uuid NOT NULL UNIQUE REFERENCES accounts(account_id) ON DELETE CASCADE,
 	display_name text NOT NULL,
 	player_health integer NOT NULL DEFAULT 100 CHECK (player_health >= 0),
+	player_level integer NOT NULL DEFAULT 1 CHECK (player_level BETWEEN 1 AND 100),
+	player_xp bigint NOT NULL DEFAULT 0 CHECK (player_xp >= 0),
+	player_xp_needed bigint NOT NULL DEFAULT 100 CHECK (player_xp_needed >= 0),
+	player_total_xp bigint NOT NULL DEFAULT 0 CHECK (player_total_xp >= 0),
+	player_title text NOT NULL DEFAULT 'Explorer',
+	last_level_up_at timestamptz,
 	current_world_name text,
 	created_at timestamptz NOT NULL DEFAULT now(),
 	updated_at timestamptz NOT NULL DEFAULT now()
@@ -72,6 +78,31 @@ CREATE TABLE IF NOT EXISTS worlds (
 
 ALTER TABLE players
 ADD COLUMN IF NOT EXISTS current_world_id uuid REFERENCES worlds(world_id) ON DELETE SET NULL;
+
+ALTER TABLE players
+ADD COLUMN IF NOT EXISTS player_level integer NOT NULL DEFAULT 1,
+ADD COLUMN IF NOT EXISTS player_xp bigint NOT NULL DEFAULT 0,
+ADD COLUMN IF NOT EXISTS player_xp_needed bigint NOT NULL DEFAULT 100,
+ADD COLUMN IF NOT EXISTS player_total_xp bigint NOT NULL DEFAULT 0,
+ADD COLUMN IF NOT EXISTS player_title text NOT NULL DEFAULT 'Explorer',
+ADD COLUMN IF NOT EXISTS last_level_up_at timestamptz;
+
+CREATE TABLE IF NOT EXISTS player_progression_events (
+	player_progression_event_id bigserial PRIMARY KEY,
+	player_id uuid NOT NULL REFERENCES players(player_id) ON DELETE CASCADE,
+	source text NOT NULL,
+	xp_delta bigint NOT NULL CHECK (xp_delta >= 0),
+	level_before integer NOT NULL CHECK (level_before BETWEEN 1 AND 100),
+	level_after integer NOT NULL CHECK (level_after BETWEEN 1 AND 100),
+	xp_before bigint NOT NULL CHECK (xp_before >= 0),
+	xp_after bigint NOT NULL CHECK (xp_after >= 0),
+	total_xp_after bigint NOT NULL CHECK (total_xp_after >= 0),
+	metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+	created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_player_progression_events_player_time
+ON player_progression_events(player_id, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS world_members (
 	world_id uuid NOT NULL REFERENCES worlds(world_id) ON DELETE CASCADE,

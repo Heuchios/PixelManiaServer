@@ -53,6 +53,9 @@ const MAX_SHOP_PRICE = 999999;
 const MAX_PLAYER_INVENTORY_KEYS = 500;
 const MAX_ITEM_ID_LENGTH = 64;
 const MAX_DROP_ID_LENGTH = 96;
+const PLAYER_LEVEL_MIN = 1;
+const PLAYER_LEVEL_MAX = 100;
+const PLAYER_XP_FIRST_LEVEL = 100;
 const ALLOW_LEGACY_PLAYER_STATE_IMPORT = !["0", "false", "no"].includes(String(process.env.ALLOW_LEGACY_PLAYER_STATE_IMPORT || "true").trim().toLowerCase());
 const MAX_MOVE_PIXELS_PER_SECOND = 900;
 const MAX_PICKUP_DISTANCE_PIXELS = TILE_SIZE * 6;
@@ -636,10 +639,20 @@ wss.on("connection", (socket) => {
       if (update.action === "place" && isSafeBlockType(update.block_type)) {
         initializeSafeOwnerOnPlace(worldName, update, player);
       }
+      const progression = update.action === "break"
+        ? awardPlayerExperience(player.account_username, getBlockBreakXp(update.block_type, update.layer), "world_block_break", {
+          world: worldName,
+          block_type: update.block_type,
+          layer: update.layer,
+          x: update.x,
+          y: update.y,
+        }, validation.playerState || null)
+        : { xp_gained: 0, levels_gained: 0, state: validation.playerState || null };
+      const requesterPlayerState = Number(progression.xp_gained || 0) > 0 ? progression.state : (validation.playerState || null);
       queueWorldSave(worldName);
-      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update, validation.playerState ? {
+      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update, requesterPlayerState ? {
         username: player.account_username,
-        player_data: validation.playerState,
+        player_data: requesterPlayerState,
       } : null);
       if (worldLockStatePayload) {
         sendWorldUpdateToRequesterAndWorld(socket, player, worldName, worldLockStatePayload);
@@ -694,13 +707,14 @@ wss.on("connection", (socket) => {
         });
       }
 
-      if (validation.playerState) {
+      if (requesterPlayerState) {
         sendInventoryTransactionResult(socket, {
           ok: true,
           action: update.action === "break" ? "world_block_break" : "world_block_place",
-          message: String(validation.message || ""),
+          message: getProgressionMessage(progression, validation.message || ""),
           username: player.account_username,
-          player_data: validation.playerState,
+          progression: buildProgressionPayload(progression),
+          player_data: requesterPlayerState,
         });
       }
       return;
@@ -3087,6 +3101,8 @@ async function executeTrade(trade) {
       world: trade.world || "START",
       requester_offers: validation.offersA,
       target_offers: validation.offersB,
+      requester_inventory_baseline: buildInventoryBaselineForItems(stateA, validation.offersA.concat(validation.offersB)),
+      target_inventory_baseline: buildInventoryBaselineForItems(stateB, validation.offersA.concat(validation.offersB)),
       request_id: tradeTransactionId,
     });
 
@@ -3965,6 +3981,10 @@ async function handleVendBuy(socket, player, data, worldName, vend) {
       item_category: soldItemCategory,
       amount: itemAmount,
       price_wls: priceWls,
+      buyer_inventory_baseline: buildInventoryBaselineForItems(buyerState, [
+        { item_id: "world_lock", item_category: "block" },
+        { item_id: soldItemId, item_category: soldItemCategory },
+      ]),
       x: Number(vend.x || 0),
       y: Number(vend.y || 0),
       request_id: makeRequestId(data),
@@ -4697,7 +4717,16 @@ function handleStationRecipeTransaction(socket, player, data) {
     return;
   }
 
+  const progression = grantExperienceToState(state, getRecipeXp(stationId, output), stationId === "furnace" ? "furnace_recipe" : "craft_recipe", {
+    world: worldName,
+    station_id: stationId,
+    recipe_id: recipe.id,
+    output_item: output.item_id,
+  });
   persistPlayerInventoryChange(username, state);
+  if (progression.xp_gained > 0) {
+    postgresStore.mirrorPlayerProgression(username, state, progression);
+  }
 
   sendInventoryTransactionResult(socket, {
     ok: true,
@@ -4705,9 +4734,10 @@ function handleStationRecipeTransaction(socket, player, data) {
     action: stationId === "furnace" ? "furnace_recipe" : "craft_recipe",
     station_id: stationId,
     recipe_id: recipe.id,
-    message: stationId === "furnace" ? `Smelted ${output.item_id}.` : `Crafted ${output.item_id}.`,
+    message: getProgressionMessage(progression, stationId === "furnace" ? `Smelted ${output.item_id}.` : `Crafted ${output.item_id}.`),
     username,
     rewards: [output],
+    progression: buildProgressionPayload(progression),
     player_data: state,
   });
 }
@@ -4868,7 +4898,16 @@ function handleFishingCompleteTransaction(socket, player, data) {
     return;
   }
 
+  const progression = grantExperienceToState(state, getFishingXp(session.fish_id, session.difficulty), "fishing_complete", {
+    world: session.world,
+    fish_id: session.fish_id,
+    lure_id: session.lure_id,
+    difficulty: session.difficulty,
+  });
   persistPlayerInventoryChange(player.account_username, state);
+  if (progression.xp_gained > 0) {
+    postgresStore.mirrorPlayerProgression(player.account_username, state, progression);
+  }
   logItemLedgerForState(socket, player, player.account_username, state, session.fish_id, "fish", 1, "fishing_complete", session.session_id, "fishing_reward", session.world, {
     lure_id: session.lure_id,
     difficulty: session.difficulty,
@@ -4880,10 +4919,11 @@ function handleFishingCompleteTransaction(socket, player, data) {
     ok: true,
     request_id: requestId,
     action: "fishing_complete",
-    message: `Caught ${session.fish_id}.`,
+    message: getProgressionMessage(progression, `Caught ${session.fish_id}.`),
     username: player.account_username,
     fish_id: session.fish_id,
     rewards: [{ item_id: session.fish_id, item_category: "fish", amount: 1 }],
+    progression: buildProgressionPayload(progression),
     player_data: state,
   });
 }
@@ -5507,7 +5547,8 @@ function handleSeedHarvestTransaction(socket, player, data) {
 
   const dropPosition = getGridCenterPixels(grid.x, grid.y);
   const drops = [];
-  if (isSeedMature(seed)) {
+  const maturedSeed = isSeedMature(seed);
+  if (maturedSeed) {
     if (Boolean(seed.mutated)) {
       const validRewardTable = SEED_MUTATION_REWARD_TABLE.filter((entry) => ItemDatabase.hasItem(entry.item_id));
       const reward = rollWeightedReward(validRewardTable);
@@ -5565,14 +5606,24 @@ function handleSeedHarvestTransaction(socket, player, data) {
     sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload);
   }
 
+  const progression = awardPlayerExperience(player.account_username, getSeedHarvestXp(rewards, maturedSeed), "seed_harvest", {
+    world: worldName,
+    seed_type: seed.seed_type,
+    mutated: Boolean(seed.mutated),
+    x: grid.x,
+    y: grid.y,
+  });
+  const playerState = Number(progression.xp_gained || 0) > 0 ? progression.state : (ensurePlayerState(player.account_username) || {});
+
   sendInventoryTransactionResult(socket, {
     ok: true,
     request_id: requestId,
     action: "seed_harvest",
-    message: "Seed-tree harvested.",
+    message: getProgressionMessage(progression, "Seed-tree harvested."),
     username: player.account_username,
     rewards,
-    player_data: ensurePlayerState(player.account_username) || {},
+    progression: buildProgressionPayload(progression),
+    player_data: playerState,
   });
 }
 
@@ -7080,6 +7131,226 @@ function resolveInventoryCategory(itemId, requestedCategory = "") {
   return ItemDatabase.resolveItemCategory(itemId, requestedCategory);
 }
 
+function getXpNeededForLevel(level) {
+  const safeLevel = clampInteger(level || PLAYER_LEVEL_MIN, PLAYER_LEVEL_MIN, PLAYER_LEVEL_MAX);
+  if (safeLevel >= PLAYER_LEVEL_MAX) return 0;
+
+  const levelIndex = safeLevel - PLAYER_LEVEL_MIN;
+  return PLAYER_XP_FIRST_LEVEL + (levelIndex * 45) + Math.floor(Math.pow(levelIndex, 1.45) * 18);
+}
+
+function getCumulativeXpAtLevel(level) {
+  const safeLevel = clampInteger(level || PLAYER_LEVEL_MIN, PLAYER_LEVEL_MIN, PLAYER_LEVEL_MAX);
+  let total = 0;
+  for (let currentLevel = PLAYER_LEVEL_MIN; currentLevel < safeLevel; currentLevel += 1) {
+    total += getXpNeededForLevel(currentLevel);
+  }
+  return total;
+}
+
+function getPlayerTitleForLevel(level) {
+  const safeLevel = clampInteger(level || PLAYER_LEVEL_MIN, PLAYER_LEVEL_MIN, PLAYER_LEVEL_MAX);
+  if (safeLevel >= 100) return "Pixel Legend";
+  if (safeLevel >= 80) return "Worldsmith";
+  if (safeLevel >= 60) return "Architect";
+  if (safeLevel >= 40) return "Trailblazer";
+  if (safeLevel >= 25) return "Crafter";
+  if (safeLevel >= 10) return "Builder";
+  return "Explorer";
+}
+
+function normalizeProgressionState(rawState = {}) {
+  const source = rawState && typeof rawState === "object" && !Array.isArray(rawState) ? rawState : {};
+  let level = clampInteger(source.player_level || source.level || PLAYER_LEVEL_MIN, PLAYER_LEVEL_MIN, PLAYER_LEVEL_MAX);
+  let xp = clampInteger(source.player_xp || source.xp || 0, 0, Number.MAX_SAFE_INTEGER);
+  let totalXp = clampInteger(source.player_total_xp || source.total_xp || 0, 0, Number.MAX_SAFE_INTEGER);
+
+  if (totalXp <= 0 && (level > PLAYER_LEVEL_MIN || xp > 0)) {
+    totalXp = getCumulativeXpAtLevel(level) + xp;
+  }
+
+  while (level < PLAYER_LEVEL_MAX) {
+    const needed = getXpNeededForLevel(level);
+    if (needed <= 0 || xp < needed) break;
+    xp -= needed;
+    level += 1;
+  }
+
+  if (level >= PLAYER_LEVEL_MAX) {
+    level = PLAYER_LEVEL_MAX;
+    xp = 0;
+  }
+
+  return {
+    player_level: level,
+    player_xp: xp,
+    player_xp_needed: getXpNeededForLevel(level),
+    player_total_xp: totalXp,
+    player_title: getPlayerTitleForLevel(level),
+  };
+}
+
+function applyProgressionFieldsToState(state, progression) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return state;
+  const safeProgression = normalizeProgressionState(progression || state);
+  state.player_level = safeProgression.player_level;
+  state.player_xp = safeProgression.player_xp;
+  state.player_xp_needed = safeProgression.player_xp_needed;
+  state.player_total_xp = safeProgression.player_total_xp;
+  state.player_title = safeProgression.player_title;
+  return state;
+}
+
+function getRarityXpBonus(itemId) {
+  const definition = ItemDatabase.getItemDefinition(clampString(itemId || ""));
+  switch (String(definition?.rarity || "common").toLowerCase()) {
+    case "legendary":
+      return 80;
+    case "epic":
+      return 38;
+    case "rare":
+      return 18;
+    case "uncommon":
+      return 7;
+    default:
+      return 0;
+  }
+}
+
+function getBlockBreakXp(blockType, layer) {
+  const definition = ItemDatabase.getItemDefinition(clampString(blockType || ""));
+  if (!definition || definition.category !== "block") return 0;
+
+  const health = Math.max(1, Math.trunc(Number(definition.block_health) || 1));
+  const layerBonus = layer === "background" ? 0 : 2;
+  return Math.max(1, 3 + health + layerBonus + getRarityXpBonus(blockType));
+}
+
+function getRecipeXp(stationId, output) {
+  const reward = output && typeof output === "object" && !Array.isArray(output) ? output : {};
+  const amount = clampInteger(reward.amount || 1, 1, MAX_ITEM_STACK);
+  const stationBonus = stationId === "furnace" ? 7 : 10;
+  return stationBonus + Math.min(120, amount * 4) + getRarityXpBonus(reward.item_id || reward.item_type || "");
+}
+
+function getFishingXp(fishId, difficulty) {
+  return 12 + (clampInteger(difficulty || 1, 1, 10) * 6) + getRarityXpBonus(fishId);
+}
+
+function getSeedHarvestXp(rewards, matured) {
+  if (!matured || !Array.isArray(rewards) || rewards.length === 0) return 0;
+
+  return rewards.reduce((total, reward) => {
+    const amount = clampInteger(reward?.amount || 1, 1, MAX_ITEM_STACK);
+    return total + 8 + Math.min(60, amount * 3) + getRarityXpBonus(reward?.item_id || reward?.item_type || "");
+  }, 0);
+}
+
+function grantExperienceToState(state, amount, source = "system", details = {}) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) {
+    return { xp_gained: 0, levels_gained: 0, state: null };
+  }
+
+  const xpGained = clampInteger(amount || 0, 0, 1000000);
+  const before = normalizeProgressionState(state);
+  applyProgressionFieldsToState(state, before);
+
+  if (xpGained <= 0 || before.player_level >= PLAYER_LEVEL_MAX) {
+    return {
+      xp_gained: 0,
+      levels_gained: 0,
+      level_before: before.player_level,
+      level_after: before.player_level,
+      xp_before: before.player_xp,
+      xp_after: before.player_xp,
+      xp_needed: before.player_xp_needed,
+      total_xp_after: before.player_total_xp,
+      title: before.player_title,
+      source,
+      details,
+      state,
+    };
+  }
+
+  let level = before.player_level;
+  let xp = before.player_xp + xpGained;
+  let levelsGained = 0;
+  while (level < PLAYER_LEVEL_MAX) {
+    const needed = getXpNeededForLevel(level);
+    if (needed <= 0 || xp < needed) break;
+    xp -= needed;
+    level += 1;
+    levelsGained += 1;
+  }
+
+  if (level >= PLAYER_LEVEL_MAX) {
+    level = PLAYER_LEVEL_MAX;
+    xp = 0;
+  }
+
+  const progression = {
+    player_level: level,
+    player_xp: xp,
+    player_xp_needed: getXpNeededForLevel(level),
+    player_total_xp: before.player_total_xp + xpGained,
+    player_title: getPlayerTitleForLevel(level),
+  };
+  applyProgressionFieldsToState(state, progression);
+  if (levelsGained > 0) {
+    state.last_level_up_at = new Date().toISOString();
+  }
+
+  return {
+    xp_gained: xpGained,
+    levels_gained: levelsGained,
+    level_before: before.player_level,
+    level_after: level,
+    xp_before: before.player_xp,
+    xp_after: xp,
+    xp_needed: progression.player_xp_needed,
+    total_xp_after: progression.player_total_xp,
+    title: progression.player_title,
+    source,
+    details,
+    state,
+  };
+}
+
+function awardPlayerExperience(username, amount, source = "system", details = {}, existingState = null) {
+  const clean = cleanAccountName(username);
+  if (clean === "") return { xp_gained: 0, levels_gained: 0, state: existingState || null };
+
+  const state = existingState || ensureWritablePlayerState(clean);
+  const progression = grantExperienceToState(state, amount, source, details);
+  if (progression.xp_gained > 0 && progression.state) {
+    persistPlayerInventoryChange(clean, progression.state);
+    postgresStore.mirrorPlayerProgression(clean, progression.state, progression);
+  }
+  return progression;
+}
+
+function buildProgressionPayload(progression) {
+  if (!progression || Number(progression.xp_gained || 0) <= 0) return {};
+  return {
+    xp_gained: Math.max(0, Math.trunc(Number(progression.xp_gained) || 0)),
+    levels_gained: Math.max(0, Math.trunc(Number(progression.levels_gained) || 0)),
+    level_before: clampInteger(progression.level_before || PLAYER_LEVEL_MIN, PLAYER_LEVEL_MIN, PLAYER_LEVEL_MAX),
+    level_after: clampInteger(progression.level_after || PLAYER_LEVEL_MIN, PLAYER_LEVEL_MIN, PLAYER_LEVEL_MAX),
+    xp_after: clampInteger(progression.xp_after || 0, 0, Number.MAX_SAFE_INTEGER),
+    xp_needed: clampInteger(progression.xp_needed || 0, 0, Number.MAX_SAFE_INTEGER),
+    total_xp_after: clampInteger(progression.total_xp_after || 0, 0, Number.MAX_SAFE_INTEGER),
+    title: String(progression.title || getPlayerTitleForLevel(progression.level_after || PLAYER_LEVEL_MIN)),
+    source: String(progression.source || ""),
+  };
+}
+
+function getProgressionMessage(progression, fallback = "") {
+  if (progression && Number(progression.levels_gained || 0) > 0) {
+    return `Level ${progression.level_after} reached: ${progression.title}!`;
+  }
+  return String(fallback || "");
+}
+
 function getInventoryFieldForCategory(category, itemId) {
   return ItemDatabase.getInventoryFieldForItem(itemId, category) || "inventory";
 }
@@ -7321,6 +7592,33 @@ function applyInventoryLedgerToState(state, ledgerEntries) {
   return true;
 }
 
+function buildInventoryBaselineForItems(state, items) {
+  if (!state || !Array.isArray(items)) return [];
+
+  const baseline = new Map();
+  for (const item of items) {
+    if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+
+    const itemId = clampString(item.item_id || item.item_type || "");
+    if (itemId === "" || !ItemDatabase.hasItem(itemId)) continue;
+
+    const itemCategory = resolveInventoryCategory(itemId, item.item_category || item.category || "");
+    if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) continue;
+
+    const key = `${itemId}\u0000${itemCategory}`;
+    if (baseline.has(key)) continue;
+
+    baseline.set(key, {
+      item_id: itemId,
+      item_category: itemCategory,
+      amount: getInventoryCount(state, itemId, itemCategory),
+      stack_limit: ItemDatabase.getStackLimit(itemId),
+    });
+  }
+
+  return Array.from(baseline.values());
+}
+
 function ensureWritablePlayerState(username) {
   const clean = cleanAccountName(username);
   if (clean === "") return null;
@@ -7354,13 +7652,16 @@ function markAccountSeen(username) {
 
 function buildPublicPlayerData(state) {
   if (!state || typeof state !== "object" || Array.isArray(state)) return {};
+  const progression = normalizeProgressionState(state);
 
   return {
     player_data_version: Math.max(1, Math.trunc(Number(state.player_data_version) || 1)),
     account_username: cleanAccountName(state.account_username || state.username || ""),
-    player_level: clampInteger(state.player_level || state.level || 1, 1, 999),
-    player_xp: clampInteger(state.player_xp || state.xp || 0, 0, Number.MAX_SAFE_INTEGER),
-    player_xp_needed: clampInteger(state.player_xp_needed || state.xp_needed || 100, 1, Number.MAX_SAFE_INTEGER),
+    player_level: progression.player_level,
+    player_xp: progression.player_xp,
+    player_xp_needed: progression.player_xp_needed,
+    player_total_xp: progression.player_total_xp,
+    player_title: progression.player_title,
   };
 }
 
@@ -9332,10 +9633,17 @@ function sanitizePlayerState(rawState, username) {
 
   const accountUsername = cleanAccountName(username || rawState.account_username || rawState.username || "");
   if (accountUsername === "") return null;
+  const progression = normalizeProgressionState(rawState);
 
   const state = {
     player_data_version: Math.max(1, Math.trunc(Number(rawState.player_data_version) || 1)),
     account_username: accountUsername,
+    player_level: progression.player_level,
+    player_xp: progression.player_xp,
+    player_xp_needed: progression.player_xp_needed,
+    player_total_xp: progression.player_total_xp,
+    player_title: progression.player_title,
+    last_level_up_at: String(rawState.last_level_up_at || "").slice(0, 64),
     selected_item_type: clampString(rawState.selected_item_type || "punch"),
     selected_item_category: cleanInventoryCategory(rawState.selected_item_category || "tool") || "tool",
     primary_hotbar_tool: clampString(rawState.primary_hotbar_tool || "punch"),
@@ -9431,6 +9739,7 @@ function savePlayerState(username) {
 
   const state = playerStates.get(accountKey(clean));
   if (!state) return;
+  applyProgressionFieldsToState(state, state);
 
   writeJsonFileAtomic(getPlayerSavePath(clean), {
     player_state_version: 1,
