@@ -27,6 +27,17 @@ const INVENTORY_FIELD_CATEGORY = Object.freeze([
 const PLAYER_LEVEL_MIN = 1;
 const PLAYER_LEVEL_MAX = 100;
 const PLAYER_XP_FIRST_LEVEL = 100;
+const POSTGRES_TRANSACTION_MAX_ATTEMPTS = 3;
+const POSTGRES_TRANSACTION_RETRY_BASE_DELAY_MS = 35;
+
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function isRetryablePostgresError(error) {
+  const code = String(error?.code || "");
+  return code === "40P01" || code === "40001" || code === "55P03";
+}
 
 function toObject(value) {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
@@ -291,22 +302,38 @@ class PostgresStore {
   async withTransaction(work) {
     if (!this.isReady()) return null;
 
-    const client = await this.pool.connect();
-    try {
-      await client.query("BEGIN");
-      const result = await work(client);
-      await client.query("COMMIT");
-      return result;
-    } catch (error) {
+    for (let attempt = 1; attempt <= POSTGRES_TRANSACTION_MAX_ATTEMPTS; attempt += 1) {
+      const client = await this.pool.connect();
+      let released = false;
       try {
-        await client.query("ROLLBACK");
-      } catch {
-        // Ignore rollback failures.
+        await client.query("BEGIN");
+        const result = await work(client);
+        await client.query("COMMIT");
+        return result;
+      } catch (error) {
+        try {
+          await client.query("ROLLBACK");
+        } catch {
+          // Ignore rollback failures.
+        }
+
+        if (isRetryablePostgresError(error) && attempt < POSTGRES_TRANSACTION_MAX_ATTEMPTS) {
+          client.release();
+          released = true;
+          const retryDelay = POSTGRES_TRANSACTION_RETRY_BASE_DELAY_MS * attempt;
+          await delay(retryDelay);
+          continue;
+        }
+
+        throw error;
+      } finally {
+        if (!released) {
+          client.release();
+        }
       }
-      throw error;
-    } finally {
-      client.release();
     }
+
+    return null;
   }
 
   runDetached(label, work) {
