@@ -48,6 +48,7 @@ const MAX_PACKET_BYTES = 64 * 1024;
 const MAX_CHAT_LENGTH = 220;
 const MAX_SIGN_TEXT_LENGTH = 500;
 const MAX_DROP_AMOUNT = 9999;
+const MAX_DROP_TILE_AMOUNT = 2000;
 const MAX_ITEM_STACK = ItemDatabase.DEFAULT_STACK_LIMIT;
 const MAX_SHOP_PRICE = 999999;
 const MAX_PLAYER_INVENTORY_KEYS = 500;
@@ -6086,7 +6087,7 @@ function createServerDrop(worldName, itemType, itemCategory, amount, x, y, picku
   const resolvedCategory = resolveInventoryCategory(itemId, itemCategory);
   if (!ItemDatabase.canStoreItemInCategory(itemId, resolvedCategory)) return null;
 
-  const safeAmount = clampInteger(amount || 1, 1, Math.min(MAX_DROP_AMOUNT, ItemDatabase.getStackLimit(itemId)));
+  const safeAmount = clampInteger(amount || 1, 1, MAX_DROP_TILE_AMOUNT);
   const payload = {
     type: "drop_spawned",
     world: cleanWorld(worldName),
@@ -8510,7 +8511,7 @@ function loadDropsIntoMap(target, rawEntries) {
       item_type: itemType,
       item_category: itemCategory,
       is_seed: itemCategory === "seed",
-      amount: clampInteger(rawEntry.amount || 1, 1, Math.min(MAX_DROP_AMOUNT, ItemDatabase.getStackLimit(itemType))),
+      amount: clampInteger(rawEntry.amount || 1, 1, MAX_DROP_TILE_AMOUNT),
       x,
       y,
       pickup_delay: Math.max(0, Number(rawEntry.pickup_delay) || 0),
@@ -9123,7 +9124,7 @@ function sanitizeDropCreate(data, worldName) {
     item_type: itemType,
     item_category: itemCategory,
     is_seed: itemCategory === "seed",
-    amount: clampInteger(data.amount || 1, 1, Math.min(MAX_DROP_AMOUNT, ItemDatabase.getStackLimit(itemType))),
+    amount: clampInteger(data.amount || 1, 1, MAX_DROP_TILE_AMOUNT),
     x,
     y,
     stack_grid_x: stackGrid ? stackGrid.x : undefined,
@@ -9175,7 +9176,7 @@ function sanitizeDropUpdate(data, worldName) {
   };
 
   if (Object.prototype.hasOwnProperty.call(data, "amount")) {
-    update.amount = clampInteger(data.amount || 0, 0, MAX_DROP_AMOUNT);
+    update.amount = clampInteger(data.amount || 0, 0, MAX_DROP_TILE_AMOUNT);
   }
 
   const x = Number(data.x);
@@ -9299,7 +9300,7 @@ function prepareDropPickup(worldName, player, update) {
   if (!playerState) return { ok: false, reason: "inventory_unavailable", drop, world: cleanWorldName };
 
   const stackLimit = ItemDatabase.getStackLimit(itemType);
-  const dropAmount = clampInteger(drop.amount || 0, 0, Math.min(MAX_DROP_AMOUNT, stackLimit));
+  const dropAmount = clampInteger(drop.amount || 0, 0, MAX_DROP_TILE_AMOUNT);
   if (dropAmount <= 0) return { ok: false, reason: "not_available", world: cleanWorldName };
 
   const currentCount = getInventoryCount(playerState, itemType, itemCategory);
