@@ -538,11 +538,14 @@ wss.on("connection", (socket) => {
       if (message.toLowerCase().startsWith("/bc ")) {
         const broadcastMessage = message.slice(4).trim().slice(0, MAX_CHAT_LENGTH);
         if (broadcastMessage.length > 0) {
+          const broadcastWorld = getPlayerCurrentWorldName(player);
           broadcastToAuthenticatedPlayers({
             type: "broadcast",
             player_id: playerId,
             name: player.name,
             message: broadcastMessage,
+            world: broadcastWorld,
+            current_world: broadcastWorld,
           });
         }
         return;
@@ -564,11 +567,14 @@ wss.on("connection", (socket) => {
       const message = String(data.message || "").trim().slice(0, MAX_CHAT_LENGTH);
       if (message.length === 0) return;
 
+      const broadcastWorld = getPlayerCurrentWorldName(player);
       broadcastToAuthenticatedPlayers({
         type: "broadcast",
         player_id: playerId,
         name: player.name,
         message,
+        world: broadcastWorld,
+        current_world: broadcastWorld,
       });
       return;
     }
