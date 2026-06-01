@@ -334,17 +334,33 @@ wss.on("connection", (socket) => {
     if (data.type === "player_state_request") {
       if (!requireAuthenticated(socket, player, "load player data")) return;
 
+      const requestId = makeRequestId(data);
       const username = cleanAccountName(data.username || player.account_username || player.name);
       if (username === "") return;
-      if (!isPlayerOwnAccount(player, username)) return;
+      const purpose = clampString(data.purpose || "").toLowerCase();
+      if (!isPlayerOwnAccount(player, username)) {
+        if (purpose === "world_lock_access_check" || purpose === "remote_player_profile") {
+          sendJson(socket, buildPublicPlayerProfilePayload(username, requestId, purpose));
+        }
+        return;
+      }
 
       const state = ensurePlayerState(username);
-      socket.send(JSON.stringify({
+      const publicProfile = buildPublicPlayerProfilePayload(username, requestId, purpose);
+      sendJson(socket, {
         type: "player_state",
+        request_id: requestId,
+        purpose,
         found: state !== null,
         username,
+        online: true,
+        world: player.world || "",
+        current_world: player.world || "",
+        last_seen_at: publicProfile.last_seen_at || "",
+        account: publicProfile.account || { username },
+        equipment_slots: player.equipment_slots || {},
         player_data: state || {},
-      }));
+      });
       return;
     }
 
@@ -935,6 +951,7 @@ wss.on("connection", (socket) => {
     if (player) {
       cancelActiveTradeForPlayer(playerId, "Trade canceled because a player disconnected.");
       activeFishingSessions.delete(playerId);
+      markAccountSeen(player.account_username);
       releaseActiveAccountSession(player);
 
       if (player.joined_world) {
@@ -4426,6 +4443,33 @@ function getTransactionDropPosition(player, data) {
   };
 }
 
+function getDropGridFromPosition(position) {
+  if (!position) return null;
+
+  const gridX = Math.round(Number(position.x) / TILE_SIZE);
+  const gridY = Math.round(Number(position.y) / TILE_SIZE);
+  if (!isGridInWorld(gridX, gridY)) return null;
+
+  return { x: gridX, y: gridY };
+}
+
+function getTransactionDropGrid(data, position = null) {
+  const explicitGrid =
+    getTransactionGrid(data, "stack_grid_x", "stack_grid_y") ||
+    getTransactionGrid(data, "grid_x", "grid_y") ||
+    getTransactionGrid(data, "tile_x", "tile_y");
+  if (explicitGrid) return explicitGrid;
+
+  return getDropGridFromPosition(position);
+}
+
+function isDropGridBlockedByBlock(worldName, grid) {
+  if (!grid) return false;
+
+  const state = ensureWorldState(worldName);
+  return getCollisionAreaAnchorInState(state, grid.x, grid.y) !== null;
+}
+
 function handleDropInventoryItemTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
   const worldName = getTransactionWorldName(player, data);
@@ -4457,6 +4501,12 @@ function handleDropInventoryItemTransaction(socket, player, data) {
   const position = getTransactionDropPosition(player, data);
   if (!isPositionInWorldBounds(position.x, position.y) || !isPlayerNearPoint(player, position.x, position.y, MAX_DROP_CREATE_DISTANCE_PIXELS)) {
     sendInventoryTransactionRejected(socket, data, "Drop closer to your player.");
+    return;
+  }
+
+  const dropGrid = getTransactionDropGrid(data, position);
+  if (isDropGridBlockedByBlock(worldName, dropGrid)) {
+    sendInventoryTransactionRejected(socket, data, "Can't drop on a block.");
     return;
   }
 
@@ -6569,6 +6619,86 @@ function doesAccountExist(username) {
   return accounts.has(accountKey(clean)) || fs.existsSync(getPlayerSavePath(clean));
 }
 
+function markAccountSeen(username) {
+  const clean = cleanAccountName(username);
+  if (clean === "") return;
+
+  const account = accounts.get(accountKey(clean));
+  if (!account) return;
+
+  account.last_seen_at = new Date().toISOString();
+  queueAccountsSave();
+}
+
+function buildPublicPlayerData(state) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return {};
+
+  const currency = state.currency_inventory && typeof state.currency_inventory === "object" && !Array.isArray(state.currency_inventory)
+    ? state.currency_inventory
+    : {};
+  const equipmentSlots = state.equipment_slots && typeof state.equipment_slots === "object" && !Array.isArray(state.equipment_slots)
+    ? { ...state.equipment_slots }
+    : {};
+
+  return {
+    player_data_version: Math.max(1, Math.trunc(Number(state.player_data_version) || 1)),
+    account_username: cleanAccountName(state.account_username || state.username || ""),
+    player_level: clampInteger(state.player_level || state.level || 1, 1, 999),
+    player_xp: clampInteger(state.player_xp || state.xp || 0, 0, Number.MAX_SAFE_INTEGER),
+    player_xp_needed: clampInteger(state.player_xp_needed || state.xp_needed || 100, 1, Number.MAX_SAFE_INTEGER),
+    player_health: clampInteger(state.player_health || 3, 0, 100),
+    currency_inventory: {
+      gem: clampInteger(currency.gem || 0, 0, Number.MAX_SAFE_INTEGER),
+    },
+    equipment_slots: equipmentSlots,
+    equipped_tool: clampString(state.equipped_tool || equipmentSlots.hand || ""),
+    equipped_back_item: clampString(state.equipped_back_item || equipmentSlots.back || ""),
+    equipped_shirt_item: clampString(state.equipped_shirt_item || equipmentSlots.shirt || ""),
+    equipped_pants_item: clampString(state.equipped_pants_item || equipmentSlots.pants || ""),
+  };
+}
+
+function buildPublicPlayerProfilePayload(username, requestId = "", purpose = "") {
+  const clean = cleanAccountName(username);
+  const key = accountKey(clean);
+  const account = accounts.get(key) || null;
+  const state = ensurePlayerState(clean);
+  const found = clean !== "" && (Boolean(account) || Boolean(state) || fs.existsSync(getPlayerSavePath(clean)));
+  const onlineEntry = findOnlinePlayerByUsername(clean);
+  const onlinePlayer = onlineEntry ? onlineEntry.player : null;
+  const publicData = buildPublicPlayerData(state);
+  const displayUsername = account?.username || publicData.account_username || clean;
+  const liveEquipment = onlinePlayer && onlinePlayer.equipment_slots && typeof onlinePlayer.equipment_slots === "object" && !Array.isArray(onlinePlayer.equipment_slots)
+    ? { ...onlinePlayer.equipment_slots }
+    : {};
+  const equipmentSlots = Object.keys(liveEquipment).length > 0 ? liveEquipment : (publicData.equipment_slots || {});
+
+  return {
+    type: "player_state",
+    ok: found,
+    found,
+    request_id: requestId,
+    purpose,
+    username: displayUsername,
+    name: displayUsername,
+    online: Boolean(onlinePlayer),
+    offline: !onlinePlayer,
+    player_id: onlinePlayer?.id || "",
+    world: onlinePlayer?.world || "",
+    current_world: onlinePlayer?.world || "",
+    role: onlinePlayer ? getPublicPlayerRole(onlinePlayer) : getAccountRole(displayUsername),
+    last_seen_at: account ? String(account.last_seen_at || "") : "",
+    account: found ? {
+      username: displayUsername,
+      role: getAccountRole(displayUsername),
+      last_seen_at: account ? String(account.last_seen_at || "") : "",
+    } : {},
+    equipment_slots: equipmentSlots,
+    player_data: publicData,
+    message: found ? (onlinePlayer ? "Player is online." : "Player is offline.") : "Player not found.",
+  };
+}
+
 function grantItemToPlayerState(username, itemId, itemCategory, amount) {
   const state = ensureWritablePlayerState(username);
   if (!state) return null;
@@ -7938,6 +8068,7 @@ function sanitizeDropCreate(data, worldName) {
   const x = Number(data.x);
   const y = Number(data.y);
   if (!isPositionInWorldBounds(x, y)) return null;
+  const stackGrid = getTransactionDropGrid(data, { x, y });
 
   const itemCategory = resolveInventoryCategory(itemType, data.item_category || "");
   if (!ItemDatabase.canStoreItemInCategory(itemType, itemCategory)) return null;
@@ -7952,6 +8083,8 @@ function sanitizeDropCreate(data, worldName) {
     amount: clampInteger(data.amount || 1, 1, Math.min(MAX_DROP_AMOUNT, ItemDatabase.getStackLimit(itemType))),
     x,
     y,
+    stack_grid_x: stackGrid ? stackGrid.x : undefined,
+    stack_grid_y: stackGrid ? stackGrid.y : undefined,
     pickup_delay: Math.max(0, Number(data.pickup_delay) || 0),
   };
 }
@@ -7974,6 +8107,14 @@ function validateDropCreateAgainstServerState(socket, player, update) {
 
   if (!isPlayerNearPoint(player, update.x, update.y, MAX_DROP_CREATE_DISTANCE_PIXELS)) {
     sendActionRejected(socket, "world_item_drop_create", "Drop closer to your player.");
+    return false;
+  }
+
+  const dropGrid = update.stack_grid_x !== undefined && update.stack_grid_y !== undefined
+    ? { x: update.stack_grid_x, y: update.stack_grid_y }
+    : getDropGridFromPosition(update);
+  if (isDropGridBlockedByBlock(update.world, dropGrid)) {
+    sendActionRejected(socket, "world_item_drop_create", "Can't drop on a block.");
     return false;
   }
 

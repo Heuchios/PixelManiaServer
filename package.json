@@ -9,6 +9,7 @@
     "integrity:admin-report": "node scripts/admin_integrity_report.js",
     "integrity:scan": "node scripts/integrity_scan.js",
     "integrity:report": "node scripts/integrity_scan.js --write-report",
+    "email:test": "node scripts/send_test_email.js",
     "logs:admin": "node scripts/read_integrity_log.js admin",
     "logs:item": "node scripts/read_integrity_log.js item",
     "logs:gem": "node scripts/read_integrity_log.js gem",
