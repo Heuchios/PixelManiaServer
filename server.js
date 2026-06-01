@@ -6633,28 +6633,12 @@ function markAccountSeen(username) {
 function buildPublicPlayerData(state) {
   if (!state || typeof state !== "object" || Array.isArray(state)) return {};
 
-  const currency = state.currency_inventory && typeof state.currency_inventory === "object" && !Array.isArray(state.currency_inventory)
-    ? state.currency_inventory
-    : {};
-  const equipmentSlots = state.equipment_slots && typeof state.equipment_slots === "object" && !Array.isArray(state.equipment_slots)
-    ? { ...state.equipment_slots }
-    : {};
-
   return {
     player_data_version: Math.max(1, Math.trunc(Number(state.player_data_version) || 1)),
     account_username: cleanAccountName(state.account_username || state.username || ""),
     player_level: clampInteger(state.player_level || state.level || 1, 1, 999),
     player_xp: clampInteger(state.player_xp || state.xp || 0, 0, Number.MAX_SAFE_INTEGER),
     player_xp_needed: clampInteger(state.player_xp_needed || state.xp_needed || 100, 1, Number.MAX_SAFE_INTEGER),
-    player_health: clampInteger(state.player_health || 3, 0, 100),
-    currency_inventory: {
-      gem: clampInteger(currency.gem || 0, 0, Number.MAX_SAFE_INTEGER),
-    },
-    equipment_slots: equipmentSlots,
-    equipped_tool: clampString(state.equipped_tool || equipmentSlots.hand || ""),
-    equipped_back_item: clampString(state.equipped_back_item || equipmentSlots.back || ""),
-    equipped_shirt_item: clampString(state.equipped_shirt_item || equipmentSlots.shirt || ""),
-    equipped_pants_item: clampString(state.equipped_pants_item || equipmentSlots.pants || ""),
   };
 }
 
@@ -6668,10 +6652,6 @@ function buildPublicPlayerProfilePayload(username, requestId = "", purpose = "")
   const onlinePlayer = onlineEntry ? onlineEntry.player : null;
   const publicData = buildPublicPlayerData(state);
   const displayUsername = account?.username || publicData.account_username || clean;
-  const liveEquipment = onlinePlayer && onlinePlayer.equipment_slots && typeof onlinePlayer.equipment_slots === "object" && !Array.isArray(onlinePlayer.equipment_slots)
-    ? { ...onlinePlayer.equipment_slots }
-    : {};
-  const equipmentSlots = Object.keys(liveEquipment).length > 0 ? liveEquipment : (publicData.equipment_slots || {});
 
   return {
     type: "player_state",
@@ -6693,7 +6673,6 @@ function buildPublicPlayerProfilePayload(username, requestId = "", purpose = "")
       role: getAccountRole(displayUsername),
       last_seen_at: account ? String(account.last_seen_at || "") : "",
     } : {},
-    equipment_slots: equipmentSlots,
     player_data: publicData,
     message: found ? (onlinePlayer ? "Player is online." : "Player is offline.") : "Player not found.",
   };
