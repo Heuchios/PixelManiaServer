@@ -157,6 +157,7 @@ const MESSAGE_RATE_LIMITS = {
   player_position: { limit: 75, windowMs: 1000 },
 };
 const DEBUG_ACTION_POSITION_FLOW = ["1", "true", "yes"].includes(String(process.env.DEBUG_ACTION_POSITION_FLOW || "false").trim().toLowerCase());
+const DEBUG_PLAYER_PROGRESSION = ["1", "true", "yes"].includes(String(process.env.DEBUG_PLAYER_PROGRESSION || "false").trim().toLowerCase());
 const SHOP_CATALOG = new Map([
   ["world_lock", { item_id: "world_lock", item_category: "block", amount: 1, price: 3500 }],
   ["crafting_station", { item_id: "crafting_station", item_category: "block", amount: 1, price: 80 }],
@@ -649,10 +650,13 @@ wss.on("connection", (socket) => {
         }, validation.playerState || null)
         : { xp_gained: 0, levels_gained: 0, state: validation.playerState || null };
       const requesterPlayerState = Number(progression.xp_gained || 0) > 0 ? progression.state : (validation.playerState || null);
+      const requesterProgressionPayload = buildProgressionPayload(progression);
+      logPlayerProgressionAward(player, progression);
       queueWorldSave(worldName);
       sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update, requesterPlayerState ? {
         username: player.account_username,
         player_data: requesterPlayerState,
+        progression: requesterProgressionPayload,
       } : null);
       if (worldLockStatePayload) {
         sendWorldUpdateToRequesterAndWorld(socket, player, worldName, worldLockStatePayload);
@@ -711,9 +715,11 @@ wss.on("connection", (socket) => {
         sendInventoryTransactionResult(socket, {
           ok: true,
           action: update.action === "break" ? "world_block_break" : "world_block_place",
-          message: getProgressionMessage(progression, validation.message || ""),
+          message: update.action === "break"
+            ? getProgressionMessage(progression, getProgressionXpMessage(progression))
+            : getProgressionMessage(progression, validation.message || ""),
           username: player.account_username,
-          progression: buildProgressionPayload(progression),
+          progression: requesterProgressionPayload,
           player_data: requesterPlayerState,
         });
       }
@@ -929,6 +935,12 @@ wss.on("connection", (socket) => {
         drop_id: update.drop_id,
       });
 
+      if (update.action_position && acceptPlayerMovement(socket, player, update.action_position, { silent: true })) {
+        player.x = update.action_position.x;
+        player.y = update.action_position.y;
+        player.facing = update.action_position.facing;
+      }
+
       worldDropActionLocks.add(dropActionKey);
       try {
         const pickupPlan = prepareDropPickup(worldName, player, update);
@@ -941,6 +953,7 @@ wss.on("connection", (socket) => {
             return;
           }
           if (pickupPlan.reason === "inventory_unavailable") {
+            logDropPickupInventoryIssue("inventory_unavailable", player, worldName, update.drop_id, pickupPlan);
             sendActionRejected(socket, "world_item_drop_pickup", "Could not add that item to your server inventory.", {
               drop_id: update.drop_id,
               world: worldName,
@@ -948,7 +961,7 @@ wss.on("connection", (socket) => {
             return;
           }
           if (pickupPlan.reason === "too_far") {
-            logDropPickupTooFar(player, worldName, update.drop_id, pickupPlan.drop);
+            logDropPickupTooFar(player, worldName, update.drop_id, pickupPlan.drop, update);
             sendActionRejected(socket, "world_item_drop_pickup", "Too far away from that drop.", {
               drop_id: update.drop_id,
               world: worldName,
@@ -980,6 +993,7 @@ wss.on("connection", (socket) => {
           at: new Date().toISOString(),
         });
         if (!pickupTransaction.ok) {
+          logDropPickupInventoryIssue("transaction_failed", player, worldName, update.drop_id, pickupPlan, pickupTransaction);
           if (pickupTransaction.reason === "insufficient_capacity") {
             sendActionRejected(socket, "world_item_drop_pickup", "Could not add that item to your server inventory.", {
               drop_id: update.drop_id,
@@ -997,6 +1011,7 @@ wss.on("connection", (socket) => {
 
         const pickupState = pickupPlan.playerState;
         if (!setInventoryCountInState(pickupState, pickupTransaction.item_type, pickupTransaction.item_category, pickupTransaction.after_amount)) {
+          logDropPickupInventoryIssue("state_update_failed", player, worldName, update.drop_id, pickupPlan, pickupTransaction);
           sendActionRejected(socket, "world_item_drop_pickup", "Could not add that item to your server inventory.", {
             drop_id: update.drop_id,
             world: worldName,
@@ -6555,7 +6570,8 @@ function sanitizePlayerAnimationState(value) {
   return "idle";
 }
 
-function acceptPlayerMovement(socket, player, position) {
+function acceptPlayerMovement(socket, player, position, options = {}) {
+  const silent = Boolean(options.silent);
   const now = Date.now();
   const lastAt = Number(player.last_position_at || 0);
 
@@ -6569,7 +6585,9 @@ function acceptPlayerMovement(socket, player, position) {
   const distance = Math.hypot(position.x - player.x, position.y - player.y);
 
   if (distance > maxDistance) {
-    sendActionRejected(socket, "player_position", "Movement was too fast.");
+    if (!silent) {
+      sendActionRejected(socket, "player_position", "Movement was too fast.");
+    }
     return false;
   }
 
@@ -7349,6 +7367,29 @@ function getProgressionMessage(progression, fallback = "") {
     return `Level ${progression.level_after} reached: ${progression.title}!`;
   }
   return String(fallback || "");
+}
+
+function getProgressionXpMessage(progression) {
+  if (!progression || Number(progression.xp_gained || 0) <= 0) return "";
+  const xpGained = Math.max(0, Math.trunc(Number(progression.xp_gained) || 0));
+  const xpAfter = Math.max(0, Math.trunc(Number(progression.xp_after) || 0));
+  const xpNeeded = Math.max(0, Math.trunc(Number(progression.xp_needed) || 0));
+  if (xpNeeded <= 0) return `+${xpGained} XP`;
+  return `+${xpGained} XP (${xpAfter}/${xpNeeded})`;
+}
+
+function logPlayerProgressionAward(player, progression) {
+  if (!DEBUG_PLAYER_PROGRESSION || !progression || Number(progression.xp_gained || 0) <= 0) return;
+
+  console.log("[player_progression_award]", {
+    username: cleanAccountName(player?.account_username || player?.name || ""),
+    source: String(progression.source || ""),
+    xp_gained: Math.max(0, Math.trunc(Number(progression.xp_gained) || 0)),
+    level_before: clampInteger(progression.level_before || PLAYER_LEVEL_MIN, PLAYER_LEVEL_MIN, PLAYER_LEVEL_MAX),
+    level_after: clampInteger(progression.level_after || PLAYER_LEVEL_MIN, PLAYER_LEVEL_MIN, PLAYER_LEVEL_MAX),
+    xp_after: Math.max(0, Math.trunc(Number(progression.xp_after) || 0)),
+    xp_needed: Math.max(0, Math.trunc(Number(progression.xp_needed) || 0)),
+  });
 }
 
 function getInventoryFieldForCategory(category, itemId) {
@@ -9175,6 +9216,7 @@ function validateDropUpdateAgainstServerState(socket, player, worldName, update)
 function sanitizeDropPickup(data, worldName, player) {
   const dropId = clampString(data.drop_id || "", MAX_DROP_ID_LENGTH);
   if (dropId.length === 0) return null;
+  const actionPosition = sanitizeOptionalDropPickupPosition(data, player, worldName);
 
   return {
     type: "world_item_drop_pickup",
@@ -9182,7 +9224,24 @@ function sanitizeDropPickup(data, worldName, player) {
     drop_id: dropId,
     player_id: player.id,
     name: cleanName(player.name),
+    action_position: actionPosition,
   };
+}
+
+function sanitizeOptionalDropPickupPosition(data, player, worldName) {
+  if (!Object.prototype.hasOwnProperty.call(data, "x") || !Object.prototype.hasOwnProperty.call(data, "y")) {
+    return null;
+  }
+
+  const position = sanitizePlayerPosition({
+    x: data.x,
+    y: data.y,
+    facing: data.facing,
+    world: data.world || worldName,
+  }, player);
+  if (!position) return null;
+  if (cleanWorld(position.world) !== cleanWorld(worldName)) return null;
+  return position;
 }
 
 function applyDropCreateToWorldState(worldName, update) {
@@ -9413,7 +9472,8 @@ function logDropPickupNotAvailable(player, worldName, dropId) {
   });
 }
 
-function logDropPickupTooFar(player, worldName, dropId, drop) {
+function logDropPickupTooFar(player, worldName, dropId, drop, update = {}) {
+  const actionPosition = update?.action_position || null;
   console.warn("[drop_pickup_too_far]", {
     username: cleanAccountName(player?.account_username || player?.name || ""),
     current_world: cleanWorld(worldName),
@@ -9424,6 +9484,25 @@ function logDropPickupTooFar(player, worldName, dropId, drop) {
     drop_y: Number(drop?.y || 0),
     distance: Math.hypot(Number(player?.x || 0) - Number(drop?.x || 0), Number(player?.y || 0) - Number(drop?.y || 0)),
     max_distance: MAX_PICKUP_DISTANCE_PIXELS,
+    action_x: actionPosition ? Number(actionPosition.x || 0) : null,
+    action_y: actionPosition ? Number(actionPosition.y || 0) : null,
+  });
+}
+
+function logDropPickupInventoryIssue(reason, player, worldName, dropId, pickupPlan = {}, transaction = {}) {
+  console.warn("[drop_pickup_inventory_issue]", {
+    reason: cleanName(reason),
+    username: cleanAccountName(player?.account_username || player?.name || ""),
+    current_world: cleanWorld(worldName),
+    requested_drop_id: clampString(dropId || "", MAX_DROP_ID_LENGTH),
+    item_type: cleanName(pickupPlan?.item_type || transaction?.item_type || ""),
+    item_category: cleanName(pickupPlan?.item_category || transaction?.item_category || ""),
+    picked_amount: Number(pickupPlan?.pickedAmount || 0),
+    drop_amount: Number(pickupPlan?.dropAmount || 0),
+    before_amount: Number(transaction?.before_amount || 0),
+    after_amount: Number(transaction?.after_amount || 0),
+    transaction_reason: cleanName(transaction?.reason || ""),
+    transaction_message: cleanName(transaction?.message || ""),
   });
 }
 
