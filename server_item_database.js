@@ -355,6 +355,14 @@ const ITEMS = Object.freeze({
     seed: "sign_seed",
     splice_only: true,
   }),
+  mushroom: block({
+    rarity: "uncommon",
+    block_health: 2,
+    seed: "",
+    collidable: true,
+    springboard: true,
+    springboard_velocity: -420,
+  }),
 
   dirt_seed: seed("dirt", { rarity: "common" }),
   grass_seed: seed("grass", { rarity: "common" }),
