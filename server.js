@@ -126,6 +126,7 @@ const POSTGRES_AUTHORITATIVE = String(process.env.POSTGRES_AUTHORITATIVE || "tru
 const REDIS_ENABLED = String(process.env.REDIS_ENABLED || "false").trim().toLowerCase() === "true";
 const REDIS_URL = String(process.env.REDIS_URL || "redis://127.0.0.1:6379").trim();
 const REDIS_KEY_PREFIX = String(process.env.REDIS_KEY_PREFIX || "pixelmania").trim() || "pixelmania";
+const REDIS_CONNECT_TIMEOUT_MS = Math.max(250, Math.trunc(Number(process.env.REDIS_CONNECT_TIMEOUT_MS) || 1500));
 const REDIS_ACTION_LOCK_TTL_MS = Math.max(1000, Math.trunc(Number(process.env.REDIS_ACTION_LOCK_TTL_MS) || 5000));
 const REDIS_PRESENCE_TTL_MS = Math.max(10000, Math.trunc(Number(process.env.REDIS_PRESENCE_TTL_MS) || 45000));
 const REDIS_ACTIVE_SESSION_TTL_MS = Math.max(REDIS_PRESENCE_TTL_MS, Math.trunc(Number(process.env.REDIS_ACTIVE_SESSION_TTL_MS) || 120000));
@@ -226,6 +227,7 @@ const redisStore = new RedisStore({
   enabled: REDIS_ENABLED,
   url: REDIS_URL,
   keyPrefix: REDIS_KEY_PREFIX,
+  connectTimeoutMs: REDIS_CONNECT_TIMEOUT_MS,
   logger: (...args) => console.warn(...args),
 });
 
@@ -536,6 +538,7 @@ wss.on("connection", (socket) => {
       }, playerId);
 
       broadcastSystemToWorld(player.world, `${player.name} joined ${player.world}`, playerId);
+      touchLivePresence(socket, player, { force: true });
       notifyOnlineFriendsOfFriendState(player.account_username);
       return;
     }
@@ -930,7 +933,8 @@ wss.on("connection", (socket) => {
       const update = sanitizeDropPickup(data, worldName, player);
       if (!update) return;
       const dropActionKey = `${worldName}:${update.drop_id}`;
-      if (worldDropActionLocks.has(dropActionKey)) {
+      const dropLock = await acquireLiveActionLock(worldDropActionLocks, "drop", dropActionKey, player.id);
+      if (!dropLock.acquired) {
         sendActionRejected(socket, "world_item_drop_pickup", "That drop is not available.", {
           drop_id: update.drop_id,
           world: worldName,
@@ -948,7 +952,6 @@ wss.on("connection", (socket) => {
         player.facing = update.action_position.facing;
       }
 
-      worldDropActionLocks.add(dropActionKey);
       try {
         const pickupPlan = prepareDropPickup(worldName, player, update);
         if (!pickupPlan.ok) {
@@ -1084,7 +1087,7 @@ wss.on("connection", (socket) => {
           amount: pickupPlan.pickedAmount,
         });
       } finally {
-        worldDropActionLocks.delete(dropActionKey);
+        releaseLiveActionLock(dropLock);
       }
       return;
     }
@@ -1126,6 +1129,7 @@ wss.on("connection", (socket) => {
           animation_state: player.animation_state,
           equipment_slots: player.equipment_slots,
         }, playerId);
+        touchLivePresence(socket, player);
         return;
       }
     } catch (error) {
@@ -1243,6 +1247,11 @@ function handleHttpRequest(request, response) {
         world_update_requester_echo: true,
         world_update_requester_player_data: true,
       },
+      persistence: {
+        postgres_ready: postgresStore.isReady(),
+        postgres_authoritative: Boolean(postgresStore.isReady() && POSTGRES_AUTHORITATIVE),
+        redis_ready: redisStore.isReady(),
+      },
     }));
     return;
   }
@@ -1257,6 +1266,7 @@ function handleHttpRequest(request, response) {
 }
 
 async function bootstrapServer() {
+  await redisStore.init();
   await postgresStore.init();
   await loadPersistentState();
   startHttpServer();
@@ -1274,6 +1284,13 @@ function startHttpServer() {
       console.warn("PixelMania persistence: PostgreSQL is enabled but not ready; using JSON fallback.");
     } else {
       console.warn("PixelMania persistence: JSON fallback is active because POSTGRES_ENABLED=false.");
+    }
+    if (redisStore.isReady()) {
+      console.log("PixelMania live cache: Redis enabled.");
+    } else if (REDIS_ENABLED) {
+      console.warn("PixelMania live cache: Redis is enabled but not ready; using in-memory live state.");
+    } else {
+      console.warn("PixelMania live cache: in-memory only because REDIS_ENABLED=false.");
     }
     if (HOST === "0.0.0.0" || HOST === "::") {
       console.warn("HOST is bound to all interfaces. Keep port 8080 blocked by firewall unless this is intentional.");
@@ -2064,6 +2081,9 @@ function replaceActiveAccountSession(username, replacementPlayerId) {
   const existingPlayer = players.get(activePlayerId);
   const existingSocket = getSocketByPlayerId(activePlayerId);
   activeAccountSessions.delete(key);
+  redisStore.clearActiveSession(username, activePlayerId).catch((error) => {
+    console.warn("[redis] active session replacement cleanup failed:", error.message);
+  });
 
   if (existingPlayer) {
     cancelActiveTradeForPlayer(activePlayerId, "Trade canceled because the account signed on somewhere else.");
@@ -2098,7 +2118,68 @@ function releaseActiveAccountSession(player) {
   if (activeAccountSessions.get(key) === player.id) {
     activeAccountSessions.delete(key);
     postgresStore.revokeSessionsByUsername(player.account_username);
+    redisStore.clearActiveSession(player.account_username, player.id).catch((error) => {
+      console.warn("[redis] active session cleanup failed:", error.message);
+    });
+    redisStore.clearPresence(player.account_username).catch((error) => {
+      console.warn("[redis] presence cleanup failed:", error.message);
+    });
   }
+}
+
+function touchLivePresence(socket, player, options = {}) {
+  if (!redisStore.isReady() || !player || !player.authenticated || !player.account_username) return;
+  const now = Date.now();
+  const force = Boolean(options.force);
+  if (!force && now - Number(player.last_presence_at || 0) < Math.floor(REDIS_PRESENCE_TTL_MS / 3)) return;
+
+  player.last_presence_at = now;
+  const presence = {
+    username: player.account_username,
+    player_id: player.id,
+    world: player.world || "",
+    x: Math.round(Number(player.x || 0)),
+    y: Math.round(Number(player.y || 0)),
+    ip: getSocketAddress(socket),
+    updated_at: new Date(now).toISOString(),
+  };
+
+  redisStore.setPresence(player.account_username, presence, REDIS_PRESENCE_TTL_MS).catch((error) => {
+    console.warn("[redis] presence update failed:", error.message);
+  });
+  redisStore.setActiveSession(player.account_username, player.id, REDIS_ACTIVE_SESSION_TTL_MS).catch((error) => {
+    console.warn("[redis] active session update failed:", error.message);
+  });
+}
+
+async function acquireLiveActionLock(localSet, scope, resource, owner = "") {
+  const cleanResource = String(resource || "").trim();
+  if (!localSet || cleanResource === "") return { acquired: false };
+  if (localSet.has(cleanResource)) return { acquired: false };
+
+  localSet.add(cleanResource);
+  const lock = await redisStore.acquireLock(scope, cleanResource, REDIS_ACTION_LOCK_TTL_MS, owner);
+  if (!lock.acquired) {
+    localSet.delete(cleanResource);
+    return { acquired: false };
+  }
+
+  return {
+    acquired: true,
+    localSet,
+    resource: cleanResource,
+    lock,
+  };
+}
+
+function releaseLiveActionLock(lockHandle) {
+  if (!lockHandle || !lockHandle.acquired) return;
+  if (lockHandle.localSet && lockHandle.resource) {
+    lockHandle.localSet.delete(lockHandle.resource);
+  }
+  redisStore.releaseLock(lockHandle.lock).catch((error) => {
+    console.warn("[redis] action lock release failed:", error.message);
+  });
 }
 
 function activatePlayerAccount(socket, player, account, options = {}) {
@@ -2118,6 +2199,7 @@ function activatePlayerAccount(socket, player, account, options = {}) {
   player.name = account.username;
   player.role = getAccountRole(account.username);
   activeAccountSessions.set(accountKey(account.username), player.id);
+  touchLivePresence(socket, player, { force: true });
 
   return { ok: true };
 }
@@ -4193,12 +4275,12 @@ async function handleVendBuy(socket, player, data, worldName, vend) {
   }
 
   const vendActionKey = `${worldName}:${vend.x},${vend.y}`;
-  if (worldVendActionLocks.has(vendActionKey)) {
+  const vendLock = await acquireLiveActionLock(worldVendActionLocks, "vend", vendActionKey, player.id);
+  if (!vendLock.acquired) {
     rejectVendTransaction(socket, data, "That vending machine is busy.");
     return;
   }
 
-  worldVendActionLocks.add(vendActionKey);
   try {
     const vendTransactionId = makeAuditId("vend");
     const transaction = await postgresStore.applyVendBuyTransaction({
@@ -4290,7 +4372,7 @@ async function handleVendBuy(socket, player, data, worldName, vend) {
     sendVendStateUpdateToWorld(worldName, savedVend);
     sendVendTransactionResult(socket, data, player, savedVend, true, "Purchase complete.", buyerState);
   } finally {
-    worldVendActionLocks.delete(vendActionKey);
+    releaseLiveActionLock(vendLock);
   }
 }
 
@@ -5891,20 +5973,51 @@ function getRawLength(raw) {
   return Buffer.byteLength(String(raw || ""), "utf8");
 }
 
-function checkMessageRateLimit(socket, messageType) {
+function getRateLimitSubject(socket, player) {
+  const username = accountKey(player?.account_username || "");
+  if (username !== "") return `account:${username}`;
+  const ip = getSocketAddress(socket);
+  if (ip !== "") return `ip:${ip}`;
+  return `socket:${socket?.playerId || "unknown"}`;
+}
+
+function notifyRateLimited(socket, bucketKey) {
+  const now = Date.now();
+  if (!socket.rateLimitWarnings) socket.rateLimitWarnings = new Map();
+  const lastWarnedAt = socket.rateLimitWarnings.get(bucketKey) || 0;
+  if (now - lastWarnedAt <= 1000 || socket.readyState !== WebSocket.OPEN) return;
+
+  socket.rateLimitWarnings.set(bucketKey, now);
+  socket.send(JSON.stringify({
+    type: "rate_limited",
+    action: bucketKey,
+    message: "Slow down a little.",
+  }));
+}
+
+async function checkMessageRateLimit(socket, player, messageType) {
   const limits = MESSAGE_RATE_LIMITS[messageType] || { limit: 60, windowMs: 1000 };
   const now = Date.now();
   const bucketKey = messageType || "unknown";
+
+  if (redisStore.isReady()) {
+    const subject = getRateLimitSubject(socket, player);
+    const result = await redisStore.checkRateLimit(`message:${bucketKey}`, subject, limits.limit, limits.windowMs);
+    if (result.allowed) {
+      return true;
+    }
+    notifyRateLimited(socket, bucketKey);
+    return false;
+  }
+
   const bucket = socket.rateLimits.get(bucketKey) || {
     count: 0,
     resetAt: now + limits.windowMs,
-    warnedAt: 0,
   };
 
   if (now >= bucket.resetAt) {
     bucket.count = 0;
     bucket.resetAt = now + limits.windowMs;
-    bucket.warnedAt = 0;
   }
 
   bucket.count += 1;
@@ -5914,15 +6027,7 @@ function checkMessageRateLimit(socket, messageType) {
     return true;
   }
 
-  if (now - bucket.warnedAt > 1000 && socket.readyState === WebSocket.OPEN) {
-    bucket.warnedAt = now;
-    socket.send(JSON.stringify({
-      type: "rate_limited",
-      action: bucketKey,
-      message: "Slow down a little.",
-    }));
-  }
-
+  notifyRateLimited(socket, bucketKey);
   return false;
 }
 
@@ -10242,6 +10347,7 @@ async function shutdown(signal = "") {
   flushPendingSaves();
   await waitForPersistenceWrites();
   await postgresStore.close();
+  await redisStore.close();
   process.exit(0);
 }
 

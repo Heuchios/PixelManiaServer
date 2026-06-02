@@ -19,6 +19,10 @@ function toInt(value, fallback = 0) {
   return Math.trunc(parsed);
 }
 
+function delay(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 function safeKeyPart(value) {
   return clean(value)
     .toLowerCase()
@@ -32,6 +36,7 @@ class RedisStore {
     this.url = clean(options.url || "redis://127.0.0.1:6379");
     this.keyPrefix = safeKeyPart(options.keyPrefix || "pixelmania");
     this.logger = typeof options.logger === "function" ? options.logger : ((...args) => console.warn(...args));
+    this.connectTimeoutMs = Math.max(250, toInt(options.connectTimeoutMs, 1500));
     this.client = null;
     this.ready = false;
     this.lastErrorLogAt = 0;
@@ -78,13 +83,31 @@ class RedisStore {
       this.logFailure("client", error);
     });
 
+    let connectPromise = null;
     try {
-      await this.client.connect();
+      connectPromise = this.client.connect();
+      await Promise.race([
+        connectPromise,
+        delay(this.connectTimeoutMs).then(() => {
+          throw new Error(`connect timeout after ${this.connectTimeoutMs}ms`);
+        }),
+      ]);
       await this.client.sendCommand(["PING"]);
       this.ready = true;
       this.logger("[redis] connected.");
     } catch (error) {
+      if (connectPromise) connectPromise.catch(() => null);
       this.ready = false;
+      try {
+        if (this.client && typeof this.client.destroy === "function") {
+          this.client.destroy();
+        } else if (this.client && typeof this.client.disconnect === "function") {
+          this.client.disconnect().catch(() => null);
+        }
+      } catch {
+        // Ignore cleanup errors after a failed Redis connect.
+      }
+      this.client = null;
       this.logFailure("initialization", error);
     }
   }
