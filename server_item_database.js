@@ -617,7 +617,7 @@ function getFishingTable(lureId) {
 }
 
 function cleanItemId(itemId) {
-  return String(itemId || "").trim();
+  return String(itemId || "").trim().toLowerCase();
 }
 
 function getItemDefinition(itemId) {
