@@ -341,11 +341,13 @@ const ITEMS = Object.freeze({
     block_health: 2,
     seed: "wood_platform_seed",
   }),
-  wooden_door: block({
+  wooden_entrance: block({
     rarity: "rare",
     block_health: 4,
-    seed: "wooden_door_seed",
+    seed: "wooden_entrance_seed",
+    no_collision: true,
     craft_only: true,
+    interact_rules: { can_interact: true, interaction_message: "Lock or unlock entrance." },
   }),
   sign: block({
     rarity: "uncommon",
@@ -373,7 +375,7 @@ const ITEMS = Object.freeze({
   vines_seed: seed("vines", { rarity: "common" }),
   wood_plank_seed: seed("wood_plank", { rarity: "uncommon" }),
   wood_platform_seed: seed("wood_platform", { rarity: "uncommon" }),
-  wooden_door_seed: seed("wooden_door", { rarity: "rare" }),
+  wooden_entrance_seed: seed("wooden_entrance", { rarity: "rare" }),
   sign_seed: seed("sign", { rarity: "uncommon" }),
   stone_brick_seed: seed("stone_brick", { rarity: "uncommon" }),
   glass_panel_seed: seed("glass_panel", { rarity: "rare" }),
@@ -553,7 +555,7 @@ const STATION_RECIPES = Object.freeze({
 const SPLICE_RECIPES = Object.freeze({
   "wood_seed+wood_seed": "wood_plank_seed",
   "grass_seed+wood_seed": "wood_platform_seed",
-  "leaf_seed+wood_seed": "wooden_door_seed",
+  "leaf_seed+wood_seed": "wooden_entrance_seed",
   "stone_seed+wood_seed": "sign_seed",
   "lava_seed+stone_seed": "stone_brick_seed",
   "glass_seed+lava_seed": "gem_block_seed",

@@ -804,7 +804,9 @@ wss.on("connection", (socket) => {
         return;
       }
 
-      if (update.action === "world_lock_state") {
+      if (update.action === "wooden_entrance_state") {
+        if (!prepareWoodenEntranceStateUpdate(socket, player, worldName, update)) return;
+      } else if (update.action === "world_lock_state") {
         if (!prepareWorldLockStateUpdate(socket, player, worldName, update)) return;
       } else if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) {
         return;
@@ -823,8 +825,8 @@ wss.on("connection", (socket) => {
         interactionDetails.public_build = Boolean(update.state.public_build);
       } else if (update.action === "sign_text") {
         interactionDetails.text_length = String(update.text || "").length;
-      } else if (update.action === "door_state") {
-        interactionDetails.open = Boolean(update.open);
+      } else if (update.action === "wooden_entrance_state") {
+        interactionDetails.locked = Boolean(update.locked);
       }
       logWorldChange(socket, player, {
         source_type: "world_interaction_update",
@@ -6848,6 +6850,10 @@ function canWorldLockRoleBuild(role) {
   return cleanRole === "admin" || cleanRole === "builder";
 }
 
+function canWorldLockRoleToggleWoodenEntrance(role) {
+  return normalizeWorldLockAccessRole(role, "") === "admin";
+}
+
 function getWorldLockRoleForAccount(lock, username) {
   const playerKey = accountKey(username);
   if (playerKey === "") return "";
@@ -6867,6 +6873,43 @@ function getWorldLockRoleForAccount(lock, username) {
   }
 
   return "";
+}
+
+function canPlayerToggleWoodenEntrance(player, worldName) {
+  if (isAdmin(player)) return true;
+  if (!player || !player.authenticated) return false;
+
+  const state = ensureWorldState(worldName);
+  const lock = state.world_lock || {};
+  if (!lock.is_locked) return true;
+
+  const playerKey = accountKey(player.account_username);
+  if (playerKey === "") return false;
+  if (accountKey(lock.owner_name || lock.owner_username || "") === playerKey) return true;
+
+  return canWorldLockRoleToggleWoodenEntrance(getWorldLockRoleForAccount(lock, player.account_username));
+}
+
+function prepareWoodenEntranceStateUpdate(socket, player, worldName, update) {
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
+  if (!block || block.block_type !== "wooden_entrance") {
+    sendActionRejected(socket, "world_interaction_update", "Wooden Entrance missing.");
+    return false;
+  }
+
+  if (!isPlayerNearGrid(player, update.x, update.y)) {
+    sendActionRejected(socket, "world_interaction_update", "Too far away.");
+    return false;
+  }
+
+  if (!canPlayerToggleWoodenEntrance(player, worldName)) {
+    sendActionRejected(socket, "world_interaction_update", "Only the world owner or world admins can lock this entrance.");
+    return false;
+  }
+
+  update.locked = Boolean(update.locked);
+  return true;
 }
 
 function sanitizePlayerPosition(data, player) {
@@ -8716,8 +8759,8 @@ function normalizeBlockEntry(rawEntry) {
     block_type: blockType,
   };
 
-  if (Object.prototype.hasOwnProperty.call(rawEntry, "door_open")) {
-    entry.door_open = Boolean(rawEntry.door_open);
+  if (Object.prototype.hasOwnProperty.call(rawEntry, "entrance_locked")) {
+    entry.entrance_locked = Boolean(rawEntry.entrance_locked);
   }
 
   if (Object.prototype.hasOwnProperty.call(rawEntry, "sign_text")) {
@@ -8796,12 +8839,12 @@ function loadInteractionsIntoMap(target, rawEntries, worldName = "") {
     const gridY = Math.trunc(y);
     if (!isGridInWorld(gridX, gridY)) continue;
 
-    if (action === "door_state") {
+    if (action === "wooden_entrance_state") {
       target.set(gridKey(gridX, gridY), {
         action,
         x: gridX,
         y: gridY,
-        open: Boolean(rawEntry.open),
+        locked: Boolean(rawEntry.locked),
         world: cleanWorld(rawEntry.world || ""),
       });
     } else if (action === "sign_text") {
@@ -8923,7 +8966,7 @@ function applyBlockUpdateToWorldState(worldName, update) {
       block_type: update.block_type,
     });
     removed.delete(key);
-    if (update.block_type !== "wooden_door" && update.block_type !== "sign") {
+    if (update.block_type !== "wooden_entrance" && update.block_type !== "sign") {
       state.interactions.delete(key);
     }
     return;
@@ -9047,7 +9090,7 @@ function isProtectedEntranceSupportBlock(blockType) {
     isVendBlockType(clean) ||
     clean === "crafting_station" ||
     clean === "furnace" ||
-    clean === "wooden_door" ||
+    clean === "wooden_entrance" ||
     clean === "sign"
   );
 }
@@ -9304,7 +9347,7 @@ function sanitizeInteractionUpdate(data, worldName) {
     };
   }
 
-  if (action === "door_state") {
+  if (action === "wooden_entrance_state") {
     const x = Number(data.x);
     const y = Number(data.y);
     if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
@@ -9318,7 +9361,7 @@ function sanitizeInteractionUpdate(data, worldName) {
       action,
       x: gridX,
       y: gridY,
-      open: Boolean(data.open),
+      locked: Boolean(data.locked),
     };
   }
 
@@ -9410,12 +9453,12 @@ function interactionKey(update) {
 function applyInteractionUpdateToWorldState(worldName, update) {
   const state = ensureWorldState(worldName);
 
-  if (update.action === "door_state") {
+  if (update.action === "wooden_entrance_state") {
     state.interactions.set(interactionKey(update), {
       action: update.action,
       x: update.x,
       y: update.y,
-      open: update.open,
+      locked: update.locked,
       world: cleanWorld(worldName),
     });
     return;
@@ -9886,8 +9929,8 @@ function getForegroundBlocksForState(state) {
     const entry = { ...block };
     const interaction = state.interactions.get(gridKey(block.x, block.y));
 
-    if (interaction && interaction.action === "door_state") {
-      entry.door_open = Boolean(interaction.open);
+    if (interaction && interaction.action === "wooden_entrance_state") {
+      entry.entrance_locked = Boolean(interaction.locked);
     } else if (interaction && interaction.action === "sign_text") {
       entry.sign_text = String(interaction.text || "");
     }
