@@ -936,6 +936,7 @@ wss.on("connection", (socket) => {
         const pickupPlan = prepareDropPickup(worldName, player, update);
         if (!pickupPlan.ok) {
           if (pickupPlan.reason === "inventory_full") {
+            logDropPickupInventoryIssue("inventory_full", player, worldName, update.drop_id, pickupPlan);
             sendActionRejected(socket, "world_item_drop_pickup", "Inventory full.", {
               drop_id: update.drop_id,
               world: worldName,
@@ -9463,10 +9464,37 @@ function prepareDropPickup(worldName, player, update) {
 
   const currentCount = getInventoryCount(playerState, itemType, itemCategory);
   const availableSpace = Math.max(0, stackLimit - currentCount);
-  if (availableSpace <= 0) return { ok: false, reason: "inventory_full", drop, world: cleanWorldName };
+  if (availableSpace <= 0) {
+    return {
+      ok: false,
+      reason: "inventory_full",
+      drop,
+      world: cleanWorldName,
+      item_type: itemType,
+      item_category: itemCategory,
+      stackLimit,
+      currentCount,
+      availableSpace,
+      dropAmount,
+    };
+  }
 
   const pickedAmount = Math.min(dropAmount, availableSpace);
-  if (pickedAmount <= 0) return { ok: false, reason: "inventory_full", drop, world: cleanWorldName };
+  if (pickedAmount <= 0) {
+    return {
+      ok: false,
+      reason: "inventory_full",
+      drop,
+      world: cleanWorldName,
+      item_type: itemType,
+      item_category: itemCategory,
+      stackLimit,
+      currentCount,
+      availableSpace,
+      dropAmount,
+      pickedAmount,
+    };
+  }
 
   return {
     ok: true,
@@ -9656,6 +9684,9 @@ function logDropPickupInventoryIssue(reason, player, worldName, dropId, pickupPl
     requested_drop_id: clampString(dropId || "", MAX_DROP_ID_LENGTH),
     item_type: cleanName(pickupPlan?.item_type || transaction?.item_type || ""),
     item_category: cleanName(pickupPlan?.item_category || transaction?.item_category || ""),
+    stack_limit: Number(pickupPlan?.stackLimit || transaction?.stack_limit || 0),
+    current_count: Number(pickupPlan?.currentCount || 0),
+    available_space: Number(pickupPlan?.availableSpace || 0),
     picked_amount: Number(pickupPlan?.pickedAmount || 0),
     drop_amount: Number(pickupPlan?.dropAmount || 0),
     before_amount: Number(transaction?.before_amount || 0),
