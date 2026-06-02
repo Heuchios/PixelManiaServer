@@ -362,6 +362,7 @@ const ITEMS = Object.freeze({
     collidable: true,
     springboard: true,
     springboard_velocity: -420,
+    springboard_animation_frame_seconds: 0.22,
   }),
 
   dirt_seed: seed("dirt", { rarity: "common" }),
