@@ -29,8 +29,8 @@ const INVENTORY_FIELD_CATEGORY = Object.freeze([
 const PLAYER_LEVEL_MIN = 1;
 const PLAYER_LEVEL_MAX = 100;
 const PLAYER_XP_FIRST_LEVEL = 100;
-const POSTGRES_TRANSACTION_MAX_ATTEMPTS = 3;
-const POSTGRES_TRANSACTION_RETRY_BASE_DELAY_MS = 35;
+const POSTGRES_TRANSACTION_MAX_ATTEMPTS = 5;
+const POSTGRES_TRANSACTION_RETRY_BASE_DELAY_MS = 75;
 const DEFAULT_INVENTORY_STACK_LIMIT = ItemDatabase.DEFAULT_STACK_LIMIT || 200;
 const MAX_INVENTORY_STACK_LIMIT = ItemDatabase.GEM_CURRENCY_STACK_LIMIT || 100000000000;
 
@@ -219,6 +219,9 @@ class PostgresStore {
     this.pool = null;
     this.bootstrapSqlPath = cleanName(options.bootstrapSqlPath || "");
     this.autoBootstrap = Boolean(options.autoBootstrap);
+    this.writeQueue = Promise.resolve();
+    this.writeQueueDepth = 0;
+    this.maxWriteQueueDepth = Math.max(100, toInt(options.maxWriteQueueDepth, 1000));
 
     if (!this.enabled) return;
     if (!PoolClass) {
@@ -385,6 +388,7 @@ class PostgresStore {
   }
 
   async close() {
+    await this.flushWriteQueue();
     if (!this.pool) return;
     try {
       await this.pool.end();
@@ -393,7 +397,43 @@ class PostgresStore {
     }
   }
 
+  async flushWriteQueue() {
+    try {
+      await this.writeQueue;
+    } catch {
+      // The queue keeps itself alive after failures; callers handle individual errors.
+    }
+  }
+
+  enqueueWrite(label, work) {
+    if (!this.isReady()) return Promise.resolve(null);
+    const cleanLabel = cleanName(label || "transaction") || "transaction";
+    if (this.writeQueueDepth >= this.maxWriteQueueDepth) {
+      const error = new Error(`write queue is full while scheduling ${cleanLabel}`);
+      error.code = "POSTGRES_WRITE_QUEUE_FULL";
+      return Promise.reject(error);
+    }
+
+    this.writeQueueDepth += 1;
+    const run = this.writeQueue
+      .catch(() => null)
+      .then(async () => {
+        try {
+          return await work();
+        } finally {
+          this.writeQueueDepth = Math.max(0, this.writeQueueDepth - 1);
+        }
+      });
+    this.writeQueue = run.then(() => null, () => null);
+    return run;
+  }
+
   async withTransaction(work) {
+    if (!this.isReady()) return null;
+    return this.enqueueWrite("transaction", () => this.withTransactionNow(work));
+  }
+
+  async withTransactionNow(work) {
     if (!this.isReady()) return null;
 
     for (let attempt = 1; attempt <= POSTGRES_TRANSACTION_MAX_ATTEMPTS; attempt += 1) {
@@ -683,10 +723,10 @@ class PostgresStore {
           password_hash: String(accountState.password_hash || row.password_hash || ""),
           session_token_hash: cleanName(accountState.session_token_hash || row.session_token_hash || ""),
           session_token_expires_at: cleanName(accountState.session_token_expires_at || normalizeOptionalTimestamp(row.session_token_expires_at) || ""),
-          email_verified: Object.prototype.hasOwnProperty.call(accountState, "email_verified") ? Boolean(accountState.email_verified) : Boolean(row.email_verified),
-          email_verified_at: cleanName(accountState.email_verified_at || normalizeOptionalTimestamp(row.email_verified_at) || ""),
-          email_verification_token_hash: cleanName(accountState.email_verification_token_hash || row.email_verification_token_hash || ""),
-          email_verification_expires_at: cleanName(accountState.email_verification_expires_at || normalizeOptionalTimestamp(row.email_verification_expires_at) || ""),
+          email_verified: Boolean(row.email_verified),
+          email_verified_at: cleanName(normalizeOptionalTimestamp(row.email_verified_at) || accountState.email_verified_at || ""),
+          email_verification_token_hash: cleanName(row.email_verification_token_hash || accountState.email_verification_token_hash || ""),
+          email_verification_expires_at: cleanName(normalizeOptionalTimestamp(row.email_verification_expires_at) || accountState.email_verification_expires_at || ""),
           role: cleanName(accountState.role || row.role || "player") || "player",
           created_at: cleanName(accountState.created_at || normalizeOptionalTimestamp(row.created_at) || ""),
           last_seen_at: cleanName(accountState.last_seen_at || normalizeOptionalTimestamp(row.last_login_at) || ""),

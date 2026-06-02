@@ -8,6 +8,7 @@ const nodemailer = require("nodemailer");
 const path = require("path");
 const ItemDatabase = require("./server_item_database");
 const PostgresStore = require("./postgres_store");
+const RedisStore = require("./redis_store");
 
 const HOST = String(process.env.HOST || "127.0.0.1").trim() || "127.0.0.1";
 const PORT = Math.max(1, Math.trunc(Number(process.env.PORT) || 8080));
@@ -116,11 +117,18 @@ const POSTGRES_SCHEMA = String(process.env.POSTGRES_SCHEMA || "pixelmania").trim
 const POSTGRES_POOL_MAX = Math.max(1, Math.trunc(Number(process.env.POSTGRES_POOL_MAX) || 10));
 const POSTGRES_IDLE_TIMEOUT_MS = Math.max(1000, Math.trunc(Number(process.env.POSTGRES_IDLE_TIMEOUT_MS) || 30000));
 const POSTGRES_CONNECT_TIMEOUT_MS = Math.max(1000, Math.trunc(Number(process.env.POSTGRES_CONNECT_TIMEOUT_MS) || 8000));
+const POSTGRES_WRITE_QUEUE_MAX = Math.max(100, Math.trunc(Number(process.env.POSTGRES_WRITE_QUEUE_MAX) || 1000));
 const POSTGRES_BOOTSTRAP_SQL_PATH = String(
   process.env.POSTGRES_BOOTSTRAP_SQL_PATH ||
   path.join(__dirname, "docs", "postgres_security_foundation.sql")
 ).trim();
 const POSTGRES_AUTHORITATIVE = String(process.env.POSTGRES_AUTHORITATIVE || "true").trim().toLowerCase() !== "false";
+const REDIS_ENABLED = String(process.env.REDIS_ENABLED || "false").trim().toLowerCase() === "true";
+const REDIS_URL = String(process.env.REDIS_URL || "redis://127.0.0.1:6379").trim();
+const REDIS_KEY_PREFIX = String(process.env.REDIS_KEY_PREFIX || "pixelmania").trim() || "pixelmania";
+const REDIS_ACTION_LOCK_TTL_MS = Math.max(1000, Math.trunc(Number(process.env.REDIS_ACTION_LOCK_TTL_MS) || 5000));
+const REDIS_PRESENCE_TTL_MS = Math.max(10000, Math.trunc(Number(process.env.REDIS_PRESENCE_TTL_MS) || 45000));
+const REDIS_ACTIVE_SESSION_TTL_MS = Math.max(REDIS_PRESENCE_TTL_MS, Math.trunc(Number(process.env.REDIS_ACTIVE_SESSION_TTL_MS) || 120000));
 const ADMIN_USERNAMES = new Set(["uso"]);
 const MESSAGE_RATE_LIMITS = {
   login: { limit: 10, windowMs: 10000 },
@@ -211,6 +219,13 @@ const postgresStore = new PostgresStore({
   poolMax: POSTGRES_POOL_MAX,
   idleTimeoutMs: POSTGRES_IDLE_TIMEOUT_MS,
   connectTimeoutMs: POSTGRES_CONNECT_TIMEOUT_MS,
+  maxWriteQueueDepth: POSTGRES_WRITE_QUEUE_MAX,
+  logger: (...args) => console.warn(...args),
+});
+const redisStore = new RedisStore({
+  enabled: REDIS_ENABLED,
+  url: REDIS_URL,
+  keyPrefix: REDIS_KEY_PREFIX,
   logger: (...args) => console.warn(...args),
 });
 
@@ -259,6 +274,7 @@ wss.on("connection", (socket) => {
     equipment_slots: {},
     client_version: "",
     last_position_at: 0,
+    last_presence_at: 0,
     last_block_break_at: 0,
     noclip_enabled: false,
     developer_pin_unlocked_until: 0,
@@ -266,6 +282,7 @@ wss.on("connection", (socket) => {
 
   socket.playerId = playerId;
   socket.rateLimits = new Map();
+  socket.rateLimitWarnings = new Map();
   socket.authRequiredNotices = new Map();
 
   socket.send(JSON.stringify({
@@ -293,7 +310,7 @@ wss.on("connection", (socket) => {
       const player = players.get(playerId);
       if (!player) return;
 
-      if (!checkMessageRateLimit(socket, String(data.type || "unknown"))) return;
+      if (!(await checkMessageRateLimit(socket, player, String(data.type || "unknown")))) return;
 
       const clientVersion = getClientVersion(data);
       if (!isClientVersionAllowed(clientVersion)) {
@@ -1472,6 +1489,7 @@ function isPostgresAuthoritativeReady() {
 
 async function loadPersistentState() {
   loadAccountsFromJson();
+  const jsonAccounts = new Map(accounts);
 
   if (!isPostgresAuthoritativeReady()) {
     return;
@@ -1485,6 +1503,16 @@ async function loadPersistentState() {
       if (account) accounts.set(accountKey(account.username), account);
     }
     console.log(`[postgres] loaded ${accounts.size} account(s) from PostgreSQL.`);
+    const missingAccounts = [];
+    for (const [key, account] of jsonAccounts.entries()) {
+      if (accounts.has(key)) continue;
+      accounts.set(key, account);
+      missingAccounts.push(account);
+    }
+    if (missingAccounts.length > 0) {
+      await postgresStore.saveAccountStates(missingAccounts);
+      console.log(`[postgres] imported ${missingAccounts.length} missing JSON account(s) into PostgreSQL.`);
+    }
   } else if (accounts.size > 0) {
     await postgresStore.saveAccountStates(Array.from(accounts.values()));
     console.log(`[postgres] imported ${accounts.size} JSON account(s) into PostgreSQL.`);
@@ -1498,6 +1526,17 @@ async function loadPersistentState() {
       if (state) playerStates.set(accountKey(state.account_username), state);
     }
     console.log(`[postgres] loaded ${playerStates.size} player state(s) from PostgreSQL.`);
+    const missingPlayers = [];
+    for (const state of readPlayerStatesFromJsonFolder()) {
+      const key = accountKey(state.account_username);
+      if (playerStates.has(key)) continue;
+      playerStates.set(key, state);
+      missingPlayers.push({ username: state.account_username, state });
+    }
+    if (missingPlayers.length > 0) {
+      await postgresStore.savePlayerStates(missingPlayers);
+      console.log(`[postgres] imported ${missingPlayers.length} missing JSON player state(s) into PostgreSQL.`);
+    }
   } else {
     const importedPlayers = loadPlayerStatesFromJsonFolder();
     if (importedPlayers > 0) {
@@ -1517,6 +1556,18 @@ async function loadPersistentState() {
       worldStates.set(cleanWorldName, deserializeWorldState(cleanWorldName, entry.state || {}));
     }
     console.log(`[postgres] loaded ${worldStates.size} world state(s) from PostgreSQL.`);
+    const missingWorlds = [];
+    for (const entry of readWorldStatesFromJsonFolder()) {
+      if (worldStates.has(entry.worldName)) continue;
+      worldStates.set(entry.worldName, entry.state);
+      missingWorlds.push(entry.worldName);
+    }
+    for (const worldName of missingWorlds) {
+      await postgresStore.saveWorldState(worldName, serializeWorldState(worldName));
+    }
+    if (missingWorlds.length > 0) {
+      console.log(`[postgres] imported ${missingWorlds.length} missing JSON world state(s) into PostgreSQL.`);
+    }
   } else {
     const importedWorlds = loadWorldStatesFromJsonFolder();
     for (const [worldName] of worldStates.entries()) {
@@ -1541,8 +1592,8 @@ function listJsonFiles(folder) {
   }
 }
 
-function loadPlayerStatesFromJsonFolder() {
-  let loaded = 0;
+function readPlayerStatesFromJsonFolder() {
+  const states = [];
   for (const filePath of listJsonFiles(PLAYER_SAVE_FOLDER)) {
     const data = readJsonFile(filePath);
     if (!data || typeof data !== "object" || Array.isArray(data)) continue;
@@ -1551,20 +1602,39 @@ function loadPlayerStatesFromJsonFolder() {
     const state = sanitizePlayerState(data.player_data || data, data.username || fallbackUsername);
     if (!state) continue;
 
+    states.push(state);
+  }
+  return states;
+}
+
+function loadPlayerStatesFromJsonFolder() {
+  let loaded = 0;
+  for (const state of readPlayerStatesFromJsonFolder()) {
     playerStates.set(accountKey(state.account_username), state);
     loaded += 1;
   }
   return loaded;
 }
 
-function loadWorldStatesFromJsonFolder() {
-  let loaded = 0;
+function readWorldStatesFromJsonFolder() {
+  const states = [];
   for (const filePath of listJsonFiles(WORLD_SAVE_FOLDER)) {
     const data = readJsonFile(filePath);
     if (!data || typeof data !== "object" || Array.isArray(data)) continue;
 
     const worldName = cleanWorld(data.world_name || path.basename(filePath, ".json"));
-    worldStates.set(worldName, deserializeWorldState(worldName, data));
+    states.push({
+      worldName,
+      state: deserializeWorldState(worldName, data),
+    });
+  }
+  return states;
+}
+
+function loadWorldStatesFromJsonFolder() {
+  let loaded = 0;
+  for (const entry of readWorldStatesFromJsonFolder()) {
+    worldStates.set(entry.worldName, entry.state);
     loaded += 1;
   }
   return loaded;
