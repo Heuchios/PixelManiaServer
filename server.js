@@ -60,6 +60,8 @@ const PLAYER_LEVEL_MAX = 100;
 const PLAYER_XP_FIRST_LEVEL = 100;
 const ALLOW_LEGACY_PLAYER_STATE_IMPORT = !["0", "false", "no"].includes(String(process.env.ALLOW_LEGACY_PLAYER_STATE_IMPORT || "true").trim().toLowerCase());
 const MAX_MOVE_PIXELS_PER_SECOND = 900;
+const LAVA_REBOUND_MOVE_EXTRA_PIXELS = TILE_SIZE * 4;
+const LAVA_REBOUND_MOVE_RADIUS_TILES = 1;
 const MAX_PICKUP_DISTANCE_PIXELS = TILE_SIZE * 6;
 const MAX_GRID_ACTION_DISTANCE_PIXELS = TILE_SIZE * 6;
 const MAX_DROP_CREATE_DISTANCE_PIXELS = TILE_SIZE * 6;
@@ -128,6 +130,7 @@ const REDIS_URL = String(process.env.REDIS_URL || "redis://127.0.0.1:6379").trim
 const REDIS_KEY_PREFIX = String(process.env.REDIS_KEY_PREFIX || "pixelmania").trim() || "pixelmania";
 const REDIS_CONNECT_TIMEOUT_MS = Math.max(250, Math.trunc(Number(process.env.REDIS_CONNECT_TIMEOUT_MS) || 1500));
 const REDIS_ACTION_LOCK_TTL_MS = Math.max(1000, Math.trunc(Number(process.env.REDIS_ACTION_LOCK_TTL_MS) || 5000));
+const REDIS_ACTION_LOCK_GUARD_MS = Math.max(3000, REDIS_ACTION_LOCK_TTL_MS + 3000);
 const REDIS_PRESENCE_TTL_MS = Math.max(10000, Math.trunc(Number(process.env.REDIS_PRESENCE_TTL_MS) || 45000));
 const REDIS_ACTIVE_SESSION_TTL_MS = Math.max(REDIS_PRESENCE_TTL_MS, Math.trunc(Number(process.env.REDIS_ACTIVE_SESSION_TTL_MS) || 120000));
 const ADMIN_USERNAMES = new Set(["uso"]);
@@ -1229,7 +1232,7 @@ function sendHtml(response, statusCode, title, message) {
 </html>`);
 }
 
-function handleHttpRequest(request, response) {
+async function handleHttpRequest(request, response) {
   let url;
   try {
     url = new URL(request.url || "/", `http://${request.headers.host || "localhost"}`);
@@ -1239,6 +1242,7 @@ function handleHttpRequest(request, response) {
   }
 
   if (request.method === "GET" && url.pathname === "/health") {
+    const redisHealth = await redisStore.getHealthSnapshot();
     response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
     response.end(JSON.stringify({
       ok: true,
@@ -1253,6 +1257,7 @@ function handleHttpRequest(request, response) {
         postgres_ready: postgresStore.isReady(),
         postgres_authoritative: Boolean(postgresStore.isReady() && POSTGRES_AUTHORITATIVE),
         redis_ready: redisStore.isReady(),
+        redis_stats: redisHealth,
       },
     }));
     return;
@@ -2154,6 +2159,32 @@ function touchLivePresence(socket, player, options = {}) {
   });
 }
 
+function scheduleLiveActionLockCleanup(lockHandle) {
+  if (!lockHandle || !lockHandle.localSet || !lockHandle.resource) return;
+  if (lockHandle.cleanupTimer) return;
+
+  const timer = setTimeout(() => {
+    if (!lockHandle.released && lockHandle.localSet && lockHandle.resource) {
+      const removed = lockHandle.localSet.delete(lockHandle.resource);
+      if (removed) {
+        console.warn("[redis] auto-released stale local action lock", {
+          scope: lockHandle.scope,
+          resource: lockHandle.resource,
+        });
+      }
+    }
+  }, REDIS_ACTION_LOCK_GUARD_MS);
+
+  if (typeof timer.unref === "function") timer.unref();
+  lockHandle.cleanupTimer = timer;
+}
+
+function clearLiveActionLockCleanup(lockHandle) {
+  if (!lockHandle || !lockHandle.cleanupTimer) return;
+  clearTimeout(lockHandle.cleanupTimer);
+  lockHandle.cleanupTimer = null;
+}
+
 async function acquireLiveActionLock(localSet, scope, resource, owner = "") {
   const cleanResource = String(resource || "").trim();
   if (!localSet || cleanResource === "") return { acquired: false };
@@ -2166,12 +2197,17 @@ async function acquireLiveActionLock(localSet, scope, resource, owner = "") {
     return { acquired: false };
   }
 
-  return {
+  const lockHandle = {
     acquired: true,
     localSet,
     resource: cleanResource,
     lock,
+    scope,
+    owner,
+    released: false,
   };
+  scheduleLiveActionLockCleanup(lockHandle);
+  return lockHandle;
 }
 
 function releaseLiveActionLock(lockHandle) {
@@ -2179,6 +2215,8 @@ function releaseLiveActionLock(lockHandle) {
   if (lockHandle.localSet && lockHandle.resource) {
     lockHandle.localSet.delete(lockHandle.resource);
   }
+  clearLiveActionLockCleanup(lockHandle);
+  lockHandle.released = true;
   redisStore.releaseLock(lockHandle.lock).catch((error) => {
     console.warn("[redis] action lock release failed:", error.message);
   });
@@ -6942,8 +6980,11 @@ function acceptPlayerMovement(socket, player, position, options = {}) {
   }
 
   const elapsedSeconds = Math.max((now - lastAt) / 1000, 0.016);
-  const maxDistance = MAX_MOVE_PIXELS_PER_SECOND * elapsedSeconds + TILE_SIZE * 2;
+  let maxDistance = MAX_MOVE_PIXELS_PER_SECOND * elapsedSeconds + TILE_SIZE * 2;
   const distance = Math.hypot(position.x - player.x, position.y - player.y);
+  if (distance > maxDistance && isMovementNearLavaRebound(player, position)) {
+    maxDistance += LAVA_REBOUND_MOVE_EXTRA_PIXELS;
+  }
 
   if (distance > maxDistance) {
     if (!silent) {
@@ -6954,6 +6995,43 @@ function acceptPlayerMovement(socket, player, position, options = {}) {
 
   player.last_position_at = now;
   return true;
+}
+
+function isMovementNearLavaRebound(player, position) {
+  const worldName = cleanWorld(position?.world || player?.world || "");
+  if (worldName === "") return false;
+
+  return (
+    isPositionNearLavaReboundBlock(worldName, player?.x, player?.y) ||
+    isPositionNearLavaReboundBlock(worldName, position?.x, position?.y)
+  );
+}
+
+function isPositionNearLavaReboundBlock(worldName, x, y) {
+  const px = Number(x);
+  const py = Number(y);
+  if (!Number.isFinite(px) || !Number.isFinite(py)) return false;
+
+  const state = ensureWorldState(worldName);
+  const gridX = Math.round(px / TILE_SIZE);
+  const gridY = Math.round(py / TILE_SIZE);
+
+  for (let dy = -LAVA_REBOUND_MOVE_RADIUS_TILES; dy <= LAVA_REBOUND_MOVE_RADIUS_TILES; dy += 1) {
+    for (let dx = -LAVA_REBOUND_MOVE_RADIUS_TILES; dx <= LAVA_REBOUND_MOVE_RADIUS_TILES; dx += 1) {
+      const block = state.foreground.get(gridKey(gridX + dx, gridY + dy));
+      if (isLavaReboundBlockType(block?.block_type)) return true;
+    }
+  }
+
+  return false;
+}
+
+function isLavaReboundBlockType(blockType) {
+  const clean = clampString(blockType || "");
+  if (clean === "lava") return true;
+
+  const definition = ItemDatabase.getItemDefinition(clean);
+  return Boolean(definition?.lava_rebound);
 }
 
 function getSocketAddress(socket) {

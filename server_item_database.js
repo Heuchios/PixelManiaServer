@@ -93,6 +93,10 @@ const ITEMS = Object.freeze({
     rarity: "rare",
     block_health: 4,
     seed: "lava_seed",
+    lava_rebound: true,
+    lava_top_velocity: -420,
+    lava_side_knockback_velocity: 300,
+    lava_bottom_knockback_velocity: 280,
     drop_rules: { seed_chance: 0.03, gem_range: [1, 3] },
   }),
   sand: block({
@@ -262,6 +266,7 @@ const ITEMS = Object.freeze({
     admin_grantable: true,
     shop_price: 15000,
     visual_size: [64, 49],
+    collidable: false,
     collision_size: [64, 49],
     visual_offset: [16, -8.5],
     collision_offset: [16, -8.5],

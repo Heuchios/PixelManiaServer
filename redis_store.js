@@ -2,6 +2,10 @@
 
 const crypto = require("crypto");
 
+const DEFAULT_SCAN_COUNT = 200;
+const HEALTH_CACHE_TTL_MS = 5000;
+const LOCK_TTL_SAMPLE_LIMIT = 16;
+
 let createClient = null;
 try {
   ({ createClient } = require("redis"));
@@ -40,6 +44,7 @@ class RedisStore {
     this.client = null;
     this.ready = false;
     this.lastErrorLogAt = 0;
+    this.healthCache = { value: null, expiresAtMs: 0 };
   }
 
   isReady() {
@@ -55,6 +60,191 @@ class RedisStore {
     if (now - this.lastErrorLogAt < 10000) return;
     this.lastErrorLogAt = now;
     this.logger(`[redis] ${label} failed:`, error.message);
+  }
+
+  _parseScanReply(reply) {
+    if (!Array.isArray(reply) || reply.length < 2) return null;
+
+    const nextCursor = String(reply[0] || "0");
+    const rawKeys = Array.isArray(reply[1]) ? reply[1] : [];
+    const keys = [];
+
+    for (const key of rawKeys) {
+      if (key === undefined || key === null) continue;
+      keys.push(String(key));
+    }
+
+    return { cursor: nextCursor, keys };
+  }
+
+  async _scanKeys(pattern, maxKeys = 0) {
+    if (!this.isReady()) return [];
+
+    const keys = [];
+    const max = Math.max(0, Math.trunc(maxKeys));
+    let cursor = "0";
+
+    do {
+      const reply = await this.client.sendCommand([
+        "SCAN",
+        cursor,
+        "MATCH",
+        pattern,
+        "COUNT",
+        String(DEFAULT_SCAN_COUNT),
+      ]);
+      const parsed = this._parseScanReply(reply);
+      if (!parsed) break;
+
+      for (const key of parsed.keys) {
+        keys.push(key);
+        if (max > 0 && keys.length >= max) {
+          return keys;
+        }
+      }
+
+      cursor = parsed.cursor;
+    } while (cursor !== "0");
+
+    return keys;
+  }
+
+  async _countKeys(pattern) {
+    if (!this.isReady()) return 0;
+
+    let cursor = "0";
+    let count = 0;
+
+    do {
+      const reply = await this.client.sendCommand([
+        "SCAN",
+        cursor,
+        "MATCH",
+        pattern,
+        "COUNT",
+        String(DEFAULT_SCAN_COUNT),
+      ]);
+      const parsed = this._parseScanReply(reply);
+      if (!parsed) break;
+
+      count += parsed.keys.length;
+      cursor = parsed.cursor;
+    } while (cursor !== "0");
+
+    return count;
+  }
+
+  _summarizeTtls(ttlValues) {
+    const valid = ttlValues.filter((value) => Number.isFinite(value) && value >= 0);
+    if (!valid.length) {
+      return {
+        sample_size: ttlValues.length,
+        min_ttl_ms: null,
+        max_ttl_ms: null,
+        avg_ttl_ms: null,
+        stale_count: ttlValues.filter((value) => value < 0).length,
+        near_expiry_count: 0,
+      };
+    }
+
+    const min = Math.min(...valid);
+    const max = Math.max(...valid);
+    const avg = Math.round(valid.reduce((sum, value) => sum + value, 0) / valid.length);
+    const nearExpiryCount = valid.filter((value) => value <= 1000).length;
+
+    return {
+      sample_size: ttlValues.length,
+      min_ttl_ms: min,
+      max_ttl_ms: max,
+      avg_ttl_ms: avg,
+      stale_count: ttlValues.filter((value) => value < 0).length,
+      near_expiry_count: nearExpiryCount,
+    };
+  }
+
+  async getHealthSnapshot() {
+    const now = Date.now();
+    if (this.healthCache.value && this.healthCache.expiresAtMs > now) {
+      return this.healthCache.value;
+    }
+
+    if (!this.isReady()) {
+      const snapshot = {
+        enabled: Boolean(this.enabled),
+        ready: false,
+        key_prefix: this.keyPrefix,
+        key_counts: {
+          locks: 0,
+          presence: 0,
+          active_sessions: 0,
+        },
+        lock_ttl_ms: {
+          sample_size: 0,
+          min_ttl_ms: null,
+          max_ttl_ms: null,
+          avg_ttl_ms: null,
+          stale_count: 0,
+          near_expiry_count: 0,
+        },
+      };
+      return snapshot;
+    }
+
+    try {
+      const [lockCount, presenceCount, activeSessionCount, lockKeySamples] = await Promise.all([
+        this._countKeys(this.key("lock", "*", "*")),
+        this._countKeys(this.key("presence", "*")),
+        this._countKeys(this.key("active_session", "*")),
+        this._scanKeys(this.key("lock", "*", "*"), LOCK_TTL_SAMPLE_LIMIT),
+      ]);
+
+      const ttlSamples = (await Promise.all(lockKeySamples.map((key) => this.client.sendCommand(["PTTL", key]))))
+        .map((value) => Number(value));
+
+      const snapshot = {
+        enabled: true,
+        ready: true,
+        key_prefix: this.keyPrefix,
+        key_counts: {
+          locks: lockCount,
+          presence: presenceCount,
+          active_sessions: activeSessionCount,
+        },
+        lock_ttl_ms: this._summarizeTtls(ttlSamples),
+      };
+
+      this.healthCache = {
+        value: snapshot,
+        expiresAtMs: now + HEALTH_CACHE_TTL_MS,
+      };
+
+      return snapshot;
+    } catch (error) {
+      this.logFailure("health snapshot", error);
+      this.healthCache = {
+        value: {
+          enabled: true,
+          ready: this.ready,
+          key_prefix: this.keyPrefix,
+          error: String(error && error.message ? error.message : "failed to collect redis health"),
+          key_counts: {
+            locks: 0,
+            presence: 0,
+            active_sessions: 0,
+          },
+          lock_ttl_ms: {
+            sample_size: 0,
+            min_ttl_ms: null,
+            max_ttl_ms: null,
+            avg_ttl_ms: null,
+            stale_count: 0,
+            near_expiry_count: 0,
+          },
+        },
+        expiresAtMs: now + HEALTH_CACHE_TTL_MS,
+      };
+      return this.healthCache.value;
+    }
   }
 
   async init() {
@@ -121,6 +311,7 @@ class RedisStore {
     } catch {
       // Ignore shutdown errors.
     } finally {
+      this.healthCache = { value: null, expiresAtMs: 0 };
       this.ready = false;
     }
   }
