@@ -15,6 +15,8 @@
     "db:maintenance": "bash scripts/postgres_maintenance.sh",
     "db:maintenance:restore-check": "bash scripts/postgres_maintenance.sh restore-check",
     "db:maintenance:copy": "bash scripts/postgres_maintenance.sh copy-only",
+    "db:maintenance:preflight": "bash scripts/postgres_maintenance.sh preflight",
+    "db:maintenance:alert-test": "bash scripts/postgres_maintenance.sh alert-test",
     "logs:admin": "node scripts/read_integrity_log.js admin",
     "logs:item": "node scripts/read_integrity_log.js item",
     "logs:gem": "node scripts/read_integrity_log.js gem",

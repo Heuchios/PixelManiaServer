@@ -1,6 +1,7 @@
 require("dotenv").config({ quiet: true });
 
 const WebSocket = require("ws");
+const childProcess = require("child_process");
 const crypto = require("crypto");
 const fs = require("fs");
 const http = require("http");
@@ -24,6 +25,11 @@ const ACCOUNTS_SAVE_PATH = process.env.ACCOUNTS_SAVE_PATH ? path.resolve(process
 const ADMIN_LOG_PATH = process.env.ADMIN_LOG_PATH ? path.resolve(process.env.ADMIN_LOG_PATH) : path.join(DATA_FOLDER, "admin_actions.log");
 const INTEGRITY_LOG_FOLDER = process.env.INTEGRITY_LOG_FOLDER ? path.resolve(process.env.INTEGRITY_LOG_FOLDER) : path.join(DATA_FOLDER, "integrity_logs");
 const WORLD_SNAPSHOT_FOLDER = process.env.WORLD_SNAPSHOT_FOLDER ? path.resolve(process.env.WORLD_SNAPSHOT_FOLDER) : path.join(DATA_FOLDER, "world_snapshots");
+const WORLD_SNAPSHOT_STORAGE = String(process.env.WORLD_SNAPSHOT_STORAGE || "local").trim().toLowerCase() || "local";
+const WORLD_SNAPSHOT_SPACES_TARGET = String(process.env.WORLD_SNAPSHOT_SPACES_TARGET || "").trim();
+const WORLD_SNAPSHOT_SPACES_ENDPOINT = String(process.env.WORLD_SNAPSHOT_SPACES_ENDPOINT || "").trim();
+const WORLD_SNAPSHOT_SPACES_REGION = String(process.env.WORLD_SNAPSHOT_SPACES_REGION || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1").trim() || "us-east-1";
+const WORLD_SNAPSHOT_POSTGRES_INLINE = !["0", "false", "no"].includes(String(process.env.WORLD_SNAPSHOT_POSTGRES_INLINE || "false").trim().toLowerCase());
 const SECURITY_EVENT_LOG_PATH = process.env.SECURITY_EVENT_LOG_PATH ? path.resolve(process.env.SECURITY_EVENT_LOG_PATH) : path.join(INTEGRITY_LOG_FOLDER, "security_events.log");
 const ITEM_LEDGER_PATH = process.env.ITEM_LEDGER_PATH ? path.resolve(process.env.ITEM_LEDGER_PATH) : path.join(INTEGRITY_LOG_FOLDER, "item_ledger.log");
 const GEM_LEDGER_PATH = process.env.GEM_LEDGER_PATH ? path.resolve(process.env.GEM_LEDGER_PATH) : path.join(INTEGRITY_LOG_FOLDER, "gem_ledger.log");
@@ -57,7 +63,7 @@ const MAX_ITEM_ID_LENGTH = 64;
 const MAX_DROP_ID_LENGTH = 96;
 const PLAYER_LEVEL_MIN = 1;
 const PLAYER_LEVEL_MAX = 100;
-const PLAYER_XP_FIRST_LEVEL = 100;
+const PLAYER_XP_FIRST_LEVEL = 300;
 const ALLOW_LEGACY_PLAYER_STATE_IMPORT = !["0", "false", "no"].includes(String(process.env.ALLOW_LEGACY_PLAYER_STATE_IMPORT || "true").trim().toLowerCase());
 const MAX_MOVE_PIXELS_PER_SECOND = 900;
 const LAVA_REBOUND_MOVE_EXTRA_PIXELS = TILE_SIZE * 4;
@@ -206,6 +212,7 @@ const blockDamage = new Map();
 const worldSaveTimers = new Map();
 const playerSaveTimers = new Map();
 const pendingPersistenceWrites = new Set();
+const worldSnapshotStorageWarnings = new Set();
 let accountsSaveTimer = null;
 let mailTransporter = null;
 const postgresStore = new PostgresStore({
@@ -1258,6 +1265,13 @@ async function handleHttpRequest(request, response) {
         postgres_authoritative: Boolean(postgresStore.isReady() && POSTGRES_AUTHORITATIVE),
         redis_ready: redisStore.isReady(),
         redis_stats: redisHealth,
+        world_snapshot_storage: {
+          mode: WORLD_SNAPSHOT_STORAGE,
+          spaces_enabled: worldSnapshotStorageIsSpaces(),
+          spaces_target_configured: Boolean(WORLD_SNAPSHOT_SPACES_TARGET),
+          spaces_endpoint_configured: Boolean(WORLD_SNAPSHOT_SPACES_ENDPOINT),
+          postgres_inline: WORLD_SNAPSHOT_POSTGRES_INLINE,
+        },
       },
     }));
     return;
@@ -6433,19 +6447,70 @@ function applyServerBlockDamage(player, worldName, update) {
 }
 
 function getGemDropRangeForRarity(rarity) {
-  switch (String(rarity || "common")) {
+  switch (String(rarity || "common").toLowerCase()) {
     case "uncommon":
-      return [2, 6];
+      return [1, 3];
     case "rare":
-      return [5, 10];
+      return [2, 6];
     case "epic":
-      return [10, 20];
+      return [5, 12];
     case "legendary":
-      return [20, 35];
+      return [15, 40];
     case "common":
     default:
-      return [0, 3];
+      return [0, 1];
   }
+}
+
+function getBlockDropChanceForRarity(rarity) {
+  switch (String(rarity || "common").toLowerCase()) {
+    case "uncommon":
+      return 0.8;
+    case "rare":
+      return 0.65;
+    case "epic":
+      return 0.45;
+    case "legendary":
+      return 0.25;
+    case "common":
+    default:
+      return 0.9;
+  }
+}
+
+function getSeedDropChanceForRarity(rarity) {
+  switch (String(rarity || "common").toLowerCase()) {
+    case "uncommon":
+      return 0.6;
+    case "rare":
+      return 0.4;
+    case "epic":
+      return 0.2;
+    case "legendary":
+      return 0.1;
+    case "common":
+    default:
+      return 0.8;
+  }
+}
+
+function shouldSuppressRarityGemDrop(rules) {
+  if (!rules || typeof rules !== "object" || !Array.isArray(rules.gem_range)) return false;
+  const max = Math.trunc(Number(rules.gem_range[1]) || 0);
+  return max <= 0;
+}
+
+function shouldSuppressRaritySeedDrop(rules) {
+  if (!rules || typeof rules !== "object" || !Object.prototype.hasOwnProperty.call(rules, "seed_chance")) return false;
+  return Number(rules.seed_chance) <= 0;
+}
+
+function shouldAlwaysReturnBlockOnBreak(itemId, definition, rules) {
+  if (isVendBlockType(itemId)) return true;
+  if (itemId === "crafting_station") return true;
+  if (rules && rules.drops_self === true) return true;
+  if (Number(definition?.shop_price || 0) > 0) return true;
+  return false;
 }
 
 function createServerDrop(worldName, itemType, itemCategory, amount, x, y, pickupDelay = SERVER_DROP_PICKUP_DELAY) {
@@ -6479,23 +6544,28 @@ function getBreakDropsForBlock(blockType, layer) {
   if (!definition || definition.category !== "block") return [];
 
   const drops = [];
+  const rules = definition.drop_rules && typeof definition.drop_rules === "object" ? definition.drop_rules : {};
   if (isVendBlockType(itemId)) {
     drops.push({ item_id: VEND_BLOCK_EMPTY, item_category: "block", amount: 1 });
   } else if (itemId === "crafting_station") {
     drops.push({ item_id: "crafting_station", item_category: "block", amount: 1 });
-  } else if (itemId !== "crafting_station_left" && itemId !== "crafting_station_right" && ItemDatabase.isDropableItem(itemId)) {
+  } else if (
+    itemId !== "crafting_station_left" &&
+    itemId !== "crafting_station_right" &&
+    ItemDatabase.isDropableItem(itemId) &&
+    (shouldAlwaysReturnBlockOnBreak(itemId, definition, rules) || randomChance(getBlockDropChanceForRarity(definition.rarity)))
+  ) {
     drops.push({ item_id: itemId, item_category: "block", amount: 1 });
   }
 
-  const rules = definition.drop_rules && typeof definition.drop_rules === "object" ? definition.drop_rules : {};
   const seedId = clampString(definition.seed || "");
-  const seedChance = Number.isFinite(rules.seed_chance) ? rules.seed_chance : 0.25;
+  const seedChance = shouldSuppressRaritySeedDrop(rules) ? 0 : getSeedDropChanceForRarity(definition.rarity);
   if (seedId !== "" && ItemDatabase.hasItem(seedId) && randomChance(seedChance)) {
     drops.push({ item_id: seedId, item_category: "seed", amount: 1 });
   }
 
   if (layer === "foreground" && ItemDatabase.hasItem("gem")) {
-    const configuredRange = Array.isArray(rules.gem_range) ? rules.gem_range : getGemDropRangeForRarity(definition.rarity);
+    const configuredRange = shouldSuppressRarityGemDrop(rules) ? [0, 0] : getGemDropRangeForRarity(definition.rarity);
     const gemAmount = randomRangeInclusive(configuredRange[0], configuredRange[1]);
     if (gemAmount > 0) {
       drops.push({ item_id: "gem", item_category: "currency", amount: gemAmount });
@@ -7248,13 +7318,103 @@ function logWorldChange(socket, player, entry = {}) {
   postgresStore.mirrorWorldChange(logEntry);
 }
 
+function warnWorldSnapshotStorageOnce(key, message) {
+  if (worldSnapshotStorageWarnings.has(key)) return;
+  worldSnapshotStorageWarnings.add(key);
+  console.warn(message);
+}
+
+function worldSnapshotStorageIsSpaces() {
+  return WORLD_SNAPSHOT_STORAGE === "spaces" || WORLD_SNAPSHOT_STORAGE === "s3" || WORLD_SNAPSHOT_STORAGE === "aws-s3";
+}
+
+function parseS3Uri(uri) {
+  const raw = String(uri || "").trim().replace(/\/+$/, "");
+  if (!raw.startsWith("s3://")) return null;
+  const withoutScheme = raw.slice("s3://".length);
+  const slashIndex = withoutScheme.indexOf("/");
+  const bucket = slashIndex >= 0 ? withoutScheme.slice(0, slashIndex) : withoutScheme;
+  const prefix = slashIndex >= 0 ? withoutScheme.slice(slashIndex + 1).replace(/^\/+|\/+$/g, "") : "";
+  if (!bucket) return null;
+  return { bucket, prefix };
+}
+
+function buildS3Key(prefix, ...parts) {
+  const cleanParts = parts
+    .map((part) => String(part || "").replace(/^\/+|\/+$/g, ""))
+    .filter(Boolean);
+  if (prefix) cleanParts.unshift(String(prefix).replace(/^\/+|\/+$/g, ""));
+  return cleanParts.join("/");
+}
+
+function execFileAsync(command, args, options = {}) {
+  return new Promise((resolve, reject) => {
+    childProcess.execFile(command, args, { maxBuffer: 1024 * 1024, ...options }, (error, stdout, stderr) => {
+      if (error) {
+        const message = String(stderr || error.message || "").trim() || error.message;
+        reject(new Error(message));
+        return;
+      }
+      resolve({ stdout, stderr });
+    });
+  });
+}
+
+async function uploadWorldSnapshotToObjectStorage(snapshotPath, cleanWorld, snapshotFileName) {
+  if (!worldSnapshotStorageIsSpaces()) return null;
+
+  const target = parseS3Uri(WORLD_SNAPSHOT_SPACES_TARGET);
+  if (!target) {
+    warnWorldSnapshotStorageOnce(
+      "missing-spaces-target",
+      "[snapshots] WORLD_SNAPSHOT_STORAGE is Spaces/S3, but WORLD_SNAPSHOT_SPACES_TARGET is not a valid s3://bucket/path URI."
+    );
+    return null;
+  }
+  if (WORLD_SNAPSHOT_STORAGE === "spaces" && !WORLD_SNAPSHOT_SPACES_ENDPOINT) {
+    warnWorldSnapshotStorageOnce(
+      "missing-spaces-endpoint",
+      "[snapshots] WORLD_SNAPSHOT_STORAGE=spaces requires WORLD_SNAPSHOT_SPACES_ENDPOINT, such as https://tor1.digitaloceanspaces.com."
+    );
+    return null;
+  }
+
+  const worldKey = safeFileName(cleanWorld, "START");
+  const objectKey = buildS3Key(target.prefix, worldKey, snapshotFileName);
+  const awsArgs = [];
+  if (WORLD_SNAPSHOT_SPACES_ENDPOINT) {
+    awsArgs.push("--endpoint-url", WORLD_SNAPSHOT_SPACES_ENDPOINT);
+  }
+  awsArgs.push("s3api", "put-object", "--bucket", target.bucket, "--key", objectKey, "--body", snapshotPath);
+
+  try {
+    await execFileAsync("aws", awsArgs, {
+      env: {
+        ...process.env,
+        AWS_DEFAULT_REGION: WORLD_SNAPSHOT_SPACES_REGION,
+        AWS_REGION: WORLD_SNAPSHOT_SPACES_REGION,
+        AWS_REQUEST_CHECKSUM_CALCULATION: process.env.AWS_REQUEST_CHECKSUM_CALCULATION || "when_required",
+        AWS_RESPONSE_CHECKSUM_VALIDATION: process.env.AWS_RESPONSE_CHECKSUM_VALIDATION || "when_required",
+        AWS_EC2_METADATA_DISABLED: process.env.AWS_EC2_METADATA_DISABLED || "true",
+      },
+    });
+    const storageUri = `s3://${target.bucket}/${objectKey}`;
+    console.log(`[snapshots] uploaded world snapshot ${cleanWorld} to ${storageUri}`);
+    return storageUri;
+  } catch (error) {
+    console.warn(`[snapshots] Spaces upload failed for ${cleanWorld}:`, error.message);
+    return null;
+  }
+}
+
 function createWorldSnapshot(worldName, reason, socket = null, player = null, details = {}) {
   try {
     const clean = cleanWorld(worldName);
     const snapshotId = makeAuditId("snapshot");
     const stamp = new Date().toISOString().replace(/[:.]/g, "-");
     const snapshotDir = path.join(WORLD_SNAPSHOT_FOLDER, safeFileName(clean, "START"));
-    const snapshotPath = path.join(snapshotDir, `${stamp}_${safeFileName(reason, "snapshot")}.json`);
+    const snapshotFileName = `${stamp}_${safeFileName(reason, "snapshot")}.json`;
+    const snapshotPath = path.join(snapshotDir, snapshotFileName);
     fs.mkdirSync(snapshotDir, { recursive: true });
 
     const snapshotPayload = {
@@ -7267,12 +7427,19 @@ function createWorldSnapshot(worldName, reason, socket = null, player = null, de
     };
 
     writeJsonFileAtomic(snapshotPath, snapshotPayload);
+    const objectStorageWrite = uploadWorldSnapshotToObjectStorage(snapshotPath, clean, snapshotFileName);
     if (postgresStore.isReady()) {
-      trackPersistenceWrite(postgresStore.saveWorldSnapshot(clean, snapshotPayload.world_state, {
-        reason: String(reason || "snapshot"),
-        storageUri: snapshotPath,
-        createdBy: cleanAccountName(player?.account_username || player?.name || "system") || "system",
-      }), `world snapshot ${clean}`);
+      trackPersistenceWrite((async () => {
+        const objectStorageUri = await objectStorageWrite;
+        return postgresStore.saveWorldSnapshot(clean, snapshotPayload.world_state, {
+          reason: String(reason || "snapshot"),
+          storageUri: objectStorageUri || snapshotPath,
+          createdBy: cleanAccountName(player?.account_username || player?.name || "system") || "system",
+          storeSnapshotData: !objectStorageUri || WORLD_SNAPSHOT_POSTGRES_INLINE,
+        });
+      })(), `world snapshot ${clean}`);
+    } else {
+      trackPersistenceWrite(objectStorageWrite, `world snapshot upload ${clean}`);
     }
 
     logWorldChange(socket, player, {
@@ -7281,7 +7448,7 @@ function createWorldSnapshot(worldName, reason, socket = null, player = null, de
       source_id: snapshotId,
       world: clean,
       action: "snapshot",
-      details: { reason, snapshot_path: snapshotPath, ...details },
+      details: { reason, snapshot_path: snapshotPath, snapshot_storage: WORLD_SNAPSHOT_STORAGE, ...details },
     });
     return { snapshotId, snapshotPath };
   } catch (error) {
@@ -7387,7 +7554,14 @@ function getDeveloperCommandWorldArgument(command) {
   if (parts.length < 2) return "";
 
   const commandName = String(parts[0] || "").toLowerCase();
-  if (commandName !== "clear" && commandName !== "resetworld" && commandName !== "reset_world" && commandName !== "reworld") {
+  if (
+    commandName !== "clear" &&
+    commandName !== "resetworld" &&
+    commandName !== "reset_world" &&
+    commandName !== "reworld" &&
+    commandName !== "snapshot" &&
+    commandName !== "snapshot_world"
+  ) {
     return "";
   }
 
@@ -7614,7 +7788,7 @@ function getXpNeededForLevel(level) {
   if (safeLevel >= PLAYER_LEVEL_MAX) return 0;
 
   const levelIndex = safeLevel - PLAYER_LEVEL_MIN;
-  return PLAYER_XP_FIRST_LEVEL + (levelIndex * 45) + Math.floor(Math.pow(levelIndex, 1.45) * 18);
+  return PLAYER_XP_FIRST_LEVEL + (levelIndex * 120) + Math.floor(Math.pow(levelIndex, 1.6) * 42);
 }
 
 function getCumulativeXpAtLevel(level) {
@@ -8390,6 +8564,24 @@ function handleDeveloperCommandRequest(socket, player, data) {
     const commandWorld = getDeveloperCommandWorldName(player, data);
     resetWorldByAdmin(commandWorld, socket, player);
     approve(`Server reset ${commandWorld}.`, { target_world: commandWorld }, { command_type: "reset_world", target_world: commandWorld });
+    return;
+  }
+
+  if (commandName === "snapshot" || commandName === "snapshot_world") {
+    const commandWorld = getDeveloperCommandWorldName(player, data);
+    const snapshot = createWorldSnapshot(commandWorld, "manual_admin_snapshot", socket, player, {
+      command,
+      request_id: requestId,
+    });
+    if (!snapshot) {
+      deny("Could not create world snapshot.", { target_world: commandWorld });
+      return;
+    }
+    approve(
+      `Server snapshot created for ${commandWorld}.`,
+      { target_world: commandWorld, snapshot_id: snapshot.snapshotId, snapshot_path: snapshot.snapshotPath },
+      { command_type: "snapshot_world", target_world: commandWorld, snapshot_id: snapshot.snapshotId, snapshot_path: snapshot.snapshotPath }
+    );
     return;
   }
 

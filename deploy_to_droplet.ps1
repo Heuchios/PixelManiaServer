@@ -12,6 +12,7 @@ param(
 $ErrorActionPreference = "Stop"
 
 $localBackend = Join-Path $PSScriptRoot "server.js"
+$localPostgresStore = Join-Path $PSScriptRoot "postgres_store.js"
 $localRedisStore = Join-Path $PSScriptRoot "redis_store.js"
 $localEcosystem = Join-Path $PSScriptRoot "ecosystem.config.js"
 $localPackage = Join-Path $PSScriptRoot "package.json"
@@ -22,6 +23,9 @@ $localPostgresMaintenance = Join-Path $PSScriptRoot "scripts/postgres_maintenanc
 
 if (-not (Test-Path $localBackend)) {
   throw "Missing file: $localBackend"
+}
+if (-not (Test-Path $localPostgresStore)) {
+  throw "Missing file: $localPostgresStore"
 }
 if (-not (Test-Path $localRedisStore)) {
   throw "Missing file: $localRedisStore"
@@ -63,6 +67,7 @@ function Invoke-RemoteCommand {
 Write-Host "Copying backend files to ${sshTarget}:${remotePath}..."
 Invoke-RemoteCommand "mkdir -p $remotePath/scripts"
 & scp @sshBaseArgs $localBackend "${sshTarget}:$remotePath/"
+& scp @sshBaseArgs $localPostgresStore "${sshTarget}:$remotePath/"
 & scp @sshBaseArgs $localRedisStore "${sshTarget}:$remotePath/"
 & scp @sshBaseArgs $localEcosystem "${sshTarget}:$remotePath/"
 & scp @sshBaseArgs $localPackage "${sshTarget}:$remotePath/"
@@ -77,6 +82,7 @@ cd __REMOTE_PATH__
 echo "== Files on droplet =="
 grep -n "redis_stats\\|getHealthSnapshot" server.js || true
 node --check server.js
+node --check postgres_store.js
 node --check redis_store.js
 chmod +x scripts/postgres_backup.sh scripts/postgres_restore_check.sh
 chmod +x scripts/postgres_maintenance.sh

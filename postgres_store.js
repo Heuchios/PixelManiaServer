@@ -28,7 +28,7 @@ const INVENTORY_FIELD_CATEGORY = Object.freeze([
 
 const PLAYER_LEVEL_MIN = 1;
 const PLAYER_LEVEL_MAX = 100;
-const PLAYER_XP_FIRST_LEVEL = 100;
+const PLAYER_XP_FIRST_LEVEL = 300;
 const POSTGRES_TRANSACTION_MAX_ATTEMPTS = 5;
 const POSTGRES_TRANSACTION_RETRY_BASE_DELAY_MS = 75;
 const DEFAULT_INVENTORY_STACK_LIMIT = ItemDatabase.DEFAULT_STACK_LIMIT || 200;
@@ -100,7 +100,7 @@ function getXpNeededForLevel(level) {
   if (safeLevel >= PLAYER_LEVEL_MAX) return 0;
 
   const levelIndex = safeLevel - PLAYER_LEVEL_MIN;
-  return PLAYER_XP_FIRST_LEVEL + (levelIndex * 45) + Math.floor(Math.pow(levelIndex, 1.45) * 18);
+  return PLAYER_XP_FIRST_LEVEL + (levelIndex * 120) + Math.floor(Math.pow(levelIndex, 1.6) * 42);
 }
 
 function getCumulativeXpAtLevel(level) {
@@ -362,7 +362,7 @@ class PostgresStore {
       ALTER TABLE ${this.table("players")}
         ADD COLUMN IF NOT EXISTS player_level integer NOT NULL DEFAULT 1,
         ADD COLUMN IF NOT EXISTS player_xp bigint NOT NULL DEFAULT 0,
-        ADD COLUMN IF NOT EXISTS player_xp_needed bigint NOT NULL DEFAULT 100,
+        ADD COLUMN IF NOT EXISTS player_xp_needed bigint NOT NULL DEFAULT 300,
         ADD COLUMN IF NOT EXISTS player_total_xp bigint NOT NULL DEFAULT 0,
         ADD COLUMN IF NOT EXISTS player_title text NOT NULL DEFAULT 'Explorer',
         ADD COLUMN IF NOT EXISTS last_level_up_at timestamptz;
@@ -857,7 +857,7 @@ class PostgresStore {
             player_health: toInt(state.player_health, toInt(row.player_health, 100)),
             player_level: toInt(state.player_level, toInt(row.player_level, 1)),
             player_xp: toInt(state.player_xp, toInt(row.player_xp, 0)),
-            player_xp_needed: toInt(state.player_xp_needed, toInt(row.player_xp_needed, 100)),
+            player_xp_needed: toInt(state.player_xp_needed, toInt(row.player_xp_needed, 300)),
             player_total_xp: toInt(state.player_total_xp, toInt(row.player_total_xp, 0)),
             player_title: cleanName(state.player_title || row.player_title || "Explorer") || "Explorer",
             last_level_up_at: cleanName(state.last_level_up_at || normalizeOptionalTimestamp(row.last_level_up_at) || ""),
@@ -1078,6 +1078,8 @@ class PostgresStore {
     const cleanWorldName = cleanName(worldName || snapshot?.world_name || "START") || "START";
     const snapshotData = safeJson(snapshot);
     const checksum = jsonChecksum(snapshotData);
+    const storeSnapshotData = options.storeSnapshotData !== false;
+    const snapshotJson = storeSnapshotData ? JSON.stringify(snapshotData) : null;
 
     try {
       await this.withTransaction(async (client) => {
@@ -1112,7 +1114,7 @@ class PostgresStore {
             worldId,
             checksum,
             cleanName(options.storageUri || ""),
-            JSON.stringify(snapshotData),
+            snapshotJson,
             cleanName(options.reason || "snapshot"),
             cleanName(options.createdBy || "system"),
           ]
