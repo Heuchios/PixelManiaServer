@@ -33,6 +33,7 @@ run_postgres() {
 
 DB_NAME="${POSTGRES_DATABASE:-$(read_env POSTGRES_DATABASE pixelmania)}"
 BACKUP_DIR="${PIXELMANIA_POSTGRES_BACKUP_DIR:-/var/backups/pixelmania/postgres}"
+FALLBACK_BACKUP_DIR="${PIXELMANIA_POSTGRES_BACKUP_FALLBACK_DIR:-/tmp/pixelmania/postgres}"
 RETENTION_DAYS="${PIXELMANIA_POSTGRES_BACKUP_RETENTION_DAYS:-14}"
 STAMP="$(date -u +"%Y%m%dT%H%M%SZ")"
 BACKUP_NAME="pixelmania_postgres_${DB_NAME}_${STAMP}.dump"
@@ -44,6 +45,23 @@ if ! command -v pg_dump >/dev/null 2>&1; then
   exit 1
 fi
 
+if ! run_postgres sh -c "test -w \"$BACKUP_DIR\""; then
+  echo "[postgres-backup] warning: $BACKUP_DIR is not writable by postgres runtime user."
+  if [ ! -w "$FALLBACK_BACKUP_DIR" ]; then
+    mkdir -p "$FALLBACK_BACKUP_DIR"
+  fi
+  if ! run_postgres sh -c "test -w \"$FALLBACK_BACKUP_DIR\""; then
+    echo "[postgres-backup] fallback directory not writable by postgres either: $FALLBACK_BACKUP_DIR" >&2
+    echo "[postgres-backup] fix permissions on both directories and rerun." >&2
+    exit 1
+  fi
+  echo "[postgres-backup] switching backup output to fallback directory: $FALLBACK_BACKUP_DIR"
+  BACKUP_DIR="$FALLBACK_BACKUP_DIR"
+  BACKUP_NAME="pixelmania_postgres_${DB_NAME}_${STAMP}.dump"
+  TMP_FILE="$BACKUP_DIR/.${BACKUP_NAME}.tmp"
+  FINAL_FILE="$BACKUP_DIR/$BACKUP_NAME"
+fi
+
 umask 077
 mkdir -p "$BACKUP_DIR"
 
@@ -52,8 +70,7 @@ run_postgres pg_dump \
   --dbname="$DB_NAME" \
   --format=custom \
   --no-owner \
-  --no-privileges \
-  --file="$TMP_FILE"
+  --no-privileges > "$TMP_FILE"
 
 mv "$TMP_FILE" "$FINAL_FILE"
 ln -sfn "$(basename "$FINAL_FILE")" "$BACKUP_DIR/latest.dump"

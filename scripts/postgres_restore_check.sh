@@ -72,7 +72,7 @@ run_postgres psql --dbname=postgres --set=ON_ERROR_STOP=1 --quiet --command \
   "SELECT pg_terminate_backend(pid) FROM pg_stat_activity WHERE datname = '$RESTORE_DB' AND pid <> pg_backend_pid();" >/dev/null
 run_postgres dropdb --if-exists "$RESTORE_DB" >/dev/null 2>&1 || true
 run_postgres createdb "$RESTORE_DB"
-run_postgres pg_restore --dbname="$RESTORE_DB" --no-owner --no-privileges "$BACKUP_FILE"
+run_postgres pg_restore --dbname="$RESTORE_DB" --no-owner --no-privileges < "$BACKUP_FILE"
 
 echo "[postgres-restore-check] core table counts"
 run_postgres psql --dbname="$RESTORE_DB" --set=ON_ERROR_STOP=1 --tuples-only --no-align <<SQL

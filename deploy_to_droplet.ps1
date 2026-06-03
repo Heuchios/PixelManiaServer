@@ -14,9 +14,11 @@ $ErrorActionPreference = "Stop"
 $localBackend = Join-Path $PSScriptRoot "server.js"
 $localRedisStore = Join-Path $PSScriptRoot "redis_store.js"
 $localEcosystem = Join-Path $PSScriptRoot "ecosystem.config.js"
+$localPackage = Join-Path $PSScriptRoot "package.json"
 $localSmoke = Join-Path $PSScriptRoot "smoke_postdeploy.ps1"
 $localPostgresBackup = Join-Path $PSScriptRoot "scripts/postgres_backup.sh"
 $localPostgresRestoreCheck = Join-Path $PSScriptRoot "scripts/postgres_restore_check.sh"
+$localPostgresMaintenance = Join-Path $PSScriptRoot "scripts/postgres_maintenance.sh"
 
 if (-not (Test-Path $localBackend)) {
   throw "Missing file: $localBackend"
@@ -27,6 +29,9 @@ if (-not (Test-Path $localRedisStore)) {
 if (-not (Test-Path $localEcosystem)) {
   throw "Missing file: $localEcosystem"
 }
+if (-not (Test-Path $localPackage)) {
+  throw "Missing file: $localPackage"
+}
 if ($RunSmokeChecks -and -not (Test-Path $localSmoke)) {
   throw "Missing file: $localSmoke"
 }
@@ -35,6 +40,9 @@ if (-not (Test-Path $localPostgresBackup)) {
 }
 if (-not (Test-Path $localPostgresRestoreCheck)) {
   throw "Missing file: $localPostgresRestoreCheck"
+}
+if (-not (Test-Path $localPostgresMaintenance)) {
+  throw "Missing file: $localPostgresMaintenance"
 }
 
 $sshTarget = "${RemoteUser}@${RemoteIp}"
@@ -57,8 +65,10 @@ Invoke-RemoteCommand "mkdir -p $remotePath/scripts"
 & scp @sshBaseArgs $localBackend "${sshTarget}:$remotePath/"
 & scp @sshBaseArgs $localRedisStore "${sshTarget}:$remotePath/"
 & scp @sshBaseArgs $localEcosystem "${sshTarget}:$remotePath/"
+& scp @sshBaseArgs $localPackage "${sshTarget}:$remotePath/"
 & scp @sshBaseArgs $localPostgresBackup "${sshTarget}:$remotePath/scripts/"
 & scp @sshBaseArgs $localPostgresRestoreCheck "${sshTarget}:$remotePath/scripts/"
+& scp @sshBaseArgs $localPostgresMaintenance "${sshTarget}:$remotePath/scripts/"
 
 Write-Host "Restarting PM2 and verifying health..."
 $remoteCommand = @'
@@ -69,6 +79,7 @@ grep -n "redis_stats\\|getHealthSnapshot" server.js || true
 node --check server.js
 node --check redis_store.js
 chmod +x scripts/postgres_backup.sh scripts/postgres_restore_check.sh
+chmod +x scripts/postgres_maintenance.sh
 pm2 delete pixelmania || true
 pm2 startOrReload ecosystem.config.js --env production --update-env
 pm2 save

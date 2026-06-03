@@ -3785,6 +3785,12 @@ function getVendStatus(vend) {
   return "empty";
 }
 
+function isVendAwaitingCollection(vend) {
+  if (!vend) return false;
+  if (Number(vend.pending_wls) > 0) return true;
+  return String(vend.status || "").trim().toLowerCase() === "sold";
+}
+
 function getVendVisualBlockType(vend) {
   const status = getVendStatus(vend);
   if (status === "sold") return VEND_BLOCK_SOLD;
@@ -4193,8 +4199,13 @@ function handleVendSetListing(socket, player, data, worldName, vend) {
     return;
   }
 
-  if (vend.listing || Number(vend.pending_wls) > 0) {
-    rejectVendTransaction(socket, data, "Cancel or collect the current vending machine first.");
+  if (vend.listing) {
+    sendVendTransactionResult(socket, data, player, vend, false, "Cancel or collect the current vending machine first.");
+    return;
+  }
+
+  if (isVendAwaitingCollection(vend)) {
+    sendVendTransactionResult(socket, data, player, vend, false, "Collect the sold vending machine first.");
     return;
   }
 
