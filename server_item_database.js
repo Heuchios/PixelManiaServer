@@ -6,8 +6,10 @@ const CATEGORY_TO_FIELD = Object.freeze({
   seed: "seed_inventory",
   tool: "tool_inventory",
   back: "back_inventory",
+  hair: "hair_inventory",
   shirt: "shirt_inventory",
   pants: "pants_inventory",
+  shoes: "shoes_inventory",
   currency: "currency_inventory",
   material: "material_inventory",
   lure: "lure_inventory",
@@ -420,12 +422,120 @@ const ITEMS = Object.freeze({
     tradeable: false,
     dropable: false,
   }),
+  angel_wings: item("back", {
+    rarity: "legendary",
+    equipment_slot: "back",
+    equipable: true,
+    tradeable: false,
+    dropable: false,
+  }),
+  evil_wings: item("back", {
+    rarity: "legendary",
+    equipment_slot: "back",
+    equipable: true,
+    tradeable: false,
+    dropable: false,
+  }),
 
   purple_shirt: item("shirt", {
     rarity: "common",
     equipment_slot: "shirt",
     equipable: true,
     shop_price: 50,
+  }),
+
+  messy_brown_hair: item("hair", {
+    rarity: "common",
+    equipment_slot: "hair",
+    equipable: true,
+  }),
+
+  basic_blue_shirt: item("shirt", {
+    rarity: "common",
+    equipment_slot: "shirt",
+    equipable: true,
+  }),
+  basic_red_shirt: item("shirt", {
+    rarity: "common",
+    equipment_slot: "shirt",
+    equipable: true,
+  }),
+  basic_white_shirt: item("shirt", {
+    rarity: "common",
+    equipment_slot: "shirt",
+    equipable: true,
+  }),
+  basic_black_shirt: item("shirt", {
+    rarity: "common",
+    equipment_slot: "shirt",
+    equipable: true,
+  }),
+  basic_heart_shirt: item("shirt", {
+    rarity: "common",
+    equipment_slot: "shirt",
+    equipable: true,
+  }),
+  basic_gray_shirt: item("shirt", {
+    rarity: "common",
+    equipment_slot: "shirt",
+    equipable: true,
+  }),
+  basic_maroon_shirt: item("shirt", {
+    rarity: "common",
+    equipment_slot: "shirt",
+    equipable: true,
+  }),
+
+  basic_black_pants: item("pants", {
+    rarity: "common",
+    equipment_slot: "pants",
+    equipable: true,
+  }),
+  basic_light_gray_pants: item("pants", {
+    rarity: "common",
+    equipment_slot: "pants",
+    equipable: true,
+  }),
+  basic_navy_pants: item("pants", {
+    rarity: "common",
+    equipment_slot: "pants",
+    equipable: true,
+  }),
+  basic_brown_pants: item("pants", {
+    rarity: "common",
+    equipment_slot: "pants",
+    equipable: true,
+  }),
+  basic_green_pants: item("pants", {
+    rarity: "common",
+    equipment_slot: "pants",
+    equipable: true,
+  }),
+  basic_pink_pants: item("pants", {
+    rarity: "common",
+    equipment_slot: "pants",
+    equipable: true,
+  }),
+
+  basic_brown_shoes: item("shoes", {
+    rarity: "common",
+    equipment_slot: "shoes",
+    equipable: true,
+  }),
+  basic_black_shoes: item("shoes", {
+    rarity: "common",
+    equipment_slot: "shoes",
+    equipable: true,
+  }),
+  basic_red_shoes: item("shoes", {
+    rarity: "common",
+    equipment_slot: "shoes",
+    equipable: true,
+  }),
+  basic_blue_shoes: item("shoes", {
+    rarity: "common",
+    equipment_slot: "shoes",
+    equipable: true,
   }),
 
   purple_pants: item("pants", {
@@ -496,6 +606,35 @@ const ITEMS = Object.freeze({
   worm_lure: item("lure", { rarity: "common" }),
   shiny_lure: item("lure", { rarity: "uncommon" }),
   golden_lure: item("lure", { rarity: "rare" }),
+  basic_items_pack: item("material", {
+    rarity: "common",
+    shop_price: 500,
+    shop_pack: true,
+    hidden: true,
+    tradeable: false,
+    dropable: false,
+    admin_grantable: false,
+    pack_rewards: [
+      "messy_brown_hair",
+      "basic_blue_shirt",
+      "basic_red_shirt",
+      "basic_white_shirt",
+      "basic_black_shirt",
+      "basic_heart_shirt",
+      "basic_gray_shirt",
+      "basic_maroon_shirt",
+      "basic_black_pants",
+      "basic_light_gray_pants",
+      "basic_navy_pants",
+      "basic_brown_pants",
+      "basic_green_pants",
+      "basic_pink_pants",
+      "basic_brown_shoes",
+      "basic_black_shoes",
+      "basic_red_shoes",
+      "basic_blue_shoes",
+    ],
+  }),
   lure_pack: item("lure", {
     rarity: "uncommon",
     shop_price: 25,

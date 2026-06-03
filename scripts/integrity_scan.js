@@ -343,12 +343,18 @@ function scanPlayerFile(report, filePath) {
     "selected_item",
     "equipped_tool",
     "equipped_back",
+    "equipped_hair",
+    "equipped_hair_item",
     "equipped_shirt",
     "equipped_pants",
+    "equipped_shoes",
+    "equipped_shoes_item",
     "tool",
     "back",
+    "hair",
     "shirt",
     "pants",
+    "shoes",
   ];
   for (const field of equipmentFields) {
     const itemId = cleanText(playerData[field]);

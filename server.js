@@ -184,12 +184,31 @@ const SHOP_CATALOG = new Map([
   ["vend_empty", { item_id: "vend_empty", item_category: "block", amount: 1, price: 7500 }],
   ["safe", { item_id: "safe", item_category: "block", amount: 1, price: 7500 }],
   ["fish_monger", { item_id: "fish_monger", item_category: "block", amount: 1, price: 15000 }],
-  ["purple_shirt", { item_id: "purple_shirt", item_category: "shirt", amount: 1, price: 50 }],
-  ["purple_pants", { item_id: "purple_pants", item_category: "pants", amount: 1, price: 50 }],
+  ["basic_items_pack", { item_id: "basic_items_pack", item_category: "material", amount: 1, price: 500, pack_size: 1 }],
   ["entrance_mover", { item_id: "entrance_mover", item_category: "tool", amount: 1, price: 200 }],
   ["fishing_rod", { item_id: "fishing_rod", item_category: "tool", amount: 1, price: 5000 }],
   ["lure_pack", { item_id: "lure_pack", item_category: "lure", amount: 1, price: 25, pack_size: 5 }],
 ]);
+const BASIC_ITEMS_PACK_TABLE = [
+  { item_id: "messy_brown_hair", item_category: "hair", weight: 100 },
+  { item_id: "basic_blue_shirt", item_category: "shirt", weight: 100 },
+  { item_id: "basic_red_shirt", item_category: "shirt", weight: 100 },
+  { item_id: "basic_white_shirt", item_category: "shirt", weight: 100 },
+  { item_id: "basic_black_shirt", item_category: "shirt", weight: 100 },
+  { item_id: "basic_heart_shirt", item_category: "shirt", weight: 100 },
+  { item_id: "basic_gray_shirt", item_category: "shirt", weight: 100 },
+  { item_id: "basic_maroon_shirt", item_category: "shirt", weight: 100 },
+  { item_id: "basic_black_pants", item_category: "pants", weight: 100 },
+  { item_id: "basic_light_gray_pants", item_category: "pants", weight: 100 },
+  { item_id: "basic_navy_pants", item_category: "pants", weight: 100 },
+  { item_id: "basic_brown_pants", item_category: "pants", weight: 100 },
+  { item_id: "basic_green_pants", item_category: "pants", weight: 100 },
+  { item_id: "basic_pink_pants", item_category: "pants", weight: 100 },
+  { item_id: "basic_brown_shoes", item_category: "shoes", weight: 100 },
+  { item_id: "basic_black_shoes", item_category: "shoes", weight: 100 },
+  { item_id: "basic_red_shoes", item_category: "shoes", weight: 100 },
+  { item_id: "basic_blue_shoes", item_category: "shoes", weight: 100 },
+];
 const LURE_PACK_TABLE = [
   { item_id: "worm_lure", item_category: "lure", weight: 65 },
   { item_id: "shiny_lure", item_category: "lure", weight: 28 },
@@ -1126,6 +1145,8 @@ wss.on("connection", (socket) => {
           player.equipment_slots = sanitizeEquipmentSlots({
             hand: data.equipped_tool || "",
             back: data.equipped_back || "",
+            hair: data.equipped_hair_item || "",
+            shoes: data.equipped_shoes_item || "",
           }, player.account_username);
         }
 
@@ -1418,6 +1439,10 @@ function getJsonContentScore(data) {
     "seed_inventory",
     "tool_inventory",
     "back_inventory",
+    "hair_inventory",
+    "shirt_inventory",
+    "pants_inventory",
+    "shoes_inventory",
     "currency_inventory",
     "material_inventory",
     "lure_inventory",
@@ -3610,13 +3635,17 @@ function handleShopBuyTransaction(socket, player, data) {
     return;
   }
 
-  if (itemId === "lure_pack") {
-    const rewardTableValid = LURE_PACK_TABLE.every((reward) => (
+  const packRewardTable = itemId === "lure_pack"
+    ? LURE_PACK_TABLE
+    : (itemId === "basic_items_pack" ? BASIC_ITEMS_PACK_TABLE : null);
+
+  if (packRewardTable) {
+    const rewardTableValid = packRewardTable.every((reward) => (
       ItemDatabase.hasItem(reward.item_id) &&
       ItemDatabase.canStoreItemInCategory(reward.item_id, reward.item_category)
     ));
     if (!rewardTableValid) {
-      sendInventoryTransactionRejected(socket, data, "Lure Pack rewards are not configured.");
+      sendInventoryTransactionRejected(socket, data, "Shop pack rewards are not configured.");
       return;
     }
   }
@@ -3641,9 +3670,9 @@ function handleShopBuyTransaction(socket, player, data) {
   }
 
   const rewards = [];
-  if (itemId === "lure_pack") {
+  if (packRewardTable) {
     for (let i = 0; i < listing.pack_size * listing.amount; i += 1) {
-      const reward = rollWeightedReward(LURE_PACK_TABLE);
+      const reward = rollWeightedReward(packRewardTable);
       addItemToState(state, reward.item_id, reward.item_category, 1);
       rewards.push({
         item_id: reward.item_id,
@@ -3697,7 +3726,9 @@ function handleShopBuyTransaction(socket, player, data) {
     request_id: requestId,
     action: "shop_buy",
     item_id: itemId,
-    message: itemId === "lure_pack" ? "Purchased and opened Lure Pack." : `Purchased ${listing.item_id}.`,
+    message: itemId === "lure_pack"
+      ? "Purchased and opened Lure Pack."
+      : (itemId === "basic_items_pack" ? "Purchased and opened Basic Items Pack." : `Purchased ${listing.item_id}.`),
     username,
     rewards: combinedRewards,
     player_data: state,
@@ -8037,8 +8068,10 @@ function createDefaultPlayerState(username) {
     seed_inventory: {},
     tool_inventory: { pickaxe: 1 },
     back_inventory: {},
+    hair_inventory: {},
     shirt_inventory: {},
     pants_inventory: {},
+    shoes_inventory: {},
     currency_inventory: {},
     material_inventory: {},
     lure_inventory: {},
@@ -8071,11 +8104,17 @@ function mergeClientPlayerStateIntoServerState(username, incomingState, options 
   merged.equipped_back_item = doesStateOwnEquippedItem(merged, incomingState.equipped_back_item || "", "back")
     ? clampString(incomingState.equipped_back_item || "")
     : "";
+  merged.equipped_hair_item = doesStateOwnEquippedItem(merged, incomingState.equipped_hair_item || "", "hair")
+    ? clampString(incomingState.equipped_hair_item || "")
+    : "";
   merged.equipped_shirt_item = doesStateOwnEquippedItem(merged, incomingState.equipped_shirt_item || "", "shirt")
     ? clampString(incomingState.equipped_shirt_item || "")
     : "";
   merged.equipped_pants_item = doesStateOwnEquippedItem(merged, incomingState.equipped_pants_item || "", "pants")
     ? clampString(incomingState.equipped_pants_item || "")
+    : "";
+  merged.equipped_shoes_item = doesStateOwnEquippedItem(merged, incomingState.equipped_shoes_item || "", "shoes")
+    ? clampString(incomingState.equipped_shoes_item || "")
     : "";
 
   const requestedLegacyImportRevision = clampInteger(options.legacyImportRevision || 0, 0, 1000);
@@ -8102,12 +8141,18 @@ function mergeClientPlayerStateIntoServerState(username, incomingState, options 
     merged.equipped_back_item = doesStateOwnEquippedItem(merged, incomingState.equipped_back_item || "", "back")
       ? clampString(incomingState.equipped_back_item || "")
       : merged.equipped_back_item;
+    merged.equipped_hair_item = doesStateOwnEquippedItem(merged, incomingState.equipped_hair_item || "", "hair")
+      ? clampString(incomingState.equipped_hair_item || "")
+      : merged.equipped_hair_item;
     merged.equipped_shirt_item = doesStateOwnEquippedItem(merged, incomingState.equipped_shirt_item || "", "shirt")
       ? clampString(incomingState.equipped_shirt_item || "")
       : merged.equipped_shirt_item;
     merged.equipped_pants_item = doesStateOwnEquippedItem(merged, incomingState.equipped_pants_item || "", "pants")
       ? clampString(incomingState.equipped_pants_item || "")
       : merged.equipped_pants_item;
+    merged.equipped_shoes_item = doesStateOwnEquippedItem(merged, incomingState.equipped_shoes_item || "", "shoes")
+      ? clampString(incomingState.equipped_shoes_item || "")
+      : merged.equipped_shoes_item;
   }
 
   return merged;
@@ -10430,16 +10475,20 @@ function sanitizePlayerState(rawState, username) {
     seed_inventory: sanitizeCountDictionary(rawState.seed_inventory, MAX_PLAYER_INVENTORY_KEYS, "seed"),
     tool_inventory: sanitizeCountDictionary(rawState.tool_inventory, MAX_PLAYER_INVENTORY_KEYS, "tool"),
     back_inventory: sanitizeCountDictionary(rawState.back_inventory, MAX_PLAYER_INVENTORY_KEYS, "back"),
+    hair_inventory: sanitizeCountDictionary(rawState.hair_inventory, MAX_PLAYER_INVENTORY_KEYS, "hair"),
     shirt_inventory: sanitizeCountDictionary(rawState.shirt_inventory, MAX_PLAYER_INVENTORY_KEYS, "shirt"),
     pants_inventory: sanitizeCountDictionary(rawState.pants_inventory, MAX_PLAYER_INVENTORY_KEYS, "pants"),
+    shoes_inventory: sanitizeCountDictionary(rawState.shoes_inventory, MAX_PLAYER_INVENTORY_KEYS, "shoes"),
     currency_inventory: sanitizeCountDictionary(rawState.currency_inventory, MAX_PLAYER_INVENTORY_KEYS, "currency"),
     material_inventory: sanitizeCountDictionary(rawState.material_inventory, MAX_PLAYER_INVENTORY_KEYS, "material"),
     lure_inventory: sanitizeCountDictionary(rawState.lure_inventory, MAX_PLAYER_INVENTORY_KEYS, "lure"),
     fish_inventory: sanitizeCountDictionary(rawState.fish_inventory, MAX_PLAYER_INVENTORY_KEYS, "fish"),
     equipped_tool: "",
     equipped_back_item: "",
+    equipped_hair_item: "",
     equipped_shirt_item: "",
     equipped_pants_item: "",
+    equipped_shoes_item: "",
     legacy_client_inventory_imported_at: String(rawState.legacy_client_inventory_imported_at || "").slice(0, 64),
     legacy_client_inventory_import_revision: clampInteger(rawState.legacy_client_inventory_import_revision || 0, 0, 1000),
     saved_at: new Date().toISOString(),
@@ -10455,6 +10504,11 @@ function sanitizePlayerState(rawState, username) {
     state.equipped_back_item = equippedBack;
   }
 
+  const equippedHair = clampString(rawState.equipped_hair_item || "");
+  if (doesStateOwnEquippedItem(state, equippedHair, "hair")) {
+    state.equipped_hair_item = equippedHair;
+  }
+
   const equippedShirt = clampString(rawState.equipped_shirt_item || "");
   if (doesStateOwnEquippedItem(state, equippedShirt, "shirt")) {
     state.equipped_shirt_item = equippedShirt;
@@ -10463,6 +10517,11 @@ function sanitizePlayerState(rawState, username) {
   const equippedPants = clampString(rawState.equipped_pants_item || "");
   if (doesStateOwnEquippedItem(state, equippedPants, "pants")) {
     state.equipped_pants_item = equippedPants;
+  }
+
+  const equippedShoes = clampString(rawState.equipped_shoes_item || "");
+  if (doesStateOwnEquippedItem(state, equippedShoes, "shoes")) {
+    state.equipped_shoes_item = equippedShoes;
   }
 
   return state;
@@ -10538,7 +10597,7 @@ function sanitizeEquipmentSlots(rawSlots, username = "") {
   const safe = {};
   const state = username !== "" ? ensurePlayerState(username) : null;
   const allowedSlots = [
-    "hand", "back", "head", "hat", "eyes", "face",
+    "hand", "back", "hair", "head", "hat", "eyes", "face",
     "shirt", "pants", "legs", "feet", "shoes",
     "neck", "aura"
   ];
