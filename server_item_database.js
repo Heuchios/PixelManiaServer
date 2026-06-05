@@ -426,14 +426,14 @@ const ITEMS = Object.freeze({
     rarity: "legendary",
     equipment_slot: "back",
     equipable: true,
-    tradeable: false,
-    dropable: false,
+    tradeable: true,
+    dropable: true,
   }),
   evil_wings: item("back", {
     rarity: "legendary",
     equipment_slot: "back",
     equipable: true,
-    tradeable: false,
+    tradeable: true,
     dropable: false,
   }),
 
