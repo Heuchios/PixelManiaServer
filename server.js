@@ -59,6 +59,23 @@ const MAX_DROP_TILE_AMOUNT = 2000;
 const MAX_ITEM_STACK = ItemDatabase.DEFAULT_STACK_LIMIT;
 const MAX_SHOP_PRICE = 999999;
 const MAX_PLAYER_INVENTORY_KEYS = 500;
+const ADMIN_INVENTORY_LOOKUP_PURPOSE = "admin_inventory_lookup";
+const ADMIN_ITEM_INSTANCE_LOOKUP_PURPOSE = "admin_item_instance_lookup";
+const ADMIN_ITEM_INSTANCE_LOOKUP_LIMIT = 250;
+const ADMIN_INVENTORY_LOOKUP_FIELDS = Object.freeze([
+  { field: "inventory", category: "block" },
+  { field: "seed_inventory", category: "seed" },
+  { field: "tool_inventory", category: "tool" },
+  { field: "back_inventory", category: "back" },
+  { field: "hair_inventory", category: "hair" },
+  { field: "shirt_inventory", category: "shirt" },
+  { field: "pants_inventory", category: "pants" },
+  { field: "shoes_inventory", category: "shoes" },
+  { field: "currency_inventory", category: "currency" },
+  { field: "material_inventory", category: "material" },
+  { field: "lure_inventory", category: "lure" },
+  { field: "fish_inventory", category: "fish" },
+]);
 const MAX_ITEM_ID_LENGTH = 64;
 const MAX_DROP_ID_LENGTH = 96;
 const PLAYER_LEVEL_MIN = 1;
@@ -157,6 +174,7 @@ const MESSAGE_RATE_LIMITS = {
   friend_request: { limit: 6, windowMs: 5000 },
   friend_response: { limit: 12, windowMs: 5000 },
   player_state_request: { limit: 8, windowMs: 10000 },
+  pull_player_request: { limit: 6, windowMs: 5000 },
   player_state_save: { limit: 6, windowMs: 10000 },
   join_world: { limit: 12, windowMs: 10000 },
   chat: { limit: 8, windowMs: 5000 },
@@ -446,9 +464,17 @@ wss.on("connection", (socket) => {
       if (!requireAuthenticated(socket, player, "load player data")) return;
 
       const requestId = makeRequestId(data);
-      const username = cleanAccountName(data.username || player.account_username || player.name);
+      const username = cleanAccountName(data.username || data.requested_username || data.target_username || player.account_username || player.name);
       if (username === "") return;
       const purpose = clampString(data.purpose || "").toLowerCase();
+      if (purpose === ADMIN_INVENTORY_LOOKUP_PURPOSE) {
+        handleAdminInventoryLookupRequest(socket, player, data, username, requestId, purpose);
+        return;
+      }
+      if (purpose === ADMIN_ITEM_INSTANCE_LOOKUP_PURPOSE) {
+        await handleAdminItemInstanceLookupRequest(socket, player, data, username, requestId, purpose);
+        return;
+      }
       if (!isPlayerOwnAccount(player, username)) {
         if (purpose === "world_lock_access_check" || purpose === "remote_player_profile") {
           const publicProfile = buildPublicPlayerProfilePayload(username, requestId, purpose);
@@ -475,6 +501,11 @@ wss.on("connection", (socket) => {
         equipment_slots: player.equipment_slots || {},
         player_data: state || {},
       });
+      return;
+    }
+
+    if (data.type === "pull_player_request") {
+      handlePullPlayerRequest(socket, player, data);
       return;
     }
 
@@ -1611,6 +1642,11 @@ async function loadPersistentState() {
     }
   }
 
+  const itemInstanceReconcile = await postgresStore.reconcileStoredItemInstancesFromPlayerStates();
+  if (itemInstanceReconcile.ok && itemInstanceReconcile.player_count > 0) {
+    console.log(`[postgres] reconciled item instances for ${itemInstanceReconcile.player_count} player state(s).`);
+  }
+
   const dbWorlds = await postgresStore.loadWorldStates();
   if (dbWorlds.length > 0) {
     worldStates.clear();
@@ -1746,6 +1782,9 @@ function makeMessageIdempotencyScope(data) {
     return type;
   }
   if (type === "account_register" || type === "account_login" || type === "account_token_login") {
+    return type;
+  }
+  if (type === "pull_player_request") {
     return type;
   }
   return "";
@@ -7025,6 +7064,31 @@ function getWorldLockRoleForAccount(lock, username) {
   return "";
 }
 
+function isWorldLockOwnerAccount(lock, username) {
+  const ownerKey = accountKey(lock?.owner_name || lock?.owner_username || "");
+  if (ownerKey === "") return false;
+  return ownerKey === accountKey(username);
+}
+
+function getWorldLockPullPermission(player, worldName) {
+  if (!player || !player.authenticated) return { ok: false, role: "", lock: {} };
+
+  const state = ensureWorldState(worldName);
+  const lock = state.world_lock || {};
+  if (!lock.is_locked) return { ok: false, role: "", lock };
+
+  if (isWorldLockOwnerAccount(lock, player.account_username)) {
+    return { ok: true, role: "owner", lock };
+  }
+
+  const role = normalizeWorldLockAccessRole(getWorldLockRoleForAccount(lock, player.account_username), "");
+  if (role === "admin") {
+    return { ok: true, role, lock };
+  }
+
+  return { ok: false, role: "", lock };
+}
+
 function canPlayerToggleWoodenEntrance(player, worldName) {
   if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
@@ -8370,6 +8434,233 @@ function markAccountSeen(username) {
   postgresStore.mirrorAccount(account, { touchLogin: false });
 }
 
+function buildAdminInventoryLookupPlayerData(username, state) {
+  const clean = cleanAccountName(username);
+  const source = state && typeof state === "object" && !Array.isArray(state)
+    ? state
+    : createDefaultPlayerState(clean);
+  if (!source) return {};
+
+  const payload = {
+    account_username: cleanAccountName(source.account_username || source.username || clean),
+    player_level: clampInteger(source.player_level || PLAYER_LEVEL_MIN, PLAYER_LEVEL_MIN, PLAYER_LEVEL_MAX),
+    player_title: clampString(source.player_title || ""),
+    selected_item_type: clampString(source.selected_item_type || ""),
+    selected_item_category: cleanInventoryCategory(source.selected_item_category || ""),
+    primary_hotbar_tool: clampString(source.primary_hotbar_tool || ""),
+    hotbar_items: sanitizeStringArray(source.hotbar_items, 16),
+    hotbar_item_categories: sanitizeStringArray(source.hotbar_item_categories, 16),
+    equipped_tool: clampString(source.equipped_tool || ""),
+    equipped_back_item: clampString(source.equipped_back_item || ""),
+    equipped_hair_item: clampString(source.equipped_hair_item || ""),
+    equipped_shirt_item: clampString(source.equipped_shirt_item || ""),
+    equipped_pants_item: clampString(source.equipped_pants_item || ""),
+    equipped_shoes_item: clampString(source.equipped_shoes_item || ""),
+    saved_at: String(source.saved_at || "").slice(0, 64),
+  };
+
+  for (const spec of ADMIN_INVENTORY_LOOKUP_FIELDS) {
+    payload[spec.field] = sanitizeCountDictionary(source[spec.field], MAX_PLAYER_INVENTORY_KEYS, spec.category);
+  }
+
+  return payload;
+}
+
+function sendAdminInventoryLookupFailure(socket, requestId, targetUsername, message, extra = {}) {
+  sendJson(socket, {
+    type: "player_state",
+    ok: false,
+    found: false,
+    request_id: requestId,
+    purpose: ADMIN_INVENTORY_LOOKUP_PURPOSE,
+    action: ADMIN_INVENTORY_LOOKUP_PURPOSE,
+    username: cleanAccountName(targetUsername),
+    message,
+    ...extra,
+  });
+}
+
+function sendAdminItemInstanceLookupFailure(socket, requestId, targetUsername, message, extra = {}) {
+  sendJson(socket, {
+    type: "player_state",
+    ok: false,
+    found: false,
+    request_id: requestId,
+    purpose: ADMIN_ITEM_INSTANCE_LOOKUP_PURPOSE,
+    action: ADMIN_ITEM_INSTANCE_LOOKUP_PURPOSE,
+    username: cleanAccountName(targetUsername),
+    message,
+    ...extra,
+  });
+}
+
+function handleAdminInventoryLookupRequest(socket, player, data, username, requestId, purpose) {
+  const targetUsername = cleanAccountName(data.target_username || data.requested_username || username);
+  const logBase = {
+    request_id: requestId,
+    purpose,
+    target_username: targetUsername,
+    world: cleanWorld(data.world || player.world || "START"),
+  };
+
+  const deny = (message, details = {}, extra = {}) => {
+    logAdminAction(socket, player, "admin_inventory_lookup_denied", { ...logBase, ...details }, false, message);
+    logSecurityEvent(socket, player, "admin_inventory_lookup_denied", { ...logBase, ...details, message }, "warning");
+    sendAdminInventoryLookupFailure(socket, requestId, targetUsername, message, extra);
+  };
+
+  if (!isAdmin(player)) {
+    deny("Inventory lookup is only available to admins.");
+    return;
+  }
+
+  if (!isDeveloperPinUnlocked(player)) {
+    deny("Developer PIN required.", { reason: "developer_pin_required" }, {
+      requires_developer_pin: true,
+      developer_pin_required: DEV_PIN_REQUIRED,
+      developer_pin_unlocked: false,
+    });
+    return;
+  }
+
+  if (targetUsername === "") {
+    logAdminAction(socket, player, "admin_inventory_lookup", logBase, false, "Target username is required.");
+    sendAdminInventoryLookupFailure(socket, requestId, targetUsername, "Target username is required.");
+    return;
+  }
+
+  const state = ensurePlayerState(targetUsername);
+  const found = Boolean(state) || doesAccountExist(targetUsername);
+  if (!found) {
+    logAdminAction(socket, player, "admin_inventory_lookup", logBase, false, "Target account does not exist.");
+    sendAdminInventoryLookupFailure(socket, requestId, targetUsername, "Target account does not exist.");
+    return;
+  }
+
+  const target = findOnlinePlayerByUsername(targetUsername);
+  const account = accounts.get(accountKey(targetUsername)) || null;
+  const displayUsername = account?.username || state?.account_username || targetUsername;
+  const lookupState = state || createDefaultPlayerState(targetUsername);
+  const playerData = buildAdminInventoryLookupPlayerData(displayUsername, lookupState);
+
+  logAdminAction(socket, player, "admin_inventory_lookup", {
+    ...logBase,
+    target_username: displayUsername,
+    target_found: true,
+    target_online: Boolean(target),
+  }, true, "Inventory lookup completed.");
+
+  sendJson(socket, {
+    type: "player_state",
+    ok: true,
+    found: true,
+    request_id: requestId,
+    purpose: ADMIN_INVENTORY_LOOKUP_PURPOSE,
+    action: ADMIN_INVENTORY_LOOKUP_PURPOSE,
+    username: displayUsername,
+    name: displayUsername,
+    online: Boolean(target),
+    offline: !target,
+    world: target?.player?.world || "",
+    current_world: target?.player?.world || "",
+    account: {
+      username: displayUsername,
+      role: getAccountRole(displayUsername),
+      last_seen_at: account ? String(account.last_seen_at || "") : "",
+    },
+    player_data: playerData,
+    message: "Inventory loaded.",
+  });
+}
+
+async function handleAdminItemInstanceLookupRequest(socket, player, data, username, requestId, purpose) {
+  const targetUsername = cleanAccountName(data.target_username || data.requested_username || username);
+  const logBase = {
+    request_id: requestId,
+    purpose,
+    target_username: targetUsername,
+    world: cleanWorld(data.world || player.world || "START"),
+  };
+
+  const deny = (message, details = {}, extra = {}) => {
+    logAdminAction(socket, player, "admin_item_instance_lookup_denied", { ...logBase, ...details }, false, message);
+    logSecurityEvent(socket, player, "admin_item_instance_lookup_denied", { ...logBase, ...details, message }, "warning");
+    sendAdminItemInstanceLookupFailure(socket, requestId, targetUsername, message, extra);
+  };
+
+  if (!isAdmin(player)) {
+    deny("Item instance lookup is only available to admins.");
+    return;
+  }
+
+  if (!isDeveloperPinUnlocked(player)) {
+    deny("Developer PIN required.", { reason: "developer_pin_required" }, {
+      requires_developer_pin: true,
+      developer_pin_required: DEV_PIN_REQUIRED,
+      developer_pin_unlocked: false,
+    });
+    return;
+  }
+
+  if (targetUsername === "") {
+    logAdminAction(socket, player, "admin_item_instance_lookup", logBase, false, "Target username is required.");
+    sendAdminItemInstanceLookupFailure(socket, requestId, targetUsername, "Target username is required.");
+    return;
+  }
+
+  if (!isPostgresAuthoritativeReady()) {
+    logAdminAction(socket, player, "admin_item_instance_lookup", logBase, false, "PostgreSQL is not ready.");
+    sendAdminItemInstanceLookupFailure(socket, requestId, targetUsername, "PostgreSQL is not ready.");
+    return;
+  }
+
+  const state = ensurePlayerState(targetUsername);
+  const found = Boolean(state) || doesAccountExist(targetUsername);
+  if (!found) {
+    logAdminAction(socket, player, "admin_item_instance_lookup", logBase, false, "Target account does not exist.");
+    sendAdminItemInstanceLookupFailure(socket, requestId, targetUsername, "Target account does not exist.");
+    return;
+  }
+
+  const target = findOnlinePlayerByUsername(targetUsername);
+  const account = accounts.get(accountKey(targetUsername)) || null;
+  const displayUsername = account?.username || state?.account_username || targetUsername;
+  const rawLimit = clampInteger(data.limit || ADMIN_ITEM_INSTANCE_LOOKUP_LIMIT, 1, ADMIN_ITEM_INSTANCE_LOOKUP_LIMIT);
+  const itemInstances = await postgresStore.listActiveItemInstances(displayUsername, { limit: rawLimit });
+
+  logAdminAction(socket, player, "admin_item_instance_lookup", {
+    ...logBase,
+    target_username: displayUsername,
+    target_found: true,
+    target_online: Boolean(target),
+    item_instance_count: itemInstances.length,
+  }, true, "Item instance lookup completed.");
+
+  sendJson(socket, {
+    type: "player_state",
+    ok: true,
+    found: true,
+    request_id: requestId,
+    purpose: ADMIN_ITEM_INSTANCE_LOOKUP_PURPOSE,
+    action: ADMIN_ITEM_INSTANCE_LOOKUP_PURPOSE,
+    username: displayUsername,
+    name: displayUsername,
+    online: Boolean(target),
+    offline: !target,
+    world: target?.player?.world || "",
+    current_world: target?.player?.world || "",
+    account: {
+      username: displayUsername,
+      role: getAccountRole(displayUsername),
+      last_seen_at: account ? String(account.last_seen_at || "") : "",
+    },
+    item_instances: itemInstances,
+    item_instance_count: itemInstances.length,
+    item_instance_limit: rawLimit,
+    message: "Item instances loaded.",
+  });
+}
+
 function buildPublicPlayerData(state) {
   if (!state || typeof state !== "object" || Array.isArray(state)) return {};
   const progression = normalizeProgressionState(state);
@@ -8499,6 +8790,105 @@ function findOnlinePlayerByUsername(username) {
   }
 
   return null;
+}
+
+function handlePullPlayerRequest(socket, player, data) {
+  if (!requireAuthenticated(socket, player, "pull players")) return;
+
+  const requestId = makeRequestId(data);
+  const worldName = getPlayerCurrentWorldName(player);
+  const requestedWorldName = cleanWorld(data.world || worldName);
+  if (!requireSameWorld(socket, player, requestedWorldName, "pull_player_request")) return;
+
+  const targetUsername = cleanAccountName(data.target_username || data.username || data.name || "").slice(0, MAX_USERNAME_LENGTH);
+  if (targetUsername === "") {
+    sendActionRejected(socket, "pull_player_request", "Use: /pull username", { request_id: requestId });
+    return;
+  }
+
+  const permission = getWorldLockPullPermission(player, worldName);
+  if (!permission.ok) {
+    sendActionRejected(socket, "pull_player_request", "Only the world owner or world admins can use /pull.", {
+      request_id: requestId,
+      target_username: targetUsername,
+    });
+    return;
+  }
+
+  const target = findOnlinePlayerByUsername(targetUsername);
+  if (!target || !target.player.joined_world || getPlayerCurrentWorldName(target.player) !== worldName) {
+    sendActionRejected(socket, "pull_player_request", `${targetUsername} is not in this world.`, {
+      request_id: requestId,
+      target_username: targetUsername,
+    });
+    return;
+  }
+
+  if (permission.role === "admin" && isWorldLockOwnerAccount(permission.lock, target.player.account_username)) {
+    sendActionRejected(socket, "pull_player_request", "World admins cannot pull the world owner.", {
+      request_id: requestId,
+      target_username: targetUsername,
+    });
+    return;
+  }
+
+  const pullX = Number(player.x);
+  const pullY = Number(player.y);
+  if (!isPositionInWorldBounds(pullX, pullY)) {
+    sendActionRejected(socket, "pull_player_request", "Your position is not ready yet.", {
+      request_id: requestId,
+      target_username: targetUsername,
+    });
+    return;
+  }
+
+  target.player.x = pullX;
+  target.player.y = pullY;
+  target.player.last_position_at = Date.now();
+
+  const targetName = cleanAccountName(target.player.account_username || target.player.name || targetUsername);
+  const pullerName = cleanAccountName(player.account_username || player.name || "Player");
+  const positionPayload = {
+    type: "player_position",
+    player_id: target.player.id,
+    name: targetName,
+    role: getPublicPlayerRole(target.player),
+    x: target.player.x,
+    y: target.player.y,
+    facing: target.player.facing,
+    world: worldName,
+    animation_state: target.player.animation_state || "idle",
+    equipment_slots: target.player.equipment_slots || {},
+  };
+
+  sendJson(target.socket, {
+    type: "player_pulled",
+    request_id: requestId,
+    player_id: target.player.id,
+    name: targetName,
+    username: targetName,
+    pulled_by: pullerName,
+    x: target.player.x,
+    y: target.player.y,
+    facing: target.player.facing,
+    world: worldName,
+    message: `${pullerName} pulled you.`,
+  });
+
+  broadcastToWorld(worldName, positionPayload, target.player.id);
+  sendJson(socket, {
+    type: "pull_player_result",
+    ok: true,
+    request_id: requestId,
+    target_username: targetName,
+    world: worldName,
+    x: target.player.x,
+    y: target.player.y,
+    message: `Pulled ${targetName}.`,
+  });
+
+  touchLivePresence(target.socket, target.player, { force: true });
+  touchLivePresence(socket, player, { force: true });
 }
 
 function handleDeveloperPinUnlock(socket, player, data) {

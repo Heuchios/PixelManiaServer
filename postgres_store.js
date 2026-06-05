@@ -35,6 +35,13 @@ const POSTGRES_TRANSACTION_MAX_ATTEMPTS = 5;
 const POSTGRES_TRANSACTION_RETRY_BASE_DELAY_MS = 75;
 const DEFAULT_INVENTORY_STACK_LIMIT = ItemDatabase.DEFAULT_STACK_LIMIT || 200;
 const MAX_INVENTORY_STACK_LIMIT = ItemDatabase.GEM_CURRENCY_STACK_LIMIT || 100000000000;
+const ITEM_INSTANCE_TRACKED_CATEGORIES = new Set(["tool", "back", "hair", "shirt", "pants", "shoes"]);
+const ITEM_INSTANCE_ACTIVE_STATE = "active";
+const ITEM_INSTANCE_RETIRED_STATE = "consumed";
+const ITEM_INSTANCE_STATES = new Set(["active", "consumed", "traded", "destroyed", "dropped", "locked"]);
+const ITEM_INSTANCE_RECONCILE_MAX_PER_ITEM = 250;
+const PUNISHMENT_TYPES = new Set(["ban", "mute", "trade_ban", "world_ban", "lockout"]);
+const PUNISHMENT_SCOPES = new Set(["global", "world"]);
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -90,6 +97,57 @@ function getInventoryStackLimitForItem(itemType, fallback = DEFAULT_INVENTORY_ST
     return clampStackLimit(ItemDatabase.getStackLimit(cleanItemType), fallback);
   }
   return clampStackLimit(fallback);
+}
+
+function resolveItemCategory(itemType, itemCategory = "") {
+  const cleanItemType = cleanName(itemType);
+  if (cleanItemType !== "" && typeof ItemDatabase.resolveItemCategory === "function") {
+    const resolved = cleanName(ItemDatabase.resolveItemCategory(cleanItemType, itemCategory));
+    if (resolved !== "") return resolved;
+  }
+  return cleanName(itemCategory || "block").toLowerCase();
+}
+
+function shouldTrackItemInstance(itemType, itemCategory = "") {
+  const cleanItemType = cleanName(itemType);
+  if (cleanItemType === "") return false;
+
+  const resolvedCategory = resolveItemCategory(cleanItemType, itemCategory);
+  const definition = typeof ItemDatabase.getItemDefinition === "function"
+    ? ItemDatabase.getItemDefinition(cleanItemType)
+    : null;
+  if (definition && definition.instance_tracked === false) return false;
+  if (definition && (definition.instance_tracked === true || definition.equipable || cleanName(definition.equipment_slot) !== "")) return true;
+  if (ITEM_INSTANCE_TRACKED_CATEGORIES.has(resolvedCategory)) return true;
+  return getInventoryStackLimitForItem(cleanItemType) <= 1;
+}
+
+function normalizeItemInstanceState(value, fallback = ITEM_INSTANCE_ACTIVE_STATE) {
+  const clean = cleanName(value).toLowerCase();
+  if (ITEM_INSTANCE_STATES.has(clean)) return clean;
+  return ITEM_INSTANCE_STATES.has(fallback) ? fallback : ITEM_INSTANCE_ACTIVE_STATE;
+}
+
+function normalizePunishmentType(value) {
+  const clean = cleanName(value).toLowerCase();
+  return PUNISHMENT_TYPES.has(clean) ? clean : "";
+}
+
+function normalizePunishmentScope(value) {
+  const clean = cleanName(value).toLowerCase();
+  return PUNISHMENT_SCOPES.has(clean) ? clean : "global";
+}
+
+function normalizePunishmentEndsAt(entry) {
+  const e = toObject(entry);
+  const explicitEndsAt = normalizeOptionalTimestamp(e.ends_at || e.expires_at || e.until || "");
+  if (explicitEndsAt) return explicitEndsAt;
+
+  const durationMinutes = toInt(e.duration_minutes || e.minutes || 0, 0);
+  if (durationMinutes > 0) {
+    return new Date(Date.now() + (durationMinutes * 60000)).toISOString();
+  }
+  return null;
 }
 
 function defaultEmailForUsername(username) {
@@ -331,7 +389,17 @@ class PostgresStore {
   }
 
   async ensurePersistenceSchema() {
-    const requiredTables = ["players", "worlds", "world_snapshots", "world_locks", "world_members", "world_lock_access", "admin_actions"];
+    const requiredTables = [
+      "players",
+      "worlds",
+      "world_snapshots",
+      "world_locks",
+      "world_members",
+      "world_lock_access",
+      "admin_actions",
+      "item_instances",
+      "punishments",
+    ];
     for (const tableName of requiredTables) {
       const tableResult = await this.pool.query("SELECT to_regclass($1) AS oid", [`${this.schema}.${tableName}`]);
       if (!tableResult.rows[0] || !tableResult.rows[0].oid) {
@@ -516,6 +584,22 @@ class PostgresStore {
       [accountId, cleanUsername, cleanWorld]
     );
     return playerResult.rows[0] ? playerResult.rows[0].player_id : null;
+  }
+
+  async lookupPlayerIdByUsername(client, username) {
+    const cleanUsername = cleanName(username);
+    if (cleanUsername === "") return null;
+    const result = await client.query(
+      `
+      SELECT p.player_id
+        FROM ${this.table("players")} p
+        JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
+       WHERE a.username = $1
+       LIMIT 1
+      `,
+      [cleanUsername]
+    );
+    return result.rows[0]?.player_id || null;
   }
 
   async claimIdempotency(scope, key, username = "", metadata = {}) {
@@ -774,6 +858,308 @@ class PostgresStore {
     }
   }
 
+  async reconcileItemInstancesForInventory(client, playerId, playerState, details = {}) {
+    if (!playerId) return;
+
+    const desiredCounts = new Map();
+    for (const [field, fallbackCategory] of INVENTORY_FIELD_CATEGORY) {
+      const bucket = toObject(playerState[field]);
+      for (const [itemType, rawAmount] of Object.entries(bucket)) {
+        const cleanItemType = cleanName(itemType);
+        if (cleanItemType === "") continue;
+        const itemCategory = resolveItemCategory(cleanItemType, fallbackCategory);
+        if (!shouldTrackItemInstance(cleanItemType, itemCategory)) continue;
+        const amount = Math.max(0, toInt(rawAmount, 0));
+        if (amount <= 0) continue;
+        const cappedAmount = Math.min(amount, ITEM_INSTANCE_RECONCILE_MAX_PER_ITEM);
+        const key = `${cleanItemType}\u0000${itemCategory}`;
+        desiredCounts.set(key, (desiredCounts.get(key) || 0) + cappedAmount);
+      }
+    }
+
+    const activeResult = await client.query(
+      `
+      SELECT item_instance_id, item_type, item_category
+        FROM ${this.table("item_instances")}
+       WHERE owner_player_id = $1
+         AND state = 'active'
+       ORDER BY created_at ASC
+       FOR UPDATE
+      `,
+      [playerId]
+    );
+
+    const activeByItem = new Map();
+    for (const row of activeResult.rows) {
+      const itemType = cleanName(row.item_type);
+      const itemCategory = resolveItemCategory(itemType, row.item_category || "");
+      if (!shouldTrackItemInstance(itemType, itemCategory)) continue;
+      const key = `${itemType}\u0000${itemCategory}`;
+      if (!activeByItem.has(key)) activeByItem.set(key, []);
+      activeByItem.get(key).push(row.item_instance_id);
+    }
+
+    const allKeys = new Set([...desiredCounts.keys(), ...activeByItem.keys()]);
+    for (const key of allKeys) {
+      const [itemType, itemCategory] = key.split("\u0000");
+      const desiredAmount = Math.max(0, desiredCounts.get(key) || 0);
+      const activeIds = activeByItem.get(key) || [];
+
+      if (activeIds.length > desiredAmount) {
+        const retiredIds = activeIds.slice(desiredAmount);
+        await client.query(
+          `
+          UPDATE ${this.table("item_instances")}
+             SET state = $2,
+                 metadata = metadata || $3::jsonb,
+                 updated_at = now()
+           WHERE item_instance_id = ANY($1::uuid[])
+          `,
+          [
+            retiredIds,
+            ITEM_INSTANCE_RETIRED_STATE,
+            JSON.stringify({
+              source: "inventory_snapshot_reconcile",
+              details: safeJson(details),
+            }),
+          ]
+        );
+      }
+
+      const missingCount = desiredAmount - activeIds.length;
+      for (let i = 0; i < missingCount; i += 1) {
+        await client.query(
+          `
+          INSERT INTO ${this.table("item_instances")} (
+            item_type,
+            item_category,
+            owner_player_id,
+            state,
+            metadata,
+            created_at,
+            updated_at
+          )
+          VALUES ($1, $2, $3, 'active', $4::jsonb, now(), now())
+          `,
+          [
+            cleanName(itemType),
+            cleanName(itemCategory),
+            playerId,
+            JSON.stringify({
+              source: "inventory_snapshot_reconcile",
+              details: safeJson(details),
+            }),
+          ]
+        );
+      }
+    }
+  }
+
+  async createItemInstance(entry = {}) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const e = toObject(entry);
+    const itemType = cleanName(e.item_type || e.item_id || "");
+    const itemCategory = resolveItemCategory(itemType, e.item_category || e.category || "");
+    const ownerUsername = cleanName(e.owner_username || e.account_username || e.username || "");
+    const worldName = cleanName(e.world || e.world_name || "");
+    const state = normalizeItemInstanceState(e.state || ITEM_INSTANCE_ACTIVE_STATE);
+    if (itemType === "" || itemCategory === "") return { ok: false, reason: "invalid_item" };
+    if (!shouldTrackItemInstance(itemType, itemCategory) && !e.force) {
+      return { ok: false, reason: "not_instance_tracked" };
+    }
+
+    try {
+      return await this.withTransaction(async (client) => {
+        const ownerPlayerId = ownerUsername !== ""
+          ? await this.lookupPlayerIdByUsername(client, ownerUsername)
+          : null;
+        if (ownerUsername !== "" && !ownerPlayerId) return { ok: false, reason: "owner_not_found" };
+        const worldId = worldName !== ""
+          ? await this.ensureWorldIdentity(client, worldName)
+          : null;
+        const originTransactionId = Number.isFinite(Number(e.origin_transaction_id))
+          ? Math.trunc(Number(e.origin_transaction_id))
+          : null;
+
+        const result = await client.query(
+          `
+          INSERT INTO ${this.table("item_instances")} (
+            item_type,
+            item_category,
+            owner_player_id,
+            world_id,
+            state,
+            origin_transaction_id,
+            metadata,
+            created_at,
+            updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, now(), now())
+          RETURNING item_instance_id
+          `,
+          [
+            itemType,
+            itemCategory,
+            ownerPlayerId,
+            worldId,
+            state,
+            originTransactionId,
+            JSON.stringify(safeJson(e.metadata || e.details || {})),
+          ]
+        );
+
+        return {
+          ok: true,
+          item_instance_id: cleanName(result.rows[0]?.item_instance_id || ""),
+          item_type: itemType,
+          item_category: itemCategory,
+          state,
+        };
+      });
+    } catch (error) {
+      this.logger("[postgres] item instance create failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
+    }
+  }
+
+  mirrorItemInstance(entry = {}) {
+    if (!this.isReady()) return;
+    this.runDetached("mirror item instance", async () => {
+      await this.createItemInstance(entry);
+    });
+  }
+
+  async updateItemInstance(entry = {}) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const e = toObject(entry);
+    const itemInstanceId = cleanName(e.item_instance_id || e.instance_id || "");
+    if (!isUuid(itemInstanceId)) return { ok: false, reason: "invalid_item_instance_id" };
+
+    const ownerUsername = cleanName(e.owner_username || e.account_username || e.username || "");
+    const worldName = cleanName(e.world || e.world_name || "");
+    const state = normalizeItemInstanceState(e.state || ITEM_INSTANCE_ACTIVE_STATE);
+
+    try {
+      return await this.withTransaction(async (client) => {
+        const ownerPlayerId = ownerUsername !== ""
+          ? await this.lookupPlayerIdByUsername(client, ownerUsername)
+          : null;
+        if (ownerUsername !== "" && !ownerPlayerId) return { ok: false, reason: "owner_not_found" };
+        const worldId = worldName !== ""
+          ? await this.ensureWorldIdentity(client, worldName)
+          : null;
+
+        const result = await client.query(
+          `
+          UPDATE ${this.table("item_instances")}
+             SET owner_player_id = COALESCE($2, owner_player_id),
+                 world_id = COALESCE($3, world_id),
+                 state = $4,
+                 metadata = metadata || $5::jsonb,
+                 updated_at = now()
+           WHERE item_instance_id = $1
+          RETURNING item_instance_id, item_type, item_category, state
+          `,
+          [
+            itemInstanceId,
+            ownerPlayerId,
+            worldId,
+            state,
+            JSON.stringify(safeJson(e.metadata || e.details || {})),
+          ]
+        );
+
+        const row = result.rows[0];
+        if (!row) return { ok: false, reason: "item_instance_not_found" };
+        return {
+          ok: true,
+          item_instance_id: cleanName(row.item_instance_id || ""),
+          item_type: cleanName(row.item_type || ""),
+          item_category: cleanName(row.item_category || ""),
+          state: cleanName(row.state || ""),
+        };
+      });
+    } catch (error) {
+      this.logger("[postgres] item instance update failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
+    }
+  }
+
+  async listActiveItemInstances(username, options = {}) {
+    if (!this.isReady()) return [];
+    const cleanUsername = cleanName(username);
+    if (cleanUsername === "") return [];
+    const itemType = cleanName(options.item_type || options.item_id || "");
+    const itemCategory = resolveItemCategory(itemType, options.item_category || options.category || "");
+    const limit = Math.min(500, Math.max(1, toInt(options.limit, 100)));
+
+    try {
+      const result = await this.pool.query(
+        `
+        SELECT ii.item_instance_id, ii.item_type, ii.item_category, ii.state, ii.metadata, ii.created_at, ii.updated_at
+          FROM ${this.table("item_instances")} ii
+          JOIN ${this.table("players")} p ON p.player_id = ii.owner_player_id
+          JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
+         WHERE a.username = $1
+           AND ii.state = 'active'
+           AND ($2 = '' OR ii.item_type = $2)
+           AND ($3 = '' OR ii.item_category = $3)
+         ORDER BY ii.created_at ASC
+         LIMIT $4
+        `,
+        [cleanUsername, itemType, itemCategory, limit]
+      );
+
+      return result.rows.map((row) => ({
+        item_instance_id: cleanName(row.item_instance_id || ""),
+        item_type: cleanName(row.item_type || ""),
+        item_category: cleanName(row.item_category || ""),
+        state: cleanName(row.state || ""),
+        metadata: toObject(row.metadata),
+        created_at: normalizeOptionalTimestamp(row.created_at),
+        updated_at: normalizeOptionalTimestamp(row.updated_at),
+      }));
+    } catch (error) {
+      this.logger("[postgres] item instance list failed:", error.message);
+      return [];
+    }
+  }
+
+  async reconcileStoredItemInstancesFromPlayerStates() {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+
+    try {
+      const rows = await this.pool.query(
+        `
+        SELECT p.player_id, a.username::text AS username, p.player_state
+          FROM ${this.table("players")} p
+          JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
+         WHERE p.player_state IS NOT NULL
+           AND p.player_state <> '{}'::jsonb
+         ORDER BY a.username ASC
+        `
+      );
+
+      if (rows.rowCount <= 0) return { ok: true, player_count: 0 };
+
+      let reconciled = 0;
+      await this.withTransaction(async (client) => {
+        for (const row of rows.rows) {
+          await this.reconcileItemInstancesForInventory(client, row.player_id, toObject(row.player_state), {
+            source: "startup_item_instance_reconcile",
+            username: cleanName(row.username || ""),
+          });
+          reconciled += 1;
+        }
+      });
+
+      return { ok: true, player_count: reconciled };
+    } catch (error) {
+      this.logger("[postgres] stored item instance reconcile failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
+    }
+  }
+
   async savePlayerState(username, state) {
     if (!this.isReady()) return false;
     const cleanUsername = cleanName(username || state?.account_username || state?.username || "");
@@ -806,6 +1192,10 @@ class PostgresStore {
         );
 
         await this.replaceInventorySnapshot(client, playerId, playerState);
+        await this.reconcileItemInstancesForInventory(client, playerId, playerState, {
+          source: "save_player_state",
+          username: cleanUsername,
+        });
       });
       return true;
     } catch (error) {
@@ -870,6 +1260,21 @@ class PostgresStore {
       this.logger("[postgres] player state load failed:", error.message);
       return [];
     }
+  }
+
+  async ensureWorldIdentity(client, worldName) {
+    const cleanWorldName = cleanName(worldName || "START") || "START";
+    const result = await client.query(
+      `
+      INSERT INTO ${this.table("worlds")} (world_name, width, height, world_data_version, is_active, created_at, updated_at)
+      VALUES ($1, 100, 70, 1, true, now(), now())
+      ON CONFLICT (world_name) DO UPDATE
+        SET last_loaded_at = now()
+      RETURNING world_id
+      `,
+      [cleanWorldName]
+    );
+    return result.rows[0]?.world_id || null;
   }
 
   async upsertWorldState(client, worldName, worldState) {
@@ -1521,10 +1926,15 @@ class PostgresStore {
               )
               VALUES ($1, $2, $3, $4, $5, 0, now())
               `,
-              [playerId, cleanItemType, fallbackCategory, amount, stackLimit]
+            [playerId, cleanItemType, fallbackCategory, amount, stackLimit]
             );
           }
         }
+
+        await this.reconcileItemInstancesForInventory(client, playerId, playerState, {
+          source: "mirror_inventory_snapshot",
+          username: cleanUsername,
+        });
       });
     });
   }
@@ -3032,6 +3442,229 @@ class PostgresStore {
       this.logger("[postgres] vend buy transaction failed:", error.message);
       return { ok: false, reason: "database_error", message: error.message };
     }
+  }
+
+  async issuePunishment(entry = {}) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const e = toObject(entry);
+    const targetUsername = cleanName(e.target_username || e.username || e.player_username || "");
+    const issuerUsername = cleanName(e.issued_by_username || e.admin_username || e.actor_username || "");
+    const punishmentType = normalizePunishmentType(e.punishment_type || e.type || "");
+    const scope = normalizePunishmentScope(e.scope || "");
+    const worldName = cleanName(e.world || e.world_name || "");
+    const reason = cleanName(e.reason || "") || "No reason provided.";
+    const endsAt = normalizePunishmentEndsAt(e);
+
+    if (targetUsername === "") return { ok: false, reason: "invalid_target" };
+    if (punishmentType === "") return { ok: false, reason: "invalid_punishment_type" };
+    if (scope === "world" && worldName === "") return { ok: false, reason: "world_required" };
+
+    try {
+      return await this.withTransaction(async (client) => {
+        const playerId = await this.lookupPlayerIdByUsername(client, targetUsername);
+        if (!playerId) return { ok: false, reason: "player_not_found" };
+        const issuedByPlayerId = issuerUsername !== ""
+          ? await this.lookupPlayerIdByUsername(client, issuerUsername)
+          : null;
+        const worldId = scope === "world"
+          ? await this.ensureWorldIdentity(client, worldName)
+          : null;
+
+        const result = await client.query(
+          `
+          INSERT INTO ${this.table("punishments")} (
+            player_id,
+            issued_by_player_id,
+            punishment_type,
+            reason,
+            scope,
+            world_id,
+            starts_at,
+            ends_at,
+            is_active,
+            metadata,
+            created_at
+          )
+          VALUES (
+            $1,
+            $2,
+            $3,
+            $4,
+            $5,
+            $6,
+            now(),
+            $7::timestamptz,
+            true,
+            $8::jsonb,
+            now()
+          )
+          RETURNING punishment_id
+          `,
+          [
+            playerId,
+            issuedByPlayerId,
+            punishmentType,
+            reason,
+            scope,
+            worldId,
+            endsAt,
+            JSON.stringify(safeJson({
+              ...toObject(e.metadata || e.details || {}),
+              target_username: targetUsername,
+              issued_by_username: issuerUsername,
+              world: worldName,
+            })),
+          ]
+        );
+
+        return {
+          ok: true,
+          punishment_id: toInt(result.rows[0]?.punishment_id, 0),
+          target_username: targetUsername,
+          punishment_type: punishmentType,
+          scope,
+          world: worldName,
+          ends_at: endsAt,
+        };
+      });
+    } catch (error) {
+      this.logger("[postgres] punishment issue failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
+    }
+  }
+
+  mirrorPunishment(entry = {}) {
+    if (!this.isReady()) return;
+    const e = toObject(entry);
+    const action = cleanName(e.action || e.mode || "").toLowerCase();
+    this.runDetached("mirror punishment", async () => {
+      if (action === "revoke" || action === "remove" || action === "unban" || action === "unmute") {
+        await this.revokePunishment(e);
+        return;
+      }
+      await this.issuePunishment(e);
+    });
+  }
+
+  async revokePunishment(entry = {}) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const e = toObject(entry);
+    const punishmentId = toInt(e.punishment_id, 0);
+    const targetUsername = cleanName(e.target_username || e.username || e.player_username || "");
+    const punishmentType = normalizePunishmentType(e.punishment_type || e.type || "");
+    const scope = normalizePunishmentScope(e.scope || "");
+    const worldName = cleanName(e.world || e.world_name || "");
+    const revokedBy = cleanName(e.revoked_by_username || e.admin_username || e.actor_username || "");
+
+    if (punishmentId <= 0 && targetUsername === "") return { ok: false, reason: "invalid_target" };
+
+    try {
+      return await this.withTransaction(async (client) => {
+        let playerId = null;
+        if (targetUsername !== "") {
+          playerId = await this.lookupPlayerIdByUsername(client, targetUsername);
+          if (!playerId) return { ok: false, reason: "player_not_found" };
+        }
+        const worldId = worldName !== "" ? await this.ensureWorldIdentity(client, worldName) : null;
+        const result = await client.query(
+          `
+          UPDATE ${this.table("punishments")}
+             SET is_active = false,
+                 metadata = metadata || $6::jsonb
+           WHERE is_active = true
+             AND ($1::bigint <= 0 OR punishment_id = $1::bigint)
+             AND ($2::uuid IS NULL OR player_id = $2::uuid)
+             AND ($3 = '' OR punishment_type = $3)
+             AND ($4 = '' OR scope = $4)
+             AND ($5::uuid IS NULL OR world_id = $5::uuid)
+          RETURNING punishment_id
+          `,
+          [
+            punishmentId,
+            playerId,
+            punishmentType,
+            e.scope === undefined ? "" : scope,
+            worldId,
+            JSON.stringify({
+              revoked_at: new Date().toISOString(),
+              revoked_by_username: revokedBy,
+              revoke_reason: cleanName(e.reason || "") || "revoked",
+            }),
+          ]
+        );
+
+        return {
+          ok: true,
+          revoked_count: result.rowCount,
+          punishment_ids: result.rows.map((row) => toInt(row.punishment_id, 0)).filter((id) => id > 0),
+        };
+      });
+    } catch (error) {
+      this.logger("[postgres] punishment revoke failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
+    }
+  }
+
+  async getActivePunishments(username, options = {}) {
+    if (!this.isReady()) return [];
+    const cleanUsername = cleanName(username);
+    if (cleanUsername === "") return [];
+    const punishmentType = normalizePunishmentType(options.punishment_type || options.type || "");
+    const scope = options.scope === undefined ? "" : normalizePunishmentScope(options.scope || "");
+    const worldName = cleanName(options.world || options.world_name || "");
+
+    try {
+      const result = await this.pool.query(
+        `
+        SELECT
+          pu.punishment_id,
+          pu.punishment_type,
+          pu.reason,
+          pu.scope,
+          w.world_name,
+          pu.starts_at,
+          pu.ends_at,
+          pu.metadata,
+          issuer.display_name AS issued_by_display_name
+        FROM ${this.table("punishments")} pu
+        JOIN ${this.table("players")} p ON p.player_id = pu.player_id
+        JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
+        LEFT JOIN ${this.table("players")} issuer ON issuer.player_id = pu.issued_by_player_id
+        LEFT JOIN ${this.table("worlds")} w ON w.world_id = pu.world_id
+        WHERE a.username = $1
+          AND pu.is_active = true
+          AND (pu.ends_at IS NULL OR pu.ends_at > now())
+          AND ($2 = '' OR pu.punishment_type = $2)
+          AND ($3 = '' OR pu.scope = $3)
+          AND ($4 = '' OR w.world_name = $4)
+        ORDER BY pu.created_at DESC
+        `,
+        [cleanUsername, punishmentType, scope, worldName]
+      );
+
+      return result.rows.map((row) => ({
+        punishment_id: toInt(row.punishment_id, 0),
+        punishment_type: cleanName(row.punishment_type || ""),
+        reason: cleanName(row.reason || ""),
+        scope: cleanName(row.scope || ""),
+        world: cleanName(row.world_name || ""),
+        starts_at: normalizeOptionalTimestamp(row.starts_at),
+        ends_at: normalizeOptionalTimestamp(row.ends_at),
+        issued_by: cleanName(row.issued_by_display_name || ""),
+        metadata: toObject(row.metadata),
+      }));
+    } catch (error) {
+      this.logger("[postgres] active punishment lookup failed:", error.message);
+      return [];
+    }
+  }
+
+  async hasActivePunishment(username, type, options = {}) {
+    const rows = await this.getActivePunishments(username, {
+      ...toObject(options),
+      punishment_type: type,
+    });
+    return rows.length > 0;
   }
 
   mirrorWorldChange(entry) {

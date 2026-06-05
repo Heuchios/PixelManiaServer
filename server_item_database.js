@@ -834,6 +834,15 @@ function isDropableItem(itemId) {
   return Boolean(definition && definition.dropable);
 }
 
+function isVendableItem(itemId) {
+  const clean = cleanItemId(itemId);
+  if (clean === "" || clean === "punch" || clean === "world_lock") return false;
+  if (clean === "vend_empty" || clean === "vend_pending" || clean === "vend_sold") return false;
+
+  const definition = getItemDefinition(clean);
+  return Boolean(definition && !definition.hidden && definition.tradeable);
+}
+
 function isGrantableItem(itemId) {
   const definition = getItemDefinition(itemId);
   return Boolean(definition && definition.admin_grantable);
@@ -924,5 +933,6 @@ module.exports = {
   isGrantableItem,
   isPlaceableBlock,
   isTradeableItem,
+  isVendableItem,
   canBreakBlock,
 };
