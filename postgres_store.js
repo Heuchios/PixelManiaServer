@@ -594,7 +594,7 @@ class PostgresStore {
       SELECT p.player_id
         FROM ${this.table("players")} p
         JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
-       WHERE a.username = $1
+       WHERE lower(a.username) = lower($1)
        LIMIT 1
       `,
       [cleanUsername]
@@ -807,8 +807,8 @@ class PostgresStore {
           email: cleanName(accountState.email || row.email),
           password_salt: cleanName(accountState.password_salt || row.password_salt || ""),
           password_hash: String(accountState.password_hash || row.password_hash || ""),
-          session_token_hash: cleanName(accountState.session_token_hash || row.session_token_hash || ""),
-          session_token_expires_at: cleanName(accountState.session_token_expires_at || normalizeOptionalTimestamp(row.session_token_expires_at) || ""),
+          session_token_hash: cleanName(row.session_token_hash || accountState.session_token_hash || ""),
+          session_token_expires_at: cleanName(normalizeOptionalTimestamp(row.session_token_expires_at) || accountState.session_token_expires_at || ""),
           email_verified: Boolean(row.email_verified),
           email_verified_at: cleanName(normalizeOptionalTimestamp(row.email_verified_at) || accountState.email_verified_at || ""),
           email_verification_token_hash: cleanName(row.email_verification_token_hash || accountState.email_verification_token_hash || ""),
@@ -1100,7 +1100,7 @@ class PostgresStore {
           FROM ${this.table("item_instances")} ii
           JOIN ${this.table("players")} p ON p.player_id = ii.owner_player_id
           JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
-         WHERE a.username = $1
+         WHERE lower(a.username) = lower($1)
            AND ii.state = 'active'
            AND ($2 = '' OR ii.item_type = $2)
            AND ($3 = '' OR ii.item_category = $3)
@@ -1122,6 +1122,60 @@ class PostgresStore {
     } catch (error) {
       this.logger("[postgres] item instance list failed:", error.message);
       return [];
+    }
+  }
+
+  async reconcileItemInstancesForUsername(username, playerState = null, details = {}) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const cleanUsername = cleanName(username);
+    if (cleanUsername === "") return { ok: false, reason: "invalid_username" };
+
+    try {
+      return await this.withTransaction(async (client) => {
+        const result = await client.query(
+          `
+          SELECT p.player_id, p.player_state, a.username::text AS username
+            FROM ${this.table("players")} p
+            JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
+           WHERE lower(a.username) = lower($1)
+           LIMIT 1
+          `,
+          [cleanUsername]
+        );
+
+        const row = result.rows[0];
+        if (!row?.player_id) return { ok: false, reason: "player_not_found" };
+
+        let state = toObject(playerState);
+        if (Object.keys(state).length <= 0) {
+          state = toObject(row.player_state);
+        }
+        if (Object.keys(state).length <= 0) {
+          return {
+            ok: true,
+            player_found: true,
+            reconciled: false,
+            reason: "empty_player_state",
+            username: cleanName(row.username || cleanUsername),
+          };
+        }
+
+        await this.reconcileItemInstancesForInventory(client, row.player_id, state, {
+          source: "manual_item_instance_reconcile",
+          username: cleanName(row.username || cleanUsername),
+          details: safeJson(details),
+        });
+
+        return {
+          ok: true,
+          player_found: true,
+          reconciled: true,
+          username: cleanName(row.username || cleanUsername),
+        };
+      });
+    } catch (error) {
+      this.logger("[postgres] item instance username reconcile failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
     }
   }
 
@@ -1706,11 +1760,11 @@ class PostgresStore {
     });
   }
 
-  mirrorSession(account, details = {}) {
-    if (!this.isReady()) return;
+  async saveSession(account, details = {}) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const accountData = toObject(account);
     const username = cleanName(accountData.username);
-    if (username === "") return;
+    if (username === "") return { ok: false, reason: "invalid_username" };
 
     const email = cleanName(accountData.email || "") || defaultEmailForUsername(username);
     const role = normalizeDbRole(accountData.role || "player");
@@ -1718,14 +1772,15 @@ class PostgresStore {
     const expiresAt = cleanName(accountData.session_token_expires_at || "");
     const ipAddress = normalizeIp(details.ip || "");
     const userAgent = cleanName(details.userAgent || "");
+    if (sessionHash === "") return { ok: false, reason: "missing_session_hash" };
 
-    this.runDetached("mirror session", async () => {
+    try {
       await this.withTransaction(async (client) => {
         const playerId = await this.ensurePlayerIdentity(client, username, email, role);
-        if (!playerId || sessionHash === "") return;
+        if (!playerId) return;
 
         const accountResult = await client.query(
-          `SELECT account_id FROM ${this.table("accounts")} WHERE username = $1 LIMIT 1`,
+          `SELECT account_id FROM ${this.table("accounts")} WHERE lower(username::text) = lower($1) LIMIT 1`,
           [username]
         );
         const accountId = accountResult.rows[0]?.account_id;
@@ -1761,18 +1816,121 @@ class PostgresStore {
           [accountId, sessionHash, ipAddress, userAgent, expiresAt]
         );
       });
-    });
+
+      return {
+        ok: true,
+        username,
+        session_token_hash: sessionHash,
+        expires_at: normalizeOptionalTimestamp(expiresAt),
+      };
+    } catch (error) {
+      this.logger("[postgres] session save failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
+    }
   }
 
-  revokeSessionsByUsername(username) {
-    if (!this.isReady()) return;
-    const cleanUsername = cleanName(username);
-    if (cleanUsername === "") return;
+  mirrorSession(account, details = {}) {
+    return this.saveSession(account, details);
+  }
 
-    this.runDetached("revoke sessions", async () => {
+  async validateSessionToken(username, sessionTokenHash, details = {}) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const cleanUsername = cleanName(username);
+    const cleanSessionHash = cleanName(sessionTokenHash);
+    if (cleanUsername === "" || cleanSessionHash === "") {
+      return { ok: false, reason: "invalid_session" };
+    }
+
+    const ipAddress = normalizeIp(details.ip || "");
+    const userAgent = cleanName(details.userAgent || "");
+
+    try {
+      return await this.withTransaction(async (client) => {
+        const result = await client.query(
+          `
+          SELECT
+            a.username::text AS username,
+            a.email::text AS email,
+            a.password_salt,
+            a.password_hash,
+            a.role,
+            a.email_verified,
+            a.email_verified_at,
+            a.email_verification_token_hash,
+            a.email_verification_expires_at,
+            a.account_state,
+            a.created_at,
+            a.last_login_at,
+            s.session_token_hash,
+            s.expires_at AS session_token_expires_at
+          FROM ${this.table("sessions")} s
+          JOIN ${this.table("accounts")} a ON a.account_id = s.account_id
+          WHERE lower(a.username::text) = lower($1)
+            AND s.session_token_hash = $2
+            AND s.revoked_at IS NULL
+            AND s.expires_at > now()
+            AND a.is_active = true
+          LIMIT 1
+          `,
+          [cleanUsername, cleanSessionHash]
+        );
+
+        const row = result.rows[0];
+        if (!row) return { ok: false, reason: "invalid_or_expired" };
+
+        await client.query(
+          `
+          UPDATE ${this.table("sessions")}
+             SET last_seen_at = now(),
+                 ip_address = COALESCE(NULLIF($2, '')::inet, ip_address),
+                 user_agent = COALESCE(NULLIF($3, ''), user_agent)
+           WHERE session_token_hash = $1
+          `,
+          [cleanSessionHash, ipAddress, userAgent]
+        );
+
+        const accountState = toObject(row.account_state);
+        const expiresAt = normalizeOptionalTimestamp(row.session_token_expires_at) || "";
+        const account = {
+          ...accountState,
+          username: cleanName(accountState.username || row.username),
+          email: cleanName(accountState.email || row.email),
+          password_salt: cleanName(accountState.password_salt || row.password_salt || ""),
+          password_hash: String(accountState.password_hash || row.password_hash || ""),
+          session_token_hash: cleanSessionHash,
+          session_token_expires_at: expiresAt,
+          email_verified: Boolean(row.email_verified),
+          email_verified_at: cleanName(normalizeOptionalTimestamp(row.email_verified_at) || accountState.email_verified_at || ""),
+          email_verification_token_hash: cleanName(row.email_verification_token_hash || accountState.email_verification_token_hash || ""),
+          email_verification_expires_at: cleanName(normalizeOptionalTimestamp(row.email_verification_expires_at) || accountState.email_verification_expires_at || ""),
+          role: cleanName(accountState.role || row.role || "player") || "player",
+          created_at: cleanName(accountState.created_at || normalizeOptionalTimestamp(row.created_at) || ""),
+          last_seen_at: cleanName(accountState.last_seen_at || normalizeOptionalTimestamp(row.last_login_at) || ""),
+        };
+
+        return {
+          ok: true,
+          username: account.username,
+          session_token_hash: cleanSessionHash,
+          expires_at: expiresAt,
+          account,
+        };
+      });
+    } catch (error) {
+      this.logger("[postgres] session validation failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
+    }
+  }
+
+  async revokeSessionsForUsername(username) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const cleanUsername = cleanName(username);
+    if (cleanUsername === "") return { ok: false, reason: "invalid_username" };
+
+    try {
       await this.withTransaction(async (client) => {
         const accountResult = await client.query(
-          `SELECT account_id FROM ${this.table("accounts")} WHERE username = $1 LIMIT 1`,
+          `SELECT account_id FROM ${this.table("accounts")} WHERE lower(username::text) = lower($1) LIMIT 1`,
           [cleanUsername]
         );
         const accountId = accountResult.rows[0]?.account_id;
@@ -1787,7 +1945,38 @@ class PostgresStore {
           [accountId]
         );
       });
-    });
+      return { ok: true };
+    } catch (error) {
+      this.logger("[postgres] session revoke failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
+    }
+  }
+
+  revokeSessionsByUsername(username) {
+    if (!this.isReady()) return Promise.resolve({ ok: false, reason: "postgres_unavailable" });
+    return this.revokeSessionsForUsername(username);
+  }
+
+  async revokeSessionByTokenHash(sessionTokenHash) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const cleanSessionHash = cleanName(sessionTokenHash);
+    if (cleanSessionHash === "") return { ok: false, reason: "invalid_session" };
+
+    try {
+      await this.pool.query(
+        `
+        UPDATE ${this.table("sessions")}
+           SET revoked_at = now()
+         WHERE session_token_hash = $1
+           AND revoked_at IS NULL
+        `,
+        [cleanSessionHash]
+      );
+      return { ok: true };
+    } catch (error) {
+      this.logger("[postgres] session token revoke failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
+    }
   }
 
   mirrorPlayerWorld(username, worldName) {

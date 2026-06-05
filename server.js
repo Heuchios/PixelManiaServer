@@ -391,12 +391,12 @@ wss.on("connection", (socket) => {
     }
 
     if (data.type === "account_login") {
-      handleAccountLogin(socket, player, data);
+      await handleAccountLogin(socket, player, data);
       return;
     }
 
     if (data.type === "account_token_login") {
-      handleAccountTokenLogin(socket, player, data);
+      await handleAccountTokenLogin(socket, player, data);
       return;
     }
 
@@ -2202,7 +2202,6 @@ function releaseActiveAccountSession(player) {
   const key = accountKey(player.account_username);
   if (activeAccountSessions.get(key) === player.id) {
     activeAccountSessions.delete(key);
-    postgresStore.revokeSessionsByUsername(player.account_username);
     redisStore.clearActiveSession(player.account_username, player.id).catch((error) => {
       console.warn("[redis] active session cleanup failed:", error.message);
     });
@@ -2451,7 +2450,7 @@ function handleAccountRegister(socket, player, data) {
   sendVerificationRequired(socket, requestId, "register", account, "Account created. Check your email to verify before signing on.");
 }
 
-function handleAccountLogin(socket, player, data) {
+async function handleAccountLogin(socket, player, data) {
   const requestId = makeRequestId(data);
   const username = cleanAccountName(data.username);
   const email = cleanEmail(data.email || "");
@@ -2500,25 +2499,52 @@ function handleAccountLogin(socket, player, data) {
     return;
   }
 
+  account.last_seen_at = new Date().toISOString();
+  const previousSessionHash = cleanAccountName(account.session_token_hash || "");
+  const previousSessionExpiresAt = String(account.session_token_expires_at || "");
+  const token = issueSessionToken(account);
+
+  if (isPostgresAuthoritativeReady()) {
+    const revokeResult = await postgresStore.revokeSessionsForUsername(account.username);
+    if (!revokeResult.ok) {
+      account.session_token_hash = previousSessionHash;
+      account.session_token_expires_at = previousSessionExpiresAt;
+      queueAccountsSave();
+      sendAuthError(socket, requestId, "login", "Could not rotate your saved login. Try again.");
+      return;
+    }
+
+    const sessionResult = await postgresStore.saveSession(account, {
+      ip: getSocketAddress(socket),
+      userAgent: String(data.user_agent || data.userAgent || ""),
+    });
+    if (!sessionResult.ok) {
+      account.session_token_hash = "";
+      account.session_token_expires_at = "";
+      queueAccountsSave();
+      sendAuthError(socket, requestId, "login", "Could not create your saved login session. Try again.");
+      return;
+    }
+  } else {
+    postgresStore.mirrorSession(account, {
+      ip: getSocketAddress(socket),
+      userAgent: String(data.user_agent || data.userAgent || ""),
+    });
+  }
+
   const activation = activatePlayerAccount(socket, player, account, { replaceExisting: true });
   if (!activation.ok) {
     sendAuthError(socket, requestId, "login", activation.message);
     return;
   }
 
-  account.last_seen_at = new Date().toISOString();
-  const token = issueSessionToken(account);
   postgresStore.mirrorAccount(account, { touchLogin: true });
-  postgresStore.mirrorSession(account, {
-    ip: getSocketAddress(socket),
-    userAgent: String(data.user_agent || data.userAgent || ""),
-  });
   sendAuthOk(socket, requestId, "login", account, token);
   sendFriendState(socket, account.username, requestId);
   notifyOnlineFriendsOfFriendState(account.username);
 }
 
-function handleAccountTokenLogin(socket, player, data) {
+async function handleAccountTokenLogin(socket, player, data) {
   const requestId = makeRequestId(data);
   const username = cleanAccountName(data.username);
   const token = String(data.session_token || "").trim();
@@ -2527,8 +2553,33 @@ function handleAccountTokenLogin(socket, player, data) {
     return;
   }
 
-  const account = accounts.get(accountKey(username));
-  if (!isSessionTokenValid(account, token)) {
+  const tokenHash = makeTokenHash(token);
+  let account = accounts.get(accountKey(username));
+  let previousSessionHash = cleanAccountName(account?.session_token_hash || tokenHash);
+  let previousSessionExpiresAt = String(account?.session_token_expires_at || "");
+
+  if (isPostgresAuthoritativeReady()) {
+    const validation = await postgresStore.validateSessionToken(username, tokenHash, {
+      ip: getSocketAddress(socket),
+      userAgent: String(data.user_agent || data.userAgent || ""),
+    });
+    if (!validation.ok) {
+      sendAuthError(socket, requestId, "token_login", "Saved login expired. Sign on again.");
+      return;
+    }
+
+    const validatedAccount = sanitizeAccountState(validation.account);
+    if (!validatedAccount) {
+      sendAuthError(socket, requestId, "token_login", "Saved login expired. Sign on again.");
+      return;
+    }
+
+    account = accounts.get(accountKey(validatedAccount.username)) || validatedAccount;
+    Object.assign(account, validatedAccount);
+    accounts.set(accountKey(account.username), account);
+    previousSessionHash = tokenHash;
+    previousSessionExpiresAt = String(account.session_token_expires_at || validation.expires_at || "");
+  } else if (!isSessionTokenValid(account, token)) {
     sendAuthError(socket, requestId, "token_login", "Saved login expired. Sign on again.");
     return;
   }
@@ -2541,19 +2592,39 @@ function handleAccountTokenLogin(socket, player, data) {
     return;
   }
 
+  account.last_seen_at = new Date().toISOString();
+  const nextToken = issueSessionToken(account);
+
+  if (isPostgresAuthoritativeReady()) {
+    const sessionResult = await postgresStore.saveSession(account, {
+      ip: getSocketAddress(socket),
+      userAgent: String(data.user_agent || data.userAgent || ""),
+    });
+    if (!sessionResult.ok) {
+      account.session_token_hash = previousSessionHash;
+      account.session_token_expires_at = previousSessionExpiresAt;
+      queueAccountsSave();
+      sendAuthError(socket, requestId, "token_login", "Could not refresh your saved login. Sign on again.");
+      return;
+    }
+
+    if (previousSessionHash !== "" && previousSessionHash !== account.session_token_hash) {
+      await postgresStore.revokeSessionByTokenHash(previousSessionHash);
+    }
+  } else {
+    postgresStore.mirrorSession(account, {
+      ip: getSocketAddress(socket),
+      userAgent: String(data.user_agent || data.userAgent || ""),
+    });
+  }
+
   const activation = activatePlayerAccount(socket, player, account, { replaceExisting: true });
   if (!activation.ok) {
     sendAuthError(socket, requestId, "token_login", activation.message);
     return;
   }
 
-  account.last_seen_at = new Date().toISOString();
-  const nextToken = issueSessionToken(account);
   postgresStore.mirrorAccount(account, { touchLogin: true });
-  postgresStore.mirrorSession(account, {
-    ip: getSocketAddress(socket),
-    userAgent: String(data.user_agent || data.userAgent || ""),
-  });
   sendAuthOk(socket, requestId, "token_login", account, nextToken);
   sendFriendState(socket, account.username, requestId);
   notifyOnlineFriendsOfFriendState(account.username);
@@ -8626,6 +8697,11 @@ async function handleAdminItemInstanceLookupRequest(socket, player, data, userna
   const account = accounts.get(accountKey(targetUsername)) || null;
   const displayUsername = account?.username || state?.account_username || targetUsername;
   const rawLimit = clampInteger(data.limit || ADMIN_ITEM_INSTANCE_LOOKUP_LIMIT, 1, ADMIN_ITEM_INSTANCE_LOOKUP_LIMIT);
+  const reconcileResult = await postgresStore.reconcileItemInstancesForUsername(displayUsername, state, {
+    source: "admin_item_instance_lookup",
+    request_id: requestId,
+    actor_username: player.account_username || player.name || "",
+  });
   const itemInstances = await postgresStore.listActiveItemInstances(displayUsername, { limit: rawLimit });
 
   logAdminAction(socket, player, "admin_item_instance_lookup", {
@@ -8634,6 +8710,8 @@ async function handleAdminItemInstanceLookupRequest(socket, player, data, userna
     target_found: true,
     target_online: Boolean(target),
     item_instance_count: itemInstances.length,
+    reconcile_ok: Boolean(reconcileResult?.ok),
+    reconcile_reason: String(reconcileResult?.reason || ""),
   }, true, "Item instance lookup completed.");
 
   sendJson(socket, {
@@ -8657,6 +8735,7 @@ async function handleAdminItemInstanceLookupRequest(socket, player, data, userna
     item_instances: itemInstances,
     item_instance_count: itemInstances.length,
     item_instance_limit: rawLimit,
+    item_instance_reconcile: reconcileResult || { ok: false, reason: "not_run" },
     message: "Item instances loaded.",
   });
 }
