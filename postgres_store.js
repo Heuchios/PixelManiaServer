@@ -586,6 +586,37 @@ class PostgresStore {
     return playerResult.rows[0] ? playerResult.rows[0].player_id : null;
   }
 
+  async ensurePlayerIdentityForExistingAccount(client, username, world = "") {
+    const cleanUsername = cleanName(username);
+    if (cleanUsername === "") return null;
+    const cleanWorld = cleanName(world || "");
+
+    const accountResult = await client.query(
+      `
+      SELECT account_id
+        FROM ${this.table("accounts")}
+       WHERE lower(username) = lower($1)
+       LIMIT 1
+      `,
+      [cleanUsername]
+    );
+    const accountId = accountResult.rows[0]?.account_id;
+    if (!accountId) return null;
+
+    const playerResult = await client.query(
+      `
+      INSERT INTO ${this.table("players")} (account_id, display_name, current_world_name)
+      VALUES ($1, $2, NULLIF($3, ''))
+      ON CONFLICT (account_id) DO UPDATE
+        SET display_name = COALESCE(NULLIF(${this.table("players")}.display_name, ''), EXCLUDED.display_name),
+            current_world_name = COALESCE(NULLIF(EXCLUDED.current_world_name, ''), ${this.table("players")}.current_world_name)
+      RETURNING player_id
+      `,
+      [accountId, cleanUsername, cleanWorld]
+    );
+    return playerResult.rows[0] ? playerResult.rows[0].player_id : null;
+  }
+
   async lookupPlayerIdByUsername(client, username) {
     const cleanUsername = cleanName(username);
     if (cleanUsername === "") return null;
@@ -3650,10 +3681,10 @@ class PostgresStore {
 
     try {
       return await this.withTransaction(async (client) => {
-        const playerId = await this.lookupPlayerIdByUsername(client, targetUsername);
+        const playerId = await this.ensurePlayerIdentityForExistingAccount(client, targetUsername);
         if (!playerId) return { ok: false, reason: "player_not_found" };
         const issuedByPlayerId = issuerUsername !== ""
-          ? await this.lookupPlayerIdByUsername(client, issuerUsername)
+          ? await this.ensurePlayerIdentityForExistingAccount(client, issuerUsername)
           : null;
         const worldId = scope === "world"
           ? await this.ensureWorldIdentity(client, worldName)

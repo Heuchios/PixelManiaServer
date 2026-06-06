@@ -62,6 +62,12 @@ const MAX_PLAYER_INVENTORY_KEYS = 500;
 const ADMIN_INVENTORY_LOOKUP_PURPOSE = "admin_inventory_lookup";
 const ADMIN_ITEM_INSTANCE_LOOKUP_PURPOSE = "admin_item_instance_lookup";
 const ADMIN_ITEM_INSTANCE_LOOKUP_LIMIT = 250;
+const ADMIN_PUNISHMENT_LOOKUP_PURPOSE = "admin_punishment_lookup";
+const PUNISHMENT_CACHE_TTL_MS = Math.max(1000, Math.trunc(Number(process.env.PUNISHMENT_CACHE_TTL_MS) || 5000));
+const PUNISHMENT_MAX_DURATION_MINUTES = Math.max(1, Math.trunc(Number(process.env.PUNISHMENT_MAX_DURATION_MINUTES) || (3650 * 24 * 60)));
+const PUNISHMENT_TYPES = new Set(["ban", "mute", "trade_ban", "world_ban", "lockout"]);
+const PUNISHMENT_SCOPE_GLOBAL = "global";
+const PUNISHMENT_SCOPE_WORLD = "world";
 const ADMIN_INVENTORY_LOOKUP_FIELDS = Object.freeze([
   { field: "inventory", category: "block" },
   { field: "seed_inventory", category: "seed" },
@@ -244,6 +250,7 @@ const activeTrades = new Map();
 const tradeByPlayerId = new Map();
 const worldDropActionLocks = new Set();
 const worldVendActionLocks = new Set();
+const punishmentCache = new Map();
 const activeFishingSessions = new Map();
 const blockDamage = new Map();
 const worldSaveTimers = new Map();
@@ -416,11 +423,13 @@ wss.on("connection", (socket) => {
     }
 
     if (data.type === "trade_request") {
-      handleTradeRequest(socket, player, data);
+      if (await rejectIfTradeBanned(socket, player, data)) return;
+      await handleTradeRequest(socket, player, data);
       return;
     }
 
     if (data.type === "trade_response") {
+      if (await rejectIfTradeBanned(socket, player, data)) return;
       handleTradeResponse(socket, player, data);
       return;
     }
@@ -441,16 +450,19 @@ wss.on("connection", (socket) => {
     }
 
     if (data.type === "trade_offer_update") {
+      if (await rejectIfTradeBanned(socket, player, data)) return;
       handleTradeOfferUpdate(socket, player, data);
       return;
     }
 
     if (data.type === "trade_confirm") {
+      if (await rejectIfTradeBanned(socket, player, data)) return;
       handleTradeConfirm(socket, player, data);
       return;
     }
 
     if (data.type === "trade_final_confirm") {
+      if (await rejectIfTradeBanned(socket, player, data)) return;
       await handleTradeFinalConfirm(socket, player, data);
       return;
     }
@@ -549,6 +561,7 @@ wss.on("connection", (socket) => {
 
       const oldWorld = player.world;
       const newWorld = cleanWorld(data.world);
+      if (await rejectIfWorldBanned(socket, player, newWorld, "join_world")) return;
 
       if (oldWorld && oldWorld !== newWorld) {
         cancelActiveTradeForPlayer(playerId, "Trade canceled because a player changed worlds.");
@@ -557,12 +570,7 @@ wss.on("connection", (socket) => {
 
       if (player.joined_world && oldWorld && oldWorld !== newWorld) {
         broadcastSystemToWorld(oldWorld, `${player.name} left ${oldWorld}`, playerId);
-        broadcastToWorld(oldWorld, {
-          type: "player_left",
-          player_id: playerId,
-          name: player.name,
-          world: oldWorld,
-        }, playerId);
+        broadcastToWorld(oldWorld, buildPublicPlayerPresencePayload("player_left", player, oldWorld), playerId);
       }
 
       player.world = newWorld;
@@ -584,18 +592,7 @@ wss.on("connection", (socket) => {
         world_state_reason: "join_world",
       })));
 
-      broadcastToWorld(player.world, {
-        type: "player_joined",
-        player_id: playerId,
-        name: player.name,
-        role: getPublicPlayerRole(player),
-        x: player.x,
-        y: player.y,
-        facing: player.facing,
-        world: player.world,
-        animation_state: player.animation_state || "idle",
-        equipment_slots: player.equipment_slots,
-      }, playerId);
+      broadcastToWorld(player.world, buildPublicPlayerPresencePayload("player_joined", player, player.world), playerId);
 
       broadcastSystemToWorld(player.world, `${player.name} joined ${player.world}`, playerId);
       touchLivePresence(socket, player, { force: true });
@@ -608,6 +605,7 @@ wss.on("connection", (socket) => {
 
       const message = String(data.message || "").trim().slice(0, MAX_CHAT_LENGTH);
       if (message.length === 0) return;
+      if (await rejectIfMuted(socket, player, "chat")) return;
 
       if (message.toLowerCase().startsWith("/bc ")) {
         const broadcastMessage = message.slice(4).trim().slice(0, MAX_CHAT_LENGTH);
@@ -640,6 +638,7 @@ wss.on("connection", (socket) => {
 
       const message = String(data.message || "").trim().slice(0, MAX_CHAT_LENGTH);
       if (message.length === 0) return;
+      if (await rejectIfMuted(socket, player, "broadcast")) return;
 
       const broadcastWorld = getPlayerCurrentWorldName(player);
       broadcastToAuthenticatedPlayers({
@@ -659,7 +658,7 @@ wss.on("connection", (socket) => {
     }
 
     if (data.type === "developer_command_request") {
-      handleDeveloperCommandRequest(socket, player, data);
+      await handleDeveloperCommandRequest(socket, player, data);
       return;
     }
 
@@ -667,6 +666,7 @@ wss.on("connection", (socket) => {
       if (!requireAuthenticated(socket, player, "edit worlds")) return;
 
       const worldName = getPlayerCurrentWorldName(player);
+      if (await rejectIfWorldBanned(socket, player, worldName, "world_block_update")) return;
 
       const update = sanitizeBlockUpdate(data, worldName);
       if (!update) return;
@@ -801,6 +801,7 @@ wss.on("connection", (socket) => {
 
       const worldName = cleanWorld(data.world || player.world || "START");
       if (!requireSameWorld(socket, player, worldName, "edit that world")) return;
+      if (await rejectIfWorldBanned(socket, player, worldName, "world_seed_update")) return;
       if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) return;
 
       const update = sanitizeSeedUpdate(data, worldName);
@@ -854,6 +855,7 @@ wss.on("connection", (socket) => {
 
       const worldName = cleanWorld(data.world || player.world || "START");
       if (!requireSameWorld(socket, player, worldName, "edit that world")) return;
+      if (await rejectIfWorldBanned(socket, player, worldName, "world_interaction_update")) return;
 
       const update = sanitizeInteractionUpdate(data, worldName);
       if (!update) return;
@@ -907,6 +909,7 @@ wss.on("connection", (socket) => {
 
       const worldName = cleanWorld(data.world || player.world || "START");
       if (!requireSameWorld(socket, player, worldName, "create drops in that world")) return;
+      if (await rejectIfWorldBanned(socket, player, worldName, "world_item_drop_create")) return;
 
       const update = sanitizeDropCreate(data, worldName);
       if (!update) return;
@@ -961,6 +964,7 @@ wss.on("connection", (socket) => {
 
       const worldName = cleanWorld(data.world || player.world || "START");
       if (!requireSameWorld(socket, player, worldName, "edit drops in that world")) return;
+      if (await rejectIfWorldBanned(socket, player, worldName, "world_item_drop_update")) return;
       if (!requireBuildPermission(socket, player, worldName, "edit drops in this locked world")) return;
 
       const update = sanitizeDropUpdate(data, worldName);
@@ -991,6 +995,7 @@ wss.on("connection", (socket) => {
       if (!requireAuthenticated(socket, player, "pick up drops")) return;
 
       const worldName = getPlayerCurrentWorldName(player);
+      if (await rejectIfWorldBanned(socket, player, worldName, "world_item_drop_pickup")) return;
 
       const update = sanitizeDropPickup(data, worldName, player);
       if (!update) return;
@@ -1181,18 +1186,7 @@ wss.on("connection", (socket) => {
           }, player.account_username);
         }
 
-        broadcastToWorld(player.world, {
-          type: "player_position",
-          player_id: playerId,
-          name: player.name,
-          role: getPublicPlayerRole(player),
-          x: player.x,
-          y: player.y,
-          facing: player.facing,
-          world: position.world,
-          animation_state: player.animation_state,
-          equipment_slots: player.equipment_slots,
-        }, playerId);
+        broadcastToWorld(player.world, buildPublicPlayerPresencePayload("player_position", player, position.world), playerId);
         touchLivePresence(socket, player);
         return;
       }
@@ -1211,12 +1205,7 @@ wss.on("connection", (socket) => {
       releaseActiveAccountSession(player);
 
       if (player.joined_world) {
-        broadcastToWorld(player.world, {
-          type: "player_left",
-          player_id: playerId,
-          name: player.name,
-          world: player.world,
-        }, playerId);
+        broadcastToWorld(player.world, buildPublicPlayerPresencePayload("player_left", player, player.world), playerId);
 
         broadcastSystemToWorld(player.world, `${player.name} left ${player.world}`, playerId);
       }
@@ -2148,6 +2137,31 @@ function getPublicPlayerRole(player) {
   return isDeveloperRole(getAccountRole(player.account_username || player.name)) ? "admin" : "player";
 }
 
+function getPublicPlayerIdentity(player, fallbackName = "Player") {
+  const displayName = cleanAccountName(player?.account_username || player?.name || fallbackName) || fallbackName;
+  return {
+    name: displayName,
+    username: displayName,
+    account_username: displayName,
+    display_name: displayName,
+    role: getPublicPlayerRole(player),
+  };
+}
+
+function buildPublicPlayerPresencePayload(type, player, worldName = "") {
+  return {
+    type,
+    player_id: String(player?.id || ""),
+    ...getPublicPlayerIdentity(player),
+    x: Number(player?.x || 0),
+    y: Number(player?.y || 0),
+    facing: Number(player?.facing || 1),
+    world: String(worldName || player?.world || ""),
+    animation_state: String(player?.animation_state || "idle"),
+    equipment_slots: player?.equipment_slots || {},
+  };
+}
+
 function isAdmin(player) {
   return Boolean(player && player.authenticated && isDeveloperRole(getAccountRole(player.account_username)));
 }
@@ -2185,12 +2199,7 @@ function replaceActiveAccountSession(username, replacementPlayerId) {
   }
 
   if (existingPlayer && existingPlayer.joined_world) {
-    broadcastToWorld(existingPlayer.world, {
-      type: "player_left",
-      player_id: activePlayerId,
-      name: existingPlayer.name,
-      world: existingPlayer.world,
-    }, activePlayerId);
+    broadcastToWorld(existingPlayer.world, buildPublicPlayerPresencePayload("player_left", existingPlayer, existingPlayer.world), activePlayerId);
     broadcastSystemToWorld(existingPlayer.world, `${existingPlayer.name} left ${existingPlayer.world}`, activePlayerId);
     players.delete(activePlayerId);
   }
@@ -2499,6 +2508,21 @@ async function handleAccountLogin(socket, player, data) {
     return;
   }
 
+  const loginPunishment = await getBlockingPunishment(account.username, ["ban", "lockout"], {
+    scope: PUNISHMENT_SCOPE_GLOBAL,
+  });
+  if (loginPunishment) {
+    sendAuthError(socket, requestId, "login", formatPunishmentBlockMessage("login", loginPunishment), {
+      punishment: publicPunishmentPayload(loginPunishment),
+    });
+    logSecurityEvent(socket, player, "punishment_blocked_login", {
+      target_username: account.username,
+      punishment_type: loginPunishment.punishment_type,
+      punishment_id: loginPunishment.punishment_id,
+    }, "warning");
+    return;
+  }
+
   account.last_seen_at = new Date().toISOString();
   const previousSessionHash = cleanAccountName(account.session_token_hash || "");
   const previousSessionExpiresAt = String(account.session_token_expires_at || "");
@@ -2589,6 +2613,21 @@ async function handleAccountTokenLogin(socket, player, data) {
       requires_email_verification: true,
       email: cleanEmail(account.email || ""),
     });
+    return;
+  }
+
+  const loginPunishment = await getBlockingPunishment(account.username, ["ban", "lockout"], {
+    scope: PUNISHMENT_SCOPE_GLOBAL,
+  });
+  if (loginPunishment) {
+    sendAuthError(socket, requestId, "token_login", formatPunishmentBlockMessage("login", loginPunishment), {
+      punishment: publicPunishmentPayload(loginPunishment),
+    });
+    logSecurityEvent(socket, player, "punishment_blocked_token_login", {
+      target_username: account.username,
+      punishment_type: loginPunishment.punishment_type,
+      punishment_id: loginPunishment.punishment_id,
+    }, "warning");
     return;
   }
 
@@ -2712,6 +2751,242 @@ function sendInventoryTransactionRejected(socket, data, message) {
 function sendJson(socket, payload) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
   socket.send(JSON.stringify(payload));
+}
+
+function normalizeServerPunishmentType(value) {
+  const clean = String(value || "").trim().toLowerCase().replace(/-/g, "_");
+  if (clean === "tradeban") return "trade_ban";
+  if (clean === "worldban") return "world_ban";
+  return PUNISHMENT_TYPES.has(clean) ? clean : "";
+}
+
+function getPunishmentTypeLabel(type) {
+  switch (normalizeServerPunishmentType(type)) {
+    case "trade_ban":
+      return "trade ban";
+    case "world_ban":
+      return "world ban";
+    case "lockout":
+      return "security lockout";
+    case "mute":
+      return "mute";
+    case "ban":
+      return "ban";
+    default:
+      return "punishment";
+  }
+}
+
+function getPunishmentCacheKey(username, type = "", scope = "", worldName = "") {
+  const key = accountKey(username);
+  const cleanType = normalizeServerPunishmentType(type);
+  const cleanScope = String(scope || "").trim().toLowerCase();
+  const cleanWorld = cleanScope === PUNISHMENT_SCOPE_WORLD ? cleanWorldNameForPunishment(worldName) : "";
+  return `${key}:${cleanType}:${cleanScope}:${cleanWorld}`;
+}
+
+function clearPunishmentCache(username = "") {
+  const key = accountKey(username);
+  if (key === "") {
+    punishmentCache.clear();
+    return;
+  }
+
+  for (const cacheKey of Array.from(punishmentCache.keys())) {
+    if (String(cacheKey).startsWith(`${key}:`)) {
+      punishmentCache.delete(cacheKey);
+    }
+  }
+}
+
+function cleanWorldNameForPunishment(worldName = "") {
+  return cleanWorld(worldName || "");
+}
+
+function cleanPunishmentReason(value = "") {
+  const clean = String(value || "").trim().replace(/\s+/g, " ").slice(0, 500);
+  return clean || "No reason provided.";
+}
+
+function parsePunishmentDurationToken(rawToken = "") {
+  const token = String(rawToken || "").trim().toLowerCase();
+  if (token === "") {
+    return { ok: false, consumed: false, durationMinutes: 0, label: "permanent" };
+  }
+
+  if (["perm", "permanent", "forever", "never", "0"].includes(token)) {
+    return { ok: true, consumed: true, durationMinutes: 0, label: "permanent" };
+  }
+
+  const match = token.match(/^(\d+)(m|h|d|w|mo|y)?$/);
+  if (!match) {
+    return { ok: false, consumed: false, durationMinutes: 0, label: "permanent" };
+  }
+
+  const amount = Math.max(0, Math.trunc(Number(match[1]) || 0));
+  const unit = match[2] || "m";
+  const multipliers = {
+    m: 1,
+    h: 60,
+    d: 24 * 60,
+    w: 7 * 24 * 60,
+    mo: 30 * 24 * 60,
+    y: 365 * 24 * 60,
+  };
+  const durationMinutes = Math.min(PUNISHMENT_MAX_DURATION_MINUTES, amount * (multipliers[unit] || 1));
+  if (durationMinutes <= 0) {
+    return { ok: true, consumed: true, durationMinutes: 0, label: "permanent" };
+  }
+
+  return {
+    ok: true,
+    consumed: true,
+    durationMinutes,
+    label: token,
+  };
+}
+
+function formatPunishmentExpires(punishment) {
+  const rawEndsAt = String(punishment?.ends_at || "").trim();
+  if (rawEndsAt === "") return "permanent";
+
+  const date = new Date(rawEndsAt);
+  if (!Number.isFinite(date.getTime())) return "until " + rawEndsAt;
+  return "until " + date.toISOString();
+}
+
+function publicPunishmentPayload(punishment = {}) {
+  const scope = String(punishment.scope || "").trim().toLowerCase();
+  return {
+    punishment_id: Math.max(0, Math.trunc(Number(punishment.punishment_id) || 0)),
+    punishment_type: normalizeServerPunishmentType(punishment.punishment_type || punishment.type || ""),
+    scope,
+    world: scope === PUNISHMENT_SCOPE_WORLD ? cleanWorldNameForPunishment(punishment.world || "") : "",
+    reason: cleanPunishmentReason(punishment.reason || ""),
+    starts_at: String(punishment.starts_at || ""),
+    ends_at: String(punishment.ends_at || ""),
+    issued_by: cleanAccountName(punishment.issued_by || punishment.issued_by_username || ""),
+  };
+}
+
+function formatPunishmentBlockMessage(action, punishment = {}) {
+  const payload = publicPunishmentPayload(punishment);
+  const label = getPunishmentTypeLabel(payload.punishment_type);
+  const expires = formatPunishmentExpires(payload);
+  const reason = payload.reason ? ` Reason: ${payload.reason}` : "";
+  if (action === "login") {
+    return `This account has an active ${label} (${expires}).${reason}`;
+  }
+  if (action === "chat" || action === "broadcast") {
+    return `You are muted (${expires}).${reason}`;
+  }
+  if (action === "trade") {
+    return `You cannot trade right now (${expires}).${reason}`;
+  }
+  if (action === "world") {
+    const worldText = payload.world ? ` in ${payload.world}` : "";
+    return `You cannot enter or edit this world${worldText} (${expires}).${reason}`;
+  }
+  return `Action blocked by active ${label} (${expires}).${reason}`;
+}
+
+async function getActivePunishmentsCached(username, options = {}) {
+  const cleanUsername = cleanAccountName(username);
+  if (cleanUsername === "" || !isPostgresAuthoritativeReady()) return [];
+
+  const cleanType = normalizeServerPunishmentType(options.punishment_type || options.type || "");
+  const cleanScope = options.scope === undefined ? "" : String(options.scope || "").trim().toLowerCase();
+  const cleanWorld = cleanScope === PUNISHMENT_SCOPE_WORLD ? cleanWorldNameForPunishment(options.world || options.world_name || "") : "";
+  const cacheKey = getPunishmentCacheKey(cleanUsername, cleanType, cleanScope, cleanWorld);
+  const cached = punishmentCache.get(cacheKey);
+  if (cached && Number(cached.expiresAt || 0) > Date.now()) {
+    return cached.rows;
+  }
+
+  const rows = await postgresStore.getActivePunishments(cleanUsername, {
+    punishment_type: cleanType,
+    scope: cleanScope,
+    world: cleanWorld,
+  });
+  punishmentCache.set(cacheKey, {
+    expiresAt: Date.now() + PUNISHMENT_CACHE_TTL_MS,
+    rows,
+  });
+  return rows;
+}
+
+async function getBlockingPunishment(username, types = [], options = {}) {
+  const requestedTypes = Array.isArray(types) ? types : [types];
+  const typeSet = new Set(requestedTypes.map(normalizeServerPunishmentType).filter(Boolean));
+  if (typeSet.size === 0) return null;
+
+  const rows = await getActivePunishmentsCached(username, options);
+  return rows.find((row) => typeSet.has(normalizeServerPunishmentType(row.punishment_type))) || null;
+}
+
+function sendPunishmentNotice(socket, player, message, punishment = null) {
+  sendJson(socket, {
+    type: "chat",
+    player_id: "system",
+    name: "System",
+    message,
+    world: player?.world || "",
+    punishment: punishment ? publicPunishmentPayload(punishment) : undefined,
+  });
+}
+
+async function rejectIfMuted(socket, player, action = "chat") {
+  const punishment = await getBlockingPunishment(player?.account_username || "", ["mute"], {
+    scope: PUNISHMENT_SCOPE_GLOBAL,
+  });
+  if (!punishment) return false;
+
+  const message = formatPunishmentBlockMessage(action, punishment);
+  sendPunishmentNotice(socket, player, message, punishment);
+  logSecurityEvent(socket, player, "punishment_blocked_action", {
+    action,
+    punishment_type: "mute",
+    punishment_id: punishment.punishment_id,
+  }, "warning");
+  return true;
+}
+
+async function rejectIfTradeBanned(socket, player, data = {}) {
+  const punishment = await getBlockingPunishment(player?.account_username || "", ["trade_ban"], {
+    scope: PUNISHMENT_SCOPE_GLOBAL,
+  });
+  if (!punishment) return false;
+
+  const message = formatPunishmentBlockMessage("trade", punishment);
+  sendTradeError(socket, data, message);
+  logSecurityEvent(socket, player, "punishment_blocked_action", {
+    action: "trade",
+    punishment_type: "trade_ban",
+    punishment_id: punishment.punishment_id,
+  }, "warning");
+  return true;
+}
+
+async function rejectIfWorldBanned(socket, player, worldName, action = "world") {
+  const cleanWorldName = cleanWorldNameForPunishment(worldName);
+  const punishment = await getBlockingPunishment(player?.account_username || "", ["world_ban"], {
+    scope: PUNISHMENT_SCOPE_WORLD,
+    world: cleanWorldName,
+  });
+  if (!punishment) return false;
+
+  const message = formatPunishmentBlockMessage("world", punishment);
+  sendActionRejected(socket, action, message, {
+    world: cleanWorldName,
+    punishment: publicPunishmentPayload(punishment),
+  });
+  logSecurityEvent(socket, player, "punishment_blocked_action", {
+    action,
+    world: cleanWorldName,
+    punishment_type: "world_ban",
+    punishment_id: punishment.punishment_id,
+  }, "warning");
+  return true;
 }
 
 function makeTradeSlots() {
@@ -2878,7 +3153,7 @@ function arePlayersCloseEnoughForTrade(playerA, playerB) {
   return Math.hypot(ax - bx, ay - by) <= MAX_TRADE_DISTANCE_PIXELS;
 }
 
-function handleTradeRequest(socket, player, data) {
+async function handleTradeRequest(socket, player, data) {
   if (!requireAuthenticated(socket, player, "trade")) return;
 
   if (tradeByPlayerId.has(player.id)) {
@@ -2912,6 +3187,20 @@ function handleTradeRequest(socket, player, data) {
 
   if (!arePlayersCloseEnoughForTrade(player, target)) {
     sendTradeError(socket, data, "Move closer to that player to trade.");
+    return;
+  }
+
+  const targetPunishment = await getBlockingPunishment(target.account_username, ["trade_ban"], {
+    scope: PUNISHMENT_SCOPE_GLOBAL,
+  });
+  if (targetPunishment) {
+    sendTradeError(socket, data, `${target.account_username} cannot trade right now.`);
+    sendPunishmentNotice(targetRecord.socket, target, formatPunishmentBlockMessage("trade", targetPunishment), targetPunishment);
+    logSecurityEvent(socket, player, "punishment_blocked_trade_target", {
+      target_username: target.account_username,
+      punishment_type: "trade_ban",
+      punishment_id: targetPunishment.punishment_id,
+    }, "warning");
     return;
   }
 
@@ -7937,6 +8226,358 @@ function parseRemoveCommand(data, command) {
   };
 }
 
+function getAccountRoleRank(username) {
+  const role = getAccountRole(username);
+  if (role === "developer" || role === "admin") return 100;
+  if (role === "moderator") return 50;
+  return 10;
+}
+
+function canPunishTarget(actorUsername, targetUsername) {
+  const actorKey = accountKey(actorUsername);
+  const targetKey = accountKey(targetUsername);
+  if (actorKey === "" || targetKey === "") return false;
+  if (actorKey === targetKey) return false;
+  return getAccountRoleRank(actorUsername) > getAccountRoleRank(targetUsername);
+}
+
+function getPunishmentStoreMessage(result, fallback = "Could not update punishment.") {
+  const reason = String(result?.reason || "").trim();
+  switch (reason) {
+    case "postgres_unavailable":
+      return "PostgreSQL is not ready.";
+    case "invalid_target":
+      return "Target username is required.";
+    case "invalid_punishment_type":
+      return "Invalid punishment type.";
+    case "world_required":
+      return "World is required for world bans.";
+    case "player_not_found":
+      return "Target account does not have a player row yet.";
+    case "database_error":
+      return "PostgreSQL rejected the punishment update.";
+    default:
+      return fallback;
+  }
+}
+
+function parsePunishmentCommand(data, command, player) {
+  const parts = splitCommand(command);
+  if (parts.length === 0) return null;
+
+  const commandName = String(parts[0] || "").toLowerCase().replace(/-/g, "_");
+  const issueCommands = {
+    ban: "ban",
+    mute: "mute",
+    tradeban: "trade_ban",
+    trade_ban: "trade_ban",
+    worldban: "world_ban",
+    world_ban: "world_ban",
+  };
+  const revokeCommands = {
+    unban: "ban",
+    unmute: "mute",
+    untradeban: "trade_ban",
+    untrade_ban: "trade_ban",
+    unworldban: "world_ban",
+    unworld_ban: "world_ban",
+  };
+  const listCommands = new Set(["punishments", "punishment", "punish"]);
+  const metadataTarget = cleanAccountName(data.target_username || data.target || data.username || "");
+  const targetUsername = cleanAccountName(parts[1] || metadataTarget);
+
+  if (listCommands.has(commandName)) {
+    return {
+      mode: "list",
+      targetUsername,
+      punishmentType: normalizeServerPunishmentType(data.punishment_type || data.type || ""),
+    };
+  }
+
+  const issueType = normalizeServerPunishmentType(issueCommands[commandName] || "");
+  if (issueType !== "") {
+    let scope = PUNISHMENT_SCOPE_GLOBAL;
+    let worldName = "";
+    let durationIndex = 2;
+
+    if (issueType === "world_ban") {
+      scope = PUNISHMENT_SCOPE_WORLD;
+      worldName = cleanWorldNameForPunishment(data.world_name || data.target_world || data.world || player?.world || "START");
+      const worldOrDuration = String(parts[2] || "").trim();
+      const durationProbe = parsePunishmentDurationToken(worldOrDuration);
+      if (worldOrDuration !== "" && !durationProbe.consumed) {
+        worldName = cleanWorldNameForPunishment(worldOrDuration);
+        durationIndex = 3;
+      }
+    }
+
+    const duration = parsePunishmentDurationToken(parts[durationIndex] || "");
+    const reasonIndex = duration.consumed ? durationIndex + 1 : durationIndex;
+    const reason = cleanPunishmentReason(parts.slice(reasonIndex).join(" ") || data.reason || "");
+    return {
+      mode: "issue",
+      targetUsername,
+      punishmentType: issueType,
+      scope,
+      world: worldName,
+      durationMinutes: duration.consumed ? duration.durationMinutes : 0,
+      durationLabel: duration.consumed ? duration.label : "permanent",
+      reason,
+    };
+  }
+
+  const revokeType = normalizeServerPunishmentType(revokeCommands[commandName] || "");
+  if (revokeType !== "") {
+    let scope = PUNISHMENT_SCOPE_GLOBAL;
+    let worldName = "";
+    let reasonIndex = 2;
+
+    if (revokeType === "world_ban") {
+      scope = PUNISHMENT_SCOPE_WORLD;
+      worldName = cleanWorldNameForPunishment(data.world_name || data.target_world || data.world || player?.world || "START");
+      if (String(parts[2] || "").trim() !== "") {
+        worldName = cleanWorldNameForPunishment(parts[2]);
+        reasonIndex = 3;
+      }
+    }
+
+    const reason = cleanPunishmentReason(parts.slice(reasonIndex).join(" ") || data.reason || "revoked");
+    return {
+      mode: "revoke",
+      targetUsername,
+      punishmentType: revokeType,
+      scope,
+      world: worldName,
+      reason,
+    };
+  }
+
+  return null;
+}
+
+function formatPunishmentList(targetUsername, rows = []) {
+  if (!Array.isArray(rows) || rows.length === 0) {
+    return `No active punishments for ${targetUsername}.`;
+  }
+
+  const rendered = rows.slice(0, 8).map((row) => {
+    const payload = publicPunishmentPayload(row);
+    const worldText = payload.scope === PUNISHMENT_SCOPE_WORLD && payload.world ? ` ${payload.world}` : "";
+    return `${getPunishmentTypeLabel(payload.punishment_type)}${worldText} ${formatPunishmentExpires(payload)}: ${payload.reason}`;
+  });
+  const suffix = rows.length > rendered.length ? ` (+${rows.length - rendered.length} more)` : "";
+  return `Active punishments for ${targetUsername}: ${rendered.join(" | ")}${suffix}`;
+}
+
+function notifyPunishmentTarget(targetUsername, message, punishment = null, closeConnection = false) {
+  const target = findOnlinePlayerByUsername(targetUsername);
+  if (!target) return;
+
+  cancelActiveTradeForPlayer(target.player.id, "Trade canceled by moderation action.");
+  sendPunishmentNotice(target.socket, target.player, message, punishment);
+  if (closeConnection) {
+    if (target.player.joined_world) {
+      broadcastToWorld(target.player.world, buildPublicPlayerPresencePayload("player_left", target.player, target.player.world), target.player.id);
+    }
+    setTimeout(() => {
+      if (target.socket.readyState === WebSocket.OPEN) {
+        target.socket.close(1008, "Account restricted.");
+      }
+    }, 80);
+  }
+}
+
+async function handleDeveloperPunishmentCommand(socket, player, data, command, parsed, approve, deny) {
+  if (!parsed) return false;
+
+  const targetUsername = cleanAccountName(parsed.targetUsername || "");
+  if (targetUsername === "") {
+    deny("Target username is required.", { command_type: "punishment" });
+    return true;
+  }
+
+  if (!isPostgresAuthoritativeReady()) {
+    deny("PostgreSQL is not ready for punishments.", { target_username: targetUsername });
+    return true;
+  }
+
+  if (!doesAccountExist(targetUsername)) {
+    deny("Target account does not exist.", { target_username: targetUsername });
+    return true;
+  }
+
+  const account = accounts.get(accountKey(targetUsername)) || null;
+  const displayUsername = account?.username || targetUsername;
+  const actorUsername = cleanAccountName(player.account_username || player.name || "");
+
+  if (parsed.mode === "list") {
+    const rows = await postgresStore.getActivePunishments(displayUsername, {
+      punishment_type: parsed.punishmentType || "",
+    });
+    approve(
+      formatPunishmentList(displayUsername, rows),
+      { target_username: displayUsername, punishment_count: rows.length },
+      {
+        command_type: "punishments",
+        target_username: displayUsername,
+        purpose: ADMIN_PUNISHMENT_LOOKUP_PURPOSE,
+        punishments: rows.map(publicPunishmentPayload),
+      }
+    );
+    return true;
+  }
+
+  if (!canPunishTarget(actorUsername, displayUsername)) {
+    deny("You cannot punish or revoke punishments for that account.", {
+      target_username: displayUsername,
+      target_role: getAccountRole(displayUsername),
+      actor_role: getAccountRole(actorUsername),
+    });
+    return true;
+  }
+
+  const punishmentType = normalizeServerPunishmentType(parsed.punishmentType || "");
+  if (punishmentType === "") {
+    deny("Invalid punishment type.", { target_username: displayUsername });
+    return true;
+  }
+
+  const scope = parsed.scope === PUNISHMENT_SCOPE_WORLD ? PUNISHMENT_SCOPE_WORLD : PUNISHMENT_SCOPE_GLOBAL;
+  const worldName = scope === PUNISHMENT_SCOPE_WORLD ? cleanWorldNameForPunishment(parsed.world || player.world || "START") : "";
+
+  if (parsed.mode === "issue") {
+    const existing = await getBlockingPunishment(displayUsername, [punishmentType], {
+      scope,
+      world: worldName,
+    });
+    if (existing) {
+      deny(`Target already has an active ${getPunishmentTypeLabel(punishmentType)}.`, {
+        target_username: displayUsername,
+        punishment_type: punishmentType,
+        punishment_id: existing.punishment_id,
+        scope,
+        world: worldName,
+      });
+      return true;
+    }
+
+    const result = await postgresStore.issuePunishment({
+      target_username: displayUsername,
+      issued_by_username: actorUsername,
+      punishment_type: punishmentType,
+      reason: parsed.reason,
+      scope,
+      world: worldName,
+      duration_minutes: parsed.durationMinutes,
+      metadata: {
+        request_id: makeRequestId(data),
+        command,
+        duration_label: parsed.durationLabel,
+      },
+    });
+
+    if (!result.ok) {
+      deny(getPunishmentStoreMessage(result), {
+        target_username: displayUsername,
+        punishment_type: punishmentType,
+        scope,
+        world: worldName,
+        reason: result.reason,
+      });
+      return true;
+    }
+
+    clearPunishmentCache(displayUsername);
+    const punishmentPayload = publicPunishmentPayload({
+      punishment_id: result.punishment_id,
+      punishment_type: punishmentType,
+      scope,
+      world: worldName,
+      reason: parsed.reason,
+      ends_at: result.ends_at,
+      issued_by: actorUsername,
+    });
+    const targetMessage = `Moderation: active ${getPunishmentTypeLabel(punishmentType)} ${formatPunishmentExpires(punishmentPayload)}. Reason: ${parsed.reason}`;
+    const shouldClose = punishmentType === "ban" || punishmentType === "lockout";
+    if (shouldClose) {
+      await postgresStore.revokeSessionsForUsername(displayUsername);
+    }
+    notifyPunishmentTarget(displayUsername, targetMessage, punishmentPayload, shouldClose);
+
+    approve(
+      `${getPunishmentTypeLabel(punishmentType)} issued for ${displayUsername} (${formatPunishmentExpires(punishmentPayload)}).`,
+      {
+        target_username: displayUsername,
+        punishment_type: punishmentType,
+        punishment_id: result.punishment_id,
+        scope,
+        world: worldName,
+        duration_minutes: parsed.durationMinutes,
+      },
+      {
+        command_type: "punishment_issue",
+        target_username: displayUsername,
+        punishment: punishmentPayload,
+      }
+    );
+    return true;
+  }
+
+  if (parsed.mode === "revoke") {
+    const result = await postgresStore.revokePunishment({
+      target_username: displayUsername,
+      punishment_type: punishmentType,
+      scope,
+      world: worldName,
+      revoked_by_username: actorUsername,
+      reason: parsed.reason,
+    });
+
+    if (!result.ok) {
+      deny(getPunishmentStoreMessage(result), {
+        target_username: displayUsername,
+        punishment_type: punishmentType,
+        scope,
+        world: worldName,
+        reason: result.reason,
+      });
+      return true;
+    }
+
+    clearPunishmentCache(displayUsername);
+    notifyPunishmentTarget(displayUsername, `Moderation: your ${getPunishmentTypeLabel(punishmentType)} was removed.`, {
+      punishment_type: punishmentType,
+      scope,
+      world: worldName,
+      reason: parsed.reason,
+    });
+
+    approve(
+      result.revoked_count > 0
+        ? `${getPunishmentTypeLabel(punishmentType)} removed for ${displayUsername}.`
+        : `No active ${getPunishmentTypeLabel(punishmentType)} matched ${displayUsername}.`,
+      {
+        target_username: displayUsername,
+        punishment_type: punishmentType,
+        scope,
+        world: worldName,
+        revoked_count: result.revoked_count,
+      },
+      {
+        command_type: "punishment_revoke",
+        target_username: displayUsername,
+        punishment_type: punishmentType,
+        scope,
+        world: worldName,
+        revoked_count: result.revoked_count,
+      }
+    );
+    return true;
+  }
+
+  return false;
+}
+
 function cleanInventoryCategory(value) {
   return ItemDatabase.cleanCategory(value);
 }
@@ -8927,18 +9568,7 @@ function handlePullPlayerRequest(socket, player, data) {
 
   const targetName = cleanAccountName(target.player.account_username || target.player.name || targetUsername);
   const pullerName = cleanAccountName(player.account_username || player.name || "Player");
-  const positionPayload = {
-    type: "player_position",
-    player_id: target.player.id,
-    name: targetName,
-    role: getPublicPlayerRole(target.player),
-    x: target.player.x,
-    y: target.player.y,
-    facing: target.player.facing,
-    world: worldName,
-    animation_state: target.player.animation_state || "idle",
-    equipment_slots: target.player.equipment_slots || {},
-  };
+  const positionPayload = buildPublicPlayerPresencePayload("player_position", target.player, worldName);
 
   sendJson(target.socket, {
     type: "player_pulled",
@@ -9027,7 +9657,7 @@ function handleDeveloperPinUnlock(socket, player, data) {
   });
 }
 
-function handleDeveloperCommandRequest(socket, player, data) {
+async function handleDeveloperCommandRequest(socket, player, data) {
   if (!requireAuthenticated(socket, player, "use admin commands")) return;
 
   const requestId = makeRequestId(data);
@@ -9096,6 +9726,12 @@ function handleDeveloperCommandRequest(socket, player, data) {
       { target_world: commandWorld, snapshot_id: snapshot.snapshotId, snapshot_path: snapshot.snapshotPath },
       { command_type: "snapshot_world", target_world: commandWorld, snapshot_id: snapshot.snapshotId, snapshot_path: snapshot.snapshotPath }
     );
+    return;
+  }
+
+  const punishmentCommand = parsePunishmentCommand(data, command, player);
+  if (punishmentCommand) {
+    await handleDeveloperPunishmentCommand(socket, player, data, command, punishmentCommand, approve, deny);
     return;
   }
 
@@ -9335,18 +9971,7 @@ function handleDeveloperCommandRequest(socket, player, data) {
     player.y = pos.y;
     player.last_position_at = Date.now();
 
-    broadcastToWorld(player.world, {
-      type: "player_position",
-      player_id: player.id,
-      name: player.name,
-      role: getPublicPlayerRole(player),
-      x: player.x,
-      y: player.y,
-      facing: player.facing,
-      world: player.world,
-      animation_state: player.animation_state || "idle",
-      equipment_slots: player.equipment_slots || {},
-    }, player.id);
+    broadcastToWorld(player.world, buildPublicPlayerPresencePayload("player_position", player, player.world), player.id);
 
     approve(
       `Teleported to ${gridX}, ${gridY}.`,
@@ -11114,8 +11739,7 @@ function getPlayersInWorld(worldName, excludePlayerId = "") {
 
     result.push({
       player_id: player.id,
-      name: player.name,
-      role: getPublicPlayerRole(player),
+      ...getPublicPlayerIdentity(player),
       x: player.x,
       y: player.y,
       facing: player.facing,
