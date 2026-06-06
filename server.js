@@ -327,6 +327,9 @@ wss.on("connection", (socket) => {
     y: 0,
     facing: 1,
     animation_state: "idle",
+    velocity_x: 0,
+    velocity_y: 0,
+    on_floor: true,
     equipment_slots: {},
     client_version: "",
     last_position_at: 0,
@@ -546,6 +549,7 @@ wss.on("connection", (socket) => {
         email: player.account_email,
       });
       setPlayerState(username, serverState);
+      player.equipment_slots = sanitizeEquipmentSlots(getEquipmentSlotsFromPlayerState(serverState), username, serverState);
       queuePlayerSave(username);
       sendJson(socket, {
         type: "player_state",
@@ -1174,6 +1178,9 @@ wss.on("connection", (socket) => {
         player.y = position.y;
         player.facing = position.facing;
         player.animation_state = sanitizePlayerAnimationState(data.animation_state);
+        player.velocity_x = sanitizePlayerVelocity(data.velocity_x);
+        player.velocity_y = sanitizePlayerVelocity(data.velocity_y);
+        player.on_floor = data.on_floor !== false;
 
         if (data.equipment_slots && typeof data.equipment_slots === "object" && !Array.isArray(data.equipment_slots)) {
           player.equipment_slots = sanitizeEquipmentSlots(data.equipment_slots, player.account_username);
@@ -1182,6 +1189,8 @@ wss.on("connection", (socket) => {
             hand: data.equipped_tool || "",
             back: data.equipped_back || "",
             hair: data.equipped_hair_item || "",
+            shirt: data.equipped_shirt_item || "",
+            pants: data.equipped_pants_item || "",
             shoes: data.equipped_shoes_item || "",
           }, player.account_username);
         }
@@ -2149,6 +2158,7 @@ function getPublicPlayerIdentity(player, fallbackName = "Player") {
 }
 
 function buildPublicPlayerPresencePayload(type, player, worldName = "") {
+  const equipmentSlots = player?.equipment_slots || {};
   return {
     type,
     player_id: String(player?.id || ""),
@@ -2158,7 +2168,17 @@ function buildPublicPlayerPresencePayload(type, player, worldName = "") {
     facing: Number(player?.facing || 1),
     world: String(worldName || player?.world || ""),
     animation_state: String(player?.animation_state || "idle"),
-    equipment_slots: player?.equipment_slots || {},
+    velocity_x: sanitizePlayerVelocity(player?.velocity_x || 0),
+    velocity_y: sanitizePlayerVelocity(player?.velocity_y || 0),
+    on_floor: player?.on_floor !== false,
+    equipment_slots: equipmentSlots,
+    equipped_tool: clampString(equipmentSlots.hand || ""),
+    equipped_back_item: clampString(equipmentSlots.back || ""),
+    equipped_back: clampString(equipmentSlots.back || ""),
+    equipped_hair_item: clampString(equipmentSlots.hair || ""),
+    equipped_shirt_item: clampString(equipmentSlots.shirt || ""),
+    equipped_pants_item: clampString(equipmentSlots.pants || ""),
+    equipped_shoes_item: clampString(equipmentSlots.shoes || ""),
   };
 }
 
@@ -2324,6 +2344,8 @@ function activatePlayerAccount(socket, player, account, options = {}) {
   player.authenticated = true;
   player.name = account.username;
   player.role = getAccountRole(account.username);
+  const state = ensurePlayerState(account.username);
+  player.equipment_slots = sanitizeEquipmentSlots(getEquipmentSlotsFromPlayerState(state), account.username, state);
   activeAccountSessions.set(accountKey(account.username), player.id);
   touchLivePresence(socket, player, { force: true });
 
@@ -7501,8 +7523,14 @@ function sanitizePlayerPosition(data, player) {
 
 function sanitizePlayerAnimationState(value) {
   const clean = String(value || "").trim().toLowerCase();
-  if (["idle", "walk", "jump"].includes(clean)) return clean;
+  if (["idle", "walk", "jump", "fall", "punch"].includes(clean)) return clean;
   return "idle";
+}
+
+function sanitizePlayerVelocity(value) {
+  const velocity = Number(value);
+  if (!Number.isFinite(velocity)) return 0;
+  return Math.max(-2000, Math.min(2000, velocity));
 }
 
 function acceptPlayerMovement(socket, player, position, options = {}) {
@@ -11687,9 +11715,27 @@ function savePlayerState(username) {
   }
 }
 
-function sanitizeEquipmentSlots(rawSlots, username = "") {
+function getEquipmentSlotsFromPlayerState(state) {
+  const source = state && typeof state === "object" && !Array.isArray(state) ? state : {};
+  return {
+    hand: clampString(source.equipped_tool || ""),
+    back: clampString(source.equipped_back_item || ""),
+    hair: clampString(source.equipped_hair_item || ""),
+    shirt: clampString(source.equipped_shirt_item || ""),
+    pants: clampString(source.equipped_pants_item || ""),
+    shoes: clampString(source.equipped_shoes_item || ""),
+  };
+}
+
+function isCoreVisibleEquipmentSlot(slot) {
+  return slot === "hand" || slot === "back" || slot === "hair" || slot === "shirt" || slot === "pants" || slot === "shoes";
+}
+
+function sanitizeEquipmentSlots(rawSlots, username = "", stateOverride = null) {
   const safe = {};
-  const state = username !== "" ? ensurePlayerState(username) : null;
+  const state = stateOverride || (username !== "" ? ensurePlayerState(username) : null);
+  const sourceSlots = rawSlots && typeof rawSlots === "object" && !Array.isArray(rawSlots) ? rawSlots : {};
+  const fallbackSlots = getEquipmentSlotsFromPlayerState(state);
   const allowedSlots = [
     "hand", "back", "hair", "head", "hat", "eyes", "face",
     "shirt", "pants", "legs", "feet", "shoes",
@@ -11697,9 +11743,14 @@ function sanitizeEquipmentSlots(rawSlots, username = "") {
   ];
 
   for (const slot of allowedSlots) {
-    if (!Object.prototype.hasOwnProperty.call(rawSlots, slot)) continue;
+    const hasIncomingSlot = Object.prototype.hasOwnProperty.call(sourceSlots, slot);
+    const hasSavedSlot = Object.prototype.hasOwnProperty.call(fallbackSlots, slot);
+    if (!hasIncomingSlot && !hasSavedSlot) continue;
 
-    const value = clampString(rawSlots[slot] || "");
+    let value = clampString(sourceSlots[slot] || "");
+    if (value === "" && isCoreVisibleEquipmentSlot(slot)) {
+      value = clampString(fallbackSlots[slot] || "");
+    }
     if (value.length > 0 && isItemAllowedInEquipmentSlot(value, slot) && doesStateOwnEquippedItem(state, value, slot)) {
       safe[slot] = value;
     } else {
@@ -11737,6 +11788,7 @@ function getPlayersInWorld(worldName, excludePlayerId = "") {
     if (player.id === excludePlayerId) continue;
     if (player.world !== worldName) continue;
 
+    const equipmentSlots = player.equipment_slots || {};
     result.push({
       player_id: player.id,
       ...getPublicPlayerIdentity(player),
@@ -11745,7 +11797,17 @@ function getPlayersInWorld(worldName, excludePlayerId = "") {
       facing: player.facing,
       world: player.world,
       animation_state: player.animation_state || "idle",
-      equipment_slots: player.equipment_slots || {},
+      velocity_x: sanitizePlayerVelocity(player.velocity_x || 0),
+      velocity_y: sanitizePlayerVelocity(player.velocity_y || 0),
+      on_floor: player.on_floor !== false,
+      equipment_slots: equipmentSlots,
+      equipped_tool: clampString(equipmentSlots.hand || ""),
+      equipped_back_item: clampString(equipmentSlots.back || ""),
+      equipped_back: clampString(equipmentSlots.back || ""),
+      equipped_hair_item: clampString(equipmentSlots.hair || ""),
+      equipped_shirt_item: clampString(equipmentSlots.shirt || ""),
+      equipped_pants_item: clampString(equipmentSlots.pants || ""),
+      equipped_shoes_item: clampString(equipmentSlots.shoes || ""),
     });
   }
 
