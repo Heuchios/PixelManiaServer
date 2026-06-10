@@ -58,6 +58,39 @@ function seed(growsInto, options = {}) {
   });
 }
 
+function backgroundBlock(options = {}) {
+  return block({
+    rarity: "common",
+    block_health: 2,
+    seed: "",
+    place_layer: "background",
+    background_block: true,
+    no_collision: true,
+    collidable: false,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+    ...options,
+  });
+}
+
+function colourBlock(options = {}) {
+  return block({
+    rarity: "uncommon",
+    block_health: 3,
+    seed: "",
+    drop_rules: { seed_chance: 0.04, gem_range: [0, 2] },
+    ...options,
+  });
+}
+
+function prestigeColourBlock(options = {}) {
+  return colourBlock({
+    rarity: "epic",
+    drop_rules: { seed_chance: 0, gem_range: [0, 0], drops_self: true },
+    drops_self: true,
+    ...options,
+  });
+}
+
 const ITEMS = Object.freeze({
   dirt: block({
     rarity: "common",
@@ -79,6 +112,7 @@ const ITEMS = Object.freeze({
     drop_rules: { seed_chance: 0.05, gem_range: [0, 1] },
   }),
   wood: block({
+    display_name: "Tree Trunk",
     rarity: "uncommon",
     block_health: 3,
     seed: "wood_seed",
@@ -119,6 +153,135 @@ const ITEMS = Object.freeze({
     no_collision: true,
     drop_rules: { seed_chance: 0, gem_range: [0, 0] },
   }),
+  snow_dirt: block({
+    display_name: "Snow Dirt",
+    rarity: "common",
+    block_health: 3,
+    placeable: false,
+    dropable: false,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  ice_block: block({
+    display_name: "Ice Block",
+    rarity: "common",
+    block_health: 3,
+    placeable: false,
+    dropable: false,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  ice_block_2: block({
+    display_name: "Treasure Ice",
+    rarity: "rare",
+    block_health: 4,
+    placeable: false,
+    dropable: false,
+    drop_rules: {
+      seed_chance: 0,
+      gem_range: [0, 0],
+      fixed_drops: Object.freeze([
+        Object.freeze({ item_id: "frozen_treasure", item_category: "block", amount: 1 }),
+      ]),
+    },
+  }),
+  ice_fossil: block({
+    display_name: "Ice Fossil",
+    rarity: "rare",
+    block_health: 4,
+    placeable: false,
+    dropable: false,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  frozen_treasure: block({
+    display_name: "Frozen Treasure",
+    rarity: "rare",
+    block_health: 1,
+    seed: "",
+    no_collision: true,
+    dropable: false,
+    instance_tracked: true,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  frozen_treasure_2: block({
+    display_name: "Opened Frozen Treasure",
+    rarity: "rare",
+    block_health: 1,
+    seed: "",
+    no_collision: true,
+    placeable: false,
+    dropable: false,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  snow_block: block({
+    display_name: "Snow Block",
+    rarity: "uncommon",
+    block_health: 2,
+    seed: "",
+    instance_tracked: true,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0], drops_self: true },
+    drops_self: true,
+  }),
+  snow_leaf: block({
+    display_name: "Snow Leaf",
+    rarity: "uncommon",
+    block_health: 2,
+    seed: "",
+    placeable: false,
+    dropable: false,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  frozen_grass: block({
+    display_name: "Frozen Grass",
+    rarity: "common",
+    block_health: 3,
+    seed: "",
+    no_collision: true,
+    placeable: false,
+    dropable: false,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  frozen_grass_1: block({
+    display_name: "Frozen Grass",
+    rarity: "common",
+    block_health: 3,
+    seed: "",
+    no_collision: true,
+    placeable: false,
+    dropable: false,
+    hidden: true,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  frozen_grass_2: block({
+    display_name: "Frozen Grass",
+    rarity: "common",
+    block_health: 3,
+    seed: "",
+    no_collision: true,
+    placeable: false,
+    dropable: false,
+    hidden: true,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  frozen_grass_3: block({
+    display_name: "Frozen Grass",
+    rarity: "common",
+    block_health: 3,
+    seed: "",
+    no_collision: true,
+    placeable: false,
+    dropable: false,
+    hidden: true,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  pile_of_snow: block({
+    display_name: "Pile of Snow",
+    rarity: "common",
+    block_health: 1,
+    seed: "",
+    no_collision: true,
+    placeable: false,
+    dropable: false,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
   cave_background: block({
     rarity: "common",
     block_health: 2,
@@ -128,6 +291,18 @@ const ITEMS = Object.freeze({
     no_collision: true,
     drop_rules: { seed_chance: 0.05, gem_range: [0, 1] },
   }),
+  white_bg: backgroundBlock(),
+  grey_bg: backgroundBlock(),
+  black_bg: backgroundBlock(),
+  red_bg: backgroundBlock(),
+  orange_bg: backgroundBlock(),
+  yellow_bg: backgroundBlock(),
+  green_bg: backgroundBlock(),
+  aqua_bg: backgroundBlock(),
+  blue_bg: backgroundBlock(),
+  purple_bg: backgroundBlock(),
+  pink_bg: backgroundBlock(),
+  brown_bg: backgroundBlock(),
   glowing_dirt: block({
     rarity: "epic",
     block_health: 4,
@@ -164,6 +339,36 @@ const ITEMS = Object.freeze({
     seed: "yellow_block_seed",
     drop_rules: { seed_chance: 0.04, gem_range: [0, 2] },
   }),
+  aqua_block: colourBlock(),
+  black_block: colourBlock({ seed: "black_block_seed" }),
+  blue_pastel_block: colourBlock(),
+  brown_block: colourBlock(),
+  dark_aqua_block: colourBlock(),
+  dark_blue_block: colourBlock(),
+  dark_brown_block: colourBlock(),
+  dark_green_block: colourBlock(),
+  dark_pink_block: colourBlock(),
+  dark_purple_block: colourBlock(),
+  dark_red_block: colourBlock(),
+  dark_yellow_block: colourBlock(),
+  green_pastel_block: colourBlock(),
+  grey_block: colourBlock(),
+  happy_block: colourBlock(),
+  light_brown_block: colourBlock(),
+  orange_block: colourBlock(),
+  orange_pastel_block: colourBlock(),
+  pastel_flower_block: colourBlock(),
+  pink_block: colourBlock(),
+  pink_pastel_block: colourBlock(),
+  purple_pastel_block: colourBlock(),
+  red_pastel_block: colourBlock(),
+  white_block: colourBlock(),
+  yellow_pastel_block: colourBlock(),
+  ps_blue_block: prestigeColourBlock(),
+  ps_green_block: prestigeColourBlock(),
+  ps_purple_block: prestigeColourBlock(),
+  ps_red_block: prestigeColourBlock(),
+  ps_yellow_block: prestigeColourBlock(),
   rose: block({
     rarity: "uncommon",
     block_health: 2,
@@ -200,6 +405,7 @@ const ITEMS = Object.freeze({
   }),
   world_lock: block({
     rarity: "legendary",
+    instance_tracked: true,
     block_health: 8,
     seed: "",
     shop_price: 3500,
@@ -207,8 +413,19 @@ const ITEMS = Object.freeze({
     dropable: true,
     permissions: { owner_controls_lock: true },
   }),
+  super_world_lock: block({
+    rarity: "legendary",
+    instance_tracked: true,
+    block_health: 8,
+    seed: "",
+    stack_limit: 200,
+    tradeable: true,
+    dropable: true,
+    permissions: { owner_controls_lock: true },
+  }),
   vend_empty: block({
     rarity: "epic",
+    instance_tracked: true,
     block_health: 5,
     placeable: true,
     tradeable: true,
@@ -246,6 +463,7 @@ const ITEMS = Object.freeze({
   }),
   safe: block({
     rarity: "epic",
+    instance_tracked: true,
     block_health: 6,
     placeable: true,
     tradeable: true,
@@ -347,12 +565,14 @@ const ITEMS = Object.freeze({
     rarity: "uncommon",
     block_health: 2,
     seed: "wood_platform_seed",
+    platform_collision: true,
   }),
   wooden_entrance: block({
     rarity: "rare",
     block_health: 4,
     seed: "wooden_entrance_seed",
     no_collision: true,
+    entrance_block: true,
     craft_only: true,
     interact_rules: { can_interact: true, interaction_message: "Lock or unlock entrance." },
   }),
@@ -360,7 +580,85 @@ const ITEMS = Object.freeze({
     rarity: "uncommon",
     block_health: 2,
     seed: "sign_seed",
+    sign_block: true,
+    no_collision: true,
+    collidable: false,
     splice_only: true,
+  }),
+  mechanical_entrance: block({
+    rarity: "rare",
+    block_health: 4,
+    seed: "",
+    no_collision: true,
+    entrance_block: true,
+    entrance_animation_frame_seconds: 0.08,
+    interact_rules: { can_interact: true, interaction_message: "Lock or unlock entrance." },
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  ceiling_lamp: block({
+    rarity: "uncommon",
+    block_health: 2,
+    seed: "",
+    no_collision: true,
+    collidable: false,
+    toggle_block: true,
+    toggle_state_key: "toggle_on",
+    toggle_action: "ceiling_lamp_state",
+    interact_rules: { can_interact: true, interaction_message: "Toggle lamp." },
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  steel_door: block({
+    rarity: "uncommon",
+    block_health: 4,
+    seed: "",
+    no_collision: true,
+    collidable: false,
+    door_block: true,
+    interact_rules: { can_interact: true, interaction_message: "Edit or enter door." },
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  steel_block: block({
+    rarity: "uncommon",
+    block_health: 5,
+    seed: "",
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  screen_door: block({
+    rarity: "uncommon",
+    block_health: 3,
+    seed: "",
+    no_collision: true,
+    collidable: false,
+    door_block: true,
+    interact_rules: { can_interact: true, interaction_message: "Edit or enter door." },
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  steel_background: backgroundBlock({
+    rarity: "uncommon",
+    block_health: 3,
+  }),
+  steel_sign: block({
+    rarity: "uncommon",
+    block_health: 3,
+    seed: "",
+    sign_block: true,
+    no_collision: true,
+    collidable: false,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  steel_platform: block({
+    rarity: "uncommon",
+    block_health: 3,
+    seed: "",
+    platform_collision: true,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  steel_ladder: block({
+    rarity: "uncommon",
+    block_health: 3,
+    seed: "",
+    platform_collision: true,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
   }),
   mushroom: block({
     rarity: "uncommon",
@@ -371,11 +669,50 @@ const ITEMS = Object.freeze({
     springboard_velocity: -420,
     springboard_animation_frame_seconds: 0.22,
   }),
+  wooden_door: block({
+    rarity: "uncommon",
+    block_health: 3,
+    seed: "",
+    no_collision: true,
+    collidable: false,
+    door_block: true,
+    interact_rules: { can_interact: true, interaction_message: "Edit or enter door." },
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  wooden_block: block({
+    rarity: "uncommon",
+    block_health: 3,
+    seed: "",
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  wooden_background: backgroundBlock({
+    rarity: "common",
+    block_health: 2,
+  }),
+  wooden_fence: block({
+    rarity: "uncommon",
+    block_health: 3,
+    seed: "",
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  wooden_frame: block({
+    rarity: "uncommon",
+    block_health: 3,
+    seed: "",
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
+  wooden_ladder: block({
+    rarity: "uncommon",
+    block_health: 2,
+    seed: "",
+    platform_collision: true,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
 
   dirt_seed: seed("dirt", { rarity: "common" }),
   grass_seed: seed("grass", { rarity: "common" }),
   stone_seed: seed("stone", { rarity: "common" }),
-  wood_seed: seed("wood", { rarity: "uncommon" }),
+  wood_seed: seed("wood", { display_name: "Tree Trunk Seed", rarity: "uncommon" }),
   leaf_seed: seed("leaf", { rarity: "uncommon" }),
   lava_seed: seed("lava", { rarity: "rare" }),
   sand_seed: seed("sand", { rarity: "common" }),
@@ -386,6 +723,7 @@ const ITEMS = Object.freeze({
   green_block_seed: seed("green_block", { rarity: "uncommon" }),
   purple_block_seed: seed("purple_block", { rarity: "uncommon" }),
   yellow_block_seed: seed("yellow_block", { rarity: "uncommon" }),
+  black_block_seed: seed("black_block", { rarity: "uncommon" }),
   rose_seed: seed("rose", { rarity: "uncommon" }),
   tulip_seed: seed("tulip", { rarity: "uncommon" }),
   vines_seed: seed("vines", { rarity: "common" }),
@@ -431,10 +769,23 @@ const ITEMS = Object.freeze({
   }),
   evil_wings: item("back", {
     rarity: "legendary",
+    instance_tracked: true,
     equipment_slot: "back",
     equipable: true,
     tradeable: true,
-    dropable: false,
+    vendable: true,
+    dropable: true,
+  }),
+  void_aura: item("back", {
+    display_name: "Void Aura",
+    rarity: "legendary",
+    instance_tracked: true,
+    equipment_slot: "back",
+    equipable: true,
+    tradeable: true,
+    vendable: true,
+    dropable: true,
+    jump_type: "double",
   }),
 
   purple_shirt: item("shirt", {
@@ -442,6 +793,13 @@ const ITEMS = Object.freeze({
     equipment_slot: "shirt",
     equipable: true,
     shop_price: 50,
+  }),
+
+  void_shirt: item("shirt", {
+    rarity: "common",
+    equipment_slot: "shirt",
+    equipable: true,
+    shop_price: 0,
   }),
 
   messy_brown_hair: item("hair", {
@@ -545,11 +903,36 @@ const ITEMS = Object.freeze({
     shop_price: 50,
   }),
 
+  void_pants: item("pants", {
+    rarity: "common",
+    equipment_slot: "pants",
+    equipable: true,
+    shop_price: 0,
+  }),
+
+  void_shoes: item("shoes", {
+    rarity: "common",
+    equipment_slot: "shoes",
+    equipable: true,
+    shop_price: 0,
+  }),
+
   fishing_rod: item("tool", {
+    display_name: "Fishing Rod",
     rarity: "uncommon",
     equipment_slot: "hand",
     equipable: true,
+    fishing_rod: true,
     shop_price: 5000,
+  }),
+  platinum_prestige_rod: item("tool", {
+    display_name: "Platinum Prestige Rod",
+    rarity: "legendary",
+    equipment_slot: "hand",
+    equipable: true,
+    fishing_rod: true,
+    instance_tracked: true,
+    shop_price: 0,
   }),
   sakura_sword: item("tool", {
     rarity: "legendary",
@@ -569,7 +952,7 @@ const ITEMS = Object.freeze({
     equipable: true,
     break_power: 1,
     effective_break_power: 3,
-    effective_blocks: ["stone", "glass", "lava"],
+    effective_blocks: ["stone", "glass", "lava", "ice_block", "ice_block_2", "ice_fossil", "frozen_treasure", "frozen_treasure_2"],
   }),
   axe: item("tool", {
     rarity: "uncommon",
@@ -577,7 +960,7 @@ const ITEMS = Object.freeze({
     equipable: true,
     break_power: 1,
     effective_break_power: 3,
-    effective_blocks: ["wood", "leaf"],
+    effective_blocks: ["wood", "leaf", "snow_leaf"],
   }),
   shovel: item("tool", {
     rarity: "uncommon",
@@ -585,7 +968,31 @@ const ITEMS = Object.freeze({
     equipable: true,
     break_power: 1,
     effective_break_power: 3,
-    effective_blocks: ["dirt", "grass", "sand", "cave_background"],
+    effective_blocks: [
+      "dirt",
+      "grass",
+      "sand",
+      "snow_dirt",
+      "snow_block",
+      "frozen_grass",
+      "frozen_grass_1",
+      "frozen_grass_2",
+      "frozen_grass_3",
+      "pile_of_snow",
+      "cave_background",
+      "white_bg",
+      "grey_bg",
+      "black_bg",
+      "red_bg",
+      "orange_bg",
+      "yellow_bg",
+      "green_bg",
+      "aqua_bg",
+      "blue_bg",
+      "purple_bg",
+      "pink_bg",
+      "brown_bg",
+    ],
   }),
   entrance_mover: item("tool", {
     rarity: "rare",
@@ -635,16 +1042,38 @@ const ITEMS = Object.freeze({
       "basic_blue_shoes",
     ],
   }),
+  prestige_coloured_block_pack: item("material", {
+    rarity: "epic",
+    shop_price: 500,
+    shop_pack: true,
+    hidden: true,
+    tradeable: false,
+    dropable: false,
+    admin_grantable: false,
+    pack_rewards: [
+      "ps_blue_block",
+      "ps_green_block",
+      "ps_purple_block",
+      "ps_red_block",
+      "ps_yellow_block",
+    ],
+  }),
   lure_pack: item("lure", {
     rarity: "uncommon",
     shop_price: 25,
     shop_pack: true,
   }),
 
-  pond_fish: item("fish", { rarity: "common", sell_value: 3 }),
-  bluegill: item("fish", { rarity: "uncommon", sell_value: 8 }),
-  golden_carp: item("fish", { rarity: "rare", sell_value: 25 }),
-  crystal_fish: item("fish", { rarity: "epic", sell_value: 75 }),
+  pond_fish: item("fish", { display_name: "Pond Fish", rarity: "common", sell_value: 3 }),
+  bluegill: item("fish", { display_name: "Bluegill", rarity: "uncommon", sell_value: 8 }),
+  golden_carp: item("fish", { display_name: "Golden Carp", rarity: "rare", sell_value: 25 }),
+  crystal_fish: item("fish", { display_name: "Crystal Fish", rarity: "epic", sell_value: 75 }),
+  sea_eater: item("fish", {
+    display_name: "Sea Eater",
+    rarity: "legendary",
+    sell_value: 250,
+    required_rod_id: "platinum_prestige_rod",
+  }),
 });
 
 const STATION_RECIPES = Object.freeze({
@@ -730,17 +1159,20 @@ const FISHING_TABLES = Object.freeze({
     Object.freeze({ fish_id: "bluegill", weight: 28, difficulty: 2 }),
     Object.freeze({ fish_id: "golden_carp", weight: 6, difficulty: 4 }),
     Object.freeze({ fish_id: "crystal_fish", weight: 1, difficulty: 6 }),
+    Object.freeze({ fish_id: "sea_eater", weight: 1, difficulty: 9, required_rod_id: "platinum_prestige_rod" }),
   ]),
   shiny_lure: Object.freeze([
     Object.freeze({ fish_id: "pond_fish", weight: 38, difficulty: 1 }),
     Object.freeze({ fish_id: "bluegill", weight: 42, difficulty: 2 }),
     Object.freeze({ fish_id: "golden_carp", weight: 16, difficulty: 4 }),
     Object.freeze({ fish_id: "crystal_fish", weight: 4, difficulty: 6 }),
+    Object.freeze({ fish_id: "sea_eater", weight: 2, difficulty: 9, required_rod_id: "platinum_prestige_rod" }),
   ]),
   golden_lure: Object.freeze([
     Object.freeze({ fish_id: "bluegill", weight: 35, difficulty: 2 }),
     Object.freeze({ fish_id: "golden_carp", weight: 50, difficulty: 4 }),
     Object.freeze({ fish_id: "crystal_fish", weight: 15, difficulty: 6 }),
+    Object.freeze({ fish_id: "sea_eater", weight: 3, difficulty: 9, required_rod_id: "platinum_prestige_rod" }),
   ]),
   default: Object.freeze([
     Object.freeze({ fish_id: "pond_fish", weight: 80, difficulty: 1 }),
@@ -773,9 +1205,15 @@ function getSpliceResult(seedA, seedB) {
   return SPLICE_RECIPES[getSpliceKey(seedA, seedB)] || "";
 }
 
-function getFishingTable(lureId) {
+function getFishingTable(lureId, options = {}) {
   const table = FISHING_TABLES[cleanItemId(lureId)] || FISHING_TABLES.default;
-  return table.map((entry) => ({ ...entry }));
+  const rodId = cleanItemId(options.rod_id || options.rodId || options.tool_id || options.toolId || "");
+  return table
+    .filter((entry) => {
+      const requiredRodId = cleanItemId(entry.required_rod_id || entry.requiredRodId || "");
+      return requiredRodId === "" || requiredRodId === rodId;
+    })
+    .map((entry) => ({ ...entry }));
 }
 
 function cleanItemId(itemId) {
@@ -836,7 +1274,7 @@ function isDropableItem(itemId) {
 
 function isVendableItem(itemId) {
   const clean = cleanItemId(itemId);
-  if (clean === "" || clean === "punch" || clean === "world_lock") return false;
+  if (clean === "" || clean === "punch" || clean === "world_lock" || clean === "super_world_lock") return false;
   if (clean === "vend_empty" || clean === "vend_pending" || clean === "vend_sold") return false;
 
   const definition = getItemDefinition(clean);
@@ -887,6 +1325,11 @@ function getBreakPower(toolId, blockType = "") {
   return basePower;
 }
 
+function isFishingRodItem(itemId) {
+  const definition = getItemDefinition(itemId);
+  return Boolean(definition && definition.category === "tool" && (definition.fishing_rod || definition.item_id === "fishing_rod"));
+}
+
 function getPlacementCost(itemId) {
   const definition = getItemDefinition(itemId);
   if (!definition || definition.category !== "block") return null;
@@ -931,6 +1374,7 @@ module.exports = {
   hasItem,
   isDropableItem,
   isGrantableItem,
+  isFishingRodItem,
   isPlaceableBlock,
   isTradeableItem,
   isVendableItem,

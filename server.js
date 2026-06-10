@@ -54,6 +54,8 @@ const POSITION_MARGIN_PIXELS = TILE_SIZE * 4;
 const MAX_PACKET_BYTES = 64 * 1024;
 const MAX_CHAT_LENGTH = 220;
 const MAX_SIGN_TEXT_LENGTH = 500;
+const MAX_DOOR_ID_LENGTH = 32;
+const MAX_DOOR_DESTINATION_LENGTH = 80;
 const MAX_DROP_AMOUNT = 9999;
 const MAX_DROP_TILE_AMOUNT = 2000;
 const MAX_ITEM_STACK = ItemDatabase.DEFAULT_STACK_LIMIT;
@@ -61,7 +63,27 @@ const MAX_SHOP_PRICE = 999999;
 const MAX_PLAYER_INVENTORY_KEYS = 500;
 const ADMIN_INVENTORY_LOOKUP_PURPOSE = "admin_inventory_lookup";
 const ADMIN_ITEM_INSTANCE_LOOKUP_PURPOSE = "admin_item_instance_lookup";
+const ADMIN_ITEM_INSTANCE_HISTORY_LOOKUP_PURPOSE = "admin_item_instance_history_lookup";
+const ADMIN_TRANSACTION_LEDGER_LOOKUP_PURPOSE = "admin_transaction_ledger_lookup";
 const ADMIN_ITEM_INSTANCE_LOOKUP_LIMIT = 250;
+const ADMIN_TRANSACTION_LEDGER_LOOKUP_LIMIT = 150;
+const ADMIN_ITEM_INSTANCE_LOOKUP_TIMEOUT_MS = Math.max(1000, Math.trunc(Number(process.env.ADMIN_ITEM_INSTANCE_LOOKUP_TIMEOUT_MS) || 7000));
+const antiDupeAuditIntervalEnv = process.env.ANTI_DUPE_AUDIT_INTERVAL_MS;
+const antiDupeAuditIntervalParsed = antiDupeAuditIntervalEnv == null || String(antiDupeAuditIntervalEnv).trim() === ""
+  ? NaN
+  : Number(antiDupeAuditIntervalEnv);
+const ANTI_DUPE_AUDIT_INTERVAL_MS = Math.max(
+  0,
+  Math.trunc(Number.isFinite(antiDupeAuditIntervalParsed) ? antiDupeAuditIntervalParsed : (15 * 60 * 1000))
+);
+const ANTI_DUPE_AUDIT_LIMIT = Math.min(200, Math.max(1, Math.trunc(Number(process.env.ANTI_DUPE_AUDIT_LIMIT) || 100)));
+const ANTI_DUPE_AUDIT_LOG_CLEAN = ["1", "true", "yes"].includes(String(process.env.ANTI_DUPE_AUDIT_LOG_CLEAN || "false").trim().toLowerCase());
+const WORLD_SNAPSHOT_INTERVAL_ENV = process.env.WORLD_SNAPSHOT_INTERVAL_MINUTES;
+const WORLD_SNAPSHOT_INTERVAL_PARSED = WORLD_SNAPSHOT_INTERVAL_ENV == null || String(WORLD_SNAPSHOT_INTERVAL_ENV).trim() === ""
+  ? NaN
+  : Number(WORLD_SNAPSHOT_INTERVAL_ENV);
+const WORLD_SNAPSHOT_INTERVAL_MINUTES = Math.max(0, Math.trunc(Number.isFinite(WORLD_SNAPSHOT_INTERVAL_PARSED) ? WORLD_SNAPSHOT_INTERVAL_PARSED : 15));
+const WORLD_SNAPSHOT_INTERVAL_MS = WORLD_SNAPSHOT_INTERVAL_MINUTES * 60 * 1000;
 const ADMIN_PUNISHMENT_LOOKUP_PURPOSE = "admin_punishment_lookup";
 const PUNISHMENT_CACHE_TTL_MS = Math.max(1000, Math.trunc(Number(process.env.PUNISHMENT_CACHE_TTL_MS) || 5000));
 const PUNISHMENT_MAX_DURATION_MINUTES = Math.max(1, Math.trunc(Number(process.env.PUNISHMENT_MAX_DURATION_MINUTES) || (3650 * 24 * 60)));
@@ -87,7 +109,7 @@ const MAX_DROP_ID_LENGTH = 96;
 const PLAYER_LEVEL_MIN = 1;
 const PLAYER_LEVEL_MAX = 100;
 const PLAYER_XP_FIRST_LEVEL = 300;
-const ALLOW_LEGACY_PLAYER_STATE_IMPORT = !["0", "false", "no"].includes(String(process.env.ALLOW_LEGACY_PLAYER_STATE_IMPORT || "true").trim().toLowerCase());
+const ALLOW_LEGACY_PLAYER_STATE_IMPORT = ["1", "true", "yes"].includes(String(process.env.ALLOW_LEGACY_PLAYER_STATE_IMPORT || "false").trim().toLowerCase());
 const MAX_MOVE_PIXELS_PER_SECOND = 900;
 const LAVA_REBOUND_MOVE_EXTRA_PIXELS = TILE_SIZE * 4;
 const LAVA_REBOUND_MOVE_RADIUS_TILES = 1;
@@ -115,6 +137,39 @@ const SERVER_SEED_GROW_TIME_SECONDS = Math.max(1, Number(process.env.SEED_GROW_T
 const MATURE_SEED_EXTRA_DROP_CHANCE = Math.max(0, Math.min(1, Number(process.env.MATURE_SEED_EXTRA_DROP_CHANCE) || 0.65));
 const CONFIGURED_SEED_MUTATION_CHANCE = Number(process.env.SEED_MUTATION_CHANCE);
 const SEED_MUTATION_CHANCE = Math.max(0, Math.min(1, Number.isFinite(CONFIGURED_SEED_MUTATION_CHANCE) ? CONFIGURED_SEED_MUTATION_CHANCE : 0.005));
+const SNOW_STORM_EVENT_TYPE = "snow_storm";
+const SNOW_STORM_SYSTEM_MESSAGE = "Snow Storm is coming, find shelter!";
+const SNOW_STORM_EVENT_DURATION_MS = 5 * 60 * 1000;
+const SNOW_STORM_RANDOM_EVENTS_ENABLED = !["0", "false", "no"].includes(String(process.env.SNOW_STORM_RANDOM_EVENTS_ENABLED || "true").trim().toLowerCase());
+const SNOW_STORM_RANDOM_INTERVAL_MS = Math.max(10000, Math.trunc(Number(process.env.SNOW_STORM_RANDOM_INTERVAL_MS) || 60000));
+const SNOW_STORM_RANDOM_CHANCE = Math.max(0, Math.min(1, Number(process.env.SNOW_STORM_RANDOM_CHANCE) || 0.05));
+const SNOW_STORM_PILE_OF_SNOW_CHANCE = Math.max(0, Math.min(1, Number(process.env.SNOW_STORM_PILE_OF_SNOW_CHANCE) || 0.08));
+const SNOW_STORM_EVENT_TILE_BATCH_SIZE = Math.max(25, Math.min(250, Math.trunc(Number(process.env.SNOW_STORM_EVENT_TILE_BATCH_SIZE) || 150)));
+const SERVER_TERRAIN_SURFACE_VERTICAL_OFFSET = -8;
+const SERVER_TERRAIN_EXTRA_HILL_RANGE = 3;
+const SERVER_BOTTOM_LAVA_STONE_HEIGHT = 4;
+const SERVER_CAVE_BOTTOM_SOLID_PADDING = 7;
+const SERVER_CAVE_MIN_DEPTH = 8;
+const SERVER_SHALLOW_CAVE_START_DEPTH = 10;
+const SERVER_DEEP_CAVE_START_DEPTH = 18;
+const SERVER_TREE_MIN_HEIGHT = 5;
+const SERVER_TREE_MAX_HEIGHT = 8;
+const SERVER_TREE_SURFACE_NOISE_THRESHOLD = 0.30;
+const SERVER_TREE_RANDOM_PLACEMENT_CHANCE = 0.45;
+const SERVER_POND_WIDTH_MIN = 5;
+const SERVER_POND_WIDTH_MAX = 11;
+const SERVER_POND_COUNT_MIN = 2;
+const SERVER_POND_COUNT_MAX = 3;
+const SERVER_POND_ATTEMPT_LIMIT = 90;
+const SERVER_POND_EDGE_DEPTH = 2;
+const SERVER_POND_CENTER_DEPTH = 3;
+const SERVER_SURFACE_DECORATION_CHANCE = 0.62;
+const SERVER_SURFACE_DECORATION_GRASS_CHANCE = 0.22;
+const SERVER_SURFACE_DECORATION_ROSE_CHANCE = 0.30;
+const SERVER_SURFACE_DECORATION_TULIP_CHANCE = 0.30;
+const SERVER_SURFACE_DECORATION_SPACING_GAP_MAX = 0.84;
+const SERVER_SURFACE_DECORATION_NOISE_SCALE_X = 0.17;
+const SERVER_SURFACE_DECORATION_NOISE_SCALE_Y = 2.9;
 const SEED_MUTATION_REWARD_TABLE = Object.freeze([
   { item_id: "glowing_dirt", item_category: "block", min_amount: 1, max_amount: 5, y_offset: -16, weight: 80 },
   { item_id: "sakura_sword", item_category: "tool", min_amount: 1, max_amount: 1, y_offset: -16, weight: 10 },
@@ -190,6 +245,7 @@ const MESSAGE_RATE_LIMITS = {
   world_block_update: { limit: 35, windowMs: 1000 },
   world_seed_update: { limit: 25, windowMs: 1000 },
   world_interaction_update: { limit: 20, windowMs: 1000 },
+  door_enter: { limit: 8, windowMs: 1000 },
   world_item_drop_create: { limit: 20, windowMs: 1000 },
   world_drop_create: { limit: 20, windowMs: 1000 },
   world_item_drop_update: { limit: 30, windowMs: 1000 },
@@ -202,6 +258,9 @@ const MESSAGE_RATE_LIMITS = {
 };
 const DEBUG_ACTION_POSITION_FLOW = ["1", "true", "yes"].includes(String(process.env.DEBUG_ACTION_POSITION_FLOW || "false").trim().toLowerCase());
 const DEBUG_PLAYER_PROGRESSION = ["1", "true", "yes"].includes(String(process.env.DEBUG_PLAYER_PROGRESSION || "false").trim().toLowerCase());
+const WORLD_LOCK_BLOCK_TYPE = "world_lock";
+const SUPER_WORLD_LOCK_BLOCK_TYPE = "super_world_lock";
+const SUPER_WORLD_LOCK_EXCHANGE_RATE = 100;
 const SHOP_CATALOG = new Map([
   ["world_lock", { item_id: "world_lock", item_category: "block", amount: 1, price: 3500 }],
   ["crafting_station", { item_id: "crafting_station", item_category: "block", amount: 1, price: 80 }],
@@ -209,6 +268,7 @@ const SHOP_CATALOG = new Map([
   ["safe", { item_id: "safe", item_category: "block", amount: 1, price: 7500 }],
   ["fish_monger", { item_id: "fish_monger", item_category: "block", amount: 1, price: 15000 }],
   ["basic_items_pack", { item_id: "basic_items_pack", item_category: "material", amount: 1, price: 500, pack_size: 1 }],
+  ["prestige_coloured_block_pack", { item_id: "prestige_coloured_block_pack", item_category: "material", amount: 1, price: 500, pack_size: 5 }],
   ["entrance_mover", { item_id: "entrance_mover", item_category: "tool", amount: 1, price: 200 }],
   ["fishing_rod", { item_id: "fishing_rod", item_category: "tool", amount: 1, price: 5000 }],
   ["lure_pack", { item_id: "lure_pack", item_category: "lure", amount: 1, price: 25, pack_size: 5 }],
@@ -233,6 +293,13 @@ const BASIC_ITEMS_PACK_TABLE = [
   { item_id: "basic_red_shoes", item_category: "shoes", weight: 100 },
   { item_id: "basic_blue_shoes", item_category: "shoes", weight: 100 },
 ];
+const PRESTIGE_COLOURED_BLOCK_PACK_TABLE = [
+  { item_id: "ps_blue_block", item_category: "block", weight: 100 },
+  { item_id: "ps_green_block", item_category: "block", weight: 100 },
+  { item_id: "ps_purple_block", item_category: "block", weight: 100 },
+  { item_id: "ps_red_block", item_category: "block", weight: 100 },
+  { item_id: "ps_yellow_block", item_category: "block", weight: 100 },
+];
 const LURE_PACK_TABLE = [
   { item_id: "worm_lure", item_category: "lure", weight: 65 },
   { item_id: "shiny_lure", item_category: "lure", weight: 28 },
@@ -250,15 +317,30 @@ const activeTrades = new Map();
 const tradeByPlayerId = new Map();
 const worldDropActionLocks = new Set();
 const worldVendActionLocks = new Set();
+const worldEventActionLocks = new Set();
+const worldFrozenTreasureOpenLocks = new Set();
 const punishmentCache = new Map();
 const activeFishingSessions = new Map();
 const blockDamage = new Map();
 const worldSaveTimers = new Map();
 const playerSaveTimers = new Map();
+const worldEventTimers = new Map();
 const pendingPersistenceWrites = new Set();
 const worldSnapshotStorageWarnings = new Set();
 let accountsSaveTimer = null;
 let mailTransporter = null;
+let antiDupeAuditTimer = null;
+let antiDupeAuditRunning = false;
+let worldSnapshotSchedulerTimer = null;
+let worldSnapshotSchedulerRunning = false;
+let worldEventRandomTimer = null;
+const worldSnapshotSchedulerState = {
+  enabled: false,
+  last_run_at: "",
+  last_duration_ms: 0,
+  last_world_count: 0,
+  last_error: "",
+};
 const postgresStore = new PostgresStore({
   enabled: POSTGRES_ENABLED,
   autoBootstrap: POSTGRES_AUTO_BOOTSTRAP,
@@ -309,7 +391,7 @@ bootstrapServer().catch((error) => {
   process.exit(1);
 });
 
-wss.on("connection", (socket) => {
+wss.on("connection", (socket, request = null) => {
   const playerId = crypto.randomUUID();
 
   players.set(playerId, {
@@ -340,6 +422,8 @@ wss.on("connection", (socket) => {
   });
 
   socket.playerId = playerId;
+  socket.userAgent = String(request?.headers?.["user-agent"] || "");
+  socket.remoteAddress = String(request?.socket?.remoteAddress || "");
   socket.rateLimits = new Map();
   socket.rateLimitWarnings = new Map();
   socket.authRequiredNotices = new Map();
@@ -490,6 +574,14 @@ wss.on("connection", (socket) => {
         await handleAdminItemInstanceLookupRequest(socket, player, data, username, requestId, purpose);
         return;
       }
+      if (purpose === ADMIN_ITEM_INSTANCE_HISTORY_LOOKUP_PURPOSE) {
+        await handleAdminItemInstanceHistoryLookupRequest(socket, player, data, username, requestId, purpose);
+        return;
+      }
+      if (purpose === ADMIN_TRANSACTION_LEDGER_LOOKUP_PURPOSE) {
+        await handleAdminTransactionLedgerLookupRequest(socket, player, data, username, requestId, purpose);
+        return;
+      }
       if (!isPlayerOwnAccount(player, username)) {
         if (purpose === "world_lock_access_check" || purpose === "remote_player_profile") {
           const publicProfile = buildPublicPlayerProfilePayload(username, requestId, purpose);
@@ -521,6 +613,11 @@ wss.on("connection", (socket) => {
 
     if (data.type === "pull_player_request") {
       handlePullPlayerRequest(socket, player, data);
+      return;
+    }
+
+    if (data.type === "door_enter") {
+      await handleDoorEnterRequest(socket, player, data);
       return;
     }
 
@@ -585,16 +682,24 @@ wss.on("connection", (socket) => {
       ensureWorldState(player.world);
       postgresStore.mirrorPlayerWorld(player.account_username, player.world);
 
+      const existingPlayers = getPlayersInWorld(player.world, playerId);
+      console.log("[APPEARANCE][Server] sending world appearance snapshot", {
+        player: player.account_username,
+        world: player.world,
+        existing_players: existingPlayers.length,
+      });
+
       socket.send(JSON.stringify({
         type: "join_world_ok",
         world: player.world,
-        players: getPlayersInWorld(player.world, playerId),
+        players: existingPlayers,
       }));
 
       socket.send(JSON.stringify(buildWorldStateMessage(player.world, {
         respawn_player: true,
         world_state_reason: "join_world",
       })));
+      sendActiveWorldEventState(socket, player.world);
 
       broadcastToWorld(player.world, buildPublicPlayerPresencePayload("player_joined", player, player.world), playerId);
 
@@ -671,6 +776,10 @@ wss.on("connection", (socket) => {
 
       const worldName = getPlayerCurrentWorldName(player);
       if (await rejectIfWorldBanned(socket, player, worldName, "world_block_update")) return;
+      if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE && !isPostgresAuthoritativeReady()) {
+        sendActionRejected(socket, "world_block_update", "PostgreSQL is not ready.");
+        return;
+      }
 
       const update = sanitizeBlockUpdate(data, worldName);
       if (!update) return;
@@ -691,20 +800,26 @@ wss.on("connection", (socket) => {
         sendActionRejected(socket, "world_block_update", "This world is locked.");
         return;
       }
-      if ((update.action === "break" || update.action === "hit") && update.block_type === "world_lock" && isWorldLocked(worldName) && !canPlayerControlWorldLock(player, worldName)) {
+      if ((update.action === "break" || update.action === "hit") && isWorldLockBlockType(update.block_type) && isWorldLocked(worldName) && !canPlayerControlWorldLock(player, worldName)) {
         sendActionRejected(socket, "world_block_update", "Only the world lock owner can break the lock.");
         return;
       }
-      if (update.action === "place" && update.block_type === "world_lock" && (ensureWorldState(worldName).world_lock?.is_locked || hasWorldLockBlock(worldName))) {
+      if (update.action === "place" && isWorldLockBlockType(update.block_type) && (ensureWorldState(worldName).world_lock?.is_locked || hasWorldLockBlock(worldName))) {
         sendActionRejected(socket, "world_block_update", "This world already has a lock.");
         return;
       }
 
-      const validation = validateBlockUpdateAgainstServerState(socket, player, worldName, update);
+      const validation = await validateBlockUpdateAgainstServerState(socket, player, worldName, update, makeRequestId(data));
       if (!validation.ok) return;
       if (validation.pendingHit) return;
+      if (update.action === "break" && update.block_type === "frozen_treasure") {
+        await handleFrozenTreasureOpen(socket, player, worldName, update, makeRequestId(data));
+        return;
+      }
 
       const blockTransactionId = makeAuditId("block");
+      const blockTypeBefore = getWorldBlockTypeAt(worldName, update.x, update.y, update.layer);
+      const previousWorldState = serializeWorldState(worldName);
       const shouldBroadcastWorldLockState = shouldApplyWorldLockStateForBlockUpdate(worldName, update);
       applyBlockUpdateToWorldState(worldName, update);
       const worldLockStatePayload = applyWorldLockStateForBlockUpdate(worldName, update, player, shouldBroadcastWorldLockState);
@@ -723,19 +838,10 @@ wss.on("connection", (socket) => {
           y: update.y,
         }, validation.playerState || null)
         : { xp_gained: 0, levels_gained: 0, state: validation.playerState || null };
-      const requesterPlayerState = Number(progression.xp_gained || 0) > 0 ? progression.state : (validation.playerState || null);
+      let requesterPlayerState = Number(progression.xp_gained || 0) > 0 ? progression.state : (validation.playerState || null);
       const requesterProgressionPayload = buildProgressionPayload(progression);
       logPlayerProgressionAward(player, progression);
-      queueWorldSave(worldName);
-      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update, requesterPlayerState ? {
-        username: player.account_username,
-        player_data: requesterPlayerState,
-        progression: requesterProgressionPayload,
-      } : null);
-      if (worldLockStatePayload) {
-        sendWorldUpdateToRequesterAndWorld(socket, player, worldName, worldLockStatePayload);
-      }
-      const emittedDrops = emitBreakDrops(worldName, update, socket, player);
+      const emittedDrops = createBreakDrops(worldName, update);
       if (update.action === "break") {
         debugActionPositionFlow("world_block_update break request end", player, {
           layer: update.layer,
@@ -745,7 +851,8 @@ wss.on("connection", (socket) => {
           emitted_drops: emittedDrops.length,
         });
       }
-      logWorldChange(socket, player, {
+      const worldChangeEntry = {
+        ...getAuditActor(socket, player),
         source_type: "world_block_update",
         source_id: blockTransactionId,
         world: worldName,
@@ -754,7 +861,85 @@ wss.on("connection", (socket) => {
         x: update.x,
         y: update.y,
         block_type: update.block_type,
-      });
+        block_type_before: blockTypeBefore || (update.action === "break" || update.action === "hit" ? update.block_type : ""),
+        block_type_after: update.action === "break" ? "" : update.block_type,
+        details: {
+          old_block_id: blockTypeBefore || (update.action === "break" || update.action === "hit" ? update.block_type : ""),
+          new_block_id: update.action === "break" ? "" : update.block_type,
+        },
+      };
+      const dropWorldChangeEntries = emittedDrops.map((drop) => ({
+        ...getAuditActor(socket, player),
+        source_type: "world_block_break",
+        source_id: blockTransactionId,
+        world: worldName,
+        action: "break_drop",
+        layer: update.layer,
+        x: update.x,
+        y: update.y,
+        block_type: drop.item_type,
+        details: {
+          drop_id: drop.drop_id,
+          item_category: drop.item_category,
+          amount: drop.amount,
+          source_block: update.block_type,
+        },
+      }));
+      const worldChanges = [worldChangeEntry, ...dropWorldChangeEntries];
+      let worldCommit = null;
+
+      if (validation.deferred_inventory_commit) {
+        const deferred = validation.deferred_inventory_commit;
+        const serializedWorld = serializeWorldState(worldName);
+        const inventoryCommit = await commitPlayerInventoryState(
+          socket,
+          player,
+          deferred.username,
+          deferred.beforeState,
+          deferred.afterState,
+          {
+            ...(deferred.options || {}),
+            world: worldName,
+            world_state: serializedWorld,
+            world_changes: worldChanges,
+          }
+        );
+
+        if (!inventoryCommit.ok) {
+          worldStates.set(cleanWorld(worldName), deserializeWorldState(worldName, previousWorldState));
+          const rejectMessage = inventoryCommit.reason === "database_error"
+            ? "PostgreSQL rejected the world update."
+            : (inventoryCommit.message || "PostgreSQL rejected the world update.");
+          sendActionRejected(socket, "world_block_update", rejectMessage);
+          return;
+        }
+
+        validation.playerState = inventoryCommit.state;
+        validation.postgres_committed = inventoryCommit.postgres_committed;
+        requesterPlayerState = inventoryCommit.state || requesterPlayerState;
+        persistWorldStateAfterInventoryCommit(worldName, inventoryCommit.postgres_committed, serializedWorld);
+        worldCommit = { ok: true, postgres_committed: inventoryCommit.postgres_committed, serialized: serializedWorld };
+      } else {
+        worldCommit = await commitWorldStateWithBlockChanges(worldName, worldChanges);
+        if (!worldCommit.ok) {
+          worldStates.set(cleanWorld(worldName), deserializeWorldState(worldName, previousWorldState));
+          sendActionRejected(socket, "world_block_update", worldCommit.message || "PostgreSQL rejected the world update.");
+          return;
+        }
+      }
+
+      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update, requesterPlayerState ? {
+        username: player.account_username,
+        player_data: requesterPlayerState,
+        progression: requesterProgressionPayload,
+      } : null);
+      if (worldLockStatePayload) {
+        sendWorldUpdateToRequesterAndWorld(socket, player, worldName, worldLockStatePayload);
+      }
+      for (const drop of emittedDrops) {
+        sendWorldUpdateToRequesterAndWorld(socket, player, worldName, drop);
+      }
+      logWorldChange(socket, player, worldChangeEntry, { skipPostgres: worldCommit.postgres_committed });
       if (update.action === "place" && validation.playerState) {
         const placementCost = ItemDatabase.getPlacementCost(update.block_type);
         if (placementCost && Number(placementCost.amount) > 0) {
@@ -763,26 +948,11 @@ wss.on("connection", (socket) => {
             y: update.y,
             placed_block: update.block_type,
             layer: update.layer,
-          });
+          }, { skipPostgres: validation.postgres_committed });
         }
       }
-      for (const drop of emittedDrops) {
-        logWorldChange(socket, player, {
-          source_type: "world_block_break",
-          source_id: blockTransactionId,
-          world: worldName,
-          action: "break_drop",
-          layer: update.layer,
-          x: update.x,
-          y: update.y,
-          block_type: drop.item_type,
-          details: {
-            drop_id: drop.drop_id,
-            item_category: drop.item_category,
-            amount: drop.amount,
-            source_block: update.block_type,
-          },
-        });
+      for (const dropWorldChangeEntry of dropWorldChangeEntries) {
+        logWorldChange(socket, player, dropWorldChangeEntry, { skipPostgres: worldCommit.postgres_committed });
       }
 
       if (requesterPlayerState) {
@@ -811,7 +981,7 @@ wss.on("connection", (socket) => {
       const update = sanitizeSeedUpdate(data, worldName);
       if (!update) return;
 
-      const validation = validateSeedUpdateAgainstServerState(socket, player, worldName, update);
+      const validation = await validateSeedUpdateAgainstServerState(socket, player, worldName, update, makeRequestId(data));
       if (!validation.ok) return;
 
       const seedTransactionId = makeAuditId("seed");
@@ -839,7 +1009,7 @@ wss.on("connection", (socket) => {
         logItemLedgerForState(socket, player, player.account_username, validation.playerState, update.seed_type, "seed", -1, "world_seed_place", seedTransactionId, "seed_plant_cost", worldName, {
           x: update.x,
           y: update.y,
-        });
+        }, { skipPostgres: validation.postgres_committed });
       }
 
       if (validation.playerState) {
@@ -864,47 +1034,59 @@ wss.on("connection", (socket) => {
       const update = sanitizeInteractionUpdate(data, worldName);
       if (!update) return;
 
+      if (update.action === "springboard_animation") {
+        if (!prepareSpringboardAnimationUpdate(socket, player, worldName, update)) return;
+        broadcastToWorld(worldName, update, player.id);
+        touchLivePresence(socket, player);
+        return;
+      }
+
       if (update.action === "entrance_gate_move") {
         if (!requireBuildPermission(socket, player, worldName, "move the Entrance Gate")) return;
-        handleEntranceGateMoveUpdate(socket, player, worldName, update);
+        await handleEntranceGateMoveUpdate(socket, player, worldName, update, makeRequestId(data));
         return;
       }
 
       if (update.action === "wooden_entrance_state") {
         if (!prepareWoodenEntranceStateUpdate(socket, player, worldName, update)) return;
+      } else if (update.action === "door_state") {
+        if (!prepareDoorStateUpdate(socket, player, worldName, update)) return;
+      } else if (update.action === "ceiling_lamp_state") {
+        if (!requireBuildPermission(socket, player, worldName, "toggle this lamp")) return;
+        if (!prepareToggleBlockStateUpdate(socket, player, worldName, update, "ceiling_lamp_state")) return;
       } else if (update.action === "world_lock_state") {
         if (!prepareWorldLockStateUpdate(socket, player, worldName, update)) return;
       } else if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) {
         return;
       }
 
+      const interactionSourceId = makeAuditId("interact");
+      const previousWorldState = serializeWorldState(worldName);
+      const objectBefore = getWorldObjectJournalData(worldName, update);
       applyInteractionUpdateToWorldState(worldName, update);
-      queueWorldSave(worldName);
-      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
-      const interactionDetails = {};
-      if (update.action === "world_lock_state" && update.state) {
-        interactionDetails.is_locked = Boolean(update.state.is_locked);
-        interactionDetails.owner_name = cleanName(update.state.owner_name || "");
-        interactionDetails.lock_grid_x = Number(update.state.lock_grid_x);
-        interactionDetails.lock_grid_y = Number(update.state.lock_grid_y);
-        interactionDetails.allowed_count = Array.isArray(update.state.allowed_players) ? update.state.allowed_players.length : 0;
-        interactionDetails.public_build = Boolean(update.state.public_build);
-      } else if (update.action === "sign_text") {
-        interactionDetails.text_length = String(update.text || "").length;
-      } else if (update.action === "wooden_entrance_state") {
-        interactionDetails.locked = Boolean(update.locked);
+      const objectAfter = getWorldObjectJournalData(worldName, update);
+      const interactionDetails = buildWorldInteractionDetails(update);
+      const worldObjectChangeEntry = buildWorldObjectChangeEntry(
+        socket,
+        player,
+        worldName,
+        update,
+        objectBefore,
+        objectAfter,
+        interactionSourceId,
+        interactionDetails
+      );
+      const worldCommit = await commitWorldStateWithBlockChanges(worldName, [worldObjectChangeEntry]);
+      if (!worldCommit.ok) {
+        worldStates.set(cleanWorld(worldName), deserializeWorldState(worldName, previousWorldState));
+        sendActionRejected(socket, "world_interaction_update", worldCommit.message || "PostgreSQL rejected the world update.");
+        return;
       }
-      logWorldChange(socket, player, {
-        source_type: "world_interaction_update",
-        source_id: makeAuditId("interact"),
-        world: worldName,
-        action: update.action,
-        layer: "interaction",
-        x: update.x,
-        y: update.y,
-        block_type: update.block_type || "",
-        details: interactionDetails,
-      });
+      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
+      if (update.action === "door_state") {
+        await maybeApplyReciprocalDoorLink(socket, player, worldName, update);
+      }
+      logWorldChange(socket, player, worldObjectChangeEntry, { skipPostgres: worldCommit.postgres_committed });
       return;
     }
 
@@ -919,10 +1101,19 @@ wss.on("connection", (socket) => {
       if (!update) return;
       if (!validateDropCreateAgainstServerState(socket, player, update)) return;
 
-      const spendResult = spendServerInventoryCost(player.account_username, {
+      const spendResult = await spendServerInventoryCost(player.account_username, {
         item_id: update.item_type,
         item_category: update.item_category,
         amount: update.amount,
+      }, {
+        socket,
+        player,
+        source: "drop_inventory",
+        action: "world_item_drop_create",
+        reason: "drop_from_inventory",
+        request_id: makeRequestId(data),
+        world: worldName,
+        metadata: { drop_id: update.drop_id, x: update.x, y: update.y },
       });
       if (!spendResult.ok) {
         sendActionRejected(socket, "world_item_drop_create", spendResult.message);
@@ -952,7 +1143,7 @@ wss.on("connection", (socket) => {
       });
       logItemLedgerForState(socket, player, player.account_username, spendResult.state, update.item_type, update.item_category, -update.amount, "world_item_drop_create", dropTransactionId, "drop_from_inventory", worldName, {
         drop_id: update.drop_id,
-      });
+      }, { skipPostgres: spendResult.postgres_committed });
       sendInventoryTransactionResult(socket, {
         ok: true,
         action: "world_item_drop_create",
@@ -1066,12 +1257,13 @@ wss.on("connection", (socket) => {
           amount: pickupPlan.pickedAmount,
           expected_before_amount: getInventoryCount(pickupPlan.playerState, pickupPlan.item_type, pickupPlan.item_category),
           stack_limit: ItemDatabase.getStackLimit(pickupPlan.item_type),
-          allow_state_repair: true,
+          allow_state_repair: false,
           world: worldName,
           drop_id: update.drop_id,
           source_id: pickupTransactionId,
           request_id: makeRequestId(data),
           correlation_id: makeAuditId("pickup"),
+          ip_address: getSocketAddress(socket),
           at: new Date().toISOString(),
         });
         if (!pickupTransaction.ok) {
@@ -1131,7 +1323,7 @@ wss.on("connection", (socket) => {
         });
         logItemLedgerForState(socket, player, player.account_username, pickupState, pickupPlan.item_type, pickupPlan.item_category, pickupPlan.pickedAmount, "world_item_drop_pickup", pickupTransactionId, "drop_pickup", worldName, {
           drop_id: pickupPlan.dropId || pickupPlan.drop?.drop_id || "",
-        });
+        }, { skipPostgres: true });
         sendInventoryTransactionResult(socket, {
           ok: true,
           action: "drop_pickup",
@@ -1174,6 +1366,8 @@ wss.on("connection", (socket) => {
         if (!requireSameWorld(socket, player, position.world, "move in that world")) return;
         if (!acceptPlayerMovement(socket, player, position)) return;
 
+        const previousEquipmentKey = JSON.stringify(player.equipment_slots || {});
+        const previousAnimationState = String(player.animation_state || "idle");
         player.x = position.x;
         player.y = position.y;
         player.facing = position.facing;
@@ -1195,7 +1389,35 @@ wss.on("connection", (socket) => {
           }, player.account_username);
         }
 
-        broadcastToWorld(player.world, buildPublicPlayerPresencePayload("player_position", player, position.world), playerId);
+        const nextEquipmentKey = JSON.stringify(player.equipment_slots || {});
+        const animationChanged = previousAnimationState !== String(player.animation_state || "idle");
+        const equipmentChanged = previousEquipmentKey !== nextEquipmentKey;
+        if (equipmentChanged) {
+          console.log("[APPEARANCE][Server] received equipment change", {
+            player: player.account_username,
+            world: player.world,
+            equipment_slots: player.equipment_slots,
+          });
+        }
+        if (animationChanged) {
+          console.log("[APPEARANCE][Server] received animation state", {
+            player: player.account_username,
+            world: player.world,
+            animation_state: player.animation_state,
+            facing: player.facing,
+          });
+        }
+
+        const presencePayload = buildPublicPlayerPresencePayload("player_position", player, position.world);
+        broadcastToWorld(player.world, presencePayload, playerId);
+        if (equipmentChanged || animationChanged) {
+          console.log("[APPEARANCE][Server] broadcast appearance update", {
+            player: player.account_username,
+            world: player.world,
+            animation_state: presencePayload.animation_state,
+            equipment_slots: presencePayload.equipment_slots,
+          });
+        }
         touchLivePresence(socket, player);
         return;
       }
@@ -1322,6 +1544,16 @@ async function handleHttpRequest(request, response) {
           spaces_endpoint_configured: Boolean(WORLD_SNAPSHOT_SPACES_ENDPOINT),
           postgres_inline: WORLD_SNAPSHOT_POSTGRES_INLINE,
         },
+        world_snapshot_scheduler: {
+          enabled: worldSnapshotSchedulerState.enabled,
+          interval_minutes: WORLD_SNAPSHOT_INTERVAL_MINUTES,
+          interval_ms: WORLD_SNAPSHOT_INTERVAL_MS,
+          running: worldSnapshotSchedulerRunning,
+          last_run_at: worldSnapshotSchedulerState.last_run_at || null,
+          last_duration_ms: worldSnapshotSchedulerState.last_duration_ms,
+          last_world_count: worldSnapshotSchedulerState.last_world_count,
+          last_error: worldSnapshotSchedulerState.last_error || "",
+        },
       },
     }));
     return;
@@ -1340,7 +1572,118 @@ async function bootstrapServer() {
   await redisStore.init();
   await postgresStore.init();
   await loadPersistentState();
+  await recoverWorldEventsAfterLoad();
+  startWorldEventRandomScheduler();
+  startAntiDupeAuditScanner();
+  startPeriodicWorldSnapshotScheduler();
   startHttpServer();
+}
+
+function startAntiDupeAuditScanner() {
+  if (antiDupeAuditTimer || ANTI_DUPE_AUDIT_INTERVAL_MS <= 0) return;
+  if (!postgresStore.isReady()) return;
+
+  const runAudit = async () => {
+    if (antiDupeAuditRunning || !postgresStore.isReady()) return;
+    antiDupeAuditRunning = true;
+    try {
+      const result = await postgresStore.auditItemInstances({ limit: ANTI_DUPE_AUDIT_LIMIT });
+      if (!result?.ok) {
+        console.warn("[anti-dupe] item instance audit failed:", result?.reason || "unknown");
+        return;
+      }
+
+      const totalIssues = clampInteger(result.summary?.total_issues || 0, 0, ANTI_DUPE_AUDIT_LIMIT);
+      if (totalIssues > 0) {
+        console.warn("[anti-dupe] item instance audit found issues", JSON.stringify({
+          scanned_at: result.scanned_at,
+          summary: result.summary,
+          sample: Array.isArray(result.issues) ? result.issues.slice(0, 5) : [],
+        }));
+      } else if (ANTI_DUPE_AUDIT_LOG_CLEAN) {
+        console.log("[anti-dupe] item instance audit clean.");
+      }
+    } catch (error) {
+      console.warn("[anti-dupe] item instance audit crashed:", error.message);
+    } finally {
+      antiDupeAuditRunning = false;
+    }
+  };
+
+  antiDupeAuditTimer = setInterval(runAudit, ANTI_DUPE_AUDIT_INTERVAL_MS);
+  if (typeof antiDupeAuditTimer.unref === "function") antiDupeAuditTimer.unref();
+  const firstAuditTimer = setTimeout(runAudit, 10000);
+  if (typeof firstAuditTimer.unref === "function") firstAuditTimer.unref();
+}
+
+function startPeriodicWorldSnapshotScheduler() {
+  if (WORLD_SNAPSHOT_INTERVAL_MS <= 0) {
+    worldSnapshotSchedulerState.enabled = false;
+    return;
+  }
+  if (worldSnapshotSchedulerTimer) return;
+  worldSnapshotSchedulerState.enabled = true;
+
+  const runSnapshotCycle = async () => {
+    if (worldSnapshotSchedulerRunning) return;
+    worldSnapshotSchedulerRunning = true;
+    const startedAt = Date.now();
+    worldSnapshotSchedulerState.last_error = "";
+    worldSnapshotSchedulerState.last_run_at = new Date(startedAt).toISOString();
+
+    try {
+      const loadedWorldNames = Array.from(worldStates.keys()).sort((a, b) => a.localeCompare(b));
+      let createdCount = 0;
+      let failedCount = 0;
+
+      for (const worldName of loadedWorldNames) {
+        const snapshot = createWorldSnapshot(worldName, "periodic_checkpoint", null, null, {
+          scheduler: true,
+          interval_minutes: WORLD_SNAPSHOT_INTERVAL_MINUTES,
+          world_count: loadedWorldNames.length,
+        });
+        if (snapshot?.snapshotId) {
+          createdCount += 1;
+        } else {
+          failedCount += 1;
+        }
+      }
+
+      worldSnapshotSchedulerState.last_world_count = createdCount;
+      if (failedCount > 0) {
+        worldSnapshotSchedulerState.last_error = `some_world_snapshots_failed_${failedCount}`;
+        console.warn("[snapshot] periodic world checkpoint completed with failures", {
+          scheduled_worlds: loadedWorldNames.length,
+          created: createdCount,
+          failed: failedCount,
+        });
+      }
+    } catch (error) {
+      worldSnapshotSchedulerState.last_error = cleanText(error?.message || error || "unknown");
+      console.warn("[snapshot] periodic world checkpoint failed:", worldSnapshotSchedulerState.last_error);
+    } finally {
+      worldSnapshotSchedulerState.last_duration_ms = Date.now() - startedAt;
+      worldSnapshotSchedulerRunning = false;
+    }
+  };
+
+  worldSnapshotSchedulerTimer = setInterval(() => {
+    runSnapshotCycle().catch((error) => {
+      worldSnapshotSchedulerState.last_error = cleanText(error?.message || error || "unknown");
+      console.warn("[snapshot] periodic world checkpoint task failed:", worldSnapshotSchedulerState.last_error);
+    });
+  }, WORLD_SNAPSHOT_INTERVAL_MS);
+
+  if (typeof worldSnapshotSchedulerTimer.unref === "function") worldSnapshotSchedulerTimer.unref();
+  const startupDelayMs = Math.min(60_000, WORLD_SNAPSHOT_INTERVAL_MS);
+  const startupTimer = setTimeout(() => {
+    runSnapshotCycle().catch((error) => {
+      worldSnapshotSchedulerState.last_error = cleanText(error?.message || error || "unknown");
+      console.warn("[snapshot] periodic world checkpoint startup run failed:", worldSnapshotSchedulerState.last_error);
+    });
+  }, startupDelayMs);
+  if (typeof startupTimer.unref === "function") startupTimer.unref();
+  console.log(`[snapshot] periodic world checkpoint every ${WORLD_SNAPSHOT_INTERVAL_MINUTES} minute(s).`);
 }
 
 function startHttpServer() {
@@ -1741,6 +2084,22 @@ function makeRequestId(data) {
   return String(data.request_id || "").trim();
 }
 
+function withTimeout(promise, timeoutMs, label) {
+  let timer = null;
+  const timeoutPromise = new Promise((_, reject) => {
+    timer = setTimeout(() => {
+      reject(new Error(`${label} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+  });
+
+  return Promise.race([
+    Promise.resolve(promise).finally(() => {
+      if (timer) clearTimeout(timer);
+    }),
+    timeoutPromise,
+  ]);
+}
+
 function makeMessageIdempotencyScope(data) {
   const type = String(data?.type || "").trim();
   if (type === "") return "";
@@ -1783,6 +2142,9 @@ function makeMessageIdempotencyScope(data) {
     return type;
   }
   if (type === "pull_player_request") {
+    return type;
+  }
+  if (type === "door_enter") {
     return type;
   }
   return "";
@@ -3914,6 +4276,7 @@ async function executeTrade(trade) {
       requester_inventory_baseline: buildInventoryBaselineForItems(stateA, validation.offersA.concat(validation.offersB)),
       target_inventory_baseline: buildInventoryBaselineForItems(stateB, validation.offersA.concat(validation.offersB)),
       request_id: tradeTransactionId,
+      ip_address: getSocketAddress(requesterRecord.socket),
     });
 
     if (!tradeResult.ok) {
@@ -3943,12 +4306,12 @@ async function executeTrade(trade) {
       target_offer: validation.offersB,
     });
     for (const item of validation.offersA) {
-      logItemLedgerForState(requesterRecord.socket, requesterRecord.player, trade.requester_username, stateA, item.item_id, item.item_category, -item.amount, "trade", tradeTransactionId, "trade_sent", requesterRecord.player.world, { trade_id: trade.id, counterparty: trade.target_username });
-      logItemLedgerForState(targetRecord.socket, targetRecord.player, trade.target_username, stateB, item.item_id, item.item_category, item.amount, "trade", tradeTransactionId, "trade_received", targetRecord.player.world, { trade_id: trade.id, counterparty: trade.requester_username });
+      logItemLedgerForState(requesterRecord.socket, requesterRecord.player, trade.requester_username, stateA, item.item_id, item.item_category, -item.amount, "trade", tradeTransactionId, "trade_sent", requesterRecord.player.world, { trade_id: trade.id, counterparty: trade.target_username }, { skipPostgres: true });
+      logItemLedgerForState(targetRecord.socket, targetRecord.player, trade.target_username, stateB, item.item_id, item.item_category, item.amount, "trade", tradeTransactionId, "trade_received", targetRecord.player.world, { trade_id: trade.id, counterparty: trade.requester_username }, { skipPostgres: true });
     }
     for (const item of validation.offersB) {
-      logItemLedgerForState(targetRecord.socket, targetRecord.player, trade.target_username, stateB, item.item_id, item.item_category, -item.amount, "trade", tradeTransactionId, "trade_sent", targetRecord.player.world, { trade_id: trade.id, counterparty: trade.requester_username });
-      logItemLedgerForState(requesterRecord.socket, requesterRecord.player, trade.requester_username, stateA, item.item_id, item.item_category, item.amount, "trade", tradeTransactionId, "trade_received", requesterRecord.player.world, { trade_id: trade.id, counterparty: trade.target_username });
+      logItemLedgerForState(targetRecord.socket, targetRecord.player, trade.target_username, stateB, item.item_id, item.item_category, -item.amount, "trade", tradeTransactionId, "trade_sent", targetRecord.player.world, { trade_id: trade.id, counterparty: trade.requester_username }, { skipPostgres: true });
+      logItemLedgerForState(requesterRecord.socket, requesterRecord.player, trade.requester_username, stateA, item.item_id, item.item_category, item.amount, "trade", tradeTransactionId, "trade_received", requesterRecord.player.world, { trade_id: trade.id, counterparty: trade.target_username }, { skipPostgres: true });
     }
 
     sendJson(requesterRecord.socket, {
@@ -3980,7 +4343,7 @@ async function handleInventoryTransactionRequest(socket, player, data) {
 
   const action = String(data.action || "").trim();
   if (action === "shop_buy") {
-    handleShopBuyTransaction(socket, player, data);
+    await handleShopBuyTransaction(socket, player, data);
     return;
   }
 
@@ -3990,59 +4353,64 @@ async function handleInventoryTransactionRequest(socket, player, data) {
   }
 
   if (action === "safe_get_state" || action === "safe_deposit" || action === "safe_withdraw") {
-    handleSafeTransaction(socket, player, data);
+    await handleSafeTransaction(socket, player, data);
     return;
   }
 
   if (action === "craft_recipe" || action === "furnace_recipe") {
-    handleStationRecipeTransaction(socket, player, data);
+    await handleStationRecipeTransaction(socket, player, data);
     return;
   }
 
   if (action === "fishing_start") {
-    handleFishingStartTransaction(socket, player, data);
+    await handleFishingStartTransaction(socket, player, data);
     return;
   }
 
   if (action === "fishing_complete") {
-    handleFishingCompleteTransaction(socket, player, data);
+    await handleFishingCompleteTransaction(socket, player, data);
     return;
   }
 
   if (action === "fish_monger_sell" || action === "fish_monger_sell_all") {
-    handleFishMongerTransaction(socket, player, data);
+    await handleFishMongerTransaction(socket, player, data);
     return;
   }
 
   if (action === "drop_inventory_item") {
-    handleDropInventoryItemTransaction(socket, player, data);
+    await handleDropInventoryItemTransaction(socket, player, data);
     return;
   }
 
   if (action === "trash_inventory_item") {
-    handleTrashInventoryItemTransaction(socket, player, data);
+    await handleTrashInventoryItemTransaction(socket, player, data);
+    return;
+  }
+
+  if (action === "convert_world_lock") {
+    await handleWorldLockConversionTransaction(socket, player, data);
     return;
   }
 
   if (action === "seed_place") {
-    handleSeedPlaceTransaction(socket, player, data);
+    await handleSeedPlaceTransaction(socket, player, data);
     return;
   }
 
   if (action === "seed_splice") {
-    handleSeedSpliceTransaction(socket, player, data);
+    await handleSeedSpliceTransaction(socket, player, data);
     return;
   }
 
   if (action === "seed_harvest") {
-    handleSeedHarvestTransaction(socket, player, data);
+    await handleSeedHarvestTransaction(socket, player, data);
     return;
   }
 
   sendInventoryTransactionRejected(socket, data, "Unknown inventory transaction.");
 }
 
-function handleShopBuyTransaction(socket, player, data) {
+async function handleShopBuyTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
   const itemId = clampString(data.item_id || data.item || "");
   const listing = SHOP_CATALOG.get(itemId);
@@ -4058,7 +4426,9 @@ function handleShopBuyTransaction(socket, player, data) {
 
   const packRewardTable = itemId === "lure_pack"
     ? LURE_PACK_TABLE
-    : (itemId === "basic_items_pack" ? BASIC_ITEMS_PACK_TABLE : null);
+    : (itemId === "basic_items_pack"
+      ? BASIC_ITEMS_PACK_TABLE
+      : (itemId === "prestige_coloured_block_pack" ? PRESTIGE_COLOURED_BLOCK_PACK_TABLE : null));
 
   if (packRewardTable) {
     const rewardTableValid = packRewardTable.every((reward) => (
@@ -4084,8 +4454,10 @@ function handleShopBuyTransaction(socket, player, data) {
     sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
     return;
   }
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
 
-  if (!spendItemFromState(state, "gem", "currency", listing.price)) {
+  if (!spendItemFromState(stagedState, "gem", "currency", listing.price)) {
     sendInventoryTransactionRejected(socket, data, "Not enough gems.");
     return;
   }
@@ -4094,7 +4466,7 @@ function handleShopBuyTransaction(socket, player, data) {
   if (packRewardTable) {
     for (let i = 0; i < listing.pack_size * listing.amount; i += 1) {
       const reward = rollWeightedReward(packRewardTable);
-      addItemToState(state, reward.item_id, reward.item_category, 1);
+      addItemToState(stagedState, reward.item_id, reward.item_category, 1);
       rewards.push({
         item_id: reward.item_id,
         item_category: reward.item_category,
@@ -4102,7 +4474,7 @@ function handleShopBuyTransaction(socket, player, data) {
       });
     }
   } else {
-    addItemToState(state, listing.item_id, listing.item_category, listing.amount);
+    addItemToState(stagedState, listing.item_id, listing.item_category, listing.amount);
     rewards.push({
       item_id: listing.item_id,
       item_category: listing.item_category,
@@ -4110,13 +4482,23 @@ function handleShopBuyTransaction(socket, player, data) {
     });
   }
 
-  state.saved_at = new Date().toISOString();
-  setPlayerState(username, state);
-  queuePlayerSave(username);
-
   const purchaseId = makeAuditId("shop");
+  const commit = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
+    source: "shop",
+    action: "shop_purchase",
+    reason: "shop_buy",
+    request_id: requestId,
+    world: player.world || "START",
+    metadata: { listing_id: itemId, purchase_id: purchaseId },
+    failure_message: "Shop inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    sendInventoryTransactionRejected(socket, data, commit.message);
+    return;
+  }
+  const committedState = commit.state;
   const combinedRewards = combineRewardEntries(rewards);
-  const gemBalanceAfter = getInventoryCount(state, "gem", "currency");
+  const gemBalanceAfter = getInventoryCount(committedState, "gem", "currency");
   logShopPurchase(socket, player, {
     purchase_id: purchaseId,
     account_username: username,
@@ -4130,7 +4512,7 @@ function handleShopBuyTransaction(socket, player, data) {
     socket,
     player,
     username,
-    state,
+    committedState,
     "gem",
     "currency",
     -listing.price,
@@ -4138,9 +4520,10 @@ function handleShopBuyTransaction(socket, player, data) {
     purchaseId,
     "shop_price",
     player.world,
-    { listing_id: itemId }
+    { listing_id: itemId },
+    { skipPostgres: commit.postgres_committed }
   );
-  logRewardLedgers(socket, player, username, state, combinedRewards, "shop_purchase", purchaseId, "shop_reward", player.world, { listing_id: itemId });
+  logRewardLedgers(socket, player, username, committedState, combinedRewards, "shop_purchase", purchaseId, "shop_reward", player.world, { listing_id: itemId }, { skipPostgres: commit.postgres_committed });
 
   sendInventoryTransactionResult(socket, {
     ok: true,
@@ -4149,10 +4532,12 @@ function handleShopBuyTransaction(socket, player, data) {
     item_id: itemId,
     message: itemId === "lure_pack"
       ? "Purchased and opened Lure Pack."
-      : (itemId === "basic_items_pack" ? "Purchased and opened Basic Items Pack." : `Purchased ${listing.item_id}.`),
+      : (itemId === "basic_items_pack"
+        ? "Purchased and opened Basic Items Pack."
+        : (itemId === "prestige_coloured_block_pack" ? "Purchased and opened Prestige Coloured Block Pack." : `Purchased ${listing.item_id}.`)),
     username,
     rewards: combinedRewards,
-    player_data: state,
+    player_data: committedState,
   });
 }
 
@@ -4286,10 +4671,21 @@ function isWorldLocked(worldName) {
   return Boolean(state.world_lock?.is_locked);
 }
 
+function normalizeWorldLockBlockType(blockType) {
+  const clean = clampString(blockType || "").toLowerCase();
+  if (clean === SUPER_WORLD_LOCK_BLOCK_TYPE) return SUPER_WORLD_LOCK_BLOCK_TYPE;
+  return WORLD_LOCK_BLOCK_TYPE;
+}
+
+function isWorldLockBlockType(blockType) {
+  const clean = clampString(blockType || "").toLowerCase();
+  return clean === WORLD_LOCK_BLOCK_TYPE || clean === SUPER_WORLD_LOCK_BLOCK_TYPE;
+}
+
 function hasWorldLockBlock(worldName) {
   const state = ensureWorldState(worldName);
   for (const block of state.foreground.values()) {
-    if (clampString(block?.block_type || "") === "world_lock") {
+    if (isWorldLockBlockType(block?.block_type || "")) {
       return true;
     }
   }
@@ -4310,7 +4706,7 @@ function isActiveWorldLockGrid(state, x, y) {
 }
 
 function shouldApplyWorldLockStateForBlockUpdate(worldName, update) {
-  if (!update || update.layer !== "foreground" || update.block_type !== "world_lock") return false;
+  if (!update || update.layer !== "foreground" || !isWorldLockBlockType(update.block_type)) return false;
   if (update.action === "place") return true;
   if (update.action !== "break") return false;
 
@@ -4319,9 +4715,12 @@ function shouldApplyWorldLockStateForBlockUpdate(worldName, update) {
 }
 
 function makeWorldLockStateForPlacement(player, update) {
+  const lockBlockType = normalizeWorldLockBlockType(update?.block_type || WORLD_LOCK_BLOCK_TYPE);
   return sanitizeWorldLockState({
     is_locked: true,
     owner_name: cleanAccountName(player?.account_username || player?.name || "").toUpperCase(),
+    lock_block_type: lockBlockType,
+    lock_type: lockBlockType,
     lock_grid_x: update.x,
     lock_grid_y: update.y,
     allowed_players: [],
@@ -4480,7 +4879,7 @@ function canPlayerBreakFishMonger(player, worldName, update) {
 function canListItemInVend(itemId, itemCategory) {
   const cleanItemId = clampString(itemId || "");
   if (cleanItemId === "" || !ItemDatabase.hasItem(cleanItemId)) return false;
-  if (cleanItemId === "punch" || cleanItemId === "world_lock") return false;
+  if (cleanItemId === "punch" || isWorldLockBlockType(cleanItemId)) return false;
   if (isVendBlockType(cleanItemId)) return false;
 
   const definition = ItemDatabase.getItemDefinition(cleanItemId);
@@ -4631,7 +5030,7 @@ async function handleVendingTransaction(socket, player, data) {
   }
 
   if (action === "vend_set_listing") {
-    handleVendSetListing(socket, player, data, worldName, vend);
+    await handleVendSetListing(socket, player, data, worldName, vend);
     return;
   }
 
@@ -4641,19 +5040,19 @@ async function handleVendingTransaction(socket, player, data) {
   }
 
   if (action === "vend_collect") {
-    handleVendCollect(socket, player, data, worldName, vend);
+    await handleVendCollect(socket, player, data, worldName, vend);
     return;
   }
 
   if (action === "vend_cancel") {
-    handleVendCancel(socket, player, data, worldName, vend);
+    await handleVendCancel(socket, player, data, worldName, vend);
     return;
   }
 
   rejectVendTransaction(socket, data, "Unknown vending action.");
 }
 
-function handleVendSetListing(socket, player, data, worldName, vend) {
+async function handleVendSetListing(socket, player, data, worldName, vend) {
   const hasOwner = accountKey(vend.owner_username || "") !== "";
   if (!hasOwner && !canPlayerPlaceVendingMachine(player, worldName)) {
     rejectVendTransaction(socket, data, isWorldLocked(worldName) ? "Only the world owner can list items in vending machines here." : "You cannot use this vending machine.");
@@ -4696,20 +5095,25 @@ function handleVendSetListing(socket, player, data, worldName, vend) {
     rejectVendTransaction(socket, data, "Could not load your server inventory.");
     return;
   }
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
 
-  if (getInventoryCount(state, itemId, itemCategory) < stock) {
+  if (getInventoryCount(stagedState, itemId, itemCategory) < stock) {
     rejectVendTransaction(socket, data, `Not enough ${itemId}.`);
     return;
   }
 
-  if (!spendItemFromState(state, itemId, itemCategory, stock)) {
+  if (!spendItemFromState(stagedState, itemId, itemCategory, stock)) {
     rejectVendTransaction(socket, data, "Server inventory changed. Try again.");
     return;
   }
 
+  const originalVend = cloneJson(vend);
+  const vendTransactionId = makeAuditId("vend");
   vend.owner_username = player.account_username;
   vend.owner_name = player.account_username.toUpperCase();
   vend.listing = {
+    listing_id: vendTransactionId,
     item_id: itemId,
     item_category: itemCategory,
     stock,
@@ -4720,9 +5124,31 @@ function handleVendSetListing(socket, player, data, worldName, vend) {
   vend.pending_wls = 0;
 
   const savedVend = setVendStateAt(worldName, vend);
-  persistPlayerInventoryChange(player.account_username, state);
-  queueWorldSave(worldName);
-  const vendTransactionId = makeAuditId("vend");
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+    source: "vending",
+    action: "vending_list",
+    reason: "vend_listing",
+    request_id: makeRequestId(data),
+    world: worldName,
+    metadata: {
+      transaction_id: vendTransactionId,
+      listing_transaction_id: vendTransactionId,
+      x: vend.x,
+      y: vend.y,
+      amount_per_sale: amountPerSale,
+      price_wls: priceWls,
+    },
+    world_state: serializedWorld,
+    failure_message: "Server inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    setVendStateAt(worldName, originalVend);
+    rejectVendTransaction(socket, data, commit.message);
+    return;
+  }
+  const committedState = commit.state;
+  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   logVendingTransaction(socket, player, {
     transaction_id: vendTransactionId,
     action: "list",
@@ -4736,16 +5162,17 @@ function handleVendSetListing(socket, player, data, worldName, vend) {
     price_wls: priceWls,
     stock_after: stock,
     pending_wls_after: 0,
-    details: { amount_per_sale: amountPerSale },
+    details: { listing_transaction_id: vendTransactionId, amount_per_sale: amountPerSale },
   });
-  logItemLedgerForState(socket, player, player.account_username, state, itemId, itemCategory, -stock, "vending_list", vendTransactionId, "vend_listing", worldName, {
+  logItemLedgerForState(socket, player, player.account_username, committedState, itemId, itemCategory, -stock, "vending_list", vendTransactionId, "vend_listing", worldName, {
+    listing_transaction_id: vendTransactionId,
     x: vend.x,
     y: vend.y,
     amount_per_sale: amountPerSale,
     price_wls: priceWls,
-  });
+  }, { skipPostgres: commit.postgres_committed });
   sendVendStateUpdateToWorld(worldName, savedVend);
-  sendVendTransactionResult(socket, data, player, savedVend, true, "Vending machine listing saved.", state);
+  sendVendTransactionResult(socket, data, player, savedVend, true, "Vending machine listing saved.", committedState);
 }
 
 async function handleVendBuy(socket, player, data, worldName, vend) {
@@ -4800,6 +5227,7 @@ async function handleVendBuy(socket, player, data, worldName, vend) {
 
   try {
     const vendTransactionId = makeAuditId("vend");
+    const originalVend = cloneJson(vend);
     const transaction = await postgresStore.applyVendBuyTransaction({
       owner_username: String(vend.owner_username || ""),
       buyer_username: player.account_username,
@@ -4816,6 +5244,8 @@ async function handleVendBuy(socket, player, data, worldName, vend) {
       y: Number(vend.y || 0),
       request_id: makeRequestId(data),
       transaction_id: vendTransactionId,
+      listing_id: listing.listing_id || listing.transaction_id || "",
+      ip_address: getSocketAddress(socket),
       at: new Date().toISOString(),
     });
 
@@ -4859,7 +5289,38 @@ async function handleVendBuy(socket, player, data, worldName, vend) {
 
     const savedVend = setVendStateAt(worldName, vend);
     persistPlayerInventoryChange(player.account_username, buyerState);
-    queueWorldSave(worldName);
+    const vendWorldCommit = await commitWorldStateWithBlockChanges(worldName, [
+      buildWorldObjectChangeEntry(
+        socket,
+        player,
+        worldName,
+        {
+          action: "vending_buy",
+          source_type: "vending",
+          source_id: vendTransactionId,
+          request_id: makeRequestId(data),
+          x: vend.x,
+          y: vend.y,
+          block_type: syncVendVisualBlock(worldName, savedVend) || VEND_BLOCK_EMPTY,
+        },
+        originalVend,
+        savedVend,
+        vendTransactionId,
+        {
+          owner_username: vend.owner_username,
+          buyer_username: player.account_username,
+          item_id: soldItemId,
+          item_category: soldItemCategory,
+          amount: itemAmount,
+          price_wls: priceWls,
+          sale_count: saleCount,
+        }
+      ),
+    ]);
+    if (!vendWorldCommit.ok) {
+      console.warn("[world-journal] vending buy world save failed:", vendWorldCommit.message || vendWorldCommit.reason || "unknown");
+      queueWorldSave(worldName);
+    }
     logVendingTransaction(socket, player, {
       transaction_id: vendTransactionId,
       action: "buy",
@@ -4880,12 +5341,12 @@ async function handleVendBuy(socket, player, data, worldName, vend) {
       x: vend.x,
       y: vend.y,
       owner_username: vend.owner_username,
-    });
+    }, { skipPostgres: true });
     logItemLedgerForState(socket, player, player.account_username, buyerState, soldItemId, soldItemCategory, itemAmount, "vending_buy", vendTransactionId, "vend_purchase", worldName, {
       x: vend.x,
       y: vend.y,
       owner_username: vend.owner_username,
-    });
+    }, { skipPostgres: true });
     sendVendStateUpdateToWorld(worldName, savedVend);
     sendVendTransactionResult(socket, data, player, savedVend, true, "Purchase complete.", buyerState);
   } finally {
@@ -4893,7 +5354,7 @@ async function handleVendBuy(socket, player, data, worldName, vend) {
   }
 }
 
-function handleVendCollect(socket, player, data, worldName, vend) {
+async function handleVendCollect(socket, player, data, worldName, vend) {
   if (!canPlayerManageVend(player, vend, worldName)) {
     rejectVendTransaction(socket, data, "Only the vending machine owner can collect from it.");
     return;
@@ -4916,14 +5377,37 @@ function handleVendCollect(socket, player, data, worldName, vend) {
     return;
   }
 
-  addItemToState(state, "world_lock", "block", pendingWls);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  if (!addItemToState(stagedState, "world_lock", "block", pendingWls)) {
+    rejectVendTransaction(socket, data, "Your inventory cannot hold those World Locks.");
+    return;
+  }
+
+  const originalVend = cloneJson(vend);
   vend.pending_wls = 0;
   clearVendOwnerIfEmpty(vend);
 
   const savedVend = setVendStateAt(worldName, vend);
-  persistPlayerInventoryChange(player.account_username, state);
-  queueWorldSave(worldName);
   const vendTransactionId = makeAuditId("vend");
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+    source: "vending",
+    action: "vending_collect",
+    reason: "vend_collect",
+    request_id: makeRequestId(data),
+    world: worldName,
+    metadata: { transaction_id: vendTransactionId, x: vend.x, y: vend.y, pending_wls: pendingWls },
+    world_state: serializedWorld,
+    failure_message: "Server inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    setVendStateAt(worldName, originalVend);
+    rejectVendTransaction(socket, data, commit.message);
+    return;
+  }
+  const committedState = commit.state;
+  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   logVendingTransaction(socket, player, {
     transaction_id: vendTransactionId,
     action: "collect",
@@ -4937,15 +5421,15 @@ function handleVendCollect(socket, player, data, worldName, vend) {
     stock_after: Number(savedVend.listing?.stock || 0),
     pending_wls_after: Number(savedVend.pending_wls || 0),
   });
-  logItemLedgerForState(socket, player, player.account_username, state, "world_lock", "block", pendingWls, "vending_collect", vendTransactionId, "vend_collect", worldName, {
+  logItemLedgerForState(socket, player, player.account_username, committedState, "world_lock", "block", pendingWls, "vending_collect", vendTransactionId, "vend_collect", worldName, {
     x: vend.x,
     y: vend.y,
-  });
+  }, { skipPostgres: commit.postgres_committed });
   sendVendStateUpdateToWorld(worldName, savedVend);
-  sendVendTransactionResult(socket, data, player, savedVend, true, `Collected ${pendingWls} World Locks.`, state);
+  sendVendTransactionResult(socket, data, player, savedVend, true, `Collected ${pendingWls} World Locks.`, committedState);
 }
 
-function handleVendCancel(socket, player, data, worldName, vend) {
+async function handleVendCancel(socket, player, data, worldName, vend) {
   if (!canPlayerManageVend(player, vend, worldName)) {
     rejectVendTransaction(socket, data, "Only the vending machine owner can cancel this listing.");
     return;
@@ -4968,14 +5452,44 @@ function handleVendCancel(socket, player, data, worldName, vend) {
     return;
   }
 
-  addItemToState(state, listing.item_id, listing.item_category, listing.stock);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  if (!addItemToState(stagedState, listing.item_id, listing.item_category, listing.stock)) {
+    rejectVendTransaction(socket, data, "Your inventory cannot hold the returned items.");
+    return;
+  }
+
+  const originalVend = cloneJson(vend);
   vend.listing = null;
   clearVendOwnerIfEmpty(vend);
 
   const savedVend = setVendStateAt(worldName, vend);
-  persistPlayerInventoryChange(player.account_username, state);
-  queueWorldSave(worldName);
   const vendTransactionId = makeAuditId("vend");
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+    source: "vending",
+    action: "vending_cancel",
+    reason: "vend_cancel",
+    request_id: makeRequestId(data),
+    world: worldName,
+    metadata: {
+      transaction_id: vendTransactionId,
+      listing_transaction_id: listing.listing_id || listing.transaction_id || "",
+      x: vend.x,
+      y: vend.y,
+      item_id: listing.item_id,
+      item_category: listing.item_category,
+    },
+    world_state: serializedWorld,
+    failure_message: "Server inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    setVendStateAt(worldName, originalVend);
+    rejectVendTransaction(socket, data, commit.message);
+    return;
+  }
+  const committedState = commit.state;
+  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   logVendingTransaction(socket, player, {
     transaction_id: vendTransactionId,
     action: "cancel",
@@ -4989,14 +5503,18 @@ function handleVendCancel(socket, player, data, worldName, vend) {
     price_wls: listing.price_wls,
     stock_after: Number(savedVend.listing?.stock || 0),
     pending_wls_after: Number(savedVend.pending_wls || 0),
-    details: { amount_per_sale: listing.amount_per_sale },
+    details: {
+      listing_transaction_id: listing.listing_id || listing.transaction_id || "",
+      amount_per_sale: listing.amount_per_sale,
+    },
   });
-  logItemLedgerForState(socket, player, player.account_username, state, listing.item_id, listing.item_category, listing.stock, "vending_cancel", vendTransactionId, "vend_cancel", worldName, {
+  logItemLedgerForState(socket, player, player.account_username, committedState, listing.item_id, listing.item_category, listing.stock, "vending_cancel", vendTransactionId, "vend_cancel", worldName, {
+    listing_transaction_id: listing.listing_id || listing.transaction_id || "",
     x: vend.x,
     y: vend.y,
-  });
+  }, { skipPostgres: commit.postgres_committed });
   sendVendStateUpdateToWorld(worldName, savedVend);
-  sendVendTransactionResult(socket, data, player, savedVend, true, "Vending listing canceled.", state);
+  sendVendTransactionResult(socket, data, player, savedVend, true, "Vending listing canceled.", committedState);
 }
 
 function isSafeBlockType(blockType) {
@@ -5183,7 +5701,7 @@ function rejectSafeTransaction(socket, data, message) {
   });
 }
 
-function handleSafeTransaction(socket, player, data) {
+async function handleSafeTransaction(socket, player, data) {
   const action = String(data.action || "").trim();
   const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "use that safe")) return;
@@ -5220,12 +5738,12 @@ function handleSafeTransaction(socket, player, data) {
   }
 
   if (action === "safe_deposit") {
-    handleSafeDeposit(socket, player, data, worldName, safe);
+    await handleSafeDeposit(socket, player, data, worldName, safe);
     return;
   }
 
   if (action === "safe_withdraw") {
-    handleSafeWithdraw(socket, player, data, worldName, safe);
+    await handleSafeWithdraw(socket, player, data, worldName, safe);
     return;
   }
 
@@ -5244,7 +5762,7 @@ function findSafeMergeSlot(safe, itemId, itemCategory, amount) {
   return -1;
 }
 
-function handleSafeDeposit(socket, player, data, worldName, safe) {
+async function handleSafeDeposit(socket, player, data, worldName, safe) {
   const itemId = clampString(data.item_id || data.item_type || "");
   const itemCategory = resolveInventoryCategory(itemId, data.item_category || data.category || "");
   const amount = clampInteger(data.amount || 0, 1, ItemDatabase.getStackLimit(itemId));
@@ -5271,11 +5789,14 @@ function handleSafeDeposit(socket, player, data, worldName, safe) {
     return;
   }
 
-  if (!spendItemFromState(state, itemId, itemCategory, amount)) {
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  if (!spendItemFromState(stagedState, itemId, itemCategory, amount)) {
     rejectSafeTransaction(socket, data, "Server inventory changed. Try again.");
     return;
   }
 
+  const originalSafe = cloneJson(safe);
   if (mergeIndex >= 0) {
     safe.slots[mergeIndex].amount = clampInteger(Number(safe.slots[mergeIndex].amount) + amount, 1, ItemDatabase.getStackLimit(itemId));
   } else {
@@ -5287,9 +5808,25 @@ function handleSafeDeposit(socket, player, data, worldName, safe) {
   }
 
   const savedSafe = setSafeStateAt(worldName, safe);
-  persistPlayerInventoryChange(player.account_username, state);
-  queueWorldSave(worldName);
   const safeTransactionId = makeAuditId("safe");
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+    source: "safe",
+    action: "safe_deposit",
+    reason: "safe_storage",
+    request_id: makeRequestId(data),
+    world: worldName,
+    metadata: { transaction_id: safeTransactionId, x: safe.x, y: safe.y, item_id: itemId, item_category: itemCategory },
+    world_state: serializedWorld,
+    failure_message: "Server inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    setSafeStateAt(worldName, originalSafe);
+    rejectSafeTransaction(socket, data, commit.message);
+    return;
+  }
+  const committedState = commit.state;
+  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   logWorldChange(socket, player, {
     source_type: "safe_transaction",
     source_id: safeTransactionId,
@@ -5300,15 +5837,15 @@ function handleSafeDeposit(socket, player, data, worldName, safe) {
     block_type: SAFE_BLOCK_TYPE,
     details: { item_id: itemId, item_category: itemCategory, amount },
   });
-  logItemLedgerForState(socket, player, player.account_username, state, itemId, itemCategory, -amount, "safe_deposit", safeTransactionId, "safe_storage", worldName, {
+  logItemLedgerForState(socket, player, player.account_username, committedState, itemId, itemCategory, -amount, "safe_deposit", safeTransactionId, "safe_storage", worldName, {
     x: safe.x,
     y: safe.y,
-  });
+  }, { skipPostgres: commit.postgres_committed });
   sendSafeStateUpdateToWorld(worldName, savedSafe);
-  sendSafeTransactionResult(socket, data, player, savedSafe, true, `Stored ${itemId} x${amount}.`, state);
+  sendSafeTransactionResult(socket, data, player, savedSafe, true, `Stored ${itemId} x${amount}.`, committedState);
 }
 
-function handleSafeWithdraw(socket, player, data, worldName, safe) {
+async function handleSafeWithdraw(socket, player, data, worldName, safe) {
   const slotIndex = clampInteger(data.slot_index || data.slot || 0, 0, SAFE_SLOT_COUNT - 1);
   if (slotIndex < 0 || slotIndex >= safe.slots.length) {
     rejectSafeTransaction(socket, data, "That safe slot is empty.");
@@ -5337,7 +5874,14 @@ function handleSafeWithdraw(socket, player, data, worldName, safe) {
     return;
   }
 
-  addItemToState(state, slot.item_id, slot.item_category, amount);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  if (!addItemToState(stagedState, slot.item_id, slot.item_category, amount)) {
+    rejectSafeTransaction(socket, data, "Your inventory cannot hold that item.");
+    return;
+  }
+
+  const originalSafe = cloneJson(safe);
   slot.amount -= amount;
   if (slot.amount <= 0) {
     safe.slots.splice(slotIndex, 1);
@@ -5346,9 +5890,25 @@ function handleSafeWithdraw(socket, player, data, worldName, safe) {
   }
 
   const savedSafe = setSafeStateAt(worldName, safe);
-  persistPlayerInventoryChange(player.account_username, state);
-  queueWorldSave(worldName);
   const safeTransactionId = makeAuditId("safe");
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+    source: "safe",
+    action: "safe_withdraw",
+    reason: "safe_withdraw",
+    request_id: makeRequestId(data),
+    world: worldName,
+    metadata: { transaction_id: safeTransactionId, x: safe.x, y: safe.y, item_id: slot.item_id, item_category: slot.item_category },
+    world_state: serializedWorld,
+    failure_message: "Server inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    setSafeStateAt(worldName, originalSafe);
+    rejectSafeTransaction(socket, data, commit.message);
+    return;
+  }
+  const committedState = commit.state;
+  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   logWorldChange(socket, player, {
     source_type: "safe_transaction",
     source_id: safeTransactionId,
@@ -5359,15 +5919,15 @@ function handleSafeWithdraw(socket, player, data, worldName, safe) {
     block_type: SAFE_BLOCK_TYPE,
     details: { item_id: slot.item_id, item_category: slot.item_category, amount },
   });
-  logItemLedgerForState(socket, player, player.account_username, state, slot.item_id, slot.item_category, amount, "safe_withdraw", safeTransactionId, "safe_withdraw", worldName, {
+  logItemLedgerForState(socket, player, player.account_username, committedState, slot.item_id, slot.item_category, amount, "safe_withdraw", safeTransactionId, "safe_withdraw", worldName, {
     x: safe.x,
     y: safe.y,
-  });
+  }, { skipPostgres: commit.postgres_committed });
   sendSafeStateUpdateToWorld(worldName, savedSafe);
-  sendSafeTransactionResult(socket, data, player, savedSafe, true, `Withdrew ${slot.item_id} x${amount}.`, state);
+  sendSafeTransactionResult(socket, data, player, savedSafe, true, `Withdrew ${slot.item_id} x${amount}.`, committedState);
 }
 
-function prepareSafeBreakInventoryReturn(socket, player, worldName, update) {
+async function prepareSafeBreakInventoryReturn(socket, player, worldName, update) {
   const safe = getSafeStateAt(worldName, update.x, update.y, false);
   const slots = Array.isArray(safe.slots) ? safe.slots.map(sanitizeSafeSlot).filter(Boolean) : [];
 
@@ -5386,7 +5946,9 @@ function prepareSafeBreakInventoryReturn(socket, player, worldName, update) {
     return { ok: false };
   }
 
-  const stagedState = JSON.parse(JSON.stringify(state));
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  const originalSafe = cloneJson(safe);
   for (const slot of slots) {
     if (!canAddItemToState(stagedState, slot.item_id, slot.item_category, slot.amount)) {
       sendActionRejected(socket, "world_block_update", "Your inventory cannot hold the safe contents.");
@@ -5396,9 +5958,26 @@ function prepareSafeBreakInventoryReturn(socket, player, worldName, update) {
   }
 
   safe.slots = [];
-  persistPlayerInventoryChange(player.account_username, stagedState);
   setSafeStateAt(worldName, safe);
   const safeBreakTransactionId = makeAuditId("safe_break");
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+    source: "safe",
+    action: "safe_break_return",
+    reason: "safe_break_return",
+    request_id: "",
+    world: worldName,
+    metadata: { transaction_id: safeBreakTransactionId, x: safe.x, y: safe.y, returned_entries: slots },
+    world_state: serializedWorld,
+    failure_message: "Server inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    setSafeStateAt(worldName, originalSafe);
+    sendActionRejected(socket, "world_block_update", commit.message);
+    return { ok: false };
+  }
+  const committedState = commit.state;
+  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   logWorldChange(socket, player, {
     source_type: "safe_break_return",
     source_id: safeBreakTransactionId,
@@ -5410,15 +5989,16 @@ function prepareSafeBreakInventoryReturn(socket, player, worldName, update) {
     details: { slot_count: slots.length, returned_entries: slots },
   });
   for (const slot of slots) {
-    logItemLedgerForState(socket, player, player.account_username, stagedState, slot.item_id, slot.item_category, slot.amount, "safe_break_return", safeBreakTransactionId, "safe_break_return", worldName, {
+    logItemLedgerForState(socket, player, player.account_username, committedState, slot.item_id, slot.item_category, slot.amount, "safe_break_return", safeBreakTransactionId, "safe_break_return", worldName, {
       x: safe.x,
       y: safe.y,
-    });
+    }, { skipPostgres: commit.postgres_committed });
   }
 
   return {
     ok: true,
-    playerState: stagedState,
+    playerState: committedState,
+    postgres_committed: commit.postgres_committed,
     message: "Returned safe contents.",
   };
 }
@@ -5490,7 +6070,7 @@ function validateStationAccess(socket, player, worldName, stationId, grid) {
   return false;
 }
 
-function handleStationRecipeTransaction(socket, player, data) {
+async function handleStationRecipeTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
   const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "use that station")) return;
@@ -5525,47 +6105,61 @@ function handleStationRecipeTransaction(socket, player, data) {
     return;
   }
 
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
   for (const cost of costs) {
-    if (getInventoryCount(state, cost.item_id, cost.item_category) < cost.amount) {
+    if (getInventoryCount(stagedState, cost.item_id, cost.item_category) < cost.amount) {
       sendInventoryTransactionRejected(socket, data, `Not enough ${cost.item_id}.`);
       return;
     }
   }
 
   for (const cost of costs) {
-    if (!spendItemFromState(state, cost.item_id, cost.item_category, cost.amount)) {
+    if (!spendItemFromState(stagedState, cost.item_id, cost.item_category, cost.amount)) {
       sendInventoryTransactionRejected(socket, data, "Server inventory changed. Try again.");
       return;
     }
   }
 
-  if (!addItemToState(state, output.item_id, output.item_category, output.amount)) {
+  if (!addItemToState(stagedState, output.item_id, output.item_category, output.amount)) {
     sendInventoryTransactionRejected(socket, data, "Could not add recipe output.");
     return;
   }
 
-  const progression = grantExperienceToState(state, getRecipeXp(stationId, output), stationId === "furnace" ? "furnace_recipe" : "craft_recipe", {
+  const action = stationId === "furnace" ? "furnace_recipe" : "craft_recipe";
+  const progression = grantExperienceToState(stagedState, getRecipeXp(stationId, output), action, {
     world: worldName,
     station_id: stationId,
     recipe_id: recipe.id,
     output_item: output.item_id,
   });
-  persistPlayerInventoryChange(username, state);
-  if (progression.xp_gained > 0) {
-    postgresStore.mirrorPlayerProgression(username, state, progression);
+  const recipeTransactionId = makeAuditId(stationId === "furnace" ? "furnace" : "craft");
+  const commit = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
+    source: stationId === "furnace" ? "furnace" : "craft",
+    action,
+    reason: action,
+    request_id: requestId,
+    world: worldName,
+    metadata: { transaction_id: recipeTransactionId, station_id: stationId, recipe_id: recipe.id, output_item: output.item_id },
+    failure_message: "Server inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    sendInventoryTransactionRejected(socket, data, commit.message);
+    return;
   }
+  const committedState = commit.state;
 
   sendInventoryTransactionResult(socket, {
     ok: true,
     request_id: requestId,
-    action: stationId === "furnace" ? "furnace_recipe" : "craft_recipe",
+    action,
     station_id: stationId,
     recipe_id: recipe.id,
     message: getProgressionMessage(progression, stationId === "furnace" ? `Smelted ${output.item_id}.` : `Crafted ${output.item_id}.`),
     username,
     rewards: [output],
     progression: buildProgressionPayload(progression),
-    player_data: state,
+    player_data: committedState,
   });
 }
 
@@ -5594,8 +6188,8 @@ function validateFishingTarget(socket, player, worldName, grid, data) {
   return true;
 }
 
-function rollFishingReward(lureId) {
-  const entry = rollWeightedReward(ItemDatabase.getFishingTable(lureId));
+function rollFishingReward(lureId, rodId = "") {
+  const entry = rollWeightedReward(ItemDatabase.getFishingTable(lureId, { rod_id: rodId }));
   if (!entry) return null;
 
   const fishId = clampString(entry.fish_id || "");
@@ -5612,7 +6206,35 @@ function getFishingServerCatchChance(difficulty) {
   return Math.max(0.7, Math.min(0.98, 1.02 - safeDifficulty * 0.035));
 }
 
-function handleFishingStartTransaction(socket, player, data) {
+function resolveFishingRodForTransaction(player, state, data = {}) {
+  const candidates = [];
+  const pushCandidate = (value) => {
+    const itemId = clampString(value || "");
+    if (itemId !== "" && !candidates.includes(itemId)) {
+      candidates.push(itemId);
+    }
+  };
+
+  pushCandidate(data.rod_id || data.tool_id || "");
+  pushCandidate(player?.equipment_slots?.hand || "");
+  pushCandidate(state?.equipped_tool || "");
+
+  if (cleanInventoryCategory(data.selected_item_category || "") === "tool") {
+    pushCandidate(data.selected_item_type || "");
+  }
+  if (cleanInventoryCategory(state?.selected_item_category || "") === "tool") {
+    pushCandidate(state?.selected_item_type || "");
+  }
+
+  for (const itemId of candidates) {
+    if (!ItemDatabase.isFishingRodItem(itemId)) continue;
+    if (getInventoryCount(state, itemId, "tool") > 0) return itemId;
+  }
+
+  return "";
+}
+
+async function handleFishingStartTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
   const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "fish in that world")) return;
@@ -5639,27 +6261,51 @@ function handleFishingStartTransaction(socket, player, data) {
     return;
   }
 
-  if (!spendItemFromState(state, lureId, "lure", 1)) {
+  const rodId = resolveFishingRodForTransaction(player, state, data);
+  if (rodId === "") {
+    sendInventoryTransactionRejected(socket, data, "Equip a fishing rod first.");
+    return;
+  }
+
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  if (!spendItemFromState(stagedState, lureId, "lure", 1)) {
     sendInventoryTransactionRejected(socket, data, `Not enough ${lureId}.`);
     return;
   }
 
-  const reward = rollFishingReward(lureId);
+  const reward = rollFishingReward(lureId, rodId);
   if (!reward) {
     sendInventoryTransactionRejected(socket, data, "Fishing rewards are not configured.");
     return;
   }
 
   const sessionId = crypto.randomUUID();
-  persistPlayerInventoryChange(username, state);
-  logItemLedgerForState(socket, player, username, state, lureId, "lure", -1, "fishing_start", sessionId, "fishing_lure_cost", worldName, {
+  const commit = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
+    source: "fishing",
+    action: "fishing_start",
+    reason: "fishing_lure_cost",
+    request_id: requestId,
+    correlation_id: sessionId,
+    world: worldName,
+    metadata: { transaction_id: sessionId, target_x: grid.x, target_y: grid.y, rod_id: rodId, lure_id: lureId },
+    failure_message: "Server inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    sendInventoryTransactionRejected(socket, data, commit.message);
+    return;
+  }
+  const committedState = commit.state;
+  logItemLedgerForState(socket, player, username, committedState, lureId, "lure", -1, "fishing_start", sessionId, "fishing_lure_cost", worldName, {
+    rod_id: rodId,
     target_x: grid.x,
     target_y: grid.y,
-  });
+  }, { skipPostgres: commit.postgres_committed });
   activeFishingSessions.set(player.id, {
     session_id: sessionId,
     username,
     world: worldName,
+    rod_id: rodId,
     lure_id: lureId,
     fish_id: reward.fish_id,
     difficulty: reward.difficulty,
@@ -5674,17 +6320,18 @@ function handleFishingStartTransaction(socket, player, data) {
     action: "fishing_start",
     message: `Casting with ${lureId}.`,
     username,
+    rod_id: rodId,
     lure_id: lureId,
     session_id: sessionId,
     fish_id: reward.fish_id,
     difficulty: reward.difficulty,
     target_x: grid.x,
     target_y: grid.y,
-    player_data: state,
+    player_data: committedState,
   });
 }
 
-function handleFishingCompleteTransaction(socket, player, data) {
+async function handleFishingCompleteTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
   const session = activeFishingSessions.get(player.id);
   if (!session) {
@@ -5720,27 +6367,54 @@ function handleFishingCompleteTransaction(socket, player, data) {
   }
 
   const state = ensureWritablePlayerState(player.account_username);
-  if (!state || !addItemToState(state, session.fish_id, "fish", 1)) {
+  if (!state) {
     sendInventoryTransactionRejected(socket, data, "Could not save caught fish.");
     return;
   }
 
-  const progression = grantExperienceToState(state, getFishingXp(session.fish_id, session.difficulty), "fishing_complete", {
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  if (!addItemToState(stagedState, session.fish_id, "fish", 1)) {
+    sendInventoryTransactionRejected(socket, data, "Could not save caught fish.");
+    return;
+  }
+
+  const progression = grantExperienceToState(stagedState, getFishingXp(session.fish_id, session.difficulty), "fishing_complete", {
     world: session.world,
+    rod_id: session.rod_id || "",
     fish_id: session.fish_id,
     lure_id: session.lure_id,
     difficulty: session.difficulty,
   });
-  persistPlayerInventoryChange(player.account_username, state);
-  if (progression.xp_gained > 0) {
-    postgresStore.mirrorPlayerProgression(player.account_username, state, progression);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+    source: "fishing",
+    action: "fishing_complete",
+    reason: "fishing_reward",
+    request_id: requestId,
+    correlation_id: session.session_id,
+    world: session.world,
+    metadata: {
+      transaction_id: session.session_id,
+      rod_id: session.rod_id || "",
+      lure_id: session.lure_id,
+      difficulty: session.difficulty,
+      target_x: session.target_x,
+      target_y: session.target_y,
+    },
+    failure_message: "Could not save caught fish.",
+  });
+  if (!commit.ok) {
+    sendInventoryTransactionRejected(socket, data, commit.message);
+    return;
   }
-  logItemLedgerForState(socket, player, player.account_username, state, session.fish_id, "fish", 1, "fishing_complete", session.session_id, "fishing_reward", session.world, {
+  const committedState = commit.state;
+  logItemLedgerForState(socket, player, player.account_username, committedState, session.fish_id, "fish", 1, "fishing_complete", session.session_id, "fishing_reward", session.world, {
+    rod_id: session.rod_id || "",
     lure_id: session.lure_id,
     difficulty: session.difficulty,
     target_x: session.target_x,
     target_y: session.target_y,
-  });
+  }, { skipPostgres: commit.postgres_committed });
 
   sendInventoryTransactionResult(socket, {
     ok: true,
@@ -5748,10 +6422,11 @@ function handleFishingCompleteTransaction(socket, player, data) {
     action: "fishing_complete",
     message: getProgressionMessage(progression, `Caught ${session.fish_id}.`),
     username: player.account_username,
+    rod_id: session.rod_id || "",
     fish_id: session.fish_id,
     rewards: [{ item_id: session.fish_id, item_category: "fish", amount: 1 }],
     progression: buildProgressionPayload(progression),
-    player_data: state,
+    player_data: committedState,
   });
 }
 
@@ -5805,7 +6480,7 @@ function validateFishMongerAccess(socket, player, data, worldName, grid) {
   return { x: anchor.x, y: anchor.y };
 }
 
-function handleFishMongerTransaction(socket, player, data) {
+async function handleFishMongerTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
   const action = String(data.action || "").trim();
   const worldName = getTransactionWorldName(player, data);
@@ -5903,6 +6578,7 @@ function handleFishMongerTransaction(socket, player, data) {
     return;
   }
 
+  const beforeState = cloneJson(state);
   const stagedState = cloneJson(state);
   for (const sale of sales) {
     if (!spendItemFromState(stagedState, sale.item_id, sale.item_category, sale.amount)) {
@@ -5916,21 +6592,33 @@ function handleFishMongerTransaction(socket, player, data) {
     return;
   }
 
-  persistPlayerInventoryChange(username, stagedState);
-
   const saleId = makeAuditId("fish_monger");
+  const commit = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
+    source: "fish_monger",
+    action,
+    reason: "fish_monger_sell",
+    request_id: requestId,
+    world: worldName,
+    metadata: { transaction_id: saleId, x: fishMongerGrid.x, y: fishMongerGrid.y, total_fish: totalFish, total_gems: totalGems },
+    failure_message: "Server inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    sendInventoryTransactionRejected(socket, data, commit.message);
+    return;
+  }
+  const committedState = commit.state;
   for (const sale of sales) {
-    logItemLedgerForState(socket, player, username, stagedState, sale.item_id, sale.item_category, -sale.amount, "fish_monger_sell", saleId, "fish_sold", worldName, {
+    logItemLedgerForState(socket, player, username, committedState, sale.item_id, sale.item_category, -sale.amount, "fish_monger_sell", saleId, "fish_sold", worldName, {
       x: fishMongerGrid.x,
       y: fishMongerGrid.y,
       sell_value: sale.sell_value,
-    });
+    }, { skipPostgres: commit.postgres_committed });
   }
-  logItemLedgerForState(socket, player, username, stagedState, "gem", "currency", totalGems, "fish_monger_sell", saleId, "fish_sale_reward", worldName, {
+  logItemLedgerForState(socket, player, username, committedState, "gem", "currency", totalGems, "fish_monger_sell", saleId, "fish_sale_reward", worldName, {
     x: fishMongerGrid.x,
     y: fishMongerGrid.y,
     total_fish: totalFish,
-  });
+  }, { skipPostgres: commit.postgres_committed });
 
   sendInventoryTransactionResult(socket, {
     ok: true,
@@ -5941,7 +6629,7 @@ function handleFishMongerTransaction(socket, player, data) {
       : `Sold ${sales[0].item_id} x${sales[0].amount} for ${totalGems} gems.`,
     username,
     rewards: [{ item_id: "gem", item_category: "currency", amount: totalGems }],
-    player_data: stagedState,
+    player_data: committedState,
   });
 }
 
@@ -5990,7 +6678,7 @@ function isDropGridBlockedByBlock(worldName, grid) {
   return getCollisionAreaAnchorInState(state, grid.x, grid.y) !== null;
 }
 
-function handleDropInventoryItemTransaction(socket, player, data) {
+async function handleDropInventoryItemTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
   const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "drop items in that world")) return;
@@ -6041,27 +6729,22 @@ function handleDropInventoryItemTransaction(socket, player, data) {
     return;
   }
 
-  if (!spendItemFromState(state, itemId, itemCategory, amount)) {
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  if (!spendItemFromState(stagedState, itemId, itemCategory, amount)) {
     sendInventoryTransactionRejected(socket, data, "Server inventory changed. Try again.");
     return;
   }
 
   const payload = createServerDrop(worldName, itemId, itemCategory, amount, position.x, position.y, SERVER_DROP_PICKUP_DELAY);
   if (!payload) {
-    addItemToState(state, itemId, itemCategory, amount);
     sendInventoryTransactionRejected(socket, data, "Could not create that drop.");
     return;
   }
 
-  persistPlayerInventoryChange(player.account_username, state);
-  queueWorldSave(worldName);
-  sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload, {
-    username: player.account_username,
-    player_data: state,
-  });
-
   const dropTransactionId = makeAuditId("drop");
-  logWorldChange(socket, player, {
+  const serializedWorld = serializeWorldState(worldName);
+  const worldChangeEntry = {
     source_type: "drop_inventory_item",
     source_id: dropTransactionId,
     world: worldName,
@@ -6074,10 +6757,34 @@ function handleDropInventoryItemTransaction(socket, player, data) {
       item_category: itemCategory,
       amount,
     },
+  };
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+    source: "drop_inventory",
+    action: "drop_inventory_item",
+    reason: "drop_from_inventory",
+    request_id: requestId,
+    world: worldName,
+    metadata: { transaction_id: dropTransactionId, drop_id: payload.drop_id, x: payload.x, y: payload.y },
+    world_state: serializedWorld,
+    world_changes: [worldChangeEntry],
+    failure_message: "Server inventory changed. Try again.",
   });
-  logItemLedgerForState(socket, player, player.account_username, state, itemId, itemCategory, -amount, "drop_inventory_item", dropTransactionId, "drop_from_inventory", worldName, {
+  if (!commit.ok) {
+    ensureWorldState(worldName).drops.delete(payload.drop_id);
+    sendInventoryTransactionRejected(socket, data, commit.message);
+    return;
+  }
+  const committedState = commit.state;
+  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
+  sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload, {
+    username: player.account_username,
+    player_data: committedState,
+  });
+
+  logWorldChange(socket, player, worldChangeEntry, { skipPostgres: commit.postgres_committed });
+  logItemLedgerForState(socket, player, player.account_username, committedState, itemId, itemCategory, -amount, "drop_inventory_item", dropTransactionId, "drop_from_inventory", worldName, {
     drop_id: payload.drop_id,
-  });
+  }, { skipPostgres: commit.postgres_committed });
 
   sendInventoryTransactionResult(socket, {
     ok: true,
@@ -6085,11 +6792,11 @@ function handleDropInventoryItemTransaction(socket, player, data) {
     action: "drop_inventory_item",
     message: `Dropped ${amount} ${itemId}.`,
     username: player.account_username,
-    player_data: state,
+    player_data: committedState,
   });
 }
 
-function handleTrashInventoryItemTransaction(socket, player, data) {
+async function handleTrashInventoryItemTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
 
   if (tradeByPlayerId.has(player.id)) {
@@ -6121,15 +6828,29 @@ function handleTrashInventoryItemTransaction(socket, player, data) {
     return;
   }
 
-  if (!spendItemFromState(state, itemId, itemCategory, amount)) {
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  if (!spendItemFromState(stagedState, itemId, itemCategory, amount)) {
     sendInventoryTransactionRejected(socket, data, "Server inventory changed. Try again.");
     return;
   }
 
-  persistPlayerInventoryChange(player.account_username, state);
-
   const trashTransactionId = makeAuditId("trash");
-  logItemLedgerForState(socket, player, player.account_username, state, itemId, itemCategory, -amount, "trash_inventory_item", trashTransactionId, "inventory_trash", player.world, {});
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+    source: "system",
+    action: "trash_inventory_item",
+    reason: "inventory_trash",
+    request_id: requestId,
+    world: player.world,
+    metadata: { transaction_id: trashTransactionId },
+    failure_message: "Server inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    sendInventoryTransactionRejected(socket, data, commit.message);
+    return;
+  }
+  const committedState = commit.state;
+  logItemLedgerForState(socket, player, player.account_username, committedState, itemId, itemCategory, -amount, "trash_inventory_item", trashTransactionId, "inventory_trash", player.world, {}, { skipPostgres: commit.postgres_committed });
 
   sendInventoryTransactionResult(socket, {
     ok: true,
@@ -6137,7 +6858,93 @@ function handleTrashInventoryItemTransaction(socket, player, data) {
     action: "trash_inventory_item",
     message: `Trashed ${amount} ${itemId}.`,
     username: player.account_username,
-    player_data: state,
+    player_data: committedState,
+  });
+}
+
+async function handleWorldLockConversionTransaction(socket, player, data) {
+  const requestId = makeRequestId(data);
+
+  if (tradeByPlayerId.has(player.id)) {
+    sendInventoryTransactionRejected(socket, data, "Finish or cancel your trade before converting locks.");
+    return;
+  }
+
+  const direction = clampString(data.direction || "").toLowerCase();
+  let spendItem = WORLD_LOCK_BLOCK_TYPE;
+  let spendAmount = SUPER_WORLD_LOCK_EXCHANGE_RATE;
+  let gainItem = SUPER_WORLD_LOCK_BLOCK_TYPE;
+  let gainAmount = 1;
+  let message = "Converted 100 World Locks into 1 Super World Lock.";
+
+  if (direction === "to_world_locks") {
+    spendItem = SUPER_WORLD_LOCK_BLOCK_TYPE;
+    spendAmount = 1;
+    gainItem = WORLD_LOCK_BLOCK_TYPE;
+    gainAmount = SUPER_WORLD_LOCK_EXCHANGE_RATE;
+    message = "Converted 1 Super World Lock into 100 World Locks.";
+  } else if (direction !== "to_super") {
+    sendInventoryTransactionRejected(socket, data, "That lock cannot be converted.");
+    return;
+  }
+
+  if (!ItemDatabase.hasItem(WORLD_LOCK_BLOCK_TYPE) || !ItemDatabase.hasItem(SUPER_WORLD_LOCK_BLOCK_TYPE)) {
+    sendInventoryTransactionRejected(socket, data, "Lock conversion is not configured on the server.");
+    return;
+  }
+
+  const state = ensureWritablePlayerState(player.account_username);
+  if (!state) {
+    sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
+    return;
+  }
+
+  if (getInventoryCount(state, spendItem, "block") < spendAmount) {
+    sendInventoryTransactionRejected(socket, data, direction === "to_super" ? "You need 100 World Locks to make a Super World Lock." : "You need a Super World Lock to convert back.");
+    return;
+  }
+
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  if (!spendItemFromState(stagedState, spendItem, "block", spendAmount)) {
+    sendInventoryTransactionRejected(socket, data, "Server inventory changed. Try again.");
+    return;
+  }
+  if (!canAddItemToState(stagedState, gainItem, "block", gainAmount)) {
+    sendInventoryTransactionRejected(socket, data, direction === "to_super" ? "Your Super World Lock stack is full." : "You need 100 empty World Lock stack space.");
+    return;
+  }
+  if (!addItemToState(stagedState, gainItem, "block", gainAmount)) {
+    sendInventoryTransactionRejected(socket, data, "Server inventory changed. Try again.");
+    return;
+  }
+
+  const conversionTransactionId = makeAuditId("lock_convert");
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+    source: "world_lock_conversion",
+    action: "convert_world_lock",
+    reason: "world_lock_conversion",
+    request_id: requestId,
+    world: player.world,
+    metadata: { transaction_id: conversionTransactionId, direction },
+    failure_message: "Server inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    sendInventoryTransactionRejected(socket, data, commit.message);
+    return;
+  }
+
+  const committedState = commit.state;
+  logItemLedgerForState(socket, player, player.account_username, committedState, spendItem, "block", -spendAmount, "convert_world_lock", conversionTransactionId, "world_lock_conversion", player.world, { direction }, { skipPostgres: commit.postgres_committed });
+  logItemLedgerForState(socket, player, player.account_username, committedState, gainItem, "block", gainAmount, "convert_world_lock", conversionTransactionId, "world_lock_conversion", player.world, { direction }, { skipPostgres: commit.postgres_committed });
+
+  sendInventoryTransactionResult(socket, {
+    ok: true,
+    request_id: requestId,
+    action: "convert_world_lock",
+    message,
+    username: player.account_username,
+    player_data: committedState,
   });
 }
 
@@ -6183,7 +6990,7 @@ function makeServerSeedEntry(x, y, seedType) {
   };
 }
 
-function handleSeedPlaceTransaction(socket, player, data) {
+async function handleSeedPlaceTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
   const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "plant seeds in that world")) return;
@@ -6214,12 +7021,17 @@ function handleSeedPlaceTransaction(socket, player, data) {
   }
 
   const state = ensureWritablePlayerState(player.account_username);
-  if (!state || !spendItemFromState(state, seedType, "seed", 1)) {
+  if (!state) {
     sendInventoryTransactionRejected(socket, data, `Not enough ${seedType}.`);
     return;
   }
 
-  persistPlayerInventoryChange(player.account_username, state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  if (!spendItemFromState(stagedState, seedType, "seed", 1)) {
+    sendInventoryTransactionRejected(socket, data, `Not enough ${seedType}.`);
+    return;
+  }
 
   const update = {
     type: "world_seed_update",
@@ -6233,13 +7045,30 @@ function handleSeedPlaceTransaction(socket, player, data) {
   };
 
   applySeedUpdateToWorldState(worldName, update);
-  queueWorldSave(worldName);
+  const seedTransactionId = makeAuditId("seed");
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+    source: "seed_place",
+    action: "seed_place",
+    reason: "seed_plant_cost",
+    request_id: requestId,
+    world: worldName,
+    metadata: { transaction_id: seedTransactionId, x: grid.x, y: grid.y, seed_type: seedType, mutated: Boolean(update.mutated) },
+    world_state: serializedWorld,
+    failure_message: "Server inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    ensureWorldState(worldName).seeds.delete(key);
+    sendInventoryTransactionRejected(socket, data, commit.message);
+    return;
+  }
+  const committedState = commit.state;
+  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update, {
     username: player.account_username,
-    player_data: state,
+    player_data: committedState,
   });
 
-  const seedTransactionId = makeAuditId("seed");
   logWorldChange(socket, player, {
     source_type: "seed_place",
     source_id: seedTransactionId,
@@ -6254,10 +7083,10 @@ function handleSeedPlaceTransaction(socket, player, data) {
       mutated: Boolean(update.mutated),
     },
   });
-  logItemLedgerForState(socket, player, player.account_username, state, seedType, "seed", -1, "seed_place", seedTransactionId, "seed_plant_cost", worldName, {
+  logItemLedgerForState(socket, player, player.account_username, committedState, seedType, "seed", -1, "seed_place", seedTransactionId, "seed_plant_cost", worldName, {
     x: grid.x,
     y: grid.y,
-  });
+  }, { skipPostgres: commit.postgres_committed });
 
   sendInventoryTransactionResult(socket, {
     ok: true,
@@ -6266,7 +7095,7 @@ function handleSeedPlaceTransaction(socket, player, data) {
     message: `Planted ${seedType}.`,
     username: player.account_username,
     seed_type: seedType,
-    player_data: state,
+    player_data: committedState,
   });
 }
 
@@ -6276,7 +7105,7 @@ function getBlockTypeForSeed(seedType) {
   return clampString(definition.grows_into || String(seedType || "").replace(/_seed$/, ""));
 }
 
-function handleSeedSpliceTransaction(socket, player, data) {
+async function handleSeedSpliceTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
   const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "splice seeds in that world")) return;
@@ -6314,12 +7143,17 @@ function handleSeedSpliceTransaction(socket, player, data) {
   }
 
   const state = ensureWritablePlayerState(player.account_username);
-  if (!state || !spendItemFromState(state, secondSeed, "seed", 1)) {
+  if (!state) {
     sendInventoryTransactionRejected(socket, data, `Not enough ${secondSeed}.`);
     return;
   }
 
-  persistPlayerInventoryChange(player.account_username, state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  if (!spendItemFromState(stagedState, secondSeed, "seed", 1)) {
+    sendInventoryTransactionRejected(socket, data, `Not enough ${secondSeed}.`);
+    return;
+  }
 
   const update = {
     type: "world_seed_update",
@@ -6333,11 +7167,30 @@ function handleSeedSpliceTransaction(socket, player, data) {
     world: worldName,
   };
 
+  const originalSeed = cloneJson(seed);
   applySeedUpdateToWorldState(worldName, update);
-  queueWorldSave(worldName);
+  const seedTransactionId = makeAuditId("seed");
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+    source: "seed_splice",
+    action: "seed_splice",
+    reason: "seed_splice",
+    request_id: requestId,
+    world: worldName,
+    metadata: { transaction_id: seedTransactionId, x: grid.x, y: grid.y, previous_seed_type: seed.seed_type, seed_type: resultSeed },
+    world_state: serializedWorld,
+    failure_message: "Server inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    ensureWorldState(worldName).seeds.set(key, originalSeed);
+    sendInventoryTransactionRejected(socket, data, commit.message);
+    return;
+  }
+  const committedState = commit.state;
+  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update, {
     username: player.account_username,
-    player_data: state,
+    player_data: committedState,
   });
 
   sendInventoryTransactionResult(socket, {
@@ -6348,11 +7201,11 @@ function handleSeedSpliceTransaction(socket, player, data) {
     username: player.account_username,
     seed_type: resultSeed,
     previous_seed_type: seed.seed_type,
-    player_data: state,
+    player_data: committedState,
   });
 }
 
-function handleSeedHarvestTransaction(socket, player, data) {
+async function handleSeedHarvestTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
   const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "harvest seeds in that world")) return;
@@ -6413,11 +7266,18 @@ function handleSeedHarvestTransaction(socket, player, data) {
     world: worldName,
   };
 
+  const state = ensureWritablePlayerState(player.account_username);
+  if (!state) {
+    sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
+    return;
+  }
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  const originalSeed = cloneJson(seed);
   applySeedUpdateToWorldState(worldName, update);
-  queueWorldSave(worldName);
-  sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
 
   const rewards = [];
+  const payloads = [];
   for (const drop of drops) {
     const payload = createServerDrop(
       worldName,
@@ -6430,17 +7290,53 @@ function handleSeedHarvestTransaction(socket, player, data) {
     );
     if (!payload) continue;
     rewards.push({ item_id: drop.item_id, item_category: drop.item_category, amount: drop.amount });
-    sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload);
+    payloads.push(payload);
   }
 
-  const progression = awardPlayerExperience(player.account_username, getSeedHarvestXp(rewards, maturedSeed), "seed_harvest", {
+  const progression = grantExperienceToState(stagedState, getSeedHarvestXp(rewards, maturedSeed), "seed_harvest", {
     world: worldName,
     seed_type: seed.seed_type,
     mutated: Boolean(seed.mutated),
     x: grid.x,
     y: grid.y,
   });
-  const playerState = Number(progression.xp_gained || 0) > 0 ? progression.state : (ensurePlayerState(player.account_username) || {});
+  const seedTransactionId = makeAuditId("seed");
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+    source: "seed_harvest",
+    action: "seed_harvest",
+    reason: "seed_harvest",
+    request_id: requestId,
+    world: worldName,
+    metadata: {
+      transaction_id: seedTransactionId,
+      x: grid.x,
+      y: grid.y,
+      seed_type: seed.seed_type,
+      mutated: Boolean(seed.mutated),
+      reward_count: rewards.length,
+    },
+    world_state: serializedWorld,
+    failure_message: "Server inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    const rollbackState = ensureWorldState(worldName);
+    rollbackState.seeds.set(key, originalSeed);
+    for (const payload of payloads) {
+      rollbackState.drops.delete(payload.drop_id);
+    }
+    sendInventoryTransactionRejected(socket, data, commit.message);
+    return;
+  }
+  const committedState = commit.state;
+  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
+  sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update, {
+    username: player.account_username,
+    player_data: committedState,
+  });
+  for (const payload of payloads) {
+    sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload);
+  }
 
   sendInventoryTransactionResult(socket, {
     ok: true,
@@ -6450,7 +7346,7 @@ function handleSeedHarvestTransaction(socket, player, data) {
     username: player.account_username,
     rewards,
     progression: buildProgressionPayload(progression),
-    player_data: playerState,
+    player_data: committedState,
   });
 }
 
@@ -6548,8 +7444,120 @@ async function checkMessageRateLimit(socket, player, messageType) {
   return false;
 }
 
+function shouldRecordFailedTransactionLedgerAction(action) {
+  const normalized = cleanName(action || "").toLowerCase();
+  if (normalized === "") return false;
+  if (normalized === "inventory_transaction_request") return true;
+  if (normalized === "world_block_update") return true;
+  if (normalized === "world_seed_update") return true;
+  if (normalized === "world_interaction_update") return true;
+  if (normalized === "world_item_drop_create" || normalized === "world_drop_create") return true;
+  if (normalized === "world_item_drop_pickup" || normalized === "world_drop_pickup" || normalized === "drop_pickup") return true;
+  if (normalized === "world_item_drop_update") return true;
+  if (normalized.startsWith("trade")) return true;
+  if (normalized.startsWith("vend") || normalized.startsWith("vending")) return true;
+  if (normalized.includes("shop_purchase")) return true;
+  return false;
+}
+
+function failedTransactionLedgerTypeForAction(action) {
+  const normalized = cleanName(action || "").toLowerCase();
+  if (normalized === "world_item_drop_create" || normalized === "world_drop_create") return "ITEM_DROP";
+  if (normalized === "world_item_drop_pickup" || normalized === "world_drop_pickup" || normalized === "drop_pickup") return "ITEM_PICKUP";
+  if (normalized.startsWith("trade")) return "TRADE_FAILED";
+  if (normalized.startsWith("vend") || normalized.startsWith("vending")) return "VENDING_FAILED";
+  if (normalized === "inventory_transaction_request") return "INVENTORY_TRANSACTION_FAILED";
+  if (normalized === "world_block_update") return "WORLD_BLOCK_UPDATE_FAILED";
+  if (normalized === "world_seed_update") return "WORLD_SEED_UPDATE_FAILED";
+  if (normalized === "world_interaction_update") return "WORLD_INTERACTION_FAILED";
+  if (normalized.includes("shop_purchase")) return "SHOP_PURCHASE";
+  return "VALUABLE_ACTION_FAILED";
+}
+
+function failedTransactionLedgerSourceForAction(action) {
+  const normalized = cleanName(action || "").toLowerCase();
+  if (normalized.startsWith("trade")) return "trade";
+  if (normalized.startsWith("vend") || normalized.startsWith("vending")) return "vending";
+  if (normalized.includes("pickup")) return "drop_pickup";
+  if (normalized.includes("drop")) return "drop_inventory";
+  if (normalized.includes("seed")) return "seed_place";
+  if (normalized.includes("shop")) return "shop";
+  if (normalized.includes("interaction")) return "world_interaction";
+  if (normalized.includes("block")) return "world_block_place";
+  return "system";
+}
+
+function sanitizeRejectedActionMetadata(extra) {
+  const raw = extra && typeof extra === "object" && !Array.isArray(extra) ? extra : {};
+  const metadata = {};
+  for (const [key, value] of Object.entries(raw)) {
+    if (value === undefined) continue;
+    const cleanKey = cleanName(key);
+    if (cleanKey === "" || cleanKey === "player_data" || cleanKey === "account" || cleanKey === "session_token") continue;
+    if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null) {
+      metadata[cleanKey] = value;
+    } else if (Array.isArray(value)) {
+      metadata[cleanKey] = value.slice(0, 20).map((entry) => (
+        typeof entry === "string" || typeof entry === "number" || typeof entry === "boolean" || entry === null
+          ? entry
+          : cleanName(JSON.stringify(entry)).slice(0, 500)
+      ));
+    } else if (typeof value === "object") {
+      try {
+        metadata[cleanKey] = JSON.parse(JSON.stringify(value));
+      } catch (_) {
+        metadata[cleanKey] = cleanName(String(value)).slice(0, 500);
+      }
+    }
+  }
+  return metadata;
+}
+
+function queueFailedTransactionLedger(socket, action, message, extra = null) {
+  if (!isPostgresAuthoritativeReady()) return;
+  if (!shouldRecordFailedTransactionLedgerAction(action)) return;
+
+  const player = socket?.playerId ? players.get(socket.playerId) : null;
+  const username = cleanAccountName(player?.account_username || player?.name || "");
+  if (!player?.authenticated || username === "") return;
+
+  const metadata = sanitizeRejectedActionMetadata(extra);
+  const account = accounts.get(accountKey(username)) || null;
+  const worldName = cleanWorld(metadata.world || metadata.world_name || player.world || "START");
+  const itemType = cleanName(metadata.item_type || metadata.item_id || metadata.block_type || metadata.seed_type || "");
+  const itemCategory = cleanInventoryCategory(metadata.item_category || metadata.category || "");
+  const publicItemInstanceId = cleanName(metadata.public_item_instance_id || metadata.item_instance_public_id || metadata.item_instance_id || "");
+  const requestId = cleanName(metadata.request_id || metadata.requestId || "");
+
+  postgresStore.runDetached("transaction ledger failed action", () => postgresStore.recordTransactionLedgerEvent({
+    transaction_type: failedTransactionLedgerTypeForAction(action),
+    status: "failed",
+    account_username: username,
+    world: worldName,
+    item_type: itemType,
+    item_category: itemCategory,
+    public_item_instance_id: publicItemInstanceId,
+    quantity: 0,
+    request_id: requestId,
+    source: failedTransactionLedgerSourceForAction(action),
+    action,
+    ip_address: getSocketAddress(socket),
+    user_agent: String(socket?.userAgent || ""),
+    session_token_hash: cleanAccountName(account?.session_token_hash || ""),
+    device_info: {
+      user_agent: String(socket?.userAgent || ""),
+      player_id: String(player?.id || ""),
+    },
+    metadata: {
+      reason: cleanName(message || "action_rejected"),
+      rejection_payload: metadata,
+    },
+  }));
+}
+
 function sendActionRejected(socket, action, message, extra = null) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  queueFailedTransactionLedger(socket, action, message, extra);
 
   const payload = {
     type: "action_rejected",
@@ -6627,6 +7635,30 @@ function blockRequiresFullAreaClear(blockType) {
 function blockRequiresWorldLock(blockType) {
   const definition = ItemDatabase.getItemDefinition(blockType);
   return Boolean(definition?.requires_world_lock);
+}
+
+function isEntranceBlockType(blockType) {
+  const definition = ItemDatabase.getItemDefinition(clampString(blockType || ""));
+  return Boolean(definition && definition.category === "block" && definition.entrance_block);
+}
+
+function isDoorBlockType(blockType) {
+  const definition = ItemDatabase.getItemDefinition(clampString(blockType || ""));
+  return Boolean(definition && definition.category === "block" && definition.door_block);
+}
+
+function isSignBlockType(blockType) {
+  const definition = ItemDatabase.getItemDefinition(clampString(blockType || ""));
+  return Boolean(definition && definition.category === "block" && definition.sign_block);
+}
+
+function isToggleBlockType(blockType) {
+  const definition = ItemDatabase.getItemDefinition(clampString(blockType || ""));
+  return Boolean(definition && definition.category === "block" && definition.toggle_block);
+}
+
+function isPersistentInteractionBlockType(blockType) {
+  return isDoorBlockType(blockType) || isEntranceBlockType(blockType) || isSignBlockType(blockType) || isToggleBlockType(blockType);
 }
 
 function getBlockCollisionRectForGrid(x, y, blockType) {
@@ -6723,6 +7755,56 @@ function clampString(value, limit = MAX_ITEM_ID_LENGTH) {
   return String(value || "").trim().slice(0, limit);
 }
 
+function cleanDoorId(value) {
+  const clean = String(value || "")
+    .trim()
+    .toUpperCase()
+    .replace(/\s+/g, "_")
+    .replace(/[^A-Z0-9_-]/g, "")
+    .slice(0, MAX_DOOR_ID_LENGTH);
+  return clean;
+}
+
+function cleanDoorDestination(value) {
+  return String(value || "").trim().slice(0, MAX_DOOR_DESTINATION_LENGTH);
+}
+
+function parseDoorDestination(value, sourceWorld = "START") {
+  const destination = cleanDoorDestination(value);
+  const fallbackWorld = cleanWorld(sourceWorld || "START");
+  if (destination === "") {
+    return {
+      destination,
+      target_world: "",
+      target_door_id: "",
+    };
+  }
+
+  const parts = destination.split(":").map((part) => String(part || "").trim()).filter((part) => part !== "");
+  let targetWorld = fallbackWorld;
+  let targetDoorId = "";
+
+  if (parts.length >= 3 && parts[1].toLowerCase() === "door") {
+    targetWorld = cleanWorld(parts[0]);
+    targetDoorId = cleanDoorId(parts[2]);
+  } else if (parts.length >= 2) {
+    if (parts[0].toLowerCase() === "door") {
+      targetDoorId = cleanDoorId(parts[1]);
+    } else {
+      targetWorld = cleanWorld(parts[0]);
+      targetDoorId = cleanDoorId(parts[1]);
+    }
+  } else {
+    targetDoorId = cleanDoorId(parts[0] || destination);
+  }
+
+  return {
+    destination,
+    target_world: cleanWorld(targetWorld || fallbackWorld),
+    target_door_id: targetDoorId,
+  };
+}
+
 function canPlayerControlWorldLock(player, worldName) {
   if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
@@ -6758,6 +7840,42 @@ function canPlayerBuildInWorld(player, worldName) {
   return canWorldLockRoleBuild(getWorldLockRoleForAccount(lock, player.account_username));
 }
 
+function canPlayerConfigureDoor(player, worldName) {
+  if (isAdmin(player)) return true;
+  if (!player || !player.authenticated) return false;
+
+  const state = ensureWorldState(worldName);
+  const lock = state.world_lock || {};
+  if (!lock.is_locked) return true;
+
+  if (isWorldLockOwnerAccount(lock, player.account_username)) return true;
+  return canWorldLockRoleBuild(getWorldLockRoleForAccount(lock, player.account_username));
+}
+
+function canPlayerToggleDoorLock(player, worldName) {
+  if (isAdmin(player)) return true;
+  if (!player || !player.authenticated) return false;
+
+  const state = ensureWorldState(worldName);
+  const lock = state.world_lock || {};
+  if (!lock.is_locked) return true;
+
+  if (isWorldLockOwnerAccount(lock, player.account_username)) return true;
+  return canWorldLockRoleToggleWoodenEntrance(getWorldLockRoleForAccount(lock, player.account_username));
+}
+
+function canPlayerPassDoor(player, worldName) {
+  if (isAdmin(player)) return true;
+  if (!player || !player.authenticated) return false;
+
+  const state = ensureWorldState(worldName);
+  const lock = state.world_lock || {};
+  if (!lock.is_locked) return true;
+
+  if (isWorldLockOwnerAccount(lock, player.account_username)) return true;
+  return getWorldLockRoleForAccount(lock, player.account_username) !== "";
+}
+
 function requireBuildPermission(socket, player, worldName, action) {
   if (canPlayerBuildInWorld(player, worldName)) return true;
 
@@ -6787,15 +7905,202 @@ function isPlayerNearGrid(player, x, y, maxDistance = MAX_GRID_ACTION_DISTANCE_P
   return isPlayerNearPoint(player, center.x, center.y, maxDistance);
 }
 
-function persistPlayerInventoryChange(username, state) {
+function getPlayerGridPosition(player) {
+  const px = Number(player?.x);
+  const py = Number(player?.y);
+  if (!Number.isFinite(px) || !Number.isFinite(py)) return null;
+  return {
+    x: Math.round(px / TILE_SIZE),
+    y: Math.round(py / TILE_SIZE),
+  };
+}
+
+function isPlayerStandingOnGrid(player, x, y) {
+  const playerGrid = getPlayerGridPosition(player);
+  if (!playerGrid) return false;
+  const deltaX = Math.abs(playerGrid.x - Math.trunc(Number(x) || 0));
+  const deltaY = Math.abs(playerGrid.y - Math.trunc(Number(y) || 0));
+  return deltaX === 0 && deltaY === 0;
+}
+
+function buildInventoryDeltasBetweenStates(beforeState, afterState) {
+  const deltas = [];
+  const seen = new Set();
+  const fields = Object.values(ItemDatabase.CATEGORY_TO_FIELD || {});
+
+  for (const field of fields) {
+    const beforeInventory = beforeState && beforeState[field] && typeof beforeState[field] === "object" && !Array.isArray(beforeState[field])
+      ? beforeState[field]
+      : {};
+    const afterInventory = afterState && afterState[field] && typeof afterState[field] === "object" && !Array.isArray(afterState[field])
+      ? afterState[field]
+      : {};
+    for (const itemId of Object.keys(beforeInventory).concat(Object.keys(afterInventory))) {
+      const cleanItemId = clampString(itemId || "");
+      if (cleanItemId === "" || seen.has(`${field}\u0000${cleanItemId}`)) continue;
+      seen.add(`${field}\u0000${cleanItemId}`);
+      if (!ItemDatabase.hasItem(cleanItemId)) continue;
+
+      const fallbackCategory = ItemDatabase.FIELD_TO_CATEGORY[field] || resolveInventoryCategory(cleanItemId);
+      const itemCategory = resolveInventoryCategory(cleanItemId, fallbackCategory);
+      if (!ItemDatabase.canStoreItemInCategory(cleanItemId, itemCategory)) continue;
+
+      const beforeAmount = getInventoryCount(beforeState, cleanItemId, itemCategory);
+      const afterAmount = getInventoryCount(afterState, cleanItemId, itemCategory);
+      const delta = afterAmount - beforeAmount;
+      if (delta === 0) continue;
+
+      deltas.push({
+        item_type: cleanItemId,
+        item_category: itemCategory,
+        delta,
+        expected_before_amount: beforeAmount,
+        stack_limit: ItemDatabase.getStackLimit(cleanItemId),
+      });
+    }
+  }
+
+  return deltas;
+}
+
+function writePlayerStateJsonBackup(username, state) {
+  const clean = cleanAccountName(username);
+  if (clean === "" || !state) return;
+
+  writeJsonFileAtomic(getPlayerSavePath(clean), {
+    player_state_version: 1,
+    username: clean,
+    saved_at: new Date().toISOString(),
+    player_data: state,
+  });
+}
+
+function writeWorldStateJsonBackup(worldName, serialized = null) {
+  const clean = cleanWorld(worldName);
+  const worldState = serialized && typeof serialized === "object" && !Array.isArray(serialized)
+    ? serialized
+    : serializeWorldState(clean);
+  writeJsonFileAtomic(getWorldSavePath(clean), worldState);
+}
+
+function persistWorldStateAfterInventoryCommit(worldName, postgresCommitted, serialized = null) {
+  if (postgresCommitted) {
+    writeWorldStateJsonBackup(worldName, serialized);
+    return;
+  }
+
+  queueWorldSave(worldName);
+}
+
+function getPostgresInventoryFailureMessage(result, fallback = "Server inventory changed. Try again.") {
+  const reason = String(result?.reason || "");
+  if (reason === "postgres_unavailable") return "PostgreSQL is not ready.";
+  if (reason === "insufficient_inventory") {
+    const item = clampString(result?.item_type || "that item");
+    return `Not enough ${item}.`;
+  }
+  if (reason === "insufficient_capacity") {
+    const item = clampString(result?.item_type || "that item");
+    return `Your inventory cannot hold ${item}.`;
+  }
+  if (
+    reason === "insufficient_item_instances" ||
+    reason === "insufficient_locked_item_instances" ||
+    reason === "missing_world_drop_item_instances" ||
+    reason === "missing_item_instance_source" ||
+    reason === "trade_missing_item_instances" ||
+    reason === "vending_missing_item_instances" ||
+    reason === "vending_payment_missing_item_instances"
+  ) {
+    const item = clampString(result?.item_type || "that item");
+    return `Tracked item data is missing for ${item}.`;
+  }
+  if (reason === "player_not_found" || reason === "invalid_username") return "Could not load your server inventory.";
+  if (reason === "database_error") return "PostgreSQL rejected the inventory update.";
+  return fallback;
+}
+
+async function commitPlayerInventoryState(socket, player, username, beforeState, afterState, options = {}) {
+  if (!afterState) {
+    return { ok: false, message: "Could not load your server inventory." };
+  }
+
+  const cleanUsername = cleanAccountName(username || afterState.account_username || player?.account_username || "");
+  if (cleanUsername === "") {
+    return { ok: false, message: "Could not load your server inventory." };
+  }
+
+  afterState.saved_at = new Date().toISOString();
+  const deltas = buildInventoryDeltasBetweenStates(beforeState || {}, afterState);
+
+  if (isPostgresAuthoritativeReady()) {
+    const result = await postgresStore.applyInventoryDeltaTransaction({
+      account_username: cleanUsername,
+      world: options.world || player?.world || "START",
+      source: options.source || options.source_type || options.action || "system",
+      action: options.action || "update",
+      reason: options.reason || options.action || "update",
+      request_id: options.request_id || "",
+      correlation_id: options.correlation_id || "",
+      metadata: options.metadata || {},
+      ip_address: options.ip_address || getSocketAddress(socket),
+      user_agent: options.user_agent || "",
+      session_token_hash: options.session_token_hash || "",
+      device_info: options.device_info || {},
+      deltas,
+      player_state: afterState,
+      world_state: options.world_state || {},
+      world_changes: Array.isArray(options.world_changes) ? options.world_changes : [],
+      allow_state_repair: options.allow_state_repair === true,
+      at: new Date().toISOString(),
+    });
+
+    if (!result || !result.ok) {
+      logSecurityEvent(socket, player, "postgres_inventory_commit_failed", {
+        username: cleanUsername,
+        action: options.action || "",
+        source: options.source || "",
+        reason: result?.reason || "unknown",
+        item_type: result?.item_type || "",
+      }, "warning");
+      return {
+        ok: false,
+        reason: result?.reason || "postgres_failed",
+        message: getPostgresInventoryFailureMessage(result, options.failure_message || "Server inventory changed. Try again."),
+      };
+    }
+
+    if (Array.isArray(result.ledger_entries) && result.ledger_entries.length > 0) {
+      if (!applyInventoryLedgerToState(afterState, result.ledger_entries)) {
+        return { ok: false, reason: "state_reconcile_failed", message: "Inventory reconciliation failed." };
+      }
+    }
+
+    setPlayerState(cleanUsername, afterState);
+    writePlayerStateJsonBackup(cleanUsername, afterState);
+    return { ok: true, state: afterState, postgres_committed: true, deltas };
+  }
+
+  if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE) {
+    return { ok: false, reason: "postgres_unavailable", message: "PostgreSQL is not ready." };
+  }
+
+  return { ok: true, state: persistPlayerInventoryChange(cleanUsername, afterState), postgres_committed: false, deltas };
+}
+
+function persistPlayerInventoryChange(username, state, options = {}) {
   if (!state) return null;
   state.saved_at = new Date().toISOString();
   setPlayerState(username, state);
-  queuePlayerSave(username);
+  if (options.postgresCommitted) {
+    writePlayerStateJsonBackup(username, state);
+  } else {
+    queuePlayerSave(username);
+  }
   return state;
 }
 
-function spendServerInventoryCost(username, cost) {
+async function spendServerInventoryCost(username, cost, options = {}) {
   if (!cost || Number(cost.amount) <= 0) return { ok: true, state: null };
 
   const state = ensureWritablePlayerState(username);
@@ -6811,11 +8116,60 @@ function spendServerInventoryCost(username, cost) {
     return { ok: false, message: `Not enough ${cost.item_id}.` };
   }
 
-  if (!spendItemFromState(state, cost.item_id, cost.item_category, cost.amount)) {
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  if (!spendItemFromState(stagedState, cost.item_id, cost.item_category, cost.amount)) {
     return { ok: false, message: "Server inventory changed. Try again." };
   }
 
-  return { ok: true, state: persistPlayerInventoryChange(username, state) };
+  if (options.defer_commit === true) {
+    return {
+      ok: true,
+      state: stagedState,
+      postgres_committed: false,
+      deferred_inventory_commit: {
+        username,
+        beforeState,
+        afterState: stagedState,
+        options: {
+          source: options.source || "system",
+          action: options.action || "spend_inventory_cost",
+          reason: options.reason || "inventory_cost",
+          request_id: options.request_id || "",
+          correlation_id: options.correlation_id || "",
+          world: options.world || options.player?.world || "",
+          metadata: {
+            ...(options.metadata || {}),
+            item_id: cost.item_id,
+            item_category: cost.item_category,
+            amount: cost.amount,
+          },
+          failure_message: options.failure_message || "Server inventory changed. Try again.",
+        },
+      },
+    };
+  }
+
+  const commit = await commitPlayerInventoryState(options.socket || null, options.player || null, username, beforeState, stagedState, {
+    source: options.source || "system",
+    action: options.action || "spend_inventory_cost",
+    reason: options.reason || "inventory_cost",
+    request_id: options.request_id || "",
+    correlation_id: options.correlation_id || "",
+    world: options.world || options.player?.world || "",
+    metadata: {
+      ...(options.metadata || {}),
+      item_id: cost.item_id,
+      item_category: cost.item_category,
+      amount: cost.amount,
+    },
+    failure_message: options.failure_message || "Server inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    return { ok: false, message: commit.message, reason: commit.reason };
+  }
+
+  return { ok: true, state: commit.state, postgres_committed: commit.postgres_committed };
 }
 
 function makeServerDropId(worldName, itemType) {
@@ -6997,6 +8351,21 @@ function getBreakDropsForBlock(blockType, layer) {
 
   const drops = [];
   const rules = definition.drop_rules && typeof definition.drop_rules === "object" ? definition.drop_rules : {};
+  if (Array.isArray(rules.fixed_drops)) {
+    for (const fixedDrop of rules.fixed_drops) {
+      const dropItemId = clampString(fixedDrop?.item_id || fixedDrop?.item_type || "");
+      if (dropItemId === "" || !ItemDatabase.hasItem(dropItemId)) continue;
+      const dropCategory = resolveInventoryCategory(dropItemId, fixedDrop?.item_category || fixedDrop?.category || "");
+      if (!ItemDatabase.canStoreItemInCategory(dropItemId, dropCategory)) continue;
+      drops.push({
+        item_id: dropItemId,
+        item_category: dropCategory,
+        amount: clampInteger(fixedDrop?.amount || 1, 1, MAX_DROP_TILE_AMOUNT),
+      });
+    }
+    return drops;
+  }
+
   if (isVendBlockType(itemId)) {
     drops.push({ item_id: VEND_BLOCK_EMPTY, item_category: "block", amount: 1 });
   } else if (itemId === "crafting_station") {
@@ -7027,7 +8396,7 @@ function getBreakDropsForBlock(blockType, layer) {
   return drops;
 }
 
-function emitBreakDrops(worldName, update, socket = null, player = null) {
+function createBreakDrops(worldName, update) {
   if (!update || update.action !== "break" || update.block_type === "") return [];
 
   const position = getGridCenterPixels(update.x, update.y);
@@ -7044,17 +8413,24 @@ function emitBreakDrops(worldName, update, socket = null, player = null) {
       SERVER_DROP_PICKUP_DELAY
     );
     if (!payload) continue;
-    if (socket && player) {
-      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload);
-    } else {
-      broadcastToWorld(worldName, payload);
-    }
     createdDrops.push(payload);
   }
   return createdDrops;
 }
 
-function prepareVendBreakInventoryReturn(socket, player, worldName, update) {
+function emitBreakDrops(worldName, update, socket = null, player = null) {
+  const createdDrops = createBreakDrops(worldName, update);
+  for (const payload of createdDrops) {
+    if (socket && player) {
+      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload);
+    } else {
+      broadcastToWorld(worldName, payload);
+    }
+  }
+  return createdDrops;
+}
+
+async function prepareVendBreakInventoryReturn(socket, player, worldName, update) {
   const vend = getVendStateAt(worldName, update.x, update.y, false);
   const listing = vend.listing && Number(vend.listing.stock) > 0 ? vend.listing : null;
   const pendingWls = clampInteger(vend.pending_wls || 0, 0, ItemDatabase.getStackLimit("world_lock"));
@@ -7074,38 +8450,69 @@ function prepareVendBreakInventoryReturn(socket, player, worldName, update) {
     return { ok: false };
   }
 
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  const originalVend = cloneJson(vend);
   const returned = [];
   const returnedEntries = [];
   if (listing) {
     const itemId = clampString(listing.item_id || "");
     const itemCategory = resolveInventoryCategory(itemId, listing.item_category || "");
     const stock = clampInteger(listing.stock || 0, 1, ItemDatabase.getStackLimit(itemId));
-    if (!canAddItemToState(state, itemId, itemCategory, stock)) {
+    if (!canAddItemToState(stagedState, itemId, itemCategory, stock)) {
       sendActionRejected(socket, "world_block_update", "Your inventory cannot hold the vending item.");
       return { ok: false };
     }
 
-    addItemToState(state, itemId, itemCategory, stock);
+    addItemToState(stagedState, itemId, itemCategory, stock);
     returned.push(`${itemId} x${stock}`);
-    returnedEntries.push({ item_id: itemId, item_category: itemCategory, amount: stock, reason: "vending_stock" });
+    returnedEntries.push({
+      item_id: itemId,
+      item_category: itemCategory,
+      amount: stock,
+      reason: "vending_stock",
+      listing_transaction_id: listing.listing_id || listing.transaction_id || "",
+    });
     vend.listing = null;
   }
 
   if (pendingWls > 0) {
-    if (!canAddItemToState(state, "world_lock", "block", pendingWls)) {
+    if (!canAddItemToState(stagedState, "world_lock", "block", pendingWls)) {
       sendActionRejected(socket, "world_block_update", "Your inventory cannot hold those World Locks.");
       return { ok: false };
     }
 
-    addItemToState(state, "world_lock", "block", pendingWls);
+    addItemToState(stagedState, "world_lock", "block", pendingWls);
     returned.push(`World Lock x${pendingWls}`);
-    returnedEntries.push({ item_id: "world_lock", item_category: "block", amount: pendingWls, reason: "vending_pending_wls" });
+    returnedEntries.push({
+      item_id: "world_lock",
+      item_category: "block",
+      amount: pendingWls,
+      reason: "vending_pending_wls",
+    });
     vend.pending_wls = 0;
   }
 
-  persistPlayerInventoryChange(player.account_username, state);
   setVendStateAt(worldName, vend);
   const vendBreakTransactionId = makeAuditId("vend_break");
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+    source: "vending",
+    action: "vending_break_return",
+    reason: "vending_break_return",
+    request_id: "",
+    world: worldName,
+    metadata: { transaction_id: vendBreakTransactionId, x: vend.x, y: vend.y, returned_entries: returnedEntries },
+    world_state: serializedWorld,
+    failure_message: "Server inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    setVendStateAt(worldName, originalVend);
+    sendActionRejected(socket, "world_block_update", commit.message);
+    return { ok: false };
+  }
+  const committedState = commit.state;
+  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   logVendingTransaction(socket, player, {
     transaction_id: vendBreakTransactionId,
     action: "break_return",
@@ -7129,20 +8536,21 @@ function prepareVendBreakInventoryReturn(socket, player, worldName, update) {
     details: { returned_entries: returnedEntries },
   });
   for (const entry of returnedEntries) {
-    logItemLedgerForState(socket, player, player.account_username, state, entry.item_id, entry.item_category, entry.amount, "vending_break_return", vendBreakTransactionId, entry.reason, worldName, {
+    logItemLedgerForState(socket, player, player.account_username, committedState, entry.item_id, entry.item_category, entry.amount, "vending_break_return", vendBreakTransactionId, entry.reason, worldName, {
       x: vend.x,
       y: vend.y,
-    });
+    }, { skipPostgres: commit.postgres_committed });
   }
 
   return {
     ok: true,
-    playerState: state,
+    playerState: committedState,
+    postgres_committed: commit.postgres_committed,
     message: returned.length > 0 ? `Returned ${returned.join(", ")}.` : "",
   };
 }
 
-function validateBlockUpdateAgainstServerState(socket, player, worldName, update) {
+async function validateBlockUpdateAgainstServerState(socket, player, worldName, update, requestId = "") {
   const state = ensureWorldState(worldName);
   let key = gridKey(update.x, update.y);
 
@@ -7194,7 +8602,12 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
       return { ok: false };
     }
 
-    if (update.block_type === "world_lock" && hasWorldLockProtectedStorageBlocks(worldName)) {
+    if (update.layer !== "background" && isDoorBlockType(update.block_type) && isPlayerStandingOnGrid(player, update.x, update.y)) {
+      sendActionRejected(socket, "world_block_update", "Step off the door to break it.");
+      return { ok: false };
+    }
+
+    if (isWorldLockBlockType(update.block_type) && hasWorldLockProtectedStorageBlocks(worldName)) {
       sendActionRejected(socket, "world_block_update", "Remove all Safes, vending machines, and Fish Mongers before breaking the World Lock.");
       return { ok: false };
     }
@@ -7239,21 +8652,23 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
     update.action = "break";
 
     if (isVendBreak) {
-      const vendReturn = prepareVendBreakInventoryReturn(socket, player, worldName, update);
+      const vendReturn = await prepareVendBreakInventoryReturn(socket, player, worldName, update);
       if (!vendReturn.ok) return { ok: false };
       return {
         ok: true,
         playerState: vendReturn.playerState || null,
+        postgres_committed: vendReturn.postgres_committed,
         message: vendReturn.message || "",
       };
     }
 
     if (isSafeBreak) {
-      const safeReturn = prepareSafeBreakInventoryReturn(socket, player, worldName, update);
+      const safeReturn = await prepareSafeBreakInventoryReturn(socket, player, worldName, update);
       if (!safeReturn.ok) return { ok: false };
       return {
         ok: true,
         playerState: safeReturn.playerState || null,
+        postgres_committed: safeReturn.postgres_committed,
         message: safeReturn.message || "",
       };
     }
@@ -7270,7 +8685,7 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
     return { ok: false };
   }
 
-  if (update.block_type === "world_lock" && (state.world_lock?.is_locked || hasWorldLockBlock(worldName))) {
+  if (isWorldLockBlockType(update.block_type) && (state.world_lock?.is_locked || hasWorldLockBlock(worldName))) {
     sendActionRejected(socket, "world_block_update", "This world already has a World Lock.");
     return { ok: false };
   }
@@ -7320,7 +8735,17 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
   }
 
   const cost = ItemDatabase.getPlacementCost(update.block_type);
-  const spendResult = spendServerInventoryCost(player.account_username, cost);
+  const spendResult = await spendServerInventoryCost(player.account_username, cost, {
+    socket,
+    player,
+    source: "world_block_place",
+    action: "world_block_place",
+    reason: "placement_cost",
+    request_id: requestId,
+    world: worldName,
+    metadata: { x: update.x, y: update.y, placed_block: update.block_type, layer: update.layer },
+    defer_commit: isPostgresAuthoritativeReady(),
+  });
   if (!spendResult.ok) {
     sendActionRejected(socket, "world_block_update", spendResult.message);
     return { ok: false };
@@ -7329,10 +8754,12 @@ function validateBlockUpdateAgainstServerState(socket, player, worldName, update
   return {
     ok: true,
     playerState: spendResult.state,
+    postgres_committed: spendResult.postgres_committed,
+    deferred_inventory_commit: spendResult.deferred_inventory_commit || null,
   };
 }
 
-function validateSeedUpdateAgainstServerState(socket, player, worldName, update) {
+async function validateSeedUpdateAgainstServerState(socket, player, worldName, update, requestId = "") {
   if (update.action !== "place") return { ok: true };
 
   if (!isPlayerNearGrid(player, update.x, update.y)) {
@@ -7352,10 +8779,19 @@ function validateSeedUpdateAgainstServerState(socket, player, worldName, update)
     return { ok: false };
   }
 
-  const spendResult = spendServerInventoryCost(player.account_username, {
+  const spendResult = await spendServerInventoryCost(player.account_username, {
     item_id: update.seed_type,
     item_category: "seed",
     amount: 1,
+  }, {
+    socket,
+    player,
+    source: "seed_place",
+    action: "world_seed_place",
+    reason: "seed_plant_cost",
+    request_id: requestId,
+    world: worldName,
+    metadata: { x: update.x, y: update.y, seed_type: update.seed_type },
   });
   if (!spendResult.ok) {
     sendActionRejected(socket, "world_seed_update", spendResult.message);
@@ -7365,6 +8801,7 @@ function validateSeedUpdateAgainstServerState(socket, player, worldName, update)
   return {
     ok: true,
     playerState: spendResult.state,
+    postgres_committed: spendResult.postgres_committed,
   };
 }
 
@@ -7395,10 +8832,12 @@ function prepareWorldLockStateUpdate(socket, player, worldName, update) {
     }
 
     const lockBlock = state.foreground.get(gridKey(nextLock.lock_grid_x, nextLock.lock_grid_y));
-    if (!lockBlock || lockBlock.block_type !== "world_lock") {
+    if (!lockBlock || !isWorldLockBlockType(lockBlock.block_type)) {
       sendActionRejected(socket, "world_lock_state", "Place a world lock block first.");
       return false;
     }
+    nextLock.lock_block_type = normalizeWorldLockBlockType(lockBlock.block_type);
+    nextLock.lock_type = nextLock.lock_block_type;
 
     if (!isAdmin(player)) {
       nextLock.owner_name = cleanName(player.account_username).toUpperCase();
@@ -7486,11 +8925,50 @@ function canPlayerToggleWoodenEntrance(player, worldName) {
   return canWorldLockRoleToggleWoodenEntrance(getWorldLockRoleForAccount(lock, player.account_username));
 }
 
+function canPlayerPassWoodenEntrance(player, worldName) {
+  if (isAdmin(player)) return true;
+  if (!player || !player.authenticated) return false;
+
+  const state = ensureWorldState(worldName);
+  const lock = state.world_lock || {};
+  if (!lock.is_locked) return true;
+
+  const playerKey = accountKey(player.account_username);
+  if (playerKey === "") return false;
+  if (accountKey(lock.owner_name || lock.owner_username || "") === playerKey) return true;
+
+  return getWorldLockRoleForAccount(lock, player.account_username) !== "";
+}
+
+function isSpringboardBlockType(blockType) {
+  const clean = clampString(blockType || "");
+  if (clean === "mushroom" || clean === "mushroom_1" || clean === "mushroom_2") return true;
+  const definition = ItemDatabase.getItemDefinition(clean) || {};
+  return Boolean(definition.springboard);
+}
+
+function prepareSpringboardAnimationUpdate(socket, player, worldName, update) {
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
+  if (!block || !isSpringboardBlockType(block.block_type)) {
+    sendActionRejected(socket, "world_interaction_update", "Springboard missing.");
+    return false;
+  }
+
+  if (!isPlayerNearGrid(player, update.x, update.y)) {
+    sendActionRejected(socket, "world_interaction_update", "Too far away.");
+    return false;
+  }
+
+  update.block_type = block.block_type;
+  return true;
+}
+
 function prepareWoodenEntranceStateUpdate(socket, player, worldName, update) {
   const state = ensureWorldState(worldName);
   const block = state.foreground.get(gridKey(update.x, update.y));
-  if (!block || block.block_type !== "wooden_entrance") {
-    sendActionRejected(socket, "world_interaction_update", "Wooden Entrance missing.");
+  if (!block || !isEntranceBlockType(block.block_type)) {
+    sendActionRejected(socket, "world_interaction_update", "Entrance missing.");
     return false;
   }
 
@@ -7505,6 +8983,349 @@ function prepareWoodenEntranceStateUpdate(socket, player, worldName, update) {
   }
 
   update.locked = Boolean(update.locked);
+  update.block_type = block.block_type;
+  return true;
+}
+
+function prepareDoorStateUpdate(socket, player, worldName, update) {
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
+  if (!block || !isDoorBlockType(block.block_type)) {
+    sendActionRejected(socket, "world_interaction_update", "Door missing.");
+    return false;
+  }
+
+  if (!isPlayerNearGrid(player, update.x, update.y)) {
+    sendActionRejected(socket, "world_interaction_update", "Too far away.");
+    return false;
+  }
+
+  if (!canPlayerConfigureDoor(player, worldName)) {
+    sendActionRejected(socket, "world_interaction_update", "Only the owner or trusted builders can edit this door.");
+    return false;
+  }
+
+  const existing = state.interactions.get(gridKey(update.x, update.y)) || {};
+  const existingLocked = Boolean(existing.locked || block.entrance_locked);
+  if (Boolean(update.locked) !== existingLocked && !canPlayerToggleDoorLock(player, worldName)) {
+    sendActionRejected(socket, "world_interaction_update", "Only the world owner or world admins can lock this door.");
+    return false;
+  }
+
+  update.locked = Boolean(update.locked);
+  update.block_type = block.block_type;
+  return true;
+}
+
+function sanitizeDoorEnterRequest(data, worldName) {
+  const x = Number(data.x);
+  const y = Number(data.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const gridX = Math.trunc(x);
+  const gridY = Math.trunc(y);
+  if (!isGridInWorld(gridX, gridY)) return null;
+
+  return {
+    x: gridX,
+    y: gridY,
+    world: cleanWorld(worldName),
+    request_id: makeRequestId(data),
+  };
+}
+
+function getDoorStateForBlock(state, block, worldName) {
+  if (!state || !block) return null;
+  const key = gridKey(block.x, block.y);
+  const interaction = state.interactions.get(key) || {};
+  const destination = cleanDoorDestination(interaction.destination || interaction.door_destination || block.door_destination || block.destination || "");
+  const parsedDestination = parseDoorDestination(destination, worldName);
+
+  return {
+    block,
+    interaction,
+    door_id: cleanDoorId(interaction.door_id || block.door_id || ""),
+    destination,
+    target_world: cleanWorld(interaction.target_world || block.door_target_world || parsedDestination.target_world || worldName),
+    target_door_id: cleanDoorId(interaction.target_door_id || block.door_target_id || parsedDestination.target_door_id || ""),
+    locked: Boolean(interaction.locked || block.entrance_locked),
+  };
+}
+
+function getDoorAtGrid(worldName, x, y) {
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(x, y));
+  if (!block || !isDoorBlockType(block.block_type)) return null;
+  return {
+    state,
+    ...getDoorStateForBlock(state, block, worldName),
+  };
+}
+
+function findDoorById(worldName, doorId) {
+  const cleanId = cleanDoorId(doorId);
+  if (cleanId === "") return null;
+
+  const state = ensureWorldState(worldName);
+  for (const block of state.foreground.values()) {
+    if (!isDoorBlockType(block?.block_type || "")) continue;
+    const doorState = getDoorStateForBlock(state, block, worldName);
+    if (!doorState || doorState.door_id !== cleanId) continue;
+    return {
+      state,
+      ...doorState,
+    };
+  }
+
+  return null;
+}
+
+function rejectDoorEnter(socket, message, extra = {}) {
+  sendActionRejected(socket, "door_enter", message, extra);
+  return false;
+}
+
+async function handleDoorEnterRequest(socket, player, data) {
+  if (!requireAuthenticated(socket, player, "enter doors")) return false;
+
+  const sourceWorld = getPlayerCurrentWorldName(player);
+  const requestWorld = cleanWorld(data.world || sourceWorld);
+  if (!requireSameWorld(socket, player, requestWorld, "enter that door")) return false;
+  if (await rejectIfWorldBanned(socket, player, sourceWorld, "door_enter")) return false;
+
+  const request = sanitizeDoorEnterRequest(data, sourceWorld);
+  if (!request) return rejectDoorEnter(socket, "Door missing.");
+
+  const sourceDoor = getDoorAtGrid(sourceWorld, request.x, request.y);
+  if (!sourceDoor) return rejectDoorEnter(socket, "Door missing.");
+
+  if (!isPlayerNearGrid(player, request.x, request.y)) {
+    return rejectDoorEnter(socket, "Too far away.");
+  }
+
+  if (sourceDoor.locked && !canPlayerPassDoor(player, sourceWorld)) {
+    return rejectDoorEnter(socket, "Door is locked.");
+  }
+
+  if (sourceDoor.destination === "" || sourceDoor.target_door_id === "") {
+    return rejectDoorEnter(socket, "Door is not linked.");
+  }
+
+  const targetWorld = cleanWorld(sourceDoor.target_world || sourceWorld);
+  if (await rejectIfWorldBanned(socket, player, targetWorld, "door_enter")) return false;
+
+  const targetDoor = findDoorById(targetWorld, sourceDoor.target_door_id);
+  if (!targetDoor) {
+    return rejectDoorEnter(socket, "Target door not found.", {
+      target_world: targetWorld,
+      target_door_id: sourceDoor.target_door_id,
+    });
+  }
+
+  if (targetDoor.locked && !canPlayerPassDoor(player, targetWorld)) {
+    return rejectDoorEnter(socket, "Target door is locked.", {
+      target_world: targetWorld,
+      target_door_id: sourceDoor.target_door_id,
+    });
+  }
+
+  const oldWorld = sourceWorld;
+  const targetPosition = getGridCenterPixels(targetDoor.block.x, targetDoor.block.y);
+  const changedWorld = oldWorld !== targetWorld;
+
+  if (changedWorld) {
+    cancelActiveTradeForPlayer(player.id, "Trade canceled because a player changed worlds.");
+    activeFishingSessions.delete(player.id);
+
+    if (player.joined_world) {
+      broadcastSystemToWorld(oldWorld, `${player.name} left ${oldWorld}`, player.id);
+      broadcastToWorld(oldWorld, buildPublicPlayerPresencePayload("player_left", player, oldWorld), player.id);
+    }
+  }
+
+  player.world = targetWorld;
+  player.current_world = targetWorld;
+  player.current_world_id = targetWorld;
+  player.joined_world = true;
+  player.x = targetPosition.x;
+  player.y = targetPosition.y;
+  player.velocity_x = 0;
+  player.velocity_y = 0;
+  player.animation_state = "idle";
+  player.last_position_at = Date.now();
+  ensureWorldState(targetWorld);
+  postgresStore.mirrorPlayerWorld(player.account_username, targetWorld);
+
+  const response = {
+    type: "door_enter_ok",
+    request_id: request.request_id,
+    world: targetWorld,
+    source_world: oldWorld,
+    source_x: request.x,
+    source_y: request.y,
+    target_door_id: targetDoor.door_id,
+    x: targetPosition.x,
+    y: targetPosition.y,
+    same_world: !changedWorld,
+    requires_world_state: changedWorld,
+    message: changedWorld ? `Entering ${targetWorld}...` : "Entered door.",
+  };
+  sendJson(socket, response);
+
+  if (changedWorld) {
+    const existingPlayers = getPlayersInWorld(targetWorld, player.id);
+    sendJson(socket, {
+      type: "join_world_ok",
+      world: targetWorld,
+      players: existingPlayers,
+    });
+
+    sendJson(socket, buildWorldStateMessage(targetWorld, {
+      respawn_player: false,
+      force_player_position: true,
+      portal_spawn_x: targetPosition.x,
+      portal_spawn_y: targetPosition.y,
+      x: targetPosition.x,
+      y: targetPosition.y,
+      world_state_reason: "door_enter",
+      message: `Entered ${targetWorld}.`,
+    }));
+    sendActiveWorldEventState(socket, targetWorld);
+
+    broadcastToWorld(targetWorld, buildPublicPlayerPresencePayload("player_joined", player, targetWorld), player.id);
+    broadcastSystemToWorld(targetWorld, `${player.name} joined ${targetWorld}`, player.id);
+    notifyOnlineFriendsOfFriendState(player.account_username);
+  } else {
+    broadcastToWorld(targetWorld, buildPublicPlayerPresencePayload("player_position", player, targetWorld), player.id);
+  }
+
+  touchLivePresence(socket, player, { force: true });
+  logWorldChange(socket, player, {
+    source_type: "door_enter",
+    source_id: request.request_id || makeAuditId("door"),
+    world: oldWorld,
+    action: "door_enter",
+    layer: "interaction",
+    x: request.x,
+    y: request.y,
+    block_type: sourceDoor.block.block_type,
+    details: {
+      source_door_id: sourceDoor.door_id,
+      destination: sourceDoor.destination,
+      target_world: targetWorld,
+      target_door_id: targetDoor.door_id,
+      target_x: targetDoor.block.x,
+      target_y: targetDoor.block.y,
+    },
+  });
+  return true;
+}
+
+function buildDoorDestinationText(targetWorld, targetDoorId, sourceWorld) {
+  const cleanTargetWorld = cleanWorld(targetWorld || sourceWorld);
+  const cleanSourceWorld = cleanWorld(sourceWorld || "");
+  const cleanTargetDoorId = cleanDoorId(targetDoorId);
+  if (cleanTargetDoorId === "") return "";
+  if (cleanTargetWorld === cleanSourceWorld) {
+    return `door:${cleanTargetDoorId}`;
+  }
+  return `${cleanTargetWorld}:door:${cleanTargetDoorId}`;
+}
+
+async function maybeApplyReciprocalDoorLink(socket, player, sourceWorld, update) {
+  if (!update || update.action !== "door_state") return null;
+
+  const sourceDoorId = cleanDoorId(update.door_id || "");
+  const targetDoorId = cleanDoorId(update.target_door_id || "");
+  if (sourceDoorId === "" || targetDoorId === "") return null;
+
+  const cleanSourceWorld = cleanWorld(sourceWorld);
+  const targetWorld = cleanWorld(update.target_world || cleanSourceWorld);
+  if (cleanSourceWorld === "" || targetWorld === "") return null;
+  if (!canPlayerBuildInWorld(player, targetWorld)) return null;
+
+  const targetDoor = findDoorById(targetWorld, targetDoorId);
+  if (!targetDoor || !targetDoor.block) return null;
+  if (targetWorld === cleanSourceWorld && Number(targetDoor.block.x) === Number(update.x) && Number(targetDoor.block.y) === Number(update.y)) {
+    return null;
+  }
+
+  const targetState = getDoorStateForBlock(targetDoor.state, targetDoor.block, targetWorld);
+  if (!targetState) return null;
+  const existingDestination = cleanDoorDestination(targetState.destination || "");
+  const existingTargetDoorId = cleanDoorId(targetState.target_door_id || "");
+  if (existingDestination !== "" || existingTargetDoorId !== "") return null;
+
+  const reverseDestination = buildDoorDestinationText(cleanSourceWorld, sourceDoorId, targetWorld);
+  const reverseUpdate = {
+    type: "world_interaction_update",
+    world: targetWorld,
+    action: "door_state",
+    x: targetDoor.block.x,
+    y: targetDoor.block.y,
+    door_id: cleanDoorId(targetState.door_id || targetDoor.door_id || targetDoorId),
+    destination: cleanDoorDestination(reverseDestination),
+    target_world: cleanSourceWorld,
+    target_door_id: sourceDoorId,
+    locked: isDoorBlockType(targetDoor.block.block_type) && Boolean(targetState.locked),
+    block_type: targetDoor.block.block_type,
+  };
+
+  const reciprocalSourceId = makeAuditId("interact");
+  const previousTargetWorldState = serializeWorldState(targetWorld);
+  const objectBefore = getWorldObjectJournalData(targetWorld, reverseUpdate);
+  applyInteractionUpdateToWorldState(targetWorld, reverseUpdate);
+  const objectAfter = getWorldObjectJournalData(targetWorld, reverseUpdate);
+  const commit = await commitWorldStateWithBlockChanges(targetWorld, [
+    buildWorldObjectChangeEntry(
+      socket,
+      player,
+      targetWorld,
+      {
+        ...reverseUpdate,
+        source_type: "door_reciprocal_link",
+      },
+      objectBefore,
+      objectAfter,
+      reciprocalSourceId,
+      {
+        source_world: cleanSourceWorld,
+        source_door_id: sourceDoorId,
+        target_door_id: targetDoorId,
+      }
+    ),
+  ]);
+
+  if (!commit.ok) {
+    worldStates.set(cleanWorld(targetWorld), deserializeWorldState(targetWorld, previousTargetWorldState));
+    console.warn("[world-journal] reciprocal door link save failed:", commit.message || commit.reason || "unknown");
+    return null;
+  }
+  sendWorldUpdateToRequesterAndWorld(socket, player, targetWorld, reverseUpdate);
+  return reverseUpdate;
+}
+
+function prepareToggleBlockStateUpdate(socket, player, worldName, update, expectedAction) {
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
+  if (!block || !isToggleBlockType(block.block_type)) {
+    sendActionRejected(socket, "world_interaction_update", "Toggle block missing.");
+    return false;
+  }
+
+  const definition = ItemDatabase.getItemDefinition(block.block_type) || {};
+  const toggleAction = clampString(definition.toggle_action || `${block.block_type}_state`);
+  if (toggleAction !== expectedAction) {
+    sendActionRejected(socket, "world_interaction_update", "Toggle block missing.");
+    return false;
+  }
+
+  if (!isPlayerNearGrid(player, update.x, update.y)) {
+    sendActionRejected(socket, "world_interaction_update", "Too far away.");
+    return false;
+  }
+
+  update.on = Boolean(update.on);
+  update.block_type = block.block_type;
   return true;
 }
 
@@ -7523,7 +9344,7 @@ function sanitizePlayerPosition(data, player) {
 
 function sanitizePlayerAnimationState(value) {
   const clean = String(value || "").trim().toLowerCase();
-  if (["idle", "walk", "jump", "fall", "punch"].includes(clean)) return clean;
+  if (["idle", "walk", "jump", "fall", "punch", "hurt", "dead", "dead_spirit"].includes(clean)) return clean;
   return "idle";
 }
 
@@ -7659,7 +9480,9 @@ function logGemLedger(socket, player, entry = {}) {
     details: entry.details || {},
   };
   appendJsonLine(GEM_LEDGER_PATH, ledgerEntry, "gem ledger");
-  postgresStore.mirrorGemLedger(ledgerEntry);
+  if (!entry.skip_postgres) {
+    postgresStore.mirrorGemLedger(ledgerEntry);
+  }
 }
 
 function logItemLedger(socket, player, entry = {}) {
@@ -7687,13 +9510,15 @@ function logItemLedger(socket, player, entry = {}) {
   };
 
   appendJsonLine(ITEM_LEDGER_PATH, ledgerEntry, "item ledger");
-  postgresStore.mirrorItemLedger(ledgerEntry);
+  if (!entry.skip_postgres) {
+    postgresStore.mirrorItemLedger(ledgerEntry);
+  }
   if (itemId === "gem") {
-    logGemLedger(socket, player, { ...ledgerEntry, ledger_id: makeAuditId("gem") });
+    logGemLedger(socket, player, { ...ledgerEntry, ledger_id: makeAuditId("gem"), skip_postgres: entry.skip_postgres });
   }
 }
 
-function logItemLedgerForState(socket, actorPlayer, accountUsername, state, itemId, itemCategory, quantityDelta, sourceType, sourceId, reason, world = "", details = {}) {
+function logItemLedgerForState(socket, actorPlayer, accountUsername, state, itemId, itemCategory, quantityDelta, sourceType, sourceId, reason, world = "", details = {}, options = {}) {
   logItemLedger(socket, actorPlayer, {
     account_username: accountUsername,
     item_id: itemId,
@@ -7705,10 +9530,11 @@ function logItemLedgerForState(socket, actorPlayer, accountUsername, state, item
     reason,
     world,
     details,
+    skip_postgres: Boolean(options.skipPostgres),
   });
 }
 
-function logRewardLedgers(socket, actorPlayer, accountUsername, state, rewards, sourceType, sourceId, reason, world = "", details = {}) {
+function logRewardLedgers(socket, actorPlayer, accountUsername, state, rewards, sourceType, sourceId, reason, world = "", details = {}, options = {}) {
   for (const reward of rewards) {
     logItemLedgerForState(
       socket,
@@ -7722,7 +9548,8 @@ function logRewardLedgers(socket, actorPlayer, accountUsername, state, rewards, 
       sourceId,
       reason,
       world,
-      details
+      details,
+      options
     );
   }
 }
@@ -7782,7 +9609,7 @@ function logVendingTransaction(socket, player, entry = {}) {
   postgresStore.mirrorVendingTransaction(logEntry);
 }
 
-function logWorldChange(socket, player, entry = {}) {
+function logWorldChange(socket, player, entry = {}, options = {}) {
   const logEntry = {
     journal_id: entry.journal_id || makeAuditId("world"),
     at: new Date().toISOString(),
@@ -7795,10 +9622,19 @@ function logWorldChange(socket, player, entry = {}) {
     x: Number.isFinite(Number(entry.x)) ? Math.trunc(Number(entry.x)) : null,
     y: Number.isFinite(Number(entry.y)) ? Math.trunc(Number(entry.y)) : null,
     block_type: clampString(entry.block_type || ""),
+    block_type_before: clampString(entry.block_type_before || ""),
+    block_type_after: clampString(entry.block_type_after || ""),
+    object_type: clampString(entry.object_type || "", 80),
+    object_id: clampString(entry.object_id || "", 160),
+    old_data: cloneJson(entry.old_data || {}),
+    new_data: cloneJson(entry.new_data || {}),
+    request_id: String(entry.request_id || ""),
     details: entry.details || {},
   };
   appendJsonLine(WORLD_CHANGE_JOURNAL_PATH, logEntry, "world change");
-  postgresStore.mirrorWorldChange(logEntry);
+  if (!options.skipPostgres && !entry.skip_postgres) {
+    postgresStore.mirrorWorldChange(logEntry);
+  }
 }
 
 function warnWorldSnapshotStorageOnce(key, message) {
@@ -8005,6 +9841,17 @@ function splitCommand(command) {
   return clean.split(/\s+/);
 }
 
+function parseForceEventName(command) {
+  const clean = String(command || "").trim().replace(/^\//, "");
+  const match = clean.match(/^forceevent\s+(?:"([^"]+)"|'([^']+)'|(.+?))(?:\s+in\s+([A-Za-z0-9_ -]+))?$/i);
+  const rawEventName = match ? (match[1] || match[2] || match[3] || "") : "";
+  const eventName = rawEventName
+    .trim()
+    .toLowerCase()
+    .replace(/[\s-]+/g, "_");
+  return eventName === "snowstorm" ? SNOW_STORM_EVENT_TYPE : eventName;
+}
+
 function parseTargetedGiveCommand(command) {
   const parts = splitCommand(command);
   if (parts.length < 4) return null;
@@ -8057,7 +9904,7 @@ function getDeveloperCommandWorldName(player, data) {
 
 function isClearProtectedBlockType(blockType) {
   const clean = clampString(blockType || "");
-  return clean === "world_lock" || clean === ENTRANCE_GATE_TYPE || clean === "bedrock";
+  return isWorldLockBlockType(clean) || clean === ENTRANCE_GATE_TYPE || clean === "bedrock";
 }
 
 function sanitizeProtectedForegroundEntry(rawEntry) {
@@ -8099,7 +9946,7 @@ function getProtectedClearEntries(state, data) {
   const tryPutProtectedEntry = (entry) => {
     if (!entry) return;
 
-    if (entry.block_type === "world_lock") {
+    if (isWorldLockBlockType(entry.block_type)) {
       if (!lock.is_locked) return;
 
       const key = gridKey(entry.x, entry.y);
@@ -8132,7 +9979,7 @@ function getProtectedClearEntries(state, data) {
   if (lock.is_locked && activeWorldLockKey !== "") {
     const lockGridX = Math.trunc(Number(lock.lock_grid_x));
     const lockGridY = Math.trunc(Number(lock.lock_grid_y));
-    putProtectedEntry(protectedEntries, { x: lockGridX, y: lockGridY, block_type: "world_lock" });
+    putProtectedEntry(protectedEntries, { x: lockGridX, y: lockGridY, block_type: normalizeWorldLockBlockType(lock.lock_block_type || lock.lock_type || WORLD_LOCK_BLOCK_TYPE) });
   }
 
   return protectedEntries;
@@ -8383,6 +10230,147 @@ function parsePunishmentCommand(data, command, player) {
   return null;
 }
 
+function parseItemInstanceAdminCommand(data, command) {
+  const parts = splitCommand(command);
+  if (parts.length === 0) return null;
+
+  const commandName = String(parts[0] || "").toLowerCase().replace(/-/g, "_");
+  const auditCommands = new Set(["itemaudit", "audititems", "item_audit", "audit_items"]);
+  if (auditCommands.has(commandName)) {
+    return {
+      mode: "audit",
+      limit: clampInteger(data.limit || parts[1] || ANTI_DUPE_AUDIT_LIMIT, 1, ANTI_DUPE_AUDIT_LIMIT),
+    };
+  }
+
+  const copiesCommands = new Set(["itemcopies", "itemowners", "item_copies", "item_owners", "itemcopy", "item_owner"]);
+  if (copiesCommands.has(commandName)) {
+    const metadataIdentifier = clampString(
+      data.public_item_instance_id || data.item_instance_public_id || data.item_instance_id || data.instance_id || data.item_type || data.item_id || data.id || "",
+      96
+    );
+    return {
+      mode: "copies",
+      itemInstanceId: clampString(metadataIdentifier || parts[1] || "", 96),
+      limit: clampInteger(data.limit || parts[2] || 100, 1, 500),
+    };
+  }
+
+  const actionCommands = {
+    itemfreeze: "freeze",
+    freezeitem: "freeze",
+    item_freeze: "freeze",
+    itemunfreeze: "unfreeze",
+    unfreezeitem: "unfreeze",
+    item_unfreeze: "unfreeze",
+    itemretire: "retire",
+    retireitem: "retire",
+    item_retire: "retire",
+    itemdelete: "retire",
+    deleteitem: "retire",
+    item_delete: "retire",
+    itemtransfer: "transfer",
+    transferitem: "transfer",
+    item_transfer: "transfer",
+    itemflag: "flag",
+    flagitem: "flag",
+    item_flag: "flag",
+  };
+  const action = actionCommands[commandName] || "";
+  if (action === "") return null;
+
+  const metadataIdentifier = clampString(
+    data.public_item_instance_id || data.item_instance_public_id || data.item_instance_id || data.instance_id || data.id || "",
+    96
+  );
+  const itemInstanceId = clampString(metadataIdentifier || parts[1] || "", 96);
+  let targetUsername = cleanAccountName(data.target_username || data.target || data.to_username || "");
+  let reasonIndex = 2;
+
+  if (action === "transfer") {
+    if (targetUsername === "") targetUsername = cleanAccountName(parts[2] || "");
+    reasonIndex = 3;
+  }
+
+  const reason = String(parts.slice(reasonIndex).join(" ") || data.reason || "").trim().slice(0, 500);
+  return {
+    mode: "moderate",
+    action,
+    itemInstanceId,
+    targetUsername,
+    reason,
+  };
+}
+
+function getItemInstanceStoreMessage(result, fallback = "Could not update item instance.") {
+  const reason = String(result?.reason || "").trim();
+  switch (reason) {
+    case "postgres_unavailable":
+      return "PostgreSQL is not ready.";
+    case "invalid_item_instance":
+      return "Item instance ID is required.";
+    case "invalid_action":
+      return "Invalid item instance action.";
+    case "item_instance_not_found":
+      return "Item instance was not found.";
+    case "owner_required":
+      return "That item has no current owner to restore to inventory.";
+    case "target_required":
+      return "Target username is required.";
+    case "target_not_found":
+      return "Target account does not have a player row yet.";
+    case "insufficient_capacity":
+      return "Target inventory does not have room for that item.";
+    case "database_error":
+      return "PostgreSQL rejected the item instance update.";
+    default:
+      return fallback;
+  }
+}
+
+function formatItemAuditSummary(result) {
+  const summary = result?.summary || {};
+  const issueCount = clampInteger(summary.total_issues || 0, 0, ANTI_DUPE_AUDIT_LIMIT);
+  if (issueCount <= 0) return "Item audit clean: no duplicate or mismatched tracked items found.";
+
+  const sample = Array.isArray(result.issues) ? result.issues.slice(0, 3) : [];
+  const sampleText = sample.map((issue) => {
+    if (issue.type === "inventory_count_mismatch") {
+      return `${issue.username || issue.player_id} ${issue.item_type}: inventory ${issue.inventory_amount}, instances ${issue.active_instance_count}`;
+    }
+    return `${issue.type}: ${issue.public_item_instance_id || issue.item_instance_id || issue.item_type || "unknown"}`;
+  }).join(" | ");
+  const suffix = sampleText !== "" ? ` Sample: ${sampleText}` : "";
+  return `Item audit found ${issueCount} issue(s): duplicates=${summary.duplicate_public_ids || 0}, impossible=${summary.impossible_states || 0}, count_mismatches=${summary.inventory_mismatches || 0}.${suffix}`;
+}
+
+function formatItemInstanceModerationMessage(result) {
+  const item = result?.item_instance || {};
+  const publicId = item.public_item_instance_id || item.item_instance_id || "item";
+  const itemType = item.item_type || "unknown_item";
+  const owner = item.current_owner_username ? ` owner=${item.current_owner_username}` : "";
+  return `Item ${result.action} ok: ${publicId} (${itemType}) state=${item.state || "unknown"} location=${item.current_location || "unknown"}${owner}.`;
+}
+
+function formatItemInstanceCopiesSummary(result) {
+  const query = result?.query || {};
+  const summary = result?.summary || {};
+  const itemType = query.item_type || query.identifier || "item";
+  const total = clampInteger(summary.total || 0, 0, 500);
+  if (total <= 0) return `No tracked copies found for ${itemType}.`;
+
+  const sample = Array.isArray(result.copies) ? result.copies.slice(0, 4) : [];
+  const sampleText = sample.map((copy) => {
+    const id = copy.public_item_instance_id || copy.item_instance_id || "item";
+    const owner = copy.current_owner_username || "no-owner";
+    const source = copy.created_by_source || "unknown";
+    const duplicate = copy.possible_duplicate ? " DUPLICATE?" : "";
+    return `${id} owner=${owner} ${copy.state || "unknown"}/${copy.current_location || "unknown"} source=${source}${duplicate}`;
+  }).join(" | ");
+  const suffix = sampleText !== "" ? ` Sample: ${sampleText}` : "";
+  return `Tracked copies for ${itemType}: total=${total}, active=${summary.active || 0}, frozen=${summary.frozen || 0}, retired=${summary.retired || 0}, duplicate_flags=${summary.duplicate_public_ids || 0}.${suffix}`;
+}
+
 function formatPunishmentList(targetUsername, rows = []) {
   if (!Array.isArray(rows) || rows.length === 0) {
     return `No active punishments for ${targetUsername}.`;
@@ -8604,6 +10592,164 @@ async function handleDeveloperPunishmentCommand(socket, player, data, command, p
   }
 
   return false;
+}
+
+async function handleDeveloperItemInstanceAdminCommand(socket, player, data, command, parsed, approve, deny) {
+  if (!parsed) return false;
+
+  if (!isPostgresAuthoritativeReady()) {
+    deny("PostgreSQL is not ready for item instance controls.", { command_type: "item_instance_admin" });
+    return true;
+  }
+
+  const actorUsername = cleanAccountName(player.account_username || player.name || "");
+  const requestId = makeRequestId(data);
+
+  if (parsed.mode === "audit") {
+    const result = await postgresStore.auditItemInstances({ limit: parsed.limit || ANTI_DUPE_AUDIT_LIMIT });
+    if (!result.ok) {
+      deny(getItemInstanceStoreMessage(result, "Item audit failed."), {
+        command_type: "item_audit",
+        reason: result.reason || "unknown",
+      });
+      return true;
+    }
+
+    const issueCount = clampInteger(result.summary?.total_issues || 0, 0, ANTI_DUPE_AUDIT_LIMIT);
+    if (issueCount > 0) {
+      logSecurityEvent(socket, player, "item_instance_audit_issues", {
+        request_id: requestId,
+        summary: result.summary,
+        sample: Array.isArray(result.issues) ? result.issues.slice(0, 5) : [],
+      }, "high");
+    }
+
+    approve(
+      formatItemAuditSummary(result),
+      {
+        command_type: "item_audit",
+        issue_count: issueCount,
+        summary: result.summary,
+      },
+      {
+        command_type: "item_audit",
+        item_audit: result,
+      }
+    );
+    return true;
+  }
+
+  if (parsed.mode === "copies") {
+    const itemInstanceId = clampString(parsed.itemInstanceId || "", 96);
+    if (itemInstanceId === "") {
+      deny("Item instance ID or item type is required.", { command_type: "item_instance_copies" });
+      return true;
+    }
+
+    const result = await postgresStore.listItemInstanceCopies(itemInstanceId, { limit: parsed.limit || 100 });
+    if (!result.ok) {
+      deny(getItemInstanceStoreMessage(result, "Item copy lookup failed."), {
+        command_type: "item_instance_copies",
+        reason: result.reason || "unknown",
+      });
+      return true;
+    }
+
+    const duplicateCount = clampInteger(result.summary?.duplicate_public_ids || 0, 0, 500);
+    if (duplicateCount > 0) {
+      logSecurityEvent(socket, player, "item_instance_duplicate_copies_lookup", {
+        request_id: requestId,
+        query: result.query,
+        summary: result.summary,
+      }, "high");
+    }
+
+    approve(
+      formatItemInstanceCopiesSummary(result),
+      {
+        command_type: "item_instance_copies",
+        item_type: result.query?.item_type || "",
+        total: result.summary?.total || 0,
+        duplicate_flags: duplicateCount,
+      },
+      {
+        command_type: "item_instance_copies",
+        item_instance_copies: result,
+      }
+    );
+    return true;
+  }
+
+  const itemInstanceId = clampString(parsed.itemInstanceId || "", 96);
+  if (itemInstanceId === "") {
+    deny("Item instance ID is required.", { command_type: "item_instance_admin", action: parsed.action || "" });
+    return true;
+  }
+
+  if (parsed.action === "transfer") {
+    const targetUsername = cleanAccountName(parsed.targetUsername || "");
+    if (targetUsername === "") {
+      deny("Target username is required.", { command_type: "item_instance_transfer", item_instance_id: itemInstanceId });
+      return true;
+    }
+    if (!doesAccountExist(targetUsername)) {
+      deny("Target account does not exist.", { command_type: "item_instance_transfer", item_instance_id: itemInstanceId, target_username: targetUsername });
+      return true;
+    }
+  }
+
+  const result = await postgresStore.moderateItemInstance(itemInstanceId, parsed.action, {
+    actor_username: actorUsername,
+    target_username: parsed.targetUsername,
+    reason: parsed.reason || "",
+    request_id: requestId,
+  });
+
+  if (!result.ok) {
+    deny(getItemInstanceStoreMessage(result), {
+      command_type: "item_instance_admin",
+      action: parsed.action || "",
+      item_instance_id: itemInstanceId,
+      reason: result.reason || "unknown",
+    });
+    return true;
+  }
+
+  const localUpdates = applyItemInstanceInventoryEffectsToPlayerStates(result.inventory_effects);
+  logSecurityEvent(socket, player, "item_instance_admin_action", {
+    request_id: requestId,
+    action: result.action,
+    item_instance: result.item_instance,
+    inventory_effects: localUpdates,
+  }, result.action === "flag" ? "warning" : "medium");
+
+  const targetUsername = cleanAccountName(result.item_instance?.current_owner_username || "");
+  const target = targetUsername !== "" ? findOnlinePlayerByUsername(targetUsername) : null;
+  if (target && accountKey(target.player.account_username) !== accountKey(actorUsername)) {
+    target.socket.send(JSON.stringify({
+      type: "chat",
+      sender: "System",
+      message: `An admin updated tracked item ${result.item_instance.public_item_instance_id || itemInstanceId}.`,
+    }));
+  }
+
+  approve(
+    formatItemInstanceModerationMessage(result),
+    {
+      command_type: "item_instance_admin",
+      action: result.action,
+      item_instance_id: result.item_instance?.item_instance_id || itemInstanceId,
+      public_item_instance_id: result.item_instance?.public_item_instance_id || "",
+      target_username: targetUsername,
+      inventory_effects: localUpdates,
+    },
+    {
+      command_type: "item_instance_admin",
+      item_instance_result: result,
+      inventory_effects: localUpdates,
+    }
+  );
+  return true;
 }
 
 function cleanInventoryCategory(value) {
@@ -9156,6 +11302,43 @@ function ensureWritablePlayerState(username) {
   return state;
 }
 
+function applyItemInstanceInventoryEffectsToPlayerStates(effects) {
+  const rows = Array.isArray(effects) ? effects : [];
+  const updated = [];
+
+  for (const effect of rows) {
+    if (!effect || effect.ok === false) continue;
+    const username = cleanAccountName(effect.username || "");
+    const itemType = clampString(effect.item_type || "");
+    const itemCategory = resolveInventoryCategory(itemType, effect.item_category || "");
+    if (username === "" || itemType === "") continue;
+
+    const state = ensureWritablePlayerState(username);
+    if (!state) continue;
+
+    const applied = setInventoryCountInState(state, itemType, itemCategory, clampInteger(effect.after_amount || 0, 0, ItemDatabase.getStackLimit(itemType)));
+    if (!applied) continue;
+
+    persistPlayerInventoryChange(username, state, { postgresCommitted: true });
+    const target = findOnlinePlayerByUsername(username);
+    if (target) {
+      sendPlayerState(target.socket, target.player.account_username);
+    }
+
+    updated.push({
+      username,
+      item_type: itemType,
+      item_category: itemCategory,
+      delta: clampInteger(effect.delta || 0, -ItemDatabase.getStackLimit(itemType), ItemDatabase.getStackLimit(itemType)),
+      before_amount: clampInteger(effect.before_amount || 0, 0, ItemDatabase.getStackLimit(itemType)),
+      after_amount: clampInteger(effect.after_amount || 0, 0, ItemDatabase.getStackLimit(itemType)),
+      online: Boolean(target),
+    });
+  }
+
+  return updated;
+}
+
 function doesAccountExist(username) {
   const clean = cleanAccountName(username);
   if (clean === "") return false;
@@ -9232,6 +11415,81 @@ function sendAdminItemInstanceLookupFailure(socket, requestId, targetUsername, m
     message,
     ...extra,
   });
+}
+
+function sendAdminItemInstanceHistoryLookupFailure(socket, requestId, targetUsername, itemInstanceId, message, extra = {}) {
+  sendJson(socket, {
+    type: "player_state",
+    ok: false,
+    found: false,
+    request_id: requestId,
+    purpose: ADMIN_ITEM_INSTANCE_HISTORY_LOOKUP_PURPOSE,
+    action: ADMIN_ITEM_INSTANCE_HISTORY_LOOKUP_PURPOSE,
+    username: cleanAccountName(targetUsername),
+    item_instance_id: cleanAccountName(itemInstanceId),
+    message,
+    ...extra,
+  });
+}
+
+function sendAdminTransactionLedgerLookupFailure(socket, requestId, targetUsername, itemInstanceId, message, extra = {}) {
+  sendJson(socket, {
+    type: "player_state",
+    ok: false,
+    found: false,
+    request_id: requestId,
+    purpose: ADMIN_TRANSACTION_LEDGER_LOOKUP_PURPOSE,
+    action: ADMIN_TRANSACTION_LEDGER_LOOKUP_PURPOSE,
+    username: cleanAccountName(targetUsername),
+    item_instance_id: cleanAccountName(itemInstanceId),
+    message,
+    ...extra,
+  });
+}
+
+function buildAdminItemInstanceLookupRows(itemInstances) {
+  const rows = Array.isArray(itemInstances) ? itemInstances : [];
+  return rows.map((entry) => ({
+    item_instance_id: cleanAccountName(entry.item_instance_id || ""),
+    public_item_instance_id: cleanAccountName(entry.public_item_instance_id || ""),
+    item_type: cleanAccountName(entry.item_type || ""),
+    item_category: cleanAccountName(entry.item_category || ""),
+    state: cleanAccountName(entry.state || ""),
+    created_by_source: cleanAccountName(entry.created_by_source || ""),
+    current_location: cleanAccountName(entry.current_location || ""),
+    created_at: String(entry.created_at || ""),
+    updated_at: String(entry.updated_at || ""),
+  }));
+}
+
+function buildAdminTransactionLedgerLookupRows(entries) {
+  const rows = Array.isArray(entries) ? entries : [];
+  return rows.map((entry) => ({
+    transaction_ledger_id: Number(entry.transaction_ledger_id || 0),
+    transaction_id: cleanAccountName(entry.transaction_id || ""),
+    transaction_type: cleanAccountName(entry.transaction_type || ""),
+    status: cleanAccountName(entry.status || ""),
+    username: cleanAccountName(entry.username || ""),
+    other_username: cleanAccountName(entry.other_username || ""),
+    world_name: cleanWorld(entry.world_name || ""),
+    item_instance_id: cleanAccountName(entry.item_instance_id || ""),
+    public_item_instance_id: cleanAccountName(entry.public_item_instance_id || ""),
+    item_type: cleanAccountName(entry.item_type || ""),
+    item_category: cleanInventoryCategory(entry.item_category || ""),
+    quantity: clampInteger(entry.quantity || 0, -999999999999, 999999999999),
+    gems_before: entry.gems_before == null ? null : clampInteger(entry.gems_before || 0, -999999999999, 999999999999),
+    gems_after: entry.gems_after == null ? null : clampInteger(entry.gems_after || 0, -999999999999, 999999999999),
+    inventory_before_hash: cleanAccountName(entry.inventory_before_hash || ""),
+    inventory_after_hash: cleanAccountName(entry.inventory_after_hash || ""),
+    ip_address: cleanAccountName(entry.ip_address || ""),
+    request_id: cleanAccountName(entry.request_id || ""),
+    correlation_id: cleanAccountName(entry.correlation_id || ""),
+    source: cleanAccountName(entry.source || ""),
+    action: cleanAccountName(entry.action || ""),
+    metadata: entry.metadata && typeof entry.metadata === "object" && !Array.isArray(entry.metadata) ? entry.metadata : {},
+    server_time: String(entry.server_time || ""),
+    created_at: String(entry.created_at || ""),
+  }));
 }
 
 function handleAdminInventoryLookupRequest(socket, player, data, username, requestId, purpose) {
@@ -9366,47 +11624,364 @@ async function handleAdminItemInstanceLookupRequest(socket, player, data, userna
   const account = accounts.get(accountKey(targetUsername)) || null;
   const displayUsername = account?.username || state?.account_username || targetUsername;
   const rawLimit = clampInteger(data.limit || ADMIN_ITEM_INSTANCE_LOOKUP_LIMIT, 1, ADMIN_ITEM_INSTANCE_LOOKUP_LIMIT);
-  const reconcileResult = await postgresStore.reconcileItemInstancesForUsername(displayUsername, state, {
-    source: "admin_item_instance_lookup",
+
+  console.log("[admin_item_instance_lookup] start", {
+    actor: player.account_username || player.name || "",
+    target: displayUsername,
     request_id: requestId,
-    actor_username: player.account_username || player.name || "",
   });
-  const itemInstances = await postgresStore.listActiveItemInstances(displayUsername, { limit: rawLimit });
 
-  logAdminAction(socket, player, "admin_item_instance_lookup", {
-    ...logBase,
-    target_username: displayUsername,
-    target_found: true,
-    target_online: Boolean(target),
-    item_instance_count: itemInstances.length,
-    reconcile_ok: Boolean(reconcileResult?.ok),
-    reconcile_reason: String(reconcileResult?.reason || ""),
-  }, true, "Item instance lookup completed.");
+  try {
+    const reconcileResult = await withTimeout(
+      postgresStore.reconcileItemInstancesForUsername(displayUsername, state, {
+        source: "admin_item_instance_lookup",
+        request_id: requestId,
+        actor_username: player.account_username || player.name || "",
+      }),
+      ADMIN_ITEM_INSTANCE_LOOKUP_TIMEOUT_MS,
+      "admin item instance reconcile"
+    );
+    const itemInstances = await withTimeout(
+      postgresStore.listActiveItemInstances(displayUsername, { limit: rawLimit }),
+      ADMIN_ITEM_INSTANCE_LOOKUP_TIMEOUT_MS,
+      "admin item instance list"
+    );
+    const itemInstanceRows = buildAdminItemInstanceLookupRows(itemInstances);
 
-  sendJson(socket, {
-    type: "player_state",
-    ok: true,
-    found: true,
-    request_id: requestId,
-    purpose: ADMIN_ITEM_INSTANCE_LOOKUP_PURPOSE,
-    action: ADMIN_ITEM_INSTANCE_LOOKUP_PURPOSE,
-    username: displayUsername,
-    name: displayUsername,
-    online: Boolean(target),
-    offline: !target,
-    world: target?.player?.world || "",
-    current_world: target?.player?.world || "",
-    account: {
+    logAdminAction(socket, player, "admin_item_instance_lookup", {
+      ...logBase,
+      target_username: displayUsername,
+      target_found: true,
+      target_online: Boolean(target),
+      item_instance_count: itemInstanceRows.length,
+      reconcile_ok: Boolean(reconcileResult?.ok),
+      reconcile_reason: String(reconcileResult?.reason || ""),
+    }, true, "Item instance lookup completed.");
+
+    console.log("[admin_item_instance_lookup] ok", {
+      target: displayUsername,
+      count: itemInstanceRows.length,
+      request_id: requestId,
+    });
+
+    sendJson(socket, {
+      type: "player_state",
+      ok: true,
+      found: true,
+      request_id: requestId,
+      purpose: ADMIN_ITEM_INSTANCE_LOOKUP_PURPOSE,
+      action: ADMIN_ITEM_INSTANCE_LOOKUP_PURPOSE,
       username: displayUsername,
-      role: getAccountRole(displayUsername),
-      last_seen_at: account ? String(account.last_seen_at || "") : "",
-    },
-    item_instances: itemInstances,
-    item_instance_count: itemInstances.length,
-    item_instance_limit: rawLimit,
-    item_instance_reconcile: reconcileResult || { ok: false, reason: "not_run" },
-    message: "Item instances loaded.",
+      name: displayUsername,
+      online: Boolean(target),
+      offline: !target,
+      world: target?.player?.world || "",
+      current_world: target?.player?.world || "",
+      account: {
+        username: displayUsername,
+        role: getAccountRole(displayUsername),
+        last_seen_at: account ? String(account.last_seen_at || "") : "",
+      },
+      item_instances: itemInstanceRows,
+      item_instance_count: itemInstanceRows.length,
+      item_instance_limit: rawLimit,
+      item_instance_reconcile: reconcileResult || { ok: false, reason: "not_run" },
+      message: "Item instances loaded.",
+    });
+  } catch (error) {
+    const message = `Item instance lookup failed: ${error.message}`;
+    console.warn("[admin_item_instance_lookup] failed", {
+      target: displayUsername,
+      request_id: requestId,
+      message,
+    });
+    logAdminAction(socket, player, "admin_item_instance_lookup", {
+      ...logBase,
+      target_username: displayUsername,
+      target_found: true,
+      target_online: Boolean(target),
+      error: error.message,
+    }, false, message);
+    sendAdminItemInstanceLookupFailure(socket, requestId, displayUsername, message, {
+      online: Boolean(target),
+      offline: !target,
+      item_instances: [],
+      item_instance_count: 0,
+      item_instance_limit: rawLimit,
+    });
+  }
+}
+
+async function handleAdminItemInstanceHistoryLookupRequest(socket, player, data, username, requestId, purpose) {
+  const targetUsername = cleanAccountName(data.target_username || data.requested_username || username);
+  const itemInstanceId = cleanAccountName(data.public_item_instance_id || data.item_instance_public_id || data.item_instance_id || data.id || "");
+  const logBase = {
+    request_id: requestId,
+    purpose,
+    target_username: targetUsername,
+    item_instance_id: itemInstanceId,
+    world: cleanWorld(data.world || player.world || "START"),
+  };
+
+  const deny = (message, details = {}, extra = {}) => {
+    logAdminAction(socket, player, "admin_item_instance_history_lookup_denied", { ...logBase, ...details }, false, message);
+    logSecurityEvent(socket, player, "admin_item_instance_history_lookup_denied", { ...logBase, ...details, message }, "warning");
+    sendAdminItemInstanceHistoryLookupFailure(socket, requestId, targetUsername, itemInstanceId, message, extra);
+  };
+
+  if (!isAdmin(player)) {
+    deny("Item instance history is only available to admins.");
+    return;
+  }
+
+  if (!isDeveloperPinUnlocked(player)) {
+    deny("Developer PIN required.", { reason: "developer_pin_required" }, {
+      requires_developer_pin: true,
+      developer_pin_required: DEV_PIN_REQUIRED,
+      developer_pin_unlocked: false,
+    });
+    return;
+  }
+
+  if (itemInstanceId === "") {
+    logAdminAction(socket, player, "admin_item_instance_history_lookup", logBase, false, "Item instance ID is required.");
+    sendAdminItemInstanceHistoryLookupFailure(socket, requestId, targetUsername, itemInstanceId, "Item instance ID is required.");
+    return;
+  }
+
+  if (!isPostgresAuthoritativeReady()) {
+    logAdminAction(socket, player, "admin_item_instance_history_lookup", logBase, false, "PostgreSQL is not ready.");
+    sendAdminItemInstanceHistoryLookupFailure(socket, requestId, targetUsername, itemInstanceId, "PostgreSQL is not ready.");
+    return;
+  }
+
+  console.log("[admin_item_instance_history_lookup] start", {
+    actor: player.account_username || player.name || "",
+    target: targetUsername,
+    item_instance_id: itemInstanceId,
+    request_id: requestId,
   });
+
+  try {
+    const history = await withTimeout(
+      postgresStore.getItemInstanceHistory(itemInstanceId, { limit: 50 }),
+      ADMIN_ITEM_INSTANCE_LOOKUP_TIMEOUT_MS,
+      "admin item instance history"
+    );
+
+    if (!history?.ok) {
+      const message = history?.reason === "item_instance_not_found"
+        ? "Item instance was not found."
+        : `Item instance history unavailable: ${history?.message || history?.reason || "unknown_error"}`;
+      logAdminAction(socket, player, "admin_item_instance_history_lookup", {
+        ...logBase,
+        lookup_ok: false,
+        reason: String(history?.reason || ""),
+      }, false, message);
+      sendAdminItemInstanceHistoryLookupFailure(socket, requestId, targetUsername, itemInstanceId, message, {
+        item_instance_history: history || {},
+      });
+      return;
+    }
+
+    logAdminAction(socket, player, "admin_item_instance_history_lookup", {
+      ...logBase,
+      lookup_ok: true,
+      event_count: history.events?.length || 0,
+      source_confidence: history.item_instance?.source_confidence || "",
+      integrity_flags: history.integrity?.flags || [],
+    }, true, "Item instance history lookup completed.");
+
+    console.log("[admin_item_instance_history_lookup] ok", {
+      item_instance_id: itemInstanceId,
+      events: history.events?.length || 0,
+      flags: history.integrity?.flags || [],
+      request_id: requestId,
+    });
+
+    sendJson(socket, {
+      type: "player_state",
+      ok: true,
+      found: true,
+      request_id: requestId,
+      purpose: ADMIN_ITEM_INSTANCE_HISTORY_LOOKUP_PURPOSE,
+      action: ADMIN_ITEM_INSTANCE_HISTORY_LOOKUP_PURPOSE,
+      username: targetUsername,
+      item_instance_id: itemInstanceId,
+      item_instance_history: history,
+      message: "Item instance history loaded.",
+    });
+  } catch (error) {
+    const message = `Item instance history lookup failed: ${error.message}`;
+    console.warn("[admin_item_instance_history_lookup] failed", {
+      item_instance_id: itemInstanceId,
+      request_id: requestId,
+      message,
+    });
+    logAdminAction(socket, player, "admin_item_instance_history_lookup", {
+      ...logBase,
+      error: error.message,
+    }, false, message);
+    sendAdminItemInstanceHistoryLookupFailure(socket, requestId, targetUsername, itemInstanceId, message);
+  }
+}
+
+async function handleAdminTransactionLedgerLookupRequest(socket, player, data, username, requestId, purpose) {
+  const requestedUsernameValue = Object.prototype.hasOwnProperty.call(data, "requested_username")
+    ? data.requested_username
+    : username;
+  const targetUsername = cleanAccountName(data.target_username || requestedUsernameValue || "");
+  const itemInstanceId = cleanAccountName(data.public_item_instance_id || data.item_instance_public_id || data.item_instance_id || data.id || "");
+  const itemType = cleanName(data.item_type || data.item_id || "");
+  const transactionType = cleanName(data.transaction_type || data.ledger_type || "");
+  const status = cleanName(data.status || "");
+  const logBase = {
+    request_id: requestId,
+    purpose,
+    target_username: targetUsername,
+    item_instance_id: itemInstanceId,
+    item_type: itemType,
+    transaction_type: transactionType,
+    status,
+    world: cleanWorld(data.world || player.world || "START"),
+  };
+
+  const deny = (message, details = {}, extra = {}) => {
+    logAdminAction(socket, player, "admin_transaction_ledger_lookup_denied", { ...logBase, ...details }, false, message);
+    logSecurityEvent(socket, player, "admin_transaction_ledger_lookup_denied", { ...logBase, ...details, message }, "warning");
+    sendAdminTransactionLedgerLookupFailure(socket, requestId, targetUsername, itemInstanceId, message, extra);
+  };
+
+  if (!isAdmin(player)) {
+    deny("Transaction ledger lookup is only available to admins.");
+    return;
+  }
+
+  if (!isDeveloperPinUnlocked(player)) {
+    deny("Developer PIN required.", { reason: "developer_pin_required" }, {
+      requires_developer_pin: true,
+      developer_pin_required: DEV_PIN_REQUIRED,
+      developer_pin_unlocked: false,
+    });
+    return;
+  }
+
+  if (targetUsername === "" && itemInstanceId === "" && itemType === "" && transactionType === "") {
+    logAdminAction(socket, player, "admin_transaction_ledger_lookup", logBase, false, "A player, item instance, item type, or transaction type is required.");
+    sendAdminTransactionLedgerLookupFailure(socket, requestId, targetUsername, itemInstanceId, "Enter a player, item instance, item type, or transaction type.");
+    return;
+  }
+
+  if (!isPostgresAuthoritativeReady()) {
+    logAdminAction(socket, player, "admin_transaction_ledger_lookup", logBase, false, "PostgreSQL is not ready.");
+    sendAdminTransactionLedgerLookupFailure(socket, requestId, targetUsername, itemInstanceId, "PostgreSQL is not ready.");
+    return;
+  }
+
+  const target = targetUsername !== "" ? findOnlinePlayerByUsername(targetUsername) : null;
+  const account = targetUsername !== "" ? accounts.get(accountKey(targetUsername)) || null : null;
+  const displayUsername = account?.username || target?.player?.account_username || targetUsername;
+  const rawLimit = clampInteger(data.limit || ADMIN_TRANSACTION_LEDGER_LOOKUP_LIMIT, 1, ADMIN_TRANSACTION_LEDGER_LOOKUP_LIMIT);
+
+  console.log("[admin_transaction_ledger_lookup] start", {
+    actor: player.account_username || player.name || "",
+    target: displayUsername,
+    item_instance_id: itemInstanceId,
+    item_type: itemType,
+    transaction_type: transactionType,
+    request_id: requestId,
+  });
+
+  try {
+    const result = await withTimeout(
+      postgresStore.listTransactionLedger({
+        username: displayUsername,
+        public_item_instance_id: itemInstanceId,
+        item_type: itemType,
+        transaction_type: transactionType,
+        status,
+        limit: rawLimit,
+      }),
+      ADMIN_ITEM_INSTANCE_LOOKUP_TIMEOUT_MS,
+      "admin transaction ledger lookup"
+    );
+
+    if (!result?.ok) {
+      const message = result?.reason === "target_required"
+        ? "Enter a player, item instance, item type, or transaction type."
+        : `Transaction ledger unavailable: ${result?.message || result?.reason || "unknown_error"}`;
+      logAdminAction(socket, player, "admin_transaction_ledger_lookup", {
+        ...logBase,
+        lookup_ok: false,
+        reason: String(result?.reason || ""),
+      }, false, message);
+      sendAdminTransactionLedgerLookupFailure(socket, requestId, displayUsername, itemInstanceId, message, {
+        transaction_ledger: [],
+        transaction_ledger_count: 0,
+      });
+      return;
+    }
+
+    const rows = buildAdminTransactionLedgerLookupRows(result.entries || []);
+    logAdminAction(socket, player, "admin_transaction_ledger_lookup", {
+      ...logBase,
+      target_username: displayUsername,
+      target_online: Boolean(target),
+      lookup_ok: true,
+      transaction_ledger_count: rows.length,
+    }, true, "Transaction ledger lookup completed.");
+
+    console.log("[admin_transaction_ledger_lookup] ok", {
+      target: displayUsername,
+      item_instance_id: itemInstanceId,
+      count: rows.length,
+      request_id: requestId,
+    });
+
+    sendJson(socket, {
+      type: "player_state",
+      ok: true,
+      found: true,
+      request_id: requestId,
+      purpose: ADMIN_TRANSACTION_LEDGER_LOOKUP_PURPOSE,
+      action: ADMIN_TRANSACTION_LEDGER_LOOKUP_PURPOSE,
+      username: displayUsername,
+      name: displayUsername,
+      online: Boolean(target),
+      offline: displayUsername !== "" ? !target : false,
+      world: target?.player?.world || "",
+      current_world: target?.player?.world || "",
+      account: displayUsername !== "" ? {
+        username: displayUsername,
+        role: getAccountRole(displayUsername),
+        last_seen_at: account ? String(account.last_seen_at || "") : "",
+      } : {},
+      item_instance_id: itemInstanceId,
+      transaction_ledger: rows,
+      transaction_ledger_count: rows.length,
+      transaction_ledger_limit: rawLimit,
+      transaction_ledger_query: result.query || {},
+      message: "Transaction ledger loaded.",
+    });
+  } catch (error) {
+    const message = `Transaction ledger lookup failed: ${error.message}`;
+    console.warn("[admin_transaction_ledger_lookup] failed", {
+      target: displayUsername,
+      item_instance_id: itemInstanceId,
+      request_id: requestId,
+      message,
+    });
+    logAdminAction(socket, player, "admin_transaction_ledger_lookup", {
+      ...logBase,
+      target_username: displayUsername,
+      error: error.message,
+    }, false, message);
+    sendAdminTransactionLedgerLookupFailure(socket, requestId, displayUsername, itemInstanceId, message, {
+      transaction_ledger: [],
+      transaction_ledger_count: 0,
+      transaction_ledger_limit: rawLimit,
+    });
+  }
 }
 
 function buildPublicPlayerData(state) {
@@ -9763,6 +12338,12 @@ async function handleDeveloperCommandRequest(socket, player, data) {
     return;
   }
 
+  const itemInstanceAdminCommand = parseItemInstanceAdminCommand(data, command);
+  if (itemInstanceAdminCommand) {
+    await handleDeveloperItemInstanceAdminCommand(socket, player, data, command, itemInstanceAdminCommand, approve, deny);
+    return;
+  }
+
   const giveCommand = parseGiveCommand(data, command);
   if (giveCommand) {
     if (!ItemDatabase.hasItem(giveCommand.itemId)) {
@@ -9785,19 +12366,53 @@ async function handleDeveloperCommandRequest(socket, player, data) {
       return;
     }
 
-    const grant = grantItemToPlayerState(
-      giveCommand.targetUsername,
+    const targetBeforeState = ensureWritablePlayerState(giveCommand.targetUsername);
+    if (!targetBeforeState) {
+      deny("Could not load target inventory.", { target_username: giveCommand.targetUsername, item_id: giveCommand.itemId, item_category: giveCommand.itemCategory, amount: giveCommand.amount });
+      return;
+    }
+
+    const targetStagedState = cloneJson(targetBeforeState);
+    const grant = addItemToState(
+      targetStagedState,
       giveCommand.itemId,
       giveCommand.itemCategory,
       giveCommand.amount
     );
     if (!grant) {
-      deny("Could not save target inventory.", { target_username: giveCommand.targetUsername, item_id: giveCommand.itemId, item_category: giveCommand.itemCategory, amount: giveCommand.amount });
+      deny("Could not stage target inventory.", { target_username: giveCommand.targetUsername, item_id: giveCommand.itemId, item_category: giveCommand.itemCategory, amount: giveCommand.amount });
+      return;
+    }
+
+    const commit = await commitPlayerInventoryState(socket, player, giveCommand.targetUsername, targetBeforeState, targetStagedState, {
+      source: "admin",
+      action: "admin_give",
+      reason: "developer_command",
+      request_id: requestId,
+      world: player.world,
+      metadata: {
+        command,
+        actor_username: player.account_username,
+        target_username: cleanAccountName(giveCommand.targetUsername),
+        item_id: giveCommand.itemId,
+        item_category: giveCommand.itemCategory,
+        amount: giveCommand.amount,
+      },
+      failure_message: "Could not save target inventory.",
+    });
+    if (!commit.ok) {
+      deny(commit.message || "Could not save target inventory.", {
+        target_username: giveCommand.targetUsername,
+        item_id: giveCommand.itemId,
+        item_category: giveCommand.itemCategory,
+        amount: giveCommand.amount,
+        reason: commit.reason || "",
+      });
       return;
     }
 
     const target = findOnlinePlayerByUsername(giveCommand.targetUsername);
-    const targetState = ensurePlayerState(giveCommand.targetUsername) || {};
+    const targetState = commit.state || ensurePlayerState(giveCommand.targetUsername) || {};
     if (target) {
       sendPlayerState(target.socket, target.player.account_username);
     }
@@ -9815,19 +12430,6 @@ async function handleDeveloperCommandRequest(socket, player, data) {
         player_data: targetState,
       }));
     }
-
-    logItemLedger(socket, player, {
-      account_username: cleanAccountName(giveCommand.targetUsername),
-      item_id: giveCommand.itemId,
-      item_category: giveCommand.itemCategory,
-      quantity_delta: giveCommand.amount,
-      balance_after: grant.count,
-      source_type: "admin_give",
-      source_id: requestId,
-      reason: "developer_command",
-      world: player.world,
-      details: { command, delivery: target ? "online" : "offline_saved" },
-    });
 
     approve(
       accountKey(giveCommand.targetUsername) === accountKey(player.account_username)
@@ -9852,7 +12454,7 @@ async function handleDeveloperCommandRequest(socket, player, data) {
         item_category: giveCommand.itemCategory,
         amount: giveCommand.amount,
         inventory_field: grant.inventoryField,
-        count: grant.count,
+        count: getInventoryCount(targetState, giveCommand.itemId, giveCommand.itemCategory),
         player_data: targetState,
       }
     );
@@ -9876,21 +12478,67 @@ async function handleDeveloperCommandRequest(socket, player, data) {
       return;
     }
 
-    const removal = removeItemFromPlayerState(
-      removeCommand.targetUsername,
-      removeCommand.itemId,
-      removeCommand.itemCategory,
-      removeCommand.amount
-    );
-    if (!removal) {
-      deny("Could not save target inventory.", { target_username: removeCommand.targetUsername, item_id: removeCommand.itemId, item_category: removeCommand.itemCategory, amount: removeCommand.amount });
+    const targetBeforeState = ensureWritablePlayerState(removeCommand.targetUsername);
+    if (!targetBeforeState) {
+      deny("Could not load target inventory.", { target_username: removeCommand.targetUsername, item_id: removeCommand.itemId, item_category: removeCommand.itemCategory, amount: removeCommand.amount });
       return;
     }
+
+    const cleanRemoveItemId = clampString(removeCommand.itemId || "");
+    const resolvedRemoveCategory = resolveInventoryCategory(cleanRemoveItemId, removeCommand.itemCategory);
+    const available = getInventoryCount(targetBeforeState, cleanRemoveItemId, resolvedRemoveCategory);
+    const requested = clampInteger(removeCommand.amount || 0, 1, MAX_ITEM_STACK);
+    const removeAmount = Math.min(available, requested);
+    const inventoryField = getInventoryFieldForCategory(resolvedRemoveCategory, cleanRemoveItemId);
+    const removal = {
+      removed: removeAmount,
+      requested,
+      available,
+      itemCategory: resolvedRemoveCategory,
+      inventoryField,
+      count: Math.max(0, available - removeAmount),
+    };
 
     if (removal.removed <= 0) {
       deny("Target does not have that item.", { target_username: removeCommand.targetUsername, item_id: removeCommand.itemId, item_category: removeCommand.itemCategory, requested: removal.requested, removed: removal.removed });
       return;
     }
+
+    const targetStagedState = cloneJson(targetBeforeState);
+    if (!spendItemFromState(targetStagedState, cleanRemoveItemId, resolvedRemoveCategory, removal.removed)) {
+      deny("Could not stage target inventory.", { target_username: removeCommand.targetUsername, item_id: removeCommand.itemId, item_category: removeCommand.itemCategory, amount: removeCommand.amount });
+      return;
+    }
+
+    const commit = await commitPlayerInventoryState(socket, player, removeCommand.targetUsername, targetBeforeState, targetStagedState, {
+      source: "admin",
+      action: "admin_remove",
+      reason: "developer_command",
+      request_id: requestId,
+      world: player.world,
+      metadata: {
+        command,
+        actor_username: player.account_username,
+        target_username: cleanAccountName(removeCommand.targetUsername),
+        item_id: removeCommand.itemId,
+        item_category: removal.itemCategory,
+        requested: removal.requested,
+        removed: removal.removed,
+      },
+      failure_message: "Could not save target inventory.",
+    });
+    if (!commit.ok) {
+      deny(commit.message || "Could not save target inventory.", {
+        target_username: removeCommand.targetUsername,
+        item_id: removeCommand.itemId,
+        item_category: removal.itemCategory,
+        requested: removal.requested,
+        removed: removal.removed,
+        reason: commit.reason || "",
+      });
+      return;
+    }
+    removal.count = getInventoryCount(commit.state, cleanRemoveItemId, removal.itemCategory);
 
     const target = findOnlinePlayerByUsername(removeCommand.targetUsername);
     if (target) {
@@ -9907,19 +12555,6 @@ async function handleDeveloperCommandRequest(socket, player, data) {
     const partialMessage = removal.removed < removal.requested
       ? ` Removed ${removal.removed}/${removal.requested} because that was all the target had.`
       : ` Removed ${removal.removed}.`;
-
-    logItemLedger(socket, player, {
-      account_username: cleanAccountName(removeCommand.targetUsername),
-      item_id: removeCommand.itemId,
-      item_category: removal.itemCategory,
-      quantity_delta: -removal.removed,
-      balance_after: removal.count,
-      source_type: "admin_remove",
-      source_id: requestId,
-      reason: "developer_command",
-      world: player.world,
-      details: { command, requested: removal.requested, delivery: target ? "online" : "offline_saved" },
-    });
 
     approve(
       target ? `Server updated ${cleanAccountName(removeCommand.targetUsername)}.${partialMessage}` : `Server updated offline account.${partialMessage}`,
@@ -9941,6 +12576,7 @@ async function handleDeveloperCommandRequest(socket, player, data) {
         inventory_field: removal.inventoryField,
         count: removal.count,
         delivery: target ? "online" : "offline_saved",
+        player_data: commit.state,
       }
     );
     return;
@@ -10029,6 +12665,111 @@ async function handleDeveloperCommandRequest(socket, player, data) {
       `Cleared ${removedCount} drops in ${commandWorld}.`,
       { target_world: commandWorld, removed_count: removedCount },
       { command_type: "clear_drops", target_world: commandWorld, removed_count: removedCount }
+    );
+    return;
+  }
+
+  if (commandName === "forceevent") {
+    const eventType = String(data.event_type || parseForceEventName(command) || "").trim().toLowerCase();
+    const commandWorld = getDeveloperCommandWorldName(player, data);
+
+    if (eventType !== SNOW_STORM_EVENT_TYPE) {
+      deny("Use: /forceevent snow_storm", { target_world: commandWorld, event_type: eventType });
+      return;
+    }
+
+    sendDeveloperApproved(socket, requestId, command, `Starting Snow Storm in ${commandWorld}...`, {
+      command_type: "force_event",
+      target_world: commandWorld,
+      event_type: eventType,
+      event_action: "start",
+      pending: true,
+    });
+
+    let result = await startSnowStormEvent(commandWorld, { reason: "developer_forceevent" });
+    if (!result.ok && result.reason === "already_active") {
+      const endResult = await endSnowStormEvent(commandWorld, { reason: "developer_forceevent_restart" });
+      if (!endResult.ok && endResult.reason !== "not_active") {
+        deny(`Snow Storm force restart failed: ${endResult.reason || "unknown"}.`, {
+          target_world: commandWorld,
+          event_type: eventType,
+          reason: endResult.reason || "",
+        });
+        return;
+      }
+      result = await startSnowStormEvent(commandWorld, { reason: "developer_forceevent_restart" });
+    }
+
+    if (!result.ok) {
+      deny(`Snow Storm force start failed: ${result.reason || "unknown"}.`, {
+        target_world: commandWorld,
+        event_type: eventType,
+        reason: result.reason || "",
+      });
+      return;
+    }
+
+    approve(
+      `Snow Storm force-started in ${commandWorld}. Visual skin active.`,
+      {
+        target_world: commandWorld,
+        event_type: eventType,
+        event_action: "start",
+        event_id: result.event_id || "",
+      },
+      {
+        command_type: "force_event",
+        target_world: commandWorld,
+        event_type: eventType,
+        event_action: "start",
+        event_id: result.event_id || "",
+      }
+    );
+    return;
+  }
+
+  if (commandName === "event" || commandName === "world_event") {
+    const parts = command.split(/\s+/).filter(Boolean);
+    const eventType = String(data.event_type || parts[1] || "").trim().toLowerCase();
+    const action = String(data.event_action || data.action || parts[2] || "start").trim().toLowerCase();
+    const commandWorld = getDeveloperCommandWorldName(player, data);
+
+    if (eventType !== SNOW_STORM_EVENT_TYPE) {
+      deny("Use: /event snow_storm start|end", { target_world: commandWorld, event_type: eventType });
+      return;
+    }
+
+    const result = action === "end"
+      ? await endSnowStormEvent(commandWorld, { reason: "developer_command" })
+      : await startSnowStormEvent(commandWorld, { reason: "developer_command" });
+
+    if (!result.ok) {
+      deny(`Snow Storm event ${action === "end" ? "end" : "start"} failed: ${result.reason || "unknown"}.`, {
+        target_world: commandWorld,
+        event_type: eventType,
+        event_action: action,
+        reason: result.reason || "",
+      });
+      return;
+    }
+
+    approve(
+      action === "end"
+        ? `Snow Storm ended in ${commandWorld}.`
+        : `Snow Storm started in ${commandWorld}. Visual skin active.`,
+      {
+        target_world: commandWorld,
+        event_type: eventType,
+        event_action: action,
+        event_id: result.event_id || "",
+      },
+      {
+        command_type: "world_event",
+        target_world: commandWorld,
+        event_type: eventType,
+        event_action: action,
+        event_id: result.event_id || "",
+      }
     );
     return;
   }
@@ -10129,6 +12870,11 @@ function createEmptyWorldState() {
     interactions: new Map(),
     world_lock: {},
     drops: new Map(),
+    active_event_type: "",
+    event_id: "",
+    event_started_at: "",
+    event_ends_at: "",
+    event_changed_tiles: [],
   };
 }
 
@@ -10171,8 +12917,75 @@ function deserializeWorldState(worldName, data) {
     state.world_lock = sanitizeWorldLockState(data.world_lock);
   }
 
+  loadWorldEventStateIntoState(state, data);
   repairEntranceGateState(state);
   return state;
+}
+
+function loadWorldEventStateIntoState(state, data) {
+  if (!state || !data || typeof data !== "object" || Array.isArray(data)) return;
+
+  const activeEvent = data.active_event && typeof data.active_event === "object" && !Array.isArray(data.active_event)
+    ? data.active_event
+    : {};
+  const eventType = clampString(data.active_event_type || activeEvent.type || activeEvent.event_type || "");
+  if (eventType !== SNOW_STORM_EVENT_TYPE) return;
+
+  const eventId = clampString(data.event_id || activeEvent.event_id || "");
+  const startedAt = normalizeEventTimestamp(data.event_started_at || activeEvent.started_at || activeEvent.event_started_at || "");
+  const endsAt = normalizeEventTimestamp(data.event_ends_at || activeEvent.ends_at || activeEvent.event_ends_at || "");
+  const rawChangedTiles = Array.isArray(data.event_changed_tiles)
+    ? data.event_changed_tiles
+    : (Array.isArray(activeEvent.changed_tiles) ? activeEvent.changed_tiles : []);
+
+  state.active_event_type = eventType;
+  state.event_id = eventId || makeAuditId("event");
+  state.event_started_at = startedAt || new Date().toISOString();
+  state.event_ends_at = endsAt || new Date(Date.now() + SNOW_STORM_EVENT_DURATION_MS).toISOString();
+  state.event_changed_tiles = rawChangedTiles
+    .map((entry) => normalizeWorldEventTileEntry(entry, state.event_id))
+    .filter(Boolean);
+}
+
+function normalizeEventTimestamp(value) {
+  const raw = String(value || "").trim();
+  if (raw === "") return "";
+  const time = Date.parse(raw);
+  if (!Number.isFinite(time)) return "";
+  return new Date(time).toISOString();
+}
+
+function normalizeWorldEventTileEntry(rawEntry, fallbackEventId = "") {
+  if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) return null;
+
+  const x = Number(rawEntry.x);
+  const y = Number(rawEntry.y);
+  if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+  const gridX = Math.trunc(x);
+  const gridY = Math.trunc(y);
+  if (!isGridInWorld(gridX, gridY)) return null;
+
+  const eventBlockId = clampString(rawEntry.event_block_id || rawEntry.block_type || "");
+  if (eventBlockId === "" || !ItemDatabase.hasItem(eventBlockId) || resolveInventoryCategory(eventBlockId) !== "block") {
+    return null;
+  }
+
+  const originalBlockId = clampString(rawEntry.original_block_id || rawEntry.original_block_type || "");
+  if (originalBlockId !== "" && (!ItemDatabase.hasItem(originalBlockId) || resolveInventoryCategory(originalBlockId) !== "block")) {
+    return null;
+  }
+
+  return {
+    x: gridX,
+    y: gridY,
+    layer: "foreground",
+    original_block_id: originalBlockId,
+    event_block_id: eventBlockId,
+    event_id: clampString(rawEntry.event_id || fallbackEventId || ""),
+    changed_at: normalizeEventTimestamp(rawEntry.changed_at || "") || new Date().toISOString(),
+    source: clampString(rawEntry.source || ""),
+    reason: clampString(rawEntry.reason || ""),
+  };
 }
 
 function loadGridArrayIntoMap(target, rawEntries, normalizeEntry) {
@@ -10213,6 +13026,28 @@ function normalizeBlockEntry(rawEntry) {
 
   if (Object.prototype.hasOwnProperty.call(rawEntry, "sign_text")) {
     entry.sign_text = String(rawEntry.sign_text || "").slice(0, MAX_SIGN_TEXT_LENGTH);
+  }
+
+  if (Object.prototype.hasOwnProperty.call(rawEntry, "toggle_on")) {
+    entry.toggle_on = Boolean(rawEntry.toggle_on);
+  }
+
+  if (isDoorBlockType(blockType) && Object.prototype.hasOwnProperty.call(rawEntry, "door_id")) {
+    entry.door_id = cleanDoorId(rawEntry.door_id);
+  }
+
+  if (isDoorBlockType(blockType) && (Object.prototype.hasOwnProperty.call(rawEntry, "door_destination") || Object.prototype.hasOwnProperty.call(rawEntry, "destination"))) {
+    const parsedDestination = parseDoorDestination(rawEntry.door_destination || rawEntry.destination || "", rawEntry.world || "");
+    entry.door_destination = parsedDestination.destination;
+    entry.door_target_world = cleanWorld(rawEntry.door_target_world || rawEntry.target_world || parsedDestination.target_world);
+    entry.door_target_id = cleanDoorId(rawEntry.door_target_id || rawEntry.target_door_id || parsedDestination.target_door_id);
+  } else if (isDoorBlockType(blockType)) {
+    if (Object.prototype.hasOwnProperty.call(rawEntry, "door_target_world") || Object.prototype.hasOwnProperty.call(rawEntry, "target_world")) {
+      entry.door_target_world = cleanWorld(rawEntry.door_target_world || rawEntry.target_world || "");
+    }
+    if (Object.prototype.hasOwnProperty.call(rawEntry, "door_target_id") || Object.prototype.hasOwnProperty.call(rawEntry, "target_door_id")) {
+      entry.door_target_id = cleanDoorId(rawEntry.door_target_id || rawEntry.target_door_id || "");
+    }
   }
 
   return entry;
@@ -10293,6 +13128,27 @@ function loadInteractionsIntoMap(target, rawEntries, worldName = "") {
         x: gridX,
         y: gridY,
         locked: Boolean(rawEntry.locked),
+        world: cleanWorld(rawEntry.world || ""),
+      });
+    } else if (action === "door_state") {
+      const parsedDestination = parseDoorDestination(rawEntry.destination || rawEntry.door_destination || "", rawEntry.world || worldName);
+      target.set(gridKey(gridX, gridY), {
+        action,
+        x: gridX,
+        y: gridY,
+        locked: Boolean(rawEntry.locked),
+        world: cleanWorld(rawEntry.world || worldName),
+        door_id: cleanDoorId(rawEntry.door_id || ""),
+        destination: parsedDestination.destination,
+        target_world: cleanWorld(rawEntry.target_world || rawEntry.door_target_world || parsedDestination.target_world),
+        target_door_id: cleanDoorId(rawEntry.target_door_id || rawEntry.door_target_id || parsedDestination.target_door_id),
+      });
+    } else if (action === "ceiling_lamp_state") {
+      target.set(gridKey(gridX, gridY), {
+        action,
+        x: gridX,
+        y: gridY,
+        on: Boolean(rawEntry.on ?? rawEntry.toggle_on),
         world: cleanWorld(rawEntry.world || ""),
       });
     } else if (action === "sign_text") {
@@ -10414,7 +13270,7 @@ function applyBlockUpdateToWorldState(worldName, update) {
       block_type: update.block_type,
     });
     removed.delete(key);
-    if (update.block_type !== "wooden_entrance" && update.block_type !== "sign") {
+    if (!isPersistentInteractionBlockType(update.block_type)) {
       state.interactions.delete(key);
     }
     return;
@@ -10430,7 +13286,7 @@ function applyBlockUpdateToWorldState(worldName, update) {
       block_type: update.block_type || "",
     });
 
-    if (update.block_type === "world_lock" && isActiveWorldLockGrid(state, update.x, update.y)) {
+    if (isWorldLockBlockType(update.block_type) && isActiveWorldLockGrid(state, update.x, update.y)) {
       state.world_lock = {};
     }
   }
@@ -10532,14 +13388,13 @@ function repairEntranceGateState(state) {
 function isProtectedEntranceSupportBlock(blockType) {
   const clean = clampString(blockType || "");
   return (
-    clean === "world_lock" ||
+    isWorldLockBlockType(clean) ||
     clean === SAFE_BLOCK_TYPE ||
     clean === FISH_MONGER_BLOCK_TYPE ||
     isVendBlockType(clean) ||
     clean === "crafting_station" ||
     clean === "furnace" ||
-    clean === "wooden_entrance" ||
-    clean === "sign"
+    isPersistentInteractionBlockType(clean)
   );
 }
 
@@ -10696,15 +13551,30 @@ function applyEntranceGateMoveToWorldState(worldName, state, oldGate, newGate) {
   return updates;
 }
 
-function handleEntranceGateMoveUpdate(socket, player, worldName, update) {
+async function handleEntranceGateMoveUpdate(socket, player, worldName, update, requestId = "") {
   const validation = validateEntranceGateMove(socket, player, worldName, update);
   if (!validation.ok) return false;
 
   const moveTransactionId = makeAuditId("gate_move");
-  const spendResult = spendServerInventoryCost(player.account_username, {
+  const spendResult = await spendServerInventoryCost(player.account_username, {
     item_id: "entrance_mover",
     item_category: "tool",
     amount: 1,
+  }, {
+    socket,
+    player,
+    source: "world_interaction",
+    action: "entrance_gate_move",
+    reason: "gate_move_cost",
+    request_id: requestId,
+    world: worldName,
+    metadata: {
+      transaction_id: moveTransactionId,
+      old_x: validation.oldGate.x,
+      old_y: validation.oldGate.y,
+      new_x: update.x,
+      new_y: update.y,
+    },
   });
   if (!spendResult.ok) {
     sendActionRejected(socket, "world_interaction_update", spendResult.message);
@@ -10724,7 +13594,7 @@ function handleEntranceGateMoveUpdate(socket, player, worldName, update) {
     old_y: validation.oldGate.y,
     new_x: update.x,
     new_y: update.y,
-  });
+  }, { skipPostgres: spendResult.postgres_committed });
   logWorldChange(socket, player, {
     source_type: "entrance_gate_move",
     source_id: moveTransactionId,
@@ -10772,6 +13642,23 @@ function handleEntranceGateMoveUpdate(socket, player, worldName, update) {
 function sanitizeInteractionUpdate(data, worldName) {
   const action = String(data.action || "").trim();
 
+  if (action === "springboard_animation") {
+    const x = Number(data.x);
+    const y = Number(data.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const gridX = Math.trunc(x);
+    const gridY = Math.trunc(y);
+    if (!isGridInWorld(gridX, gridY)) return null;
+
+    return {
+      type: "world_interaction_update",
+      world: cleanWorld(worldName),
+      action,
+      x: gridX,
+      y: gridY,
+    };
+  }
+
   if (action === "entrance_gate_move") {
     const x = Number(data.x);
     const y = Number(data.y);
@@ -10810,6 +13697,47 @@ function sanitizeInteractionUpdate(data, worldName) {
       x: gridX,
       y: gridY,
       locked: Boolean(data.locked),
+    };
+  }
+
+  if (action === "door_state") {
+    const x = Number(data.x);
+    const y = Number(data.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const gridX = Math.trunc(x);
+    const gridY = Math.trunc(y);
+    if (!isGridInWorld(gridX, gridY)) return null;
+    const parsedDestination = parseDoorDestination(data.destination || data.door_destination || "", worldName);
+
+    return {
+      type: "world_interaction_update",
+      world: cleanWorld(worldName),
+      action,
+      x: gridX,
+      y: gridY,
+      door_id: cleanDoorId(data.door_id || ""),
+      destination: parsedDestination.destination,
+      target_world: parsedDestination.target_world,
+      target_door_id: parsedDestination.target_door_id,
+      locked: Boolean(data.locked),
+    };
+  }
+
+  if (action === "ceiling_lamp_state") {
+    const x = Number(data.x);
+    const y = Number(data.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const gridX = Math.trunc(x);
+    const gridY = Math.trunc(y);
+    if (!isGridInWorld(gridX, gridY)) return null;
+
+    return {
+      type: "world_interaction_update",
+      world: cleanWorld(worldName),
+      action,
+      x: gridX,
+      y: gridY,
+      on: Boolean(data.on),
     };
   }
 
@@ -10852,6 +13780,9 @@ function sanitizeWorldLockState(state) {
   const lockGridX = Math.trunc(Number(rawState.lock_grid_x) || WORLD_LOCK_GRID_SENTINEL);
   const lockGridY = Math.trunc(Number(rawState.lock_grid_y) || WORLD_LOCK_GRID_SENTINEL);
   const ownerName = cleanAccountName(rawState.owner_name || "").toUpperCase();
+  const lockBlockType = isLocked
+    ? normalizeWorldLockBlockType(rawState.lock_block_type || rawState.lock_type || WORLD_LOCK_BLOCK_TYPE)
+    : WORLD_LOCK_BLOCK_TYPE;
   const allowedSet = new Set();
   const playerRoles = {};
 
@@ -10885,6 +13816,8 @@ function sanitizeWorldLockState(state) {
   return {
     is_locked: isLocked,
     owner_name: ownerName,
+    lock_block_type: lockBlockType,
+    lock_type: lockBlockType,
     lock_grid_x: lockGridX,
     lock_grid_y: lockGridY,
     allowed_players: cleanAllowedPlayers,
@@ -10907,6 +13840,43 @@ function applyInteractionUpdateToWorldState(worldName, update) {
       x: update.x,
       y: update.y,
       locked: update.locked,
+      world: cleanWorld(worldName),
+    });
+    return;
+  }
+
+  if (update.action === "door_state") {
+    const key = interactionKey(update);
+    const block = state.foreground.get(key);
+    const hasDoorLink = cleanDoorId(update.door_id || "") !== "" || cleanDoorId(update.target_door_id || "") !== "";
+    const keepLocked = isDoorBlockType(block?.block_type || "") && Boolean(update.locked);
+
+    if (!hasDoorLink && !keepLocked) {
+      state.interactions.delete(key);
+      return;
+    }
+
+    state.interactions.set(key, {
+      action: update.action,
+      x: update.x,
+      y: update.y,
+      locked: Boolean(update.locked),
+      world: cleanWorld(worldName),
+      block_type: clampString(update.block_type || block?.block_type || ""),
+      door_id: cleanDoorId(update.door_id || ""),
+      destination: cleanDoorDestination(update.destination || ""),
+      target_world: cleanWorld(update.target_world || worldName),
+      target_door_id: cleanDoorId(update.target_door_id || ""),
+    });
+    return;
+  }
+
+  if (update.action === "ceiling_lamp_state") {
+    state.interactions.set(interactionKey(update), {
+      action: update.action,
+      x: update.x,
+      y: update.y,
+      on: Boolean(update.on),
       world: cleanWorld(worldName),
     });
     return;
@@ -11370,17 +14340,34 @@ function isPlayerNearDrop(player, drop) {
   return Math.hypot(player.x - drop.x, player.y - drop.y) <= MAX_PICKUP_DISTANCE_PIXELS;
 }
 
-function getForegroundBlocksForState(state) {
+function getForegroundBlocksForState(state, worldName = "") {
   const blocks = [];
 
   for (const block of state.foreground.values()) {
     const entry = { ...block };
     const interaction = state.interactions.get(gridKey(block.x, block.y));
+    const blockType = clampString(entry.block_type || "");
+    if (!isDoorBlockType(blockType)) {
+      delete entry.door_id;
+      delete entry.door_destination;
+      delete entry.door_target_world;
+      delete entry.door_target_id;
+    }
 
-    if (interaction && interaction.action === "wooden_entrance_state") {
+    if (interaction && interaction.action === "wooden_entrance_state" && isEntranceBlockType(blockType)) {
       entry.entrance_locked = Boolean(interaction.locked);
-    } else if (interaction && interaction.action === "sign_text") {
+    } else if (interaction && interaction.action === "door_state" && isEntranceBlockType(blockType)) {
+      entry.entrance_locked = Boolean(interaction.locked);
+    } else if (interaction && interaction.action === "door_state" && isDoorBlockType(blockType)) {
+      entry.entrance_locked = Boolean(interaction.locked);
+      entry.door_id = cleanDoorId(interaction.door_id || "");
+      entry.door_destination = cleanDoorDestination(interaction.destination || interaction.door_destination || "");
+      entry.door_target_world = cleanWorld(interaction.target_world || interaction.door_target_world || worldName);
+      entry.door_target_id = cleanDoorId(interaction.target_door_id || interaction.door_target_id || "");
+    } else if (interaction && interaction.action === "sign_text" && isSignBlockType(blockType)) {
       entry.sign_text = String(interaction.text || "");
+    } else if (interaction && interaction.action === "ceiling_lamp_state" && isToggleBlockType(blockType)) {
+      entry.toggle_on = Boolean(interaction.on);
     }
 
     blocks.push(entry);
@@ -11397,7 +14384,7 @@ function serializeWorldState(worldName) {
     world_name: cleanWorld(worldName),
     saved_at: new Date().toISOString(),
     cleared: Boolean(state.cleared),
-    blocks: getForegroundBlocksForState(state),
+    blocks: getForegroundBlocksForState(state, worldName),
     background_blocks: Array.from(state.background.values()),
     removed_foreground: state.cleared ? [] : Array.from(state.removed_foreground.values()),
     removed_background: state.cleared ? [] : Array.from(state.removed_background.values()),
@@ -11405,6 +14392,113 @@ function serializeWorldState(worldName) {
     interactions: Array.from(state.interactions.values()),
     world_lock: state.world_lock || {},
     drops: Array.from(state.drops.values()),
+    active_event_type: state.active_event_type || "",
+    event_id: state.event_id || "",
+    event_started_at: state.event_started_at || "",
+    event_ends_at: state.event_ends_at || "",
+    event_changed_tiles: Array.isArray(state.event_changed_tiles) ? state.event_changed_tiles.map((entry) => ({ ...entry })) : [],
+    active_event: buildActiveWorldEventSnapshot(state),
+  };
+}
+
+function getWorldBlockTypeAt(worldName, x, y, layer = "foreground") {
+  const state = ensureWorldState(worldName);
+  const target = String(layer || "").toLowerCase() === "background" ? state.background : state.foreground;
+  const block = target.get(gridKey(x, y));
+  return clampString(block?.block_type || "");
+}
+
+function getWorldObjectJournalType(update = {}) {
+  const action = clampString(update.action || "", 80).toLowerCase();
+  if (action.includes("vend")) return "vending";
+  if (action.includes("safe")) return "safe";
+  if (action === "world_lock_state" || action.includes("world_lock")) return "world_lock";
+  if (action === "sign_text" || action.includes("sign")) return "sign";
+  if (action === "door_state" || action.includes("door")) return "door";
+  if (action === "wooden_entrance_state" || action.includes("entrance")) return "wooden_entrance";
+  if (action.includes("lamp") || action.includes("toggle")) return "toggle";
+  return "interaction";
+}
+
+function getWorldObjectJournalId(worldName, update = {}, objectType = "") {
+  const explicit = clampString(update.object_id || "");
+  if (explicit !== "") return explicit;
+
+  const cleanType = clampString(objectType || getWorldObjectJournalType(update), 80) || "interaction";
+  const doorId = cleanDoorId(update.door_id || "");
+  if (doorId !== "") return `door:${doorId}`;
+  if (cleanType === "world_lock") return `${cleanWorld(worldName)}:world_lock`;
+
+  const x = Number.isFinite(Number(update.x)) ? Math.trunc(Number(update.x)) : 0;
+  const y = Number.isFinite(Number(update.y)) ? Math.trunc(Number(update.y)) : 0;
+  return `${cleanType}:${x}:${y}`;
+}
+
+function getWorldObjectJournalData(worldName, update = {}) {
+  const state = ensureWorldState(worldName);
+  const action = clampString(update.action || "", 80).toLowerCase();
+
+  if (action === "world_lock_state") {
+    return cloneJson(state.world_lock || {});
+  }
+
+  const key = gridKey(update.x, update.y);
+  const interaction = state.interactions.get(key);
+  if (!interaction) return {};
+
+  const block = state.foreground.get(key);
+  return cloneJson({
+    block_type: clampString(update.block_type || block?.block_type || interaction.block_type || ""),
+    ...interaction,
+  });
+}
+
+function buildWorldInteractionDetails(update = {}) {
+  const interactionDetails = {};
+  if (update.action === "world_lock_state" && update.state) {
+    interactionDetails.is_locked = Boolean(update.state.is_locked);
+    interactionDetails.owner_name = cleanName(update.state.owner_name || "");
+    interactionDetails.lock_grid_x = Number(update.state.lock_grid_x);
+    interactionDetails.lock_grid_y = Number(update.state.lock_grid_y);
+    interactionDetails.allowed_count = Array.isArray(update.state.allowed_players) ? update.state.allowed_players.length : 0;
+    interactionDetails.public_build = Boolean(update.state.public_build);
+  } else if (update.action === "sign_text") {
+    interactionDetails.text_length = String(update.text || "").length;
+  } else if (update.action === "wooden_entrance_state") {
+    interactionDetails.locked = Boolean(update.locked);
+  } else if (update.action === "door_state") {
+    interactionDetails.door_id = update.door_id;
+    interactionDetails.target_world = update.target_world;
+    interactionDetails.target_door_id = update.target_door_id;
+    interactionDetails.locked = Boolean(update.locked);
+  } else if (update.action === "ceiling_lamp_state") {
+    interactionDetails.on = Boolean(update.on);
+  } else if (String(update.action || "").includes("vend")) {
+    interactionDetails.vending_action = String(update.action || "");
+  } else if (String(update.action || "").includes("safe")) {
+    interactionDetails.safe_action = String(update.action || "");
+  }
+  return interactionDetails;
+}
+
+function buildWorldObjectChangeEntry(socket, player, worldName, update = {}, oldData = {}, newData = {}, sourceId = "", details = {}) {
+  const objectType = getWorldObjectJournalType(update);
+  return {
+    ...getAuditActor(socket, player),
+    source_type: String(update.source_type || "world_interaction_update"),
+    source_id: String(sourceId || update.source_id || makeAuditId("interact")),
+    request_id: String(update.request_id || ""),
+    world: cleanWorld(worldName),
+    action: String(update.action || "update"),
+    layer: "object",
+    x: Number.isFinite(Number(update.x)) ? Math.trunc(Number(update.x)) : null,
+    y: Number.isFinite(Number(update.y)) ? Math.trunc(Number(update.y)) : null,
+    block_type: clampString(update.block_type || oldData?.block_type || newData?.block_type || ""),
+    object_type: objectType,
+    object_id: getWorldObjectJournalId(worldName, update, objectType),
+    old_data: cloneJson(oldData || {}),
+    new_data: cloneJson(newData || {}),
+    details,
   };
 }
 
@@ -11414,7 +14508,7 @@ function buildWorldStateMessage(worldName, extraMessageData = {}) {
     type: "world_state",
     world: cleanWorld(worldName),
     cleared: Boolean(state.cleared),
-    foreground: getForegroundBlocksForState(state),
+    foreground: getForegroundBlocksForState(state, worldName),
     background: Array.from(state.background.values()),
     removed_foreground: state.cleared ? [] : Array.from(state.removed_foreground.values()),
     removed_background: state.cleared ? [] : Array.from(state.removed_background.values()),
@@ -11422,7 +14516,33 @@ function buildWorldStateMessage(worldName, extraMessageData = {}) {
     interactions: Array.from(state.interactions.values()),
     world_lock: state.world_lock || {},
     drops: Array.from(state.drops.values()),
+    active_event_type: state.active_event_type || "",
+    event_id: state.event_id || "",
+    event_started_at: state.event_started_at || "",
+    event_ends_at: state.event_ends_at || "",
+    event_remaining_ms: getActiveWorldEventRemainingMs(state),
+    active_event: buildActiveWorldEventSnapshot(state),
     ...extraMessageData,
+  };
+}
+
+function getActiveWorldEventRemainingMs(state) {
+  if (!state || state.active_event_type !== SNOW_STORM_EVENT_TYPE) return 0;
+  const endsAt = Date.parse(state.event_ends_at || "");
+  if (!Number.isFinite(endsAt)) return 0;
+  return Math.max(0, endsAt - Date.now());
+}
+
+function buildActiveWorldEventSnapshot(state) {
+  if (!state || state.active_event_type !== SNOW_STORM_EVENT_TYPE) return {};
+  return {
+    type: state.active_event_type,
+    event_type: state.active_event_type,
+    event_id: state.event_id || "",
+    started_at: state.event_started_at || "",
+    ends_at: state.event_ends_at || "",
+    remaining_ms: getActiveWorldEventRemainingMs(state),
+    changed_tile_count: Array.isArray(state.event_changed_tiles) ? state.event_changed_tiles.length : 0,
   };
 }
 
@@ -11440,9 +14560,1012 @@ function queueWorldSave(worldName) {
 function saveWorldState(worldName) {
   const clean = cleanWorld(worldName);
   const serialized = serializeWorldState(clean);
-  writeJsonFileAtomic(getWorldSavePath(clean), serialized);
+  writeWorldStateJsonBackup(clean, serialized);
   if (postgresStore.isReady()) {
     trackPersistenceWrite(postgresStore.saveWorldState(clean, serialized), `world state ${clean}`);
+  }
+}
+
+async function commitWorldStateWithBlockChanges(worldName, changes = []) {
+  const clean = cleanWorld(worldName);
+  const serialized = serializeWorldState(clean);
+
+  if (isPostgresAuthoritativeReady()) {
+    const result = await postgresStore.saveWorldStateWithWorldChanges(clean, serialized, changes);
+    if (!result || !result.ok) {
+      return {
+        ok: false,
+        reason: result?.reason || "postgres_failed",
+        message: result?.reason === "postgres_unavailable"
+          ? "PostgreSQL is not ready."
+          : "PostgreSQL rejected the world update.",
+      };
+    }
+    writeWorldStateJsonBackup(clean, serialized);
+    return { ok: true, postgres_committed: true, serialized };
+  }
+
+  if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE) {
+    return { ok: false, reason: "postgres_unavailable", message: "PostgreSQL is not ready." };
+  }
+
+  saveWorldState(clean);
+  return { ok: true, postgres_committed: false, serialized };
+}
+
+function clearWorldEventState(state) {
+  if (!state) return;
+  state.active_event_type = "";
+  state.event_id = "";
+  state.event_started_at = "";
+  state.event_ends_at = "";
+  state.event_changed_tiles = [];
+}
+
+function hasActiveSnowStormEvent(state) {
+  if (!state || state.active_event_type !== SNOW_STORM_EVENT_TYPE) return false;
+  const endsAt = Date.parse(state.event_ends_at || "");
+  return Number.isFinite(endsAt) && endsAt > Date.now();
+}
+
+function buildWorldEventStartedMessage(worldName, state) {
+  return {
+    type: "event_started",
+    world: cleanWorld(worldName),
+    event_type: SNOW_STORM_EVENT_TYPE,
+    event_name: SNOW_STORM_EVENT_TYPE,
+    event_id: state?.event_id || "",
+    started_at: state?.event_started_at || "",
+    ends_at: state?.event_ends_at || "",
+    duration_ms: SNOW_STORM_EVENT_DURATION_MS,
+    remaining_ms: getActiveWorldEventRemainingMs(state),
+    message: SNOW_STORM_SYSTEM_MESSAGE,
+  };
+}
+
+function sendActiveWorldEventState(socket, worldName) {
+  const state = ensureWorldState(worldName);
+  if (!hasActiveSnowStormEvent(state)) return;
+  sendJson(socket, buildWorldEventStartedMessage(worldName, state));
+}
+
+function buildWorldEventEndedMessage(worldName, eventId = "", endedAt = new Date().toISOString()) {
+  return {
+    type: "event_ended",
+    world: cleanWorld(worldName),
+    event_type: SNOW_STORM_EVENT_TYPE,
+    event_name: SNOW_STORM_EVENT_TYPE,
+    event_id: eventId,
+    ended_at: endedAt,
+  };
+}
+
+function broadcastEventSystemMessage(worldName, eventId, message) {
+  broadcastToWorld(worldName, {
+    type: "event_system_message",
+    world: cleanWorld(worldName),
+    event_type: SNOW_STORM_EVENT_TYPE,
+    event_id: eventId || "",
+    message,
+  });
+  broadcastSystemToWorld(worldName, message);
+}
+
+function broadcastEventTileUpdates(worldName, eventId, phase, updates = []) {
+  const clean = cleanWorld(worldName);
+  const safeUpdates = Array.isArray(updates) ? updates : [];
+  const batchCount = Math.ceil(safeUpdates.length / SNOW_STORM_EVENT_TILE_BATCH_SIZE);
+  for (let index = 0; index < safeUpdates.length; index += SNOW_STORM_EVENT_TILE_BATCH_SIZE) {
+    const batch = safeUpdates.slice(index, index + SNOW_STORM_EVENT_TILE_BATCH_SIZE);
+    broadcastToWorld(clean, {
+      type: "event_tile_updates",
+      world: clean,
+      event_type: SNOW_STORM_EVENT_TYPE,
+      event_id: eventId || "",
+      phase,
+      batch_index: Math.floor(index / SNOW_STORM_EVENT_TILE_BATCH_SIZE),
+      batch_count: batchCount,
+      updates: batch,
+    });
+  }
+}
+
+function scheduleWorldEventEnd(worldName) {
+  const clean = cleanWorld(worldName);
+  const existing = worldEventTimers.get(clean);
+  if (existing) clearTimeout(existing);
+  worldEventTimers.delete(clean);
+
+  const state = ensureWorldState(clean);
+  if (state.active_event_type !== SNOW_STORM_EVENT_TYPE) return;
+
+  const endsAt = Date.parse(state.event_ends_at || "");
+  if (!Number.isFinite(endsAt)) return;
+  const timer = setTimeout(() => {
+    worldEventTimers.delete(clean);
+    endSnowStormEvent(clean, { reason: "timer" }).catch((error) => {
+      console.warn("[world_event] snow_storm end failed:", error.message);
+    });
+  }, Math.max(0, endsAt - Date.now()));
+  if (typeof timer.unref === "function") timer.unref();
+  worldEventTimers.set(clean, timer);
+}
+
+async function recoverWorldEventsAfterLoad() {
+  for (const [worldName, state] of worldStates.entries()) {
+    if (!state || state.active_event_type !== SNOW_STORM_EVENT_TYPE) continue;
+    const endsAt = Date.parse(state.event_ends_at || "");
+    if (!Number.isFinite(endsAt) || endsAt <= Date.now()) {
+      await endSnowStormEvent(worldName, { reason: "startup_expired", broadcast: false });
+    } else {
+      scheduleWorldEventEnd(worldName);
+    }
+  }
+}
+
+function startWorldEventRandomScheduler() {
+  if (!SNOW_STORM_RANDOM_EVENTS_ENABLED || worldEventRandomTimer) return;
+  worldEventRandomTimer = setInterval(() => {
+    tryStartRandomSnowStormEvent().catch((error) => {
+      console.warn("[world_event] random snow_storm start failed:", error.message);
+    });
+  }, SNOW_STORM_RANDOM_INTERVAL_MS);
+  if (typeof worldEventRandomTimer.unref === "function") worldEventRandomTimer.unref();
+}
+
+function getActiveWorldNamesForEvents() {
+  const names = new Set();
+  for (const player of players.values()) {
+    if (!player?.authenticated || !player.joined_world) continue;
+    const worldName = cleanWorld(player.world || player.current_world || "");
+    if (worldName !== "") names.add(worldName);
+  }
+  return Array.from(names);
+}
+
+async function tryStartRandomSnowStormEvent() {
+  const activeWorlds = getActiveWorldNamesForEvents()
+    .filter((worldName) => !hasActiveSnowStormEvent(ensureWorldState(worldName)));
+  if (activeWorlds.length === 0) return { ok: false, reason: "no_active_world" };
+  if (!randomChance(SNOW_STORM_RANDOM_CHANCE)) return { ok: false, reason: "chance_missed" };
+
+  const worldName = activeWorlds[crypto.randomInt(0, activeWorlds.length)];
+  return startSnowStormEvent(worldName, { reason: "random" });
+}
+
+function makeDeterministicRng(seedText) {
+  const digest = crypto.createHash("sha256").update(String(seedText || "")).digest();
+  let state = digest.readUInt32LE(0) || 0x6d2b79f5;
+  return () => {
+    state = (state + 0x6d2b79f5) >>> 0;
+    let value = state;
+    value = Math.imul(value ^ (value >>> 15), value | 1);
+    value ^= value + Math.imul(value ^ (value >>> 7), value | 61);
+    return ((value ^ (value >>> 14)) >>> 0) / 4294967296;
+  };
+}
+
+function deterministicInt(rng, min, max) {
+  const safeMin = Math.trunc(Number(min) || 0);
+  const safeMax = Math.trunc(Number(max) || safeMin);
+  if (safeMax <= safeMin) return safeMin;
+  return safeMin + Math.floor(rng() * (safeMax - safeMin + 1));
+}
+
+function serverWorldGenerationSeed(worldName) {
+  const source = `PIXELMANIA_WORLD_${cleanWorld(worldName).toUpperCase() || "START"}`;
+  let value = 173;
+  for (let i = 0; i < source.length; i += 1) {
+    value = (value * 131 + source.charCodeAt(i)) % 2147483647;
+  }
+  return Math.max(1, value);
+}
+
+function serverCellNoise(generationSeed, x, y, salt = 0) {
+  const seedOffset = (generationSeed % 1000003) * 0.0001;
+  const value = Math.sin((Number(x) || 0) * 12.9898 + (Number(y) || 0) * 78.233 + (Number(salt) || 0) * 37.719 + seedOffset) * 43758.5453123;
+  return value - Math.floor(value);
+}
+
+function serverGenerationMinSurfaceY() {
+  return Math.max(3, (BEDROCK_START_Y - 15) + SERVER_TERRAIN_SURFACE_VERTICAL_OFFSET - SERVER_TERRAIN_EXTRA_HILL_RANGE);
+}
+
+function serverGenerationMaxSurfaceY() {
+  return Math.max(serverGenerationMinSurfaceY(), (BEDROCK_START_Y - 8) + SERVER_TERRAIN_SURFACE_VERTICAL_OFFSET + SERVER_TERRAIN_EXTRA_HILL_RANGE);
+}
+
+function serverGenerationSurfaceBaseY() {
+  return clampInteger((BEDROCK_START_Y - 9) + SERVER_TERRAIN_SURFACE_VERTICAL_OFFSET, serverGenerationMinSurfaceY(), serverGenerationMaxSurfaceY());
+}
+
+function isServerSpawnSafeColumn(x) {
+  return Math.abs(Math.trunc(Number(x) || 0) - 10) <= 3;
+}
+
+function buildServerTerrainSurface(worldName) {
+  const generationSeed = serverWorldGenerationSeed(worldName);
+  const baseSurfaceY = serverGenerationSurfaceBaseY();
+  const minSurfaceY = serverGenerationMinSurfaceY();
+  const maxSurfaceY = serverGenerationMaxSurfaceY();
+  const phaseA = serverCellNoise(generationSeed, 1, 1, 5001) * Math.PI * 2;
+  const phaseB = serverCellNoise(generationSeed, 2, 1, 5002) * Math.PI * 2;
+  const phaseC = serverCellNoise(generationSeed, 3, 1, 5003) * Math.PI * 2;
+  const surface = new Map();
+
+  for (let x = 0; x < WORLD_WIDTH; x += 1) {
+    if (isServerSpawnSafeColumn(x)) {
+      surface.set(x, baseSurfaceY);
+      continue;
+    }
+
+    const drift = Math.round((serverCellNoise(generationSeed, Math.floor(x / 6), 0, 5004) - 0.5) * 4);
+    const wave1 = Math.sin(x * 0.070 + phaseA) * 4.8;
+    const wave2 = Math.sin(x * 0.145 + phaseB) * 2.4;
+    const wave3 = Math.sin(x * 0.310 + phaseC) * 1.2;
+    surface.set(x, clampInteger(Math.round(baseSurfaceY + wave1 + wave2 + wave3 + drift), minSurfaceY, maxSurfaceY));
+  }
+
+  for (let pass = 0; pass < 3; pass += 1) {
+    for (let x = 1; x < WORLD_WIDTH - 1; x += 1) {
+      if (isServerSpawnSafeColumn(x)) {
+        surface.set(x, baseSurfaceY);
+        continue;
+      }
+
+      let current = surface.get(x);
+      const left = surface.get(x - 1);
+      const right = surface.get(x + 1);
+      if (current < left - 1) current = left - 1;
+      if (current > left + 1) current = left + 1;
+      if (current < right - 1) current = right - 1;
+      if (current > right + 1) current = right + 1;
+      surface.set(x, clampInteger(current, minSurfaceY, maxSurfaceY));
+    }
+  }
+
+  return { generationSeed, surface };
+}
+
+function serverSurfaceYAt(surface, x) {
+  const safeX = clampInteger(x, 0, WORLD_WIDTH - 1);
+  return surface.has(safeX) ? surface.get(safeX) : serverGenerationSurfaceBaseY();
+}
+
+function serverPickWeightedBlock(generationSeed, x, y, options) {
+  const total = options.reduce((sum, option) => sum + Math.max(0, Number(option.weight) || 0), 0);
+  if (total <= 0) return "dirt";
+  let roll = serverCellNoise(generationSeed, x, y, 9047) * total;
+  for (const option of options) {
+    roll -= Math.max(0, Number(option.weight) || 0);
+    if (roll <= 0) return option.type || "dirt";
+  }
+  return options[options.length - 1]?.type || "dirt";
+}
+
+function isServerBottomLavaStoneLayer(y) {
+  const depth = BEDROCK_START_Y - Math.trunc(Number(y) || 0);
+  return depth >= 1 && depth <= SERVER_BOTTOM_LAVA_STONE_HEIGHT;
+}
+
+function serverShallowCaveAxis(generationSeed, x, surfaceY) {
+  return surfaceY + 13 + Math.round((serverCellNoise(generationSeed, x, surfaceY, 801) - 0.5) * 5.6 + (serverCellNoise(generationSeed, surfaceY, x, 802) - 0.5) * 4.0);
+}
+
+function serverDeepCaveAxis(generationSeed, x, surfaceY) {
+  return surfaceY + 23 + Math.round((serverCellNoise(generationSeed, x, surfaceY, 803) - 0.5) * 7.6 + (serverCellNoise(generationSeed, surfaceY, x, 804) - 0.5) * 3.6);
+}
+
+function shouldServerGenerateCavePocket(generationSeed, x, y, surfaceY) {
+  const depth = y - surfaceY;
+  if (depth < SERVER_CAVE_MIN_DEPTH) return false;
+  if (isServerSpawnSafeColumn(x)) return false;
+  if (y >= BEDROCK_START_Y - SERVER_CAVE_BOTTOM_SOLID_PADDING) return false;
+  if (isServerBottomLavaStoneLayer(y)) return false;
+
+  if (depth >= SERVER_SHALLOW_CAVE_START_DEPTH) {
+    const axis = serverShallowCaveAxis(generationSeed, x, surfaceY);
+    const distance = Math.abs(y - axis);
+    const width = 1.2 + (serverCellNoise(generationSeed, x, surfaceY, 1203) * 1.35);
+    if (distance <= width && serverCellNoise(generationSeed, x, y, 2281) < 0.90) return true;
+    if (distance <= width + 1 && serverCellNoise(generationSeed, x, y, 3359) < 0.22) return true;
+  }
+
+  if (depth >= SERVER_DEEP_CAVE_START_DEPTH) {
+    const axis = serverDeepCaveAxis(generationSeed, x, surfaceY);
+    const distance = Math.abs(y - axis);
+    const width = 0.9 + (serverCellNoise(generationSeed, x, surfaceY, 3359) * 1.1);
+    if (serverCellNoise(generationSeed, surfaceY, y, 2281) > 0.72) {
+      if (distance <= width && serverCellNoise(generationSeed, x, y, 401) < 0.85) return true;
+      if (distance <= width + 1 && serverCellNoise(generationSeed, x, y, 402) < 0.18) return true;
+    }
+  }
+
+  if (depth >= 12 && serverCellNoise(generationSeed, x * 3, y * 3, 601) > 0.68 && serverCellNoise(generationSeed, x, y, 602) < 0.28) return true;
+  if (depth >= 16 && serverCellNoise(generationSeed, x, y, 603) < 0.018) return true;
+  return false;
+}
+
+function serverSurfaceBlockType(generationSeed, x, y, surfaceY) {
+  if (isServerSpawnSafeColumn(x)) {
+    return serverPickWeightedBlock(generationSeed, x, y, [
+      { type: "dirt", weight: 86 },
+      { type: "sand", weight: 7 },
+      { type: "stone", weight: 7 },
+    ]);
+  }
+
+  const span = Math.max(1, serverGenerationMaxSurfaceY() - serverGenerationMinSurfaceY());
+  const flatness = Math.max(0, Math.min(1, (surfaceY - serverGenerationMinSurfaceY()) / span));
+  if (flatness > 0.73 && serverCellNoise(generationSeed, x, surfaceY, 901) < 0.20) return "sand";
+  if (serverCellNoise(generationSeed, surfaceY, x, 902) > 0.90) {
+    return serverPickWeightedBlock(generationSeed, x, y, [
+      { type: "stone", weight: 56 },
+      { type: "dirt", weight: 34 },
+      { type: "sand", weight: 10 },
+    ]);
+  }
+  return serverPickWeightedBlock(generationSeed, x, y, [
+    { type: "dirt", weight: 84 },
+    { type: "sand", weight: 9 },
+    { type: "stone", weight: 7 },
+  ]);
+}
+
+function serverNormalUndergroundBlockType(generationSeed, x, y, depth) {
+  if (depth <= 5) {
+    return serverPickWeightedBlock(generationSeed, x, y, [
+      { type: "dirt", weight: 89 },
+      { type: "stone", weight: 7 },
+      { type: "sand", weight: 4 },
+    ]);
+  }
+  if (depth <= 16) {
+    return serverPickWeightedBlock(generationSeed, x, y, [
+      { type: "dirt", weight: 80 },
+      { type: "stone", weight: 13 },
+      { type: "sand", weight: 7 },
+    ]);
+  }
+  if (depth <= 24) {
+    return serverPickWeightedBlock(generationSeed, x, y, [
+      { type: "dirt", weight: 68 },
+      { type: "stone", weight: 24 },
+      { type: "sand", weight: 8 },
+    ]);
+  }
+  if (depth <= 34) {
+    return serverPickWeightedBlock(generationSeed, x, y, [
+      { type: "dirt", weight: 55 },
+      { type: "stone", weight: 37 },
+      { type: "sand", weight: 8 },
+    ]);
+  }
+  return serverPickWeightedBlock(generationSeed, x, y, [
+    { type: "dirt", weight: 40 },
+    { type: "stone", weight: 53 },
+    { type: "sand", weight: 8 },
+  ]);
+}
+
+function serverGeneratedBlockType(generationSeed, x, y, surfaceY) {
+  if (y >= BEDROCK_START_Y) return "bedrock";
+  if (y < surfaceY) return "";
+  if (y === surfaceY) return serverSurfaceBlockType(generationSeed, x, y, surfaceY);
+  const depth = y - surfaceY;
+  if (isServerBottomLavaStoneLayer(y)) {
+    return serverPickWeightedBlock(generationSeed, x, y, [
+      { type: "stone", weight: 62 },
+      { type: "lava", weight: 28 },
+      { type: "dirt", weight: 10 },
+    ]);
+  }
+  if (isServerSpawnSafeColumn(x)) {
+    return serverPickWeightedBlock(generationSeed, x, y, depth <= 9
+      ? [
+        { type: "dirt", weight: 88 },
+        { type: "stone", weight: 9 },
+        { type: "sand", weight: 3 },
+      ]
+      : [
+        { type: "dirt", weight: 80 },
+        { type: "stone", weight: 15 },
+        { type: "sand", weight: 5 },
+      ]);
+  }
+  if (shouldServerGenerateCavePocket(generationSeed, x, y, surfaceY)) return "";
+  return serverNormalUndergroundBlockType(generationSeed, x, y, depth);
+}
+
+function serverMapSet(map, x, y, blockType) {
+  const key = gridKey(x, y);
+  if (blockType === "") {
+    map.delete(key);
+    return;
+  }
+  map.set(key, { x, y, block_type: blockType, source: "generated" });
+}
+
+function serverMapSetIfEmpty(map, x, y, blockType) {
+  const key = gridKey(x, y);
+  if (map.has(key)) return false;
+  serverMapSet(map, x, y, blockType);
+  return true;
+}
+
+function serverCanGenerateNaturalPond(map, surface, centerX, width) {
+  const half = Math.floor(width * 0.5);
+  let minSurface = 999999;
+  let maxSurface = -999999;
+  for (let x = centerX - half; x <= centerX + half; x += 1) {
+    if (x <= 2 || x >= WORLD_WIDTH - 3) return false;
+    if (isServerSpawnSafeColumn(x)) return false;
+    const surfaceY = serverSurfaceYAt(surface, x);
+    minSurface = Math.min(minSurface, surfaceY);
+    maxSurface = Math.max(maxSurface, surfaceY);
+    const top = map.get(gridKey(x, surfaceY))?.block_type || "";
+    const below = map.get(gridKey(x, surfaceY + 1))?.block_type || "";
+    if (!["dirt", "sand", "stone", "grass"].includes(top)) return false;
+    if (!["dirt", "sand", "stone"].includes(below)) return false;
+  }
+  return maxSurface - minSurface <= 1;
+}
+
+function serverCreateNaturalPond(map, surface, rng, centerX, width) {
+  const half = Math.floor(width * 0.5);
+  const startX = centerX - half;
+  const endX = centerX + half;
+  let surfaceYForPond = -999999;
+  const profileNoise = deterministicInt(rng, 0, 2147483646);
+  for (let x = startX; x <= endX; x += 1) {
+    surfaceYForPond = Math.max(surfaceYForPond, serverSurfaceYAt(surface, x));
+  }
+  const waterSurfaceY = surfaceYForPond + 1;
+
+  for (let x = startX; x <= endX; x += 1) {
+    const distanceFromCenter = Math.abs(x - centerX);
+    const edgeCurve = Math.floor(SERVER_POND_EDGE_DEPTH + Math.sin(distanceFromCenter * 0.65 + profileNoise * 0.001));
+    const carveDepth = clampInteger(SERVER_POND_CENTER_DEPTH + edgeCurve, SERVER_POND_EDGE_DEPTH, SERVER_POND_CENTER_DEPTH + 2);
+
+    for (let y = serverSurfaceYAt(surface, x); y <= waterSurfaceY + SERVER_POND_CENTER_DEPTH + 1; y += 1) {
+      const localDepth = y - waterSurfaceY;
+      if (x === startX || x === endX) {
+        serverMapSet(map, x, y, "dirt");
+        continue;
+      }
+      if (y < waterSurfaceY) {
+        serverMapSet(map, x, y, "");
+        continue;
+      }
+      let localVariation = 0;
+      if (Math.abs(distanceFromCenter) > 1) {
+        localVariation = (0.22 - serverCellNoise(1, x, distanceFromCenter, profileNoise % 1000)) * 1.4;
+      }
+      const pondDepth = clampInteger(carveDepth + Math.round(localVariation), SERVER_POND_EDGE_DEPTH, SERVER_POND_CENTER_DEPTH + 2);
+      serverMapSet(map, x, y, localDepth < pondDepth ? "water" : "dirt");
+    }
+  }
+
+  serverMapSet(map, startX + 1, waterSurfaceY, "dirt");
+  serverMapSet(map, endX - 1, waterSurfaceY, "dirt");
+}
+
+function serverGenerateNaturalPonds(map, surface, rng) {
+  const pondCount = deterministicInt(rng, SERVER_POND_COUNT_MIN, SERVER_POND_COUNT_MAX);
+  const usedCenters = [];
+  let created = 0;
+  for (let attempt = 0; attempt < SERVER_POND_ATTEMPT_LIMIT && created < pondCount; attempt += 1) {
+    let width = deterministicInt(rng, SERVER_POND_WIDTH_MIN, SERVER_POND_WIDTH_MAX);
+    if (width % 2 === 0) width += 1;
+    const centerX = deterministicInt(rng, 8, WORLD_WIDTH - 9);
+    const minSpacing = Math.max(7, width);
+    if (isServerSpawnSafeColumn(centerX)) continue;
+    if (usedCenters.some((usedX) => Math.abs(usedX - centerX) < minSpacing)) continue;
+    if (!serverCanGenerateNaturalPond(map, surface, centerX, width)) continue;
+    serverCreateNaturalPond(map, surface, rng, centerX, width);
+    usedCenters.push(centerX);
+    created += 1;
+  }
+}
+
+function serverGenerateSurfaceDecorations(map, surface, generationSeed) {
+  for (let x = 2; x < WORLD_WIDTH - 2; x += 1) {
+    const surfaceY = serverSurfaceYAt(surface, x);
+    const key = gridKey(x, surfaceY);
+    const surfaceType = map.get(key)?.block_type || "";
+    if (!["dirt", "sand", "stone"].includes(surfaceType)) continue;
+    if (serverCellNoise(generationSeed, x, surfaceY, 7201) > SERVER_SURFACE_DECORATION_CHANCE) continue;
+    if (serverCellNoise(generationSeed, Math.trunc(x * SERVER_SURFACE_DECORATION_NOISE_SCALE_X), Math.trunc(surfaceY * SERVER_SURFACE_DECORATION_NOISE_SCALE_Y), 7202) > SERVER_SURFACE_DECORATION_SPACING_GAP_MAX) continue;
+
+    const selectionRoll = serverCellNoise(generationSeed, x, surfaceY + 1, 7201);
+    const total = SERVER_SURFACE_DECORATION_GRASS_CHANCE + SERVER_SURFACE_DECORATION_ROSE_CHANCE + SERVER_SURFACE_DECORATION_TULIP_CHANCE;
+    const normalized = total > 0 ? selectionRoll / total : 1;
+    let decoration = "grass";
+    if (normalized < (SERVER_SURFACE_DECORATION_TULIP_CHANCE / total)) {
+      decoration = "tulip";
+    } else if (normalized < ((SERVER_SURFACE_DECORATION_TULIP_CHANCE + SERVER_SURFACE_DECORATION_ROSE_CHANCE) / total)) {
+      decoration = "rose";
+    }
+    serverMapSet(map, x, surfaceY, decoration);
+  }
+}
+
+function serverCreateTree(map, surface, generationSeed, rng, x) {
+  if (x <= 1 || x >= WORLD_WIDTH - 2) return false;
+  const surfaceY = serverSurfaceYAt(surface, x);
+  const groundType = map.get(gridKey(x, surfaceY))?.block_type || "";
+  if (!["grass", "dirt", "sand", "stone", "rose", "tulip"].includes(groundType)) return false;
+  if (Math.abs(serverSurfaceYAt(surface, x - 1) - surfaceY) > 1) return false;
+  if (Math.abs(serverSurfaceYAt(surface, x + 1) - surfaceY) > 1) return false;
+
+  serverMapSet(map, x, surfaceY, "dirt");
+  const baseY = surfaceY - 1;
+  const trunkHeight = deterministicInt(rng, SERVER_TREE_MIN_HEIGHT, SERVER_TREE_MAX_HEIGHT);
+  let trunkTilt = 0;
+  if (serverCellNoise(generationSeed, x, surfaceY, 7101) > 0.9) {
+    const tiltNoise = serverCellNoise(generationSeed, x + 10, surfaceY, 7102);
+    if (tiltNoise < 0.33) trunkTilt = -1;
+    else if (tiltNoise > 0.66) trunkTilt = 1;
+  }
+
+  const trunkPositions = [];
+  for (let i = 0; i < trunkHeight; i += 1) {
+    const trunkX = x + trunkTilt * Math.floor(i / 2);
+    const trunkY = baseY - i;
+    serverMapSetIfEmpty(map, trunkX, trunkY, "wood");
+    trunkPositions.push({ x: trunkX, y: trunkY });
+  }
+
+  const top = trunkPositions[trunkPositions.length - 1];
+  const leafCoreY = baseY - trunkHeight;
+  let leafSpreadX = 2;
+  if (trunkHeight >= 6) leafSpreadX = 3;
+  if (trunkHeight >= 7) leafSpreadX = 4;
+
+  for (let dy = -4; dy < 2; dy += 1) {
+    let rowSpan = leafSpreadX;
+    if (dy >= -1) rowSpan = Math.max(2, leafSpreadX - 1);
+    else if (dy <= -3) rowSpan = Math.max(3, leafSpreadX + 1);
+    else rowSpan = leafSpreadX + 1;
+    rowSpan = clampInteger(rowSpan + Math.round((serverCellNoise(generationSeed, x, leafCoreY + dy, 7401) - 0.5) * 1.2), 2, leafSpreadX + 2);
+
+    for (let dx = -rowSpan; dx <= rowSpan; dx += 1) {
+      const leafX = top.x + dx;
+      const leafY = leafCoreY + dy;
+      if (!isGridInWorld(leafX, leafY)) continue;
+      const dist = Math.abs(dx) + Math.abs(dy);
+      if (dist > 8) continue;
+      const leafNoise = serverCellNoise(generationSeed, leafX, leafY, 7400);
+      const isEdge = Math.abs(dx) === rowSpan || dist >= 5;
+      if (dy < -1 && dist <= 2 && leafNoise < 0.03) continue;
+      if (isEdge && leafNoise < 0.28) continue;
+      if (dist > 4 && leafNoise < 0.16) continue;
+      if (dist > 5 && leafNoise < 0.35) continue;
+      serverMapSetIfEmpty(map, leafX, leafY, "leaf");
+    }
+  }
+
+  return true;
+}
+
+function serverGenerateTrees(map, surface, generationSeed, rng) {
+  let lastTreeX = -999;
+  for (let x = 4; x < WORLD_WIDTH - 4; x += 1) {
+    if (isServerSpawnSafeColumn(x)) continue;
+    if (x - lastTreeX < 3) continue;
+    const surfaceY = serverSurfaceYAt(surface, x);
+    if (serverCellNoise(generationSeed, x, surfaceY, 7001) > SERVER_TREE_SURFACE_NOISE_THRESHOLD) continue;
+    if (serverCellNoise(generationSeed, x * 2, surfaceY, 7002) < 0.03) continue;
+    if (rng() >= SERVER_TREE_RANDOM_PLACEMENT_CHANCE) continue;
+    if (serverCreateTree(map, surface, generationSeed, rng, x)) lastTreeX = x;
+  }
+}
+
+function buildServerGeneratedForegroundMap(worldName, state) {
+  const map = new Map();
+  if (state?.cleared) return map;
+
+  const { generationSeed, surface } = buildServerTerrainSurface(worldName);
+  for (let x = 0; x < WORLD_WIDTH; x += 1) {
+    const surfaceY = serverSurfaceYAt(surface, x);
+    for (let y = surfaceY; y < WORLD_HEIGHT; y += 1) {
+      const blockType = serverGeneratedBlockType(generationSeed, x, y, surfaceY);
+      if (blockType !== "") serverMapSet(map, x, y, blockType);
+    }
+  }
+
+  const rng = makeDeterministicRng(`generated:${cleanWorld(worldName)}:${generationSeed}`);
+  serverGenerateNaturalPonds(map, surface, rng);
+  serverGenerateSurfaceDecorations(map, surface, generationSeed);
+  serverGenerateTrees(map, surface, generationSeed, rng);
+  return map;
+}
+
+function buildEffectiveForegroundMap(worldName, state, generatedMap = null) {
+  const map = new Map();
+  const baseMap = generatedMap || buildServerGeneratedForegroundMap(worldName, state);
+  for (const [key, entry] of baseMap.entries()) {
+    map.set(key, { ...entry, source: "generated" });
+  }
+  for (const key of state.removed_foreground.keys()) {
+    map.delete(key);
+  }
+  for (const [key, entry] of state.foreground.entries()) {
+    map.set(key, { ...entry, source: "explicit" });
+  }
+  return map;
+}
+
+function buildPersistedForegroundEventMap(state) {
+  const map = new Map();
+  if (!state || !state.foreground) return map;
+  for (const [key, entry] of state.foreground.entries()) {
+    map.set(key, { ...entry, source: "explicit" });
+  }
+  return map;
+}
+
+function getSnowStormEventBlockForOriginal(originalBlockId, rng) {
+  switch (originalBlockId) {
+    case "dirt":
+      return "snow_dirt";
+    case "grass":
+      return "frozen_grass";
+    case "water": {
+      const roll = rng();
+      if (roll < 0.03) return "ice_fossil";
+      if (roll < 0.15) return "ice_block_2";
+      return "ice_block";
+    }
+    default:
+      return "";
+  }
+}
+
+function isSnowStormDirtExposed(effectiveMap, state, x, y) {
+  const aboveY = Number(y) - 1;
+  if (!isGridInWorld(x, aboveY)) return true;
+  const aboveKey = gridKey(x, aboveY);
+  if (state?.seeds?.has?.(aboveKey)) return false;
+  const above = effectiveMap.get(aboveKey);
+  return !above || clampString(above.block_type || "") === "";
+}
+
+function makeSnowStormWorldChange(worldName, tile, action, sourceId, reason) {
+  return {
+    source_type: "world_event",
+    source_id: sourceId,
+    world: cleanWorld(worldName),
+    action,
+    reason,
+    layer: "foreground",
+    x: tile.x,
+    y: tile.y,
+    block_type: action === "break" ? tile.event_block_id : tile.event_block_id,
+    block_type_before: tile.original_block_id || "",
+    block_type_after: action === "break" ? "" : tile.event_block_id,
+    details: {
+      event_type: SNOW_STORM_EVENT_TYPE,
+      event_id: sourceId,
+      original_block_id: tile.original_block_id || "",
+      event_block_id: tile.event_block_id || "",
+      tile_source: tile.source || "",
+      reason: tile.reason || reason,
+    },
+  };
+}
+
+async function startSnowStormEvent(worldName, options = {}) {
+  const clean = cleanWorld(worldName);
+  const lockKey = `${clean}:${SNOW_STORM_EVENT_TYPE}`;
+  if (worldEventActionLocks.has(lockKey)) return { ok: false, reason: "locked" };
+  worldEventActionLocks.add(lockKey);
+
+  try {
+    const state = ensureWorldState(clean);
+    if (hasActiveSnowStormEvent(state)) return { ok: false, reason: "already_active" };
+
+    const previousWorldState = serializeWorldState(clean);
+    const eventId = makeAuditId("snow_storm");
+    const startedAt = new Date();
+    const endsAt = new Date(startedAt.getTime() + SNOW_STORM_EVENT_DURATION_MS);
+    const changedTiles = [];
+    const updates = [];
+    const stats = {
+      dirt_converted: 0,
+      water_converted: 0,
+      grass_converted: 0,
+      leaf_converted: 0,
+      ice_block_2_created: 0,
+      ice_fossil_created: 0,
+    };
+
+    state.active_event_type = SNOW_STORM_EVENT_TYPE;
+    state.event_id = eventId;
+    state.event_started_at = startedAt.toISOString();
+    state.event_ends_at = endsAt.toISOString();
+    state.event_changed_tiles = changedTiles;
+
+    const worldChanges = changedTiles.map((tile) => makeSnowStormWorldChange(clean, tile, "place", eventId, "snow_storm_start"));
+    const commit = await commitWorldStateWithBlockChanges(clean, worldChanges);
+    if (!commit.ok) {
+      worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
+      return { ok: false, reason: commit.reason || "commit_failed", message: commit.message || "" };
+    }
+
+    scheduleWorldEventEnd(clean);
+    if (options.broadcast !== false) {
+      broadcastToWorld(clean, buildWorldEventStartedMessage(clean, state));
+      broadcastEventSystemMessage(clean, eventId, SNOW_STORM_SYSTEM_MESSAGE);
+      broadcastEventTileUpdates(clean, eventId, "start", updates);
+    }
+
+    console.log("[world_event] snow_storm started", {
+      world: clean,
+      event_id: eventId,
+      reason: options.reason || "system",
+      ends_at: state.event_ends_at,
+      changed_tiles: changedTiles.length,
+      ...stats,
+    });
+
+    return { ok: true, event_id: eventId, stats, changed_tiles: changedTiles.length };
+  } finally {
+    worldEventActionLocks.delete(lockKey);
+  }
+}
+
+async function endSnowStormEvent(worldName, options = {}) {
+  const clean = cleanWorld(worldName);
+  const lockKey = `${clean}:${SNOW_STORM_EVENT_TYPE}`;
+  if (worldEventActionLocks.has(lockKey)) return { ok: false, reason: "locked" };
+  worldEventActionLocks.add(lockKey);
+
+  try {
+    const state = ensureWorldState(clean);
+    if (state.active_event_type !== SNOW_STORM_EVENT_TYPE) return { ok: false, reason: "not_active" };
+    const eventId = state.event_id || "";
+    const previousWorldState = serializeWorldState(clean);
+    const changedTiles = Array.isArray(state.event_changed_tiles) ? state.event_changed_tiles.slice() : [];
+    const endedAt = new Date().toISOString();
+    const updates = [];
+    const worldChanges = [];
+    const stats = {
+      reverted: 0,
+      removed_piles: 0,
+      removed_generated_overrides: 0,
+      skipped_player_changed: 0,
+    };
+    let needsWorldStateRefresh = false;
+
+    const existingTimer = worldEventTimers.get(clean);
+    if (existingTimer) clearTimeout(existingTimer);
+    worldEventTimers.delete(clean);
+
+    for (const rawTile of changedTiles) {
+      const tile = normalizeWorldEventTileEntry(rawTile, eventId);
+      if (!tile) continue;
+      const key = gridKey(tile.x, tile.y);
+      const currentBlockId = clampString(state.foreground.get(key)?.block_type || "");
+      if (currentBlockId !== tile.event_block_id) {
+        stats.skipped_player_changed += 1;
+        continue;
+      }
+
+      const wasGeneratedOverride = clampString(tile.source || "") === "generated";
+      if (tile.original_block_id !== "" && !wasGeneratedOverride) {
+        state.foreground.set(key, { x: tile.x, y: tile.y, block_type: tile.original_block_id });
+        state.removed_foreground.delete(key);
+        updates.push({
+          type: "world_block_update",
+          action: "place",
+          layer: "foreground",
+          x: tile.x,
+          y: tile.y,
+          block_type: tile.original_block_id,
+          world: clean,
+        });
+        worldChanges.push({
+          source_type: "world_event",
+          source_id: eventId,
+          world: clean,
+          action: "place",
+          reason: "snow_storm_revert",
+          layer: "foreground",
+          x: tile.x,
+          y: tile.y,
+          block_type: tile.original_block_id,
+          block_type_before: tile.event_block_id,
+          block_type_after: tile.original_block_id,
+          details: {
+            event_type: SNOW_STORM_EVENT_TYPE,
+            event_id: eventId,
+            original_block_id: tile.original_block_id,
+            event_block_id: tile.event_block_id,
+            tile_source: tile.source || "",
+          },
+        });
+        stats.reverted += 1;
+      } else {
+        state.foreground.delete(key);
+        state.removed_foreground.delete(key);
+        updates.push({
+          type: "world_block_update",
+          action: "break",
+          layer: "foreground",
+          x: tile.x,
+          y: tile.y,
+          block_type: tile.event_block_id,
+          world: clean,
+        });
+        worldChanges.push({
+          source_type: "world_event",
+          source_id: eventId,
+          world: clean,
+          action: "break",
+          reason: "snow_storm_remove_spawn",
+          layer: "foreground",
+          x: tile.x,
+          y: tile.y,
+          block_type: tile.event_block_id,
+          block_type_before: tile.event_block_id,
+          block_type_after: "",
+          details: {
+            event_type: SNOW_STORM_EVENT_TYPE,
+            event_id: eventId,
+            event_block_id: tile.event_block_id,
+            original_block_id: tile.original_block_id || "",
+            tile_source: tile.source || "",
+          },
+        });
+        if (wasGeneratedOverride) {
+          stats.removed_generated_overrides += 1;
+          needsWorldStateRefresh = true;
+        } else {
+          stats.removed_piles += 1;
+        }
+      }
+    }
+
+    clearWorldEventState(state);
+    const commit = await commitWorldStateWithBlockChanges(clean, worldChanges);
+    if (!commit.ok) {
+      worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
+      scheduleWorldEventEnd(clean);
+      return { ok: false, reason: commit.reason || "commit_failed", message: commit.message || "" };
+    }
+
+    if (options.broadcast !== false) {
+      broadcastToWorld(clean, buildWorldEventEndedMessage(clean, eventId, endedAt));
+      if (needsWorldStateRefresh) {
+        broadcastToWorld(clean, buildWorldStateMessage(clean, {
+          world_state_reason: "snow_storm_end",
+        }));
+      } else {
+        broadcastEventTileUpdates(clean, eventId, "end", updates);
+      }
+    }
+
+    console.log("[world_event] snow_storm ended", {
+      world: clean,
+      event_id: eventId,
+      reason: options.reason || "system",
+      changed_tiles: changedTiles.length,
+      ...stats,
+    });
+
+    return { ok: true, event_id: eventId, stats, updates: updates.length };
+  } finally {
+    worldEventActionLocks.delete(lockKey);
+  }
+}
+
+async function handleFrozenTreasureOpen(socket, player, worldName, update, requestId = "") {
+  const clean = cleanWorld(worldName);
+  const key = gridKey(update.x, update.y);
+  const lockKey = `${clean}:${key}`;
+  if (worldFrozenTreasureOpenLocks.has(lockKey)) {
+    sendActionRejected(socket, "world_block_update", "That treasure is already opening.");
+    return false;
+  }
+  worldFrozenTreasureOpenLocks.add(lockKey);
+
+  try {
+    const state = ensureWorldState(clean);
+    const currentBlock = state.foreground.get(key);
+    if (clampString(currentBlock?.block_type || "") !== "frozen_treasure") {
+      sendActionRejected(socket, "world_block_update", "That frozen treasure is already open.");
+      return false;
+    }
+
+    const previousWorldState = serializeWorldState(clean);
+    const transactionId = makeAuditId("frozen_treasure");
+    const openedUpdate = {
+      type: "world_block_update",
+      action: "place",
+      layer: "foreground",
+      x: update.x,
+      y: update.y,
+      block_type: "frozen_treasure_2",
+      world: clean,
+    };
+
+    state.foreground.set(key, { x: update.x, y: update.y, block_type: "frozen_treasure_2" });
+    state.removed_foreground.delete(key);
+    clearServerBlockDamage(clean, update);
+
+    const dropPosition = getGridCenterPixels(update.x, update.y);
+    const rewardDrop = createServerDrop(clean, "snow_block", "block", 1, dropPosition.x, dropPosition.y, SERVER_DROP_PICKUP_DELAY);
+    if (!rewardDrop) {
+      worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
+      sendActionRejected(socket, "world_block_update", "Could not create the treasure reward.");
+      return false;
+    }
+
+    const openChange = {
+      ...getAuditActor(socket, player),
+      source_type: "server_event",
+      source_id: transactionId,
+      request_id: requestId || "",
+      world: clean,
+      action: "place",
+      reason: "frozen_treasure_open",
+      layer: "foreground",
+      x: update.x,
+      y: update.y,
+      block_type: "frozen_treasure_2",
+      block_type_before: "frozen_treasure",
+      block_type_after: "frozen_treasure_2",
+      details: {
+        event_type: SNOW_STORM_EVENT_TYPE,
+        opened_block: "frozen_treasure",
+        reward_item: "snow_block",
+      },
+    };
+    const rewardChange = {
+      ...getAuditActor(socket, player),
+      source_type: "server_event",
+      source_id: transactionId,
+      request_id: requestId || "",
+      world: clean,
+      action: "drop_create",
+      reason: "frozen_treasure_reward",
+      layer: "foreground",
+      x: update.x,
+      y: update.y,
+      block_type: rewardDrop.item_type,
+      details: {
+        event_type: SNOW_STORM_EVENT_TYPE,
+        drop_id: rewardDrop.drop_id,
+        item_category: rewardDrop.item_category,
+        amount: rewardDrop.amount,
+        source_block: "frozen_treasure",
+      },
+    };
+
+    const commit = await commitWorldStateWithBlockChanges(clean, [openChange, rewardChange]);
+    if (!commit.ok) {
+      worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
+      sendActionRejected(socket, "world_block_update", commit.message || "PostgreSQL rejected the treasure reward.");
+      return false;
+    }
+
+    sendWorldUpdateToRequesterAndWorld(socket, player, clean, openedUpdate);
+    sendWorldUpdateToRequesterAndWorld(socket, player, clean, rewardDrop);
+    logWorldChange(socket, player, openChange, { skipPostgres: commit.postgres_committed });
+    logWorldChange(socket, player, rewardChange, { skipPostgres: commit.postgres_committed });
+
+    console.log("[world_event] frozen_treasure opened", {
+      world: clean,
+      x: update.x,
+      y: update.y,
+      actor: player?.account_username || player?.name || "",
+      reward_drop_id: rewardDrop.drop_id,
+      reward_item: rewardDrop.item_type,
+    });
+    return true;
+  } finally {
+    worldFrozenTreasureOpenLocks.delete(lockKey);
   }
 }
 
@@ -11702,12 +15825,7 @@ function savePlayerState(username) {
   if (!state) return;
   applyProgressionFieldsToState(state, state);
 
-  writeJsonFileAtomic(getPlayerSavePath(clean), {
-    player_state_version: 1,
-    username: clean,
-    saved_at: new Date().toISOString(),
-    player_data: state,
-  });
+  writePlayerStateJsonBackup(clean, state);
   if (postgresStore.isReady()) {
     trackPersistenceWrite(postgresStore.savePlayerState(clean, state), `player state ${clean}`);
   } else {
@@ -11748,7 +15866,7 @@ function sanitizeEquipmentSlots(rawSlots, username = "", stateOverride = null) {
     if (!hasIncomingSlot && !hasSavedSlot) continue;
 
     let value = clampString(sourceSlots[slot] || "");
-    if (value === "" && isCoreVisibleEquipmentSlot(slot)) {
+    if (value === "" && !hasIncomingSlot && isCoreVisibleEquipmentSlot(slot)) {
       value = clampString(fallbackSlots[slot] || "");
     }
     if (value.length > 0 && isItemAllowedInEquipmentSlot(value, slot) && doesStateOwnEquippedItem(state, value, slot)) {
@@ -11882,6 +16000,22 @@ async function shutdown(signal = "") {
     console.log(`PixelMania server shutting down (${signal}).`);
   }
   clearInterval(periodicSaveTimer);
+  if (antiDupeAuditTimer) {
+    clearInterval(antiDupeAuditTimer);
+    antiDupeAuditTimer = null;
+  }
+  if (worldSnapshotSchedulerTimer) {
+    clearInterval(worldSnapshotSchedulerTimer);
+    worldSnapshotSchedulerTimer = null;
+  }
+  if (worldEventRandomTimer) {
+    clearInterval(worldEventRandomTimer);
+    worldEventRandomTimer = null;
+  }
+  for (const timer of worldEventTimers.values()) {
+    clearTimeout(timer);
+  }
+  worldEventTimers.clear();
   flushPendingSaves();
   await waitForPersistenceWrites();
   await postgresStore.close();

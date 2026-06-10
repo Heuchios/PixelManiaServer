@@ -39,9 +39,31 @@ const ITEM_INSTANCE_TRACKED_CATEGORIES = new Set(["tool", "back", "hair", "shirt
 const ITEM_INSTANCE_ACTIVE_STATE = "active";
 const ITEM_INSTANCE_RETIRED_STATE = "consumed";
 const ITEM_INSTANCE_STATES = new Set(["active", "consumed", "traded", "destroyed", "dropped", "locked"]);
+const ITEM_INSTANCE_LOCATIONS = new Set(["inventory", "vending", "trade", "world_drop", "safe", "shop", "admin", "system", "unknown"]);
+const ITEM_INSTANCE_EVENT_TYPES = new Set(["created", "reconciled", "owner_changed", "location_changed", "state_changed", "updated", "retired"]);
 const ITEM_INSTANCE_RECONCILE_MAX_PER_ITEM = 250;
+const ITEM_INSTANCE_VAGUE_CREATION_SOURCES = new Set(["", "system", "unknown", "item_ledger", "inventory_delta", "update"]);
+const TRANSACTION_LEDGER_STATUSES = new Set(["success", "failed", "reversed"]);
 const PUNISHMENT_TYPES = new Set(["ban", "mute", "trade_ban", "world_ban", "lockout"]);
 const PUNISHMENT_SCOPES = new Set(["global", "world"]);
+const WORLD_OBJECT_CHANGE_DIFF_LIMIT = 500;
+const WORLD_OBJECT_CHANGE_ACTIONS = new Set([
+  "wooden_entrance_state",
+  "door_state",
+  "sign_text",
+  "ceiling_lamp_state",
+  "world_lock_state",
+  "vend_state",
+  "vending_list",
+  "vending_buy",
+  "vending_collect",
+  "vending_cancel",
+  "vending_break_return",
+  "safe_state",
+  "safe_deposit",
+  "safe_withdraw",
+  "safe_break_return",
+]);
 
 function delay(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -50,6 +72,30 @@ function delay(ms) {
 function isRetryablePostgresError(error) {
   const code = String(error?.code || "");
   return code === "40P01" || code === "40001" || code === "55P03";
+}
+
+function makeTrackedItemMovementError(result = {}) {
+  const reason = cleanName(result.reason || "tracked_item_instance_movement_failed");
+  const error = new Error(cleanName(result.message || reason) || "tracked_item_instance_movement_failed");
+  error.name = "TrackedItemMovementError";
+  error.isTrackedItemMovementError = true;
+  error.result = {
+    ok: false,
+    reason,
+    ...toObject(result),
+  };
+  return error;
+}
+
+function resultForTrackedItemMovementError(error, fallbackReason = "tracked_item_instance_movement_failed") {
+  if (error && error.isTrackedItemMovementError) {
+    return {
+      ok: false,
+      reason: fallbackReason,
+      ...toObject(error.result),
+    };
+  }
+  return null;
 }
 
 function toObject(value) {
@@ -126,6 +172,117 @@ function normalizeItemInstanceState(value, fallback = ITEM_INSTANCE_ACTIVE_STATE
   const clean = cleanName(value).toLowerCase();
   if (ITEM_INSTANCE_STATES.has(clean)) return clean;
   return ITEM_INSTANCE_STATES.has(fallback) ? fallback : ITEM_INSTANCE_ACTIVE_STATE;
+}
+
+function normalizeItemInstanceLocation(value, fallback = "inventory") {
+  const clean = cleanName(value).toLowerCase();
+  if (ITEM_INSTANCE_LOCATIONS.has(clean)) return clean;
+  return ITEM_INSTANCE_LOCATIONS.has(fallback) ? fallback : "inventory";
+}
+
+function normalizeItemInstanceSource(value, fallback = "system") {
+  const clean = cleanName(value).toLowerCase().replace(/[^a-z0-9_.:-]+/g, "_").replace(/^_+|_+$/g, "");
+  return (clean || fallback).slice(0, 80);
+}
+
+function isVagueItemInstanceCreationSource(value) {
+  return ITEM_INSTANCE_VAGUE_CREATION_SOURCES.has(normalizeItemInstanceSource(value, ""));
+}
+
+function normalizeTransactionLedgerStatus(value, fallback = "success") {
+  const clean = cleanName(value).toLowerCase();
+  if (TRANSACTION_LEDGER_STATUSES.has(clean)) return clean;
+  return TRANSACTION_LEDGER_STATUSES.has(fallback) ? fallback : "success";
+}
+
+function normalizeTransactionLedgerType(entry = {}) {
+  const e = toObject(entry);
+  const source = normalizeLedgerSource(e.source || e.source_type || "");
+  const action = cleanName(e.action || "").toLowerCase();
+  const itemType = cleanName(e.item_type || e.item_id || "").toLowerCase();
+  const itemCategory = cleanName(e.item_category || e.category || "").toLowerCase();
+  const delta = toInt(e.delta ?? e.quantity ?? e.amount ?? 0, 0);
+
+  if (source === "shop") return "SHOP_PURCHASE";
+  if (source === "trade") return "TRADE_COMPLETE";
+  if (source === "vending") {
+    if (action.includes("buy") || action.includes("spend") || action.includes("receive") || action.includes("payment")) return "VENDING_BUY";
+    if (action.includes("list")) return "VENDING_LIST";
+    if (action.includes("cancel")) return "VENDING_CANCEL";
+    if (action.includes("collect")) return "VENDING_COLLECT";
+    return "VENDING_TRANSACTION";
+  }
+  if (source === "admin") {
+    if (action.includes("remove") || delta < 0) return "ADMIN_REMOVE_ITEM";
+    if (action.includes("give") || delta > 0) return "ADMIN_GIVE_ITEM";
+    return "ADMIN_ITEM_ACTION";
+  }
+  if (source === "craft" || source === "crafting") return delta >= 0 ? "CRAFT_OUTPUT" : "CRAFT_INPUT";
+  if (source === "furnace") return delta >= 0 ? "FURNACE_OUTPUT" : "FURNACE_INPUT";
+  if (source === "fishing" || source === "fish_monger") return delta >= 0 ? "FISHING_REWARD" : "FISHING_COST";
+  if (source === "drop_inventory") return "ITEM_DROP";
+  if (source === "drop_pickup" || source === "world_drop") return "ITEM_PICKUP";
+  if (source === "world_block_place") {
+    if (itemType === "world_lock" || itemType.endsWith("_lock") || itemCategory === "lock") return "WORLD_LOCK_PLACE";
+    return "WORLD_BLOCK_PLACE";
+  }
+  if (source === "world_block_break") return "WORLD_BLOCK_BREAK";
+  if (source === "safe") {
+    if (action.includes("deposit") || delta < 0) return "SAFE_DEPOSIT";
+    if (action.includes("withdraw") || delta > 0) return "SAFE_WITHDRAW";
+    return "SAFE_TRANSACTION";
+  }
+  if (source === "event") return "EVENT_REWARD";
+  if (source === "quest") return "QUEST_REWARD";
+  if (source === "loot_box") return "LOOT_BOX_REWARD";
+  if (source === "reward") return "REWARD";
+  if (source === "rollback") {
+    if (action.includes("restore")) return "ROLLBACK_RESTORE";
+    if (action.includes("remove")) return "ROLLBACK_REMOVE";
+    if (action.includes("apply")) return "ROLLBACK_APPLY";
+    return "ROLLBACK_EVENT";
+  }
+  return "INVENTORY_DELTA";
+}
+
+function normalizeItemInstanceEventType(value, fallback = "updated") {
+  const clean = cleanName(value).toLowerCase();
+  if (ITEM_INSTANCE_EVENT_TYPES.has(clean)) return clean;
+  return ITEM_INSTANCE_EVENT_TYPES.has(fallback) ? fallback : "updated";
+}
+
+function generatePublicItemInstanceId() {
+  return `PM-ITEM-${crypto.randomBytes(8).toString("hex").toUpperCase()}`;
+}
+
+function extractItemInstanceSource(details, fallback = "system") {
+  const outer = toObject(details);
+  const inner = toObject(outer.details);
+  return normalizeItemInstanceSource(outer.source || inner.source || fallback, fallback);
+}
+
+function summarizeItemInstanceEventMetadata(value) {
+  const metadata = toObject(value);
+  const summary = {};
+  for (const key of [
+    "reason",
+    "source",
+    "action",
+    "actor_username",
+    "username",
+    "target_username",
+    "request_id",
+    "transaction_id",
+    "item_type",
+    "item_category",
+    "world",
+    "previous_state",
+    "state",
+  ]) {
+    const clean = cleanName(metadata[key] || "");
+    if (clean !== "") summary[key] = clean.slice(0, 160);
+  }
+  return summary;
 }
 
 function normalizePunishmentType(value) {
@@ -227,6 +384,119 @@ function safeJson(value) {
   return value;
 }
 
+function clonePlainJson(value) {
+  try {
+    return JSON.parse(JSON.stringify(value === undefined ? {} : value));
+  } catch {
+    return safeJson(value);
+  }
+}
+
+function stableJsonForCompare(value) {
+  if (Array.isArray(value)) {
+    return value.map((item) => stableJsonForCompare(item));
+  }
+  if (value && typeof value === "object") {
+    const result = {};
+    for (const key of Object.keys(value).sort()) {
+      result[key] = stableJsonForCompare(value[key]);
+    }
+    return result;
+  }
+  return value;
+}
+
+function stableJsonString(value) {
+  return JSON.stringify(stableJsonForCompare(value === undefined ? {} : value));
+}
+
+function normalizeWorldObjectAction(value) {
+  return cleanName(value).toLowerCase().replace(/[^a-z0-9_.:-]+/g, "_").replace(/^_+|_+$/g, "").slice(0, 80);
+}
+
+function normalizeWorldObjectType(entry = {}) {
+  const e = toObject(entry);
+  const explicit = normalizeWorldObjectAction(e.object_type || e.type || "");
+  if (explicit !== "" && explicit !== "world_interaction_update") return explicit;
+
+  const action = normalizeWorldObjectAction(e.action || "");
+  if (action.includes("vend")) return "vending";
+  if (action.includes("safe")) return "safe";
+  if (action === "world_lock_state" || action.includes("world_lock")) return "world_lock";
+  if (action === "sign_text" || action.includes("sign")) return "sign";
+  if (action === "door_state" || action.includes("door")) return "door";
+  if (action === "wooden_entrance_state" || action.includes("entrance")) return "wooden_entrance";
+  if (action.includes("lamp") || action.includes("toggle")) return "toggle";
+  return "interaction";
+}
+
+function normalizeWorldObjectId(entry = {}, worldName = "", objectType = "") {
+  const e = toObject(entry);
+  const explicit = cleanName(e.object_id || e.id || "");
+  if (explicit !== "") return explicit.slice(0, 160);
+
+  const details = toObject(e.details);
+  const doorId = cleanName(e.door_id || details.door_id || "");
+  if (doorId !== "") return `door:${doorId}`.slice(0, 160);
+
+  const cleanObjectType = normalizeWorldObjectAction(objectType) || normalizeWorldObjectType(e);
+  if (cleanObjectType === "world_lock") {
+    const world = cleanName(e.world || worldName || "");
+    return `${world || "world"}:world_lock`.slice(0, 160);
+  }
+
+  const x = Number.isFinite(Number(e.x)) ? Math.trunc(Number(e.x)) : null;
+  const y = Number.isFinite(Number(e.y)) ? Math.trunc(Number(e.y)) : null;
+  if (x !== null && y !== null) return `${cleanObjectType}:${x}:${y}`.slice(0, 160);
+  return `${cleanObjectType}:unknown`.slice(0, 160);
+}
+
+function shouldTreatAsWorldObjectChange(entry = {}) {
+  const e = toObject(entry);
+  if (cleanName(e.object_type || e.object_id || "") !== "") return true;
+  if (Object.keys(toObject(e.old_data)).length > 0 || Object.keys(toObject(e.new_data)).length > 0) return true;
+  const action = normalizeWorldObjectAction(e.action || "");
+  return WORLD_OBJECT_CHANGE_ACTIONS.has(action);
+}
+
+function extractWorldObjectJournalMap(worldState = {}, fallbackWorldName = "") {
+  const state = toObject(worldState);
+  const cleanWorldName = cleanName(state.world_name || fallbackWorldName || "");
+  const entries = new Map();
+
+  const worldLock = toObject(state.world_lock);
+  if (Object.keys(worldLock).length > 0) {
+    const key = `world_lock:${cleanWorldName || "world"}`;
+    entries.set(key, {
+      object_type: "world_lock",
+      object_id: `${cleanWorldName || "world"}:world_lock`,
+      x: Number.isFinite(Number(worldLock.lock_grid_x)) ? Math.trunc(Number(worldLock.lock_grid_x)) : null,
+      y: Number.isFinite(Number(worldLock.lock_grid_y)) ? Math.trunc(Number(worldLock.lock_grid_y)) : null,
+      data: clonePlainJson(worldLock),
+    });
+  }
+
+  const interactions = Array.isArray(state.interactions) ? state.interactions : [];
+  for (const rawInteraction of interactions) {
+    const interaction = toObject(rawInteraction);
+    const action = normalizeWorldObjectAction(interaction.action || "");
+    if (!WORLD_OBJECT_CHANGE_ACTIONS.has(action)) continue;
+
+    const objectType = normalizeWorldObjectType(interaction);
+    const objectId = normalizeWorldObjectId(interaction, cleanWorldName, objectType);
+    const key = `${objectType}:${objectId}`;
+    entries.set(key, {
+      object_type: objectType,
+      object_id: objectId,
+      x: Number.isFinite(Number(interaction.x)) ? Math.trunc(Number(interaction.x)) : null,
+      y: Number.isFinite(Number(interaction.y)) ? Math.trunc(Number(interaction.y)) : null,
+      data: clonePlainJson(interaction),
+    });
+  }
+
+  return entries;
+}
+
 function isUuid(value) {
   const clean = cleanName(value);
   if (clean === "") return false;
@@ -237,18 +507,29 @@ function normalizeLedgerSource(value) {
   const raw = cleanName(value).toLowerCase();
   if (raw.includes("trade")) return "trade";
   if (raw.includes("vending") || raw.includes("vend")) return "vending";
+  if (raw.includes("world_drop")) return "world_drop";
+  if (raw.includes("safe")) return "safe";
   if (raw.includes("shop")) return "shop";
+  if (raw.includes("event")) return "event";
+  if (raw.includes("quest")) return "quest";
+  if (raw.includes("crafting") || raw.includes("craft")) return "crafting";
+  if (raw.includes("loot_box") || raw.includes("lootbox")) return "loot_box";
+  if (raw.includes("reward")) return "reward";
   if (raw.includes("seed_place")) return "seed_place";
   if (raw.includes("seed_splice")) return "seed_splice";
   if (raw.includes("seed_harvest")) return "seed_harvest";
   if (raw.includes("drop_pickup")) return "drop_pickup";
   if (raw.includes("drop_create") || raw.includes("drop_from_inventory") || raw.includes("drop_inventory")) return "drop_inventory";
   if (raw.includes("furnace")) return "furnace";
-  if (raw.includes("craft")) return "craft";
   if (raw.includes("fishing")) return "fishing";
   if (raw.includes("fish_monger")) return "fish_monger";
-  if (raw.includes("admin")) return "admin";
+  if (raw.includes("admin") || raw.includes("developer")) return "admin";
+  if (raw.includes("rollback")) return "rollback";
   if (raw.includes("world_block_break")) return "world_block_break";
+  if (raw.includes("world_block_place")) return "world_block_place";
+  if (raw.includes("world_lock_conversion") || raw.includes("convert_world_lock")) return "world_lock_conversion";
+  if (raw.includes("entrance")) return "world_interaction";
+  if (raw.includes("world_interaction")) return "world_interaction";
   return "system";
 }
 
@@ -424,6 +705,257 @@ class PostgresStore {
 
       ALTER TABLE ${this.table("world_snapshots")}
         ADD COLUMN IF NOT EXISTS reason text NOT NULL DEFAULT 'snapshot';
+
+      ALTER TABLE ${this.table("item_instances")}
+        ADD COLUMN IF NOT EXISTS public_item_instance_id text,
+        ADD COLUMN IF NOT EXISTS created_by_source text NOT NULL DEFAULT 'unknown',
+        ADD COLUMN IF NOT EXISTS current_location text NOT NULL DEFAULT 'inventory';
+
+      UPDATE ${this.table("item_instances")}
+         SET public_item_instance_id = 'PM-ITEM-' || upper(substr(replace(item_instance_id::text, '-', ''), 1, 16))
+       WHERE public_item_instance_id IS NULL
+          OR public_item_instance_id = '';
+
+      ALTER TABLE ${this.table("item_instances")}
+        ALTER COLUMN public_item_instance_id SET NOT NULL,
+        ALTER COLUMN public_item_instance_id SET DEFAULT ('PM-ITEM-' || upper(substr(replace(gen_random_uuid()::text, '-', ''), 1, 16))),
+        ALTER COLUMN created_by_source SET NOT NULL,
+        ALTER COLUMN current_location SET NOT NULL;
+
+      ALTER TABLE ${this.table("world_locks")}
+        DROP CONSTRAINT IF EXISTS world_locks_lock_type_check;
+
+      ALTER TABLE ${this.table("world_locks")}
+        ADD CONSTRAINT world_locks_lock_type_check CHECK (lock_type IN ('none', 'world_lock', 'super_world_lock', 'diamond_lock'));
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_item_instances_public_id
+      ON ${this.table("item_instances")}(public_item_instance_id);
+
+      CREATE INDEX IF NOT EXISTS idx_item_instances_type_state
+      ON ${this.table("item_instances")}(item_category, item_type, state);
+
+      CREATE INDEX IF NOT EXISTS idx_item_instances_location_state
+      ON ${this.table("item_instances")}(current_location, state);
+
+      CREATE TABLE IF NOT EXISTS ${this.table("item_instance_events")} (
+        item_instance_event_id bigserial PRIMARY KEY,
+        item_instance_id uuid NOT NULL REFERENCES ${this.table("item_instances")}(item_instance_id) ON DELETE CASCADE,
+        event_type text NOT NULL,
+        from_player_id uuid REFERENCES ${this.table("players")}(player_id) ON DELETE SET NULL,
+        to_player_id uuid REFERENCES ${this.table("players")}(player_id) ON DELETE SET NULL,
+        from_location text,
+        to_location text,
+        world_id uuid REFERENCES ${this.table("worlds")}(world_id) ON DELETE SET NULL,
+        item_transaction_id bigint REFERENCES ${this.table("item_transactions")}(item_transaction_id) ON DELETE SET NULL,
+        correlation_id uuid,
+        source text NOT NULL DEFAULT 'system',
+        metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_item_instance_events_item_time
+      ON ${this.table("item_instance_events")}(item_instance_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_item_instance_events_player_time
+      ON ${this.table("item_instance_events")}(to_player_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_item_instance_events_correlation
+      ON ${this.table("item_instance_events")}(correlation_id)
+      WHERE correlation_id IS NOT NULL;
+
+      ALTER TABLE ${this.table("item_transactions")}
+        DROP CONSTRAINT IF EXISTS item_transactions_source_check;
+
+      ALTER TABLE ${this.table("item_transactions")}
+        ADD CONSTRAINT item_transactions_source_check CHECK (
+          source IN (
+            'world_block_break',
+            'world_block_place',
+            'world_lock_conversion',
+            'world_interaction',
+            'drop_pickup',
+            'drop_inventory',
+            'seed_place',
+            'seed_splice',
+            'seed_harvest',
+            'trade',
+            'vending',
+            'safe',
+            'shop',
+            'craft',
+            'crafting',
+            'event',
+            'quest',
+            'loot_box',
+            'reward',
+            'world_drop',
+            'furnace',
+            'fishing',
+            'fish_monger',
+            'admin',
+            'rollback',
+            'system'
+          )
+        );
+
+      CREATE TABLE IF NOT EXISTS ${this.table("transaction_ledger")} (
+        transaction_ledger_id bigserial PRIMARY KEY,
+        transaction_id uuid NOT NULL DEFAULT gen_random_uuid(),
+        transaction_type text NOT NULL,
+        status text NOT NULL DEFAULT 'success',
+        player_id uuid REFERENCES ${this.table("players")}(player_id) ON DELETE SET NULL,
+        other_player_id uuid REFERENCES ${this.table("players")}(player_id) ON DELETE SET NULL,
+        world_id uuid REFERENCES ${this.table("worlds")}(world_id) ON DELETE SET NULL,
+        item_transaction_id bigint REFERENCES ${this.table("item_transactions")}(item_transaction_id) ON DELETE SET NULL,
+        gem_ledger_id bigint REFERENCES ${this.table("gem_ledger")}(gem_ledger_id) ON DELETE SET NULL,
+        trade_id uuid REFERENCES ${this.table("trades")}(trade_id) ON DELETE SET NULL,
+        vending_transaction_id bigint REFERENCES ${this.table("vending_transactions")}(vending_transaction_id) ON DELETE SET NULL,
+        shop_purchase_id bigint REFERENCES ${this.table("shop_purchases")}(shop_purchase_id) ON DELETE SET NULL,
+        admin_action_id bigint REFERENCES ${this.table("admin_actions")}(admin_action_id) ON DELETE SET NULL,
+        item_instance_id uuid REFERENCES ${this.table("item_instances")}(item_instance_id) ON DELETE SET NULL,
+        public_item_instance_id text,
+        item_type text,
+        item_category text,
+        quantity bigint,
+        gems_before bigint,
+        gems_after bigint,
+        inventory_before_hash text,
+        inventory_after_hash text,
+        ip_address inet,
+        session_token_hash text,
+        user_agent text,
+        device_info jsonb NOT NULL DEFAULT '{}'::jsonb,
+        request_id text,
+        correlation_id uuid,
+        source text,
+        action text,
+        metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+        server_time timestamptz NOT NULL DEFAULT now(),
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+
+      ALTER TABLE ${this.table("transaction_ledger")}
+        DROP CONSTRAINT IF EXISTS transaction_ledger_status_check;
+
+      ALTER TABLE ${this.table("transaction_ledger")}
+        ADD CONSTRAINT transaction_ledger_status_check CHECK (status IN ('success', 'failed', 'reversed'));
+
+      CREATE INDEX IF NOT EXISTS idx_transaction_ledger_player_time
+      ON ${this.table("transaction_ledger")}(player_id, server_time DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_transaction_ledger_type_time
+      ON ${this.table("transaction_ledger")}(transaction_type, server_time DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_transaction_ledger_instance_time
+      ON ${this.table("transaction_ledger")}(public_item_instance_id, server_time DESC)
+      WHERE public_item_instance_id IS NOT NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_transaction_ledger_item_time
+      ON ${this.table("transaction_ledger")}(item_category, item_type, server_time DESC)
+      WHERE item_type IS NOT NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_transaction_ledger_request_id
+      ON ${this.table("transaction_ledger")}(request_id)
+      WHERE request_id IS NOT NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_transaction_ledger_correlation_id
+      ON ${this.table("transaction_ledger")}(correlation_id)
+      WHERE correlation_id IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS ${this.table("rollback_jobs")} (
+        rollback_job_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+        rollback_type text NOT NULL CHECK (rollback_type IN ('player', 'world', 'item', 'transaction')),
+        status text NOT NULL DEFAULT 'planned' CHECK (status IN ('planned', 'applied', 'failed')),
+        actor_username text NOT NULL DEFAULT 'rollback_tool',
+        reason text NOT NULL,
+        target_username text,
+        target_world text,
+        target_item_instance_id text,
+        target_transaction_id uuid,
+        target_transaction_ledger_id bigint,
+        since_at timestamptz,
+        until_at timestamptz,
+        snapshot_version integer,
+        dry_run boolean NOT NULL DEFAULT true,
+        plan jsonb NOT NULL DEFAULT '{}'::jsonb,
+        result jsonb NOT NULL DEFAULT '{}'::jsonb,
+        applied_at timestamptz,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_rollback_jobs_type_time
+      ON ${this.table("rollback_jobs")}(rollback_type, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_rollback_jobs_status_time
+      ON ${this.table("rollback_jobs")}(status, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_rollback_jobs_target_user_time
+      ON ${this.table("rollback_jobs")}(target_username, created_at DESC)
+      WHERE target_username IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS ${this.table("world_block_changes")} (
+        world_block_change_id bigserial PRIMARY KEY,
+        world_id uuid NOT NULL REFERENCES ${this.table("worlds")}(world_id) ON DELETE CASCADE,
+        player_id uuid REFERENCES ${this.table("players")}(player_id) ON DELETE SET NULL,
+        action text NOT NULL CHECK (action IN ('place', 'break', 'hit')),
+        reason text,
+        layer text NOT NULL CHECK (layer IN ('foreground', 'background')),
+        block_x integer NOT NULL,
+        block_y integer NOT NULL,
+        block_type_before text,
+        block_type_after text,
+        hit_count integer,
+        tx_uuid uuid,
+        metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+
+      ALTER TABLE ${this.table("world_block_changes")}
+        ADD COLUMN IF NOT EXISTS reason text,
+        ADD COLUMN IF NOT EXISTS block_type_before text,
+        ADD COLUMN IF NOT EXISTS block_type_after text,
+        ADD COLUMN IF NOT EXISTS hit_count integer,
+        ADD COLUMN IF NOT EXISTS metadata jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+      CREATE INDEX IF NOT EXISTS idx_world_block_changes_world_time
+      ON ${this.table("world_block_changes")}(world_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_world_block_changes_world_position
+      ON ${this.table("world_block_changes")}(world_id, block_x, block_y, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_world_block_changes_player_time
+      ON ${this.table("world_block_changes")}(player_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS ${this.table("world_object_changes")} (
+        world_object_change_id bigserial PRIMARY KEY,
+        world_id uuid NOT NULL REFERENCES ${this.table("worlds")}(world_id) ON DELETE CASCADE,
+        player_id uuid REFERENCES ${this.table("players")}(player_id) ON DELETE SET NULL,
+        object_type text NOT NULL,
+        object_id text NOT NULL,
+        block_x integer,
+        block_y integer,
+        action text NOT NULL,
+        reason text,
+        source_type text,
+        source_id text,
+        request_id text,
+        old_data jsonb NOT NULL DEFAULT '{}'::jsonb,
+        new_data jsonb NOT NULL DEFAULT '{}'::jsonb,
+        metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+
+      ALTER TABLE ${this.table("world_object_changes")}
+        ADD COLUMN IF NOT EXISTS reason text;
+
+      CREATE INDEX IF NOT EXISTS idx_world_object_changes_world_time
+      ON ${this.table("world_object_changes")}(world_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_world_object_changes_object_time
+      ON ${this.table("world_object_changes")}(world_id, object_type, object_id, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_world_object_changes_player_time
+      ON ${this.table("world_object_changes")}(player_id, created_at DESC);
     `);
   }
 
@@ -631,6 +1163,22 @@ class PostgresStore {
       [cleanUsername]
     );
     return result.rows[0]?.player_id || null;
+  }
+
+  async lookupUsernameByPlayerId(client, playerId) {
+    const cleanPlayerId = cleanName(playerId);
+    if (!isUuid(cleanPlayerId)) return "";
+    const result = await client.query(
+      `
+      SELECT a.username::text AS username
+        FROM ${this.table("players")} p
+        JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
+       WHERE p.player_id = $1
+       LIMIT 1
+      `,
+      [cleanPlayerId]
+    );
+    return cleanName(result.rows[0]?.username || "");
   }
 
   async claimIdempotency(scope, key, username = "", metadata = {}) {
@@ -891,6 +1439,9 @@ class PostgresStore {
 
   async reconcileItemInstancesForInventory(client, playerId, playerState, details = {}) {
     if (!playerId) return;
+    const reconcileDetails = toObject(details);
+    const allowCreateMissing = reconcileDetails.allow_create_missing !== false;
+    const allowRetireExtra = reconcileDetails.allow_retire_extra !== false;
 
     const desiredCounts = new Map();
     for (const [field, fallbackCategory] of INVENTORY_FIELD_CATEGORY) {
@@ -910,7 +1461,7 @@ class PostgresStore {
 
     const activeResult = await client.query(
       `
-      SELECT item_instance_id, item_type, item_category
+      SELECT item_instance_id, item_type, item_category, owner_player_id, world_id, current_location
         FROM ${this.table("item_instances")}
        WHERE owner_player_id = $1
          AND state = 'active'
@@ -927,21 +1478,24 @@ class PostgresStore {
       if (!shouldTrackItemInstance(itemType, itemCategory)) continue;
       const key = `${itemType}\u0000${itemCategory}`;
       if (!activeByItem.has(key)) activeByItem.set(key, []);
-      activeByItem.get(key).push(row.item_instance_id);
+      activeByItem.get(key).push(row);
     }
 
+    const source = extractItemInstanceSource(reconcileDetails, "inventory_snapshot_reconcile");
     const allKeys = new Set([...desiredCounts.keys(), ...activeByItem.keys()]);
     for (const key of allKeys) {
       const [itemType, itemCategory] = key.split("\u0000");
       const desiredAmount = Math.max(0, desiredCounts.get(key) || 0);
-      const activeIds = activeByItem.get(key) || [];
+      const activeRows = activeByItem.get(key) || [];
 
-      if (activeIds.length > desiredAmount) {
-        const retiredIds = activeIds.slice(desiredAmount);
+      if (allowRetireExtra && activeRows.length > desiredAmount) {
+        const retiredRows = activeRows.slice(desiredAmount);
+        const retiredIds = retiredRows.map((row) => row.item_instance_id);
         await client.query(
           `
           UPDATE ${this.table("item_instances")}
              SET state = $2,
+                 current_location = 'unknown',
                  metadata = metadata || $3::jsonb,
                  updated_at = now()
            WHERE item_instance_id = ANY($1::uuid[])
@@ -955,34 +1509,474 @@ class PostgresStore {
             }),
           ]
         );
+
+        for (const row of retiredRows) {
+          await this.recordItemInstanceEvent(client, {
+            item_instance_id: row.item_instance_id,
+            event_type: "retired",
+            from_player_id: row.owner_player_id,
+            to_player_id: row.owner_player_id,
+            from_location: row.current_location || "inventory",
+            to_location: "unknown",
+            world_id: row.world_id,
+            source,
+            metadata: {
+              reason: "inventory_snapshot_reconcile",
+              item_type: cleanName(itemType),
+              item_category: cleanName(itemCategory),
+              details: safeJson(details),
+            },
+          });
+        }
       }
 
-      const missingCount = desiredAmount - activeIds.length;
+      const missingCount = desiredAmount - activeRows.length;
+      if (!allowCreateMissing) continue;
       for (let i = 0; i < missingCount; i += 1) {
-        await client.query(
+        const publicItemInstanceId = generatePublicItemInstanceId();
+        const result = await client.query(
           `
           INSERT INTO ${this.table("item_instances")} (
+            public_item_instance_id,
             item_type,
             item_category,
             owner_player_id,
             state,
+            created_by_source,
+            current_location,
             metadata,
             created_at,
             updated_at
           )
-          VALUES ($1, $2, $3, 'active', $4::jsonb, now(), now())
+          VALUES ($1, $2, $3, $4, 'active', $5, 'inventory', $6::jsonb, now(), now())
+          RETURNING item_instance_id, owner_player_id
           `,
           [
+            publicItemInstanceId,
             cleanName(itemType),
             cleanName(itemCategory),
             playerId,
+            source,
             JSON.stringify({
               source: "inventory_snapshot_reconcile",
               details: safeJson(details),
             }),
           ]
         );
+
+        await this.recordItemInstanceEvent(client, {
+          item_instance_id: result.rows[0]?.item_instance_id,
+          event_type: "created",
+          to_player_id: result.rows[0]?.owner_player_id || playerId,
+          to_location: "inventory",
+          source,
+          metadata: {
+            public_item_instance_id: publicItemInstanceId,
+            item_type: cleanName(itemType),
+            item_category: cleanName(itemCategory),
+            reason: "inventory_snapshot_reconcile",
+            details: safeJson(details),
+          },
+        });
       }
+    }
+  }
+
+  async recordItemInstanceEvent(client, entry = {}) {
+    const e = toObject(entry);
+    const itemInstanceId = cleanName(e.item_instance_id || e.instance_id || "");
+    if (!isUuid(itemInstanceId)) return null;
+
+    const fromPlayerId = isUuid(e.from_player_id) ? cleanName(e.from_player_id) : null;
+    const toPlayerId = isUuid(e.to_player_id) ? cleanName(e.to_player_id) : null;
+    const worldId = isUuid(e.world_id) ? cleanName(e.world_id) : null;
+    const correlationId = isUuid(e.correlation_id) ? cleanName(e.correlation_id) : null;
+    const itemTransactionId = toInt(e.item_transaction_id, 0) > 0 ? toInt(e.item_transaction_id, 0) : null;
+
+    await client.query(
+      `
+      INSERT INTO ${this.table("item_instance_events")} (
+        item_instance_id,
+        event_type,
+        from_player_id,
+        to_player_id,
+        from_location,
+        to_location,
+        world_id,
+        item_transaction_id,
+        correlation_id,
+        source,
+        metadata,
+        created_at
+      )
+      VALUES ($1, $2, $3, $4, NULLIF($5, ''), NULLIF($6, ''), $7, $8, $9, $10, $11::jsonb, now())
+      `,
+      [
+        itemInstanceId,
+        normalizeItemInstanceEventType(e.event_type || e.type || "updated"),
+        fromPlayerId,
+        toPlayerId,
+        normalizeItemInstanceLocation(e.from_location || "", "unknown"),
+        normalizeItemInstanceLocation(e.to_location || "", "unknown"),
+        worldId,
+        itemTransactionId,
+        correlationId,
+        normalizeItemInstanceSource(e.source || "system"),
+        JSON.stringify(safeJson(e.metadata || e.details || {})),
+      ]
+    );
+
+    return { ok: true };
+  }
+
+  async getInventorySnapshotHash(client, playerId) {
+    if (!isUuid(playerId)) return null;
+    const result = await client.query(
+      `
+      SELECT item_type, item_category, amount, stack_limit
+        FROM ${this.table("inventory")}
+       WHERE player_id = $1
+         AND amount <> 0
+       ORDER BY item_category ASC, item_type ASC
+      `,
+      [playerId]
+    );
+    const payload = result.rows.map((row) => ({
+      item_type: cleanName(row.item_type || ""),
+      item_category: cleanName(row.item_category || ""),
+      amount: String(row.amount ?? "0"),
+      stack_limit: String(row.stack_limit ?? "0"),
+    }));
+    return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
+  }
+
+  async recordTransactionLedger(client, entry = {}) {
+    const e = toObject(entry);
+    const playerId = isUuid(e.player_id) ? cleanName(e.player_id) : null;
+
+    const itemInstances = Array.isArray(e.item_instances)
+      ? e.item_instances.map((item) => toObject(item)).filter((item) => isUuid(item.item_instance_id))
+      : [];
+    const rowsToWrite = itemInstances.length > 0 ? itemInstances : [null];
+    const insertedIds = [];
+    const rawIpAddress = cleanName(e.ip_address || e.ip || "");
+    const ipAddress = net.isIP(rawIpAddress) ? rawIpAddress : null;
+    const transactionType = cleanName(e.transaction_type || e.type || "")
+      || normalizeTransactionLedgerType(e);
+    const status = normalizeTransactionLedgerStatus(e.status || "success");
+    const baseMetadata = safeJson(e.metadata);
+    const transactionId = isUuid(e.transaction_id) ? cleanName(e.transaction_id) : null;
+    const otherPlayerId = isUuid(e.other_player_id) ? cleanName(e.other_player_id) : null;
+    const worldId = isUuid(e.world_id) ? cleanName(e.world_id) : null;
+    const itemTransactionId = toInt(e.item_transaction_id, 0) > 0 ? toInt(e.item_transaction_id, 0) : null;
+    const gemLedgerId = toInt(e.gem_ledger_id, 0) > 0 ? toInt(e.gem_ledger_id, 0) : null;
+    const vendingTransactionId = toInt(e.vending_transaction_id, 0) > 0 ? toInt(e.vending_transaction_id, 0) : null;
+    const shopPurchaseId = toInt(e.shop_purchase_id, 0) > 0 ? toInt(e.shop_purchase_id, 0) : null;
+    const adminActionId = toInt(e.admin_action_id, 0) > 0 ? toInt(e.admin_action_id, 0) : null;
+    const tradeId = isUuid(e.trade_id) ? cleanName(e.trade_id) : null;
+    const correlationId = isUuid(e.correlation_id) ? cleanName(e.correlation_id) : null;
+    const at = cleanName(e.server_time || e.at || "");
+    const hasLedgerContext = playerId
+      || otherPlayerId
+      || worldId
+      || itemInstances.length > 0
+      || isUuid(e.item_instance_id)
+      || cleanName(e.public_item_instance_id || "") !== ""
+      || cleanName(e.item_type || e.item_id || "") !== ""
+      || cleanName(e.action || "") !== "";
+    if (!hasLedgerContext) return [];
+
+    for (const itemInstance of rowsToWrite) {
+      const itemInstanceId = itemInstance && isUuid(itemInstance.item_instance_id)
+        ? cleanName(itemInstance.item_instance_id)
+        : (isUuid(e.item_instance_id) ? cleanName(e.item_instance_id) : null);
+      const publicItemInstanceId = itemInstance
+        ? cleanName(itemInstance.public_item_instance_id || "")
+        : cleanName(e.public_item_instance_id || "");
+      const itemType = cleanName(e.item_type || itemInstance?.item_type || "");
+      const itemCategory = cleanName(e.item_category || itemInstance?.item_category || "");
+      const quantity = itemInstance ? (toInt(e.quantity, 0) < 0 ? -1 : 1) : toInt(e.quantity ?? e.delta ?? 0, 0);
+      const metadata = itemInstance
+        ? { ...baseMetadata, item_instance: summarizeItemInstanceEventMetadata(itemInstance), public_item_instance_id: publicItemInstanceId }
+        : baseMetadata;
+
+      const result = await client.query(
+        `
+        INSERT INTO ${this.table("transaction_ledger")} (
+          transaction_id,
+          transaction_type,
+          status,
+          player_id,
+          other_player_id,
+          world_id,
+          item_transaction_id,
+          gem_ledger_id,
+          trade_id,
+          vending_transaction_id,
+          shop_purchase_id,
+          admin_action_id,
+          item_instance_id,
+          public_item_instance_id,
+          item_type,
+          item_category,
+          quantity,
+          gems_before,
+          gems_after,
+          inventory_before_hash,
+          inventory_after_hash,
+          ip_address,
+          session_token_hash,
+          user_agent,
+          device_info,
+          request_id,
+          correlation_id,
+          source,
+          action,
+          metadata,
+          server_time,
+          created_at
+        )
+        VALUES (
+          COALESCE($1::uuid, gen_random_uuid()),
+          $2,
+          $3,
+          $4,
+          $5,
+          $6,
+          $7,
+          $8,
+          $9,
+          $10,
+          $11,
+          $12,
+          $13,
+          NULLIF($14, ''),
+          NULLIF($15, ''),
+          NULLIF($16, ''),
+          $17,
+          $18,
+          $19,
+          NULLIF($20, ''),
+          NULLIF($21, ''),
+          $22::inet,
+          NULLIF($23, ''),
+          NULLIF($24, ''),
+          $25::jsonb,
+          NULLIF($26, ''),
+          $27::uuid,
+          NULLIF($28, ''),
+          NULLIF($29, ''),
+          $30::jsonb,
+          COALESCE(NULLIF($31, '')::timestamptz, now()),
+          now()
+        )
+        RETURNING transaction_ledger_id
+        `,
+        [
+          transactionId,
+          transactionType,
+          status,
+          playerId,
+          otherPlayerId,
+          worldId,
+          itemTransactionId,
+          gemLedgerId,
+          tradeId,
+          vendingTransactionId,
+          shopPurchaseId,
+          adminActionId,
+          itemInstanceId,
+          publicItemInstanceId,
+          itemType,
+          itemCategory,
+          quantity,
+          Number.isFinite(Number(e.gems_before)) ? Math.trunc(Number(e.gems_before)) : null,
+          Number.isFinite(Number(e.gems_after)) ? Math.trunc(Number(e.gems_after)) : null,
+          cleanName(e.inventory_before_hash || ""),
+          cleanName(e.inventory_after_hash || ""),
+          ipAddress,
+          cleanName(e.session_token_hash || ""),
+          cleanName(e.user_agent || ""),
+          JSON.stringify(safeJson(e.device_info)),
+          cleanName(e.request_id || ""),
+          correlationId,
+          normalizeLedgerSource(e.source || e.source_type || "system"),
+          cleanName(e.action || ""),
+          JSON.stringify(metadata),
+          at,
+        ]
+      );
+      insertedIds.push(result.rows[0]?.transaction_ledger_id || null);
+    }
+
+    return insertedIds.filter((id) => id !== null);
+  }
+
+  async recordTransactionLedgerEvent(entry = {}) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const e = toObject(entry);
+    const username = cleanName(e.account_username || e.username || e.player_username || "");
+    const otherUsername = cleanName(e.other_account_username || e.other_username || "");
+    const worldName = cleanName(e.world || e.world_name || "");
+
+    try {
+      return await this.withTransaction(async (client) => {
+        const playerId = isUuid(e.player_id)
+          ? cleanName(e.player_id)
+          : (username !== "" ? await this.ensurePlayerIdentityForExistingAccount(client, username, worldName) : null);
+        const otherPlayerId = isUuid(e.other_player_id)
+          ? cleanName(e.other_player_id)
+          : (otherUsername !== "" ? await this.ensurePlayerIdentityForExistingAccount(client, otherUsername, worldName) : null);
+        const worldId = isUuid(e.world_id)
+          ? cleanName(e.world_id)
+          : (worldName !== "" ? await this.ensureWorldIdentity(client, worldName) : null);
+        const inventoryHash = playerId ? await this.getInventorySnapshotHash(client, playerId) : null;
+        const ids = await this.recordTransactionLedger(client, {
+          ...e,
+          player_id: playerId,
+          other_player_id: otherPlayerId,
+          world_id: worldId,
+          inventory_before_hash: e.inventory_before_hash || inventoryHash || "",
+          inventory_after_hash: e.inventory_after_hash || inventoryHash || "",
+        });
+        return { ok: ids.length > 0, transaction_ledger_ids: ids };
+      });
+    } catch (error) {
+      this.logger("[postgres] transaction ledger event failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
+    }
+  }
+
+  async listTransactionLedger(entry = {}) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const e = toObject(entry);
+    const username = cleanName(e.username || e.account_username || e.player_username || e.target_username || "");
+    const publicItemInstanceId = cleanName(e.public_item_instance_id || e.item_instance_public_id || e.item_instance_id || "");
+    const itemType = cleanName(e.item_type || e.item_id || "");
+    const transactionType = cleanName(e.transaction_type || e.type || "").toUpperCase();
+    const status = cleanName(e.status || "").toLowerCase();
+    const limit = Math.min(250, Math.max(1, toInt(e.limit, 100)));
+
+    if (username === "" && publicItemInstanceId === "" && itemType === "" && transactionType === "") {
+      return { ok: false, reason: "target_required" };
+    }
+
+    const where = [];
+    const params = [];
+    const addParam = (value) => {
+      params.push(value);
+      return `$${params.length}`;
+    };
+
+    if (username !== "") {
+      const p = addParam(username);
+      where.push(`(lower(actor_account.username) = lower(${p}) OR lower(other_account.username) = lower(${p}))`);
+    }
+    if (publicItemInstanceId !== "") {
+      if (isUuid(publicItemInstanceId)) {
+        where.push(`tl.item_instance_id = ${addParam(publicItemInstanceId)}::uuid`);
+      } else {
+        where.push(`lower(tl.public_item_instance_id) = lower(${addParam(publicItemInstanceId)})`);
+      }
+    }
+    if (itemType !== "") {
+      where.push(`tl.item_type = ${addParam(itemType)}`);
+    }
+    if (transactionType !== "") {
+      where.push(`tl.transaction_type = ${addParam(transactionType)}`);
+    }
+    if (status !== "" && TRANSACTION_LEDGER_STATUSES.has(status)) {
+      where.push(`tl.status = ${addParam(status)}`);
+    }
+    params.push(limit);
+    const limitParam = `$${params.length}`;
+
+    try {
+      const result = await this.pool.query(
+        `
+        SELECT tl.transaction_ledger_id,
+               tl.transaction_id,
+               tl.transaction_type,
+               tl.status,
+               actor_account.username::text AS username,
+               other_account.username::text AS other_username,
+               worlds.world_name::text AS world_name,
+               tl.item_instance_id,
+               tl.public_item_instance_id,
+               tl.item_type,
+               tl.item_category,
+               tl.quantity,
+               tl.gems_before,
+               tl.gems_after,
+               tl.inventory_before_hash,
+               tl.inventory_after_hash,
+               tl.ip_address::text AS ip_address,
+               tl.session_token_hash,
+               tl.user_agent,
+               tl.device_info,
+               tl.request_id,
+               tl.correlation_id,
+               tl.source,
+               tl.action,
+               tl.metadata,
+               tl.server_time,
+               tl.created_at
+          FROM ${this.table("transaction_ledger")} tl
+          LEFT JOIN ${this.table("players")} actor_player ON actor_player.player_id = tl.player_id
+          LEFT JOIN ${this.table("accounts")} actor_account ON actor_account.account_id = actor_player.account_id
+          LEFT JOIN ${this.table("players")} other_player ON other_player.player_id = tl.other_player_id
+          LEFT JOIN ${this.table("accounts")} other_account ON other_account.account_id = other_player.account_id
+          LEFT JOIN ${this.table("worlds")} worlds ON worlds.world_id = tl.world_id
+         WHERE ${where.join(" AND ")}
+         ORDER BY tl.server_time DESC, tl.transaction_ledger_id DESC
+         LIMIT ${limitParam}
+        `,
+        params
+      );
+
+      return {
+        ok: true,
+        query: {
+          username,
+          public_item_instance_id: publicItemInstanceId,
+          item_type: itemType,
+          transaction_type: transactionType,
+          status,
+          limit,
+        },
+        entries: result.rows.map((row) => ({
+          transaction_ledger_id: toInt(row.transaction_ledger_id, 0),
+          transaction_id: cleanName(row.transaction_id || ""),
+          transaction_type: cleanName(row.transaction_type || ""),
+          status: cleanName(row.status || ""),
+          username: cleanName(row.username || ""),
+          other_username: cleanName(row.other_username || ""),
+          world_name: cleanName(row.world_name || ""),
+          item_instance_id: cleanName(row.item_instance_id || ""),
+          public_item_instance_id: cleanName(row.public_item_instance_id || ""),
+          item_type: cleanName(row.item_type || ""),
+          item_category: cleanName(row.item_category || ""),
+          quantity: toInt(row.quantity, 0),
+          gems_before: row.gems_before == null ? null : toInt(row.gems_before, 0),
+          gems_after: row.gems_after == null ? null : toInt(row.gems_after, 0),
+          inventory_before_hash: cleanName(row.inventory_before_hash || ""),
+          inventory_after_hash: cleanName(row.inventory_after_hash || ""),
+          ip_address: cleanName(row.ip_address || ""),
+          session_token_hash: cleanName(row.session_token_hash || ""),
+          user_agent: cleanName(row.user_agent || ""),
+          device_info: safeJson(row.device_info),
+          request_id: cleanName(row.request_id || ""),
+          correlation_id: cleanName(row.correlation_id || ""),
+          source: cleanName(row.source || ""),
+          action: cleanName(row.action || ""),
+          metadata: safeJson(row.metadata),
+          server_time: normalizeOptionalTimestamp(row.server_time),
+          created_at: normalizeOptionalTimestamp(row.created_at),
+        })),
+      };
+    } catch (error) {
+      this.logger("[postgres] transaction ledger lookup failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
     }
   }
 
@@ -994,6 +1988,8 @@ class PostgresStore {
     const ownerUsername = cleanName(e.owner_username || e.account_username || e.username || "");
     const worldName = cleanName(e.world || e.world_name || "");
     const state = normalizeItemInstanceState(e.state || ITEM_INSTANCE_ACTIVE_STATE);
+    const createdBySource = normalizeItemInstanceSource(e.created_by_source || e.source || e.created_source || toObject(e.metadata).source || "system");
+    const currentLocation = normalizeItemInstanceLocation(e.current_location || e.location || "inventory");
     if (itemType === "" || itemCategory === "") return { ok: false, reason: "invalid_item" };
     if (!shouldTrackItemInstance(itemType, itemCategory) && !e.force) {
       return { ok: false, reason: "not_instance_tracked" };
@@ -1011,40 +2007,67 @@ class PostgresStore {
         const originTransactionId = Number.isFinite(Number(e.origin_transaction_id))
           ? Math.trunc(Number(e.origin_transaction_id))
           : null;
+        const publicItemInstanceId = cleanName(e.public_item_instance_id || e.item_instance_public_id || "") || generatePublicItemInstanceId();
 
         const result = await client.query(
           `
           INSERT INTO ${this.table("item_instances")} (
+            public_item_instance_id,
             item_type,
             item_category,
             owner_player_id,
             world_id,
             state,
+            created_by_source,
+            current_location,
             origin_transaction_id,
             metadata,
             created_at,
             updated_at
           )
-          VALUES ($1, $2, $3, $4, $5, $6, $7::jsonb, now(), now())
-          RETURNING item_instance_id
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10::jsonb, now(), now())
+          RETURNING item_instance_id, public_item_instance_id
           `,
           [
+            publicItemInstanceId,
             itemType,
             itemCategory,
             ownerPlayerId,
             worldId,
             state,
+            createdBySource,
+            currentLocation,
             originTransactionId,
             JSON.stringify(safeJson(e.metadata || e.details || {})),
           ]
         );
 
+        await this.recordItemInstanceEvent(client, {
+          item_instance_id: result.rows[0]?.item_instance_id,
+          event_type: "created",
+          to_player_id: ownerPlayerId,
+          to_location: currentLocation,
+          world_id: worldId,
+          item_transaction_id: originTransactionId,
+          source: createdBySource,
+          metadata: {
+            public_item_instance_id: cleanName(result.rows[0]?.public_item_instance_id || publicItemInstanceId),
+            item_type: itemType,
+            item_category: itemCategory,
+            state,
+            details: safeJson(e.metadata || e.details || {}),
+          },
+        });
+
         return {
           ok: true,
           item_instance_id: cleanName(result.rows[0]?.item_instance_id || ""),
+          public_item_instance_id: cleanName(result.rows[0]?.public_item_instance_id || publicItemInstanceId),
           item_type: itemType,
           item_category: itemCategory,
           state,
+          created_by_source: createdBySource,
+          current_location: currentLocation,
         };
       });
     } catch (error) {
@@ -1068,10 +2091,24 @@ class PostgresStore {
 
     const ownerUsername = cleanName(e.owner_username || e.account_username || e.username || "");
     const worldName = cleanName(e.world || e.world_name || "");
-    const state = normalizeItemInstanceState(e.state || ITEM_INSTANCE_ACTIVE_STATE);
+    const requestedState = cleanName(e.state || "");
+    const requestedLocation = cleanName(e.current_location || e.location || "");
+    const source = normalizeItemInstanceSource(e.source || e.updated_by_source || toObject(e.metadata).source || "system");
 
     try {
       return await this.withTransaction(async (client) => {
+        const previousResult = await client.query(
+          `
+          SELECT item_instance_id, public_item_instance_id, item_type, item_category, owner_player_id, world_id, state, current_location
+            FROM ${this.table("item_instances")}
+           WHERE item_instance_id = $1
+           FOR UPDATE
+          `,
+          [itemInstanceId]
+        );
+        const previous = previousResult.rows[0];
+        if (!previous) return { ok: false, reason: "item_instance_not_found" };
+
         const ownerPlayerId = ownerUsername !== ""
           ? await this.lookupPlayerIdByUsername(client, ownerUsername)
           : null;
@@ -1079,6 +2116,12 @@ class PostgresStore {
         const worldId = worldName !== ""
           ? await this.ensureWorldIdentity(client, worldName)
           : null;
+        const state = requestedState !== ""
+          ? normalizeItemInstanceState(requestedState, previous.state || ITEM_INSTANCE_ACTIVE_STATE)
+          : normalizeItemInstanceState(previous.state || ITEM_INSTANCE_ACTIVE_STATE);
+        const currentLocation = requestedLocation !== ""
+          ? normalizeItemInstanceLocation(requestedLocation, previous.current_location || "inventory")
+          : normalizeItemInstanceLocation(previous.current_location || "inventory");
 
         const result = await client.query(
           `
@@ -1086,28 +2129,61 @@ class PostgresStore {
              SET owner_player_id = COALESCE($2, owner_player_id),
                  world_id = COALESCE($3, world_id),
                  state = $4,
-                 metadata = metadata || $5::jsonb,
+                 current_location = $5,
+                 metadata = metadata || $6::jsonb,
                  updated_at = now()
            WHERE item_instance_id = $1
-          RETURNING item_instance_id, item_type, item_category, state
+          RETURNING item_instance_id, public_item_instance_id, item_type, item_category, owner_player_id, world_id, state, current_location
           `,
           [
             itemInstanceId,
             ownerPlayerId,
             worldId,
             state,
+            currentLocation,
             JSON.stringify(safeJson(e.metadata || e.details || {})),
           ]
         );
 
         const row = result.rows[0];
         if (!row) return { ok: false, reason: "item_instance_not_found" };
+
+        let eventType = "updated";
+        if (cleanName(previous.owner_player_id || "") !== cleanName(row.owner_player_id || "")) {
+          eventType = "owner_changed";
+        } else if (cleanName(previous.current_location || "") !== cleanName(row.current_location || "")) {
+          eventType = "location_changed";
+        } else if (cleanName(previous.state || "") !== cleanName(row.state || "")) {
+          eventType = "state_changed";
+        }
+
+        await this.recordItemInstanceEvent(client, {
+          item_instance_id: row.item_instance_id,
+          event_type: eventType,
+          from_player_id: previous.owner_player_id,
+          to_player_id: row.owner_player_id,
+          from_location: previous.current_location || "unknown",
+          to_location: row.current_location || "unknown",
+          world_id: row.world_id || previous.world_id,
+          source,
+          metadata: {
+            public_item_instance_id: cleanName(row.public_item_instance_id || previous.public_item_instance_id || ""),
+            item_type: cleanName(row.item_type || ""),
+            item_category: cleanName(row.item_category || ""),
+            previous_state: cleanName(previous.state || ""),
+            state: cleanName(row.state || ""),
+            details: safeJson(e.metadata || e.details || {}),
+          },
+        });
+
         return {
           ok: true,
           item_instance_id: cleanName(row.item_instance_id || ""),
+          public_item_instance_id: cleanName(row.public_item_instance_id || ""),
           item_type: cleanName(row.item_type || ""),
           item_category: cleanName(row.item_category || ""),
           state: cleanName(row.state || ""),
+          current_location: cleanName(row.current_location || ""),
         };
       });
     } catch (error) {
@@ -1127,7 +2203,16 @@ class PostgresStore {
     try {
       const result = await this.pool.query(
         `
-        SELECT ii.item_instance_id, ii.item_type, ii.item_category, ii.state, ii.metadata, ii.created_at, ii.updated_at
+        SELECT ii.item_instance_id,
+               ii.public_item_instance_id,
+               ii.item_type,
+               ii.item_category,
+               ii.state,
+               ii.created_by_source,
+               ii.current_location,
+               ii.metadata,
+               ii.created_at,
+               ii.updated_at
           FROM ${this.table("item_instances")} ii
           JOIN ${this.table("players")} p ON p.player_id = ii.owner_player_id
           JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
@@ -1143,9 +2228,12 @@ class PostgresStore {
 
       return result.rows.map((row) => ({
         item_instance_id: cleanName(row.item_instance_id || ""),
+        public_item_instance_id: cleanName(row.public_item_instance_id || ""),
         item_type: cleanName(row.item_type || ""),
         item_category: cleanName(row.item_category || ""),
         state: cleanName(row.state || ""),
+        created_by_source: cleanName(row.created_by_source || ""),
+        current_location: cleanName(row.current_location || ""),
         metadata: toObject(row.metadata),
         created_at: normalizeOptionalTimestamp(row.created_at),
         updated_at: normalizeOptionalTimestamp(row.updated_at),
@@ -1153,6 +2241,806 @@ class PostgresStore {
     } catch (error) {
       this.logger("[postgres] item instance list failed:", error.message);
       return [];
+    }
+  }
+
+  async listItemInstanceCopies(identifier, options = {}) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const cleanIdentifier = cleanName(identifier);
+    if (cleanIdentifier === "") return { ok: false, reason: "invalid_item_instance" };
+
+    const limit = Math.min(500, Math.max(1, toInt(options.limit, 100)));
+    const lookupByUuid = isUuid(cleanIdentifier);
+    const lookupByPublicId = cleanIdentifier.toUpperCase().startsWith("PM-ITEM-");
+    let anchor = null;
+    let itemType = cleanName(options.item_type || options.item_id || "");
+
+    try {
+      if (lookupByUuid || lookupByPublicId) {
+        const anchorResult = await this.pool.query(
+          `
+          SELECT item_instance_id,
+                 public_item_instance_id,
+                 item_type,
+                 item_category
+            FROM ${this.table("item_instances")}
+           WHERE ${lookupByUuid ? "item_instance_id = $1::uuid" : "lower(public_item_instance_id) = lower($1)"}
+           LIMIT 1
+          `,
+          [cleanIdentifier]
+        );
+        anchor = anchorResult.rows[0] || null;
+        itemType = cleanName(anchor?.item_type || "");
+      } else {
+        itemType = cleanIdentifier;
+      }
+
+      if (itemType === "") return { ok: false, reason: "item_instance_not_found" };
+
+      const result = await this.pool.query(
+        `
+        WITH public_id_counts AS (
+          SELECT public_item_instance_id, count(*)::int AS public_id_count
+            FROM ${this.table("item_instances")}
+           GROUP BY public_item_instance_id
+        )
+        SELECT ii.item_instance_id,
+               ii.public_item_instance_id,
+               ii.item_type,
+               ii.item_category,
+               ii.owner_player_id,
+               owner_account.username::text AS owner_username,
+               ii.world_id,
+               iw.world_name::text AS world_name,
+               ii.state,
+               ii.created_by_source,
+               ii.current_location,
+               ii.metadata,
+               ii.created_at,
+               ii.updated_at,
+               coalesce(pic.public_id_count, 0)::int AS public_id_count
+          FROM ${this.table("item_instances")} ii
+          LEFT JOIN public_id_counts pic ON pic.public_item_instance_id = ii.public_item_instance_id
+          LEFT JOIN ${this.table("players")} owner_player ON owner_player.player_id = ii.owner_player_id
+          LEFT JOIN ${this.table("accounts")} owner_account ON owner_account.account_id = owner_player.account_id
+          LEFT JOIN ${this.table("worlds")} iw ON iw.world_id = ii.world_id
+         WHERE ii.item_type = $1
+         ORDER BY
+              CASE WHEN ii.state = 'active' THEN 0 ELSE 1 END,
+              ii.created_at ASC,
+              ii.public_item_instance_id ASC
+         LIMIT $2
+        `,
+        [itemType, limit]
+      );
+
+      const copies = result.rows.map((row) => ({
+        item_instance_id: cleanName(row.item_instance_id || ""),
+        public_item_instance_id: cleanName(row.public_item_instance_id || ""),
+        item_type: cleanName(row.item_type || ""),
+        item_category: cleanName(row.item_category || ""),
+        state: cleanName(row.state || ""),
+        current_location: cleanName(row.current_location || ""),
+        current_owner_username: cleanName(row.owner_username || ""),
+        world_name: cleanName(row.world_name || ""),
+        created_by_source: cleanName(row.created_by_source || ""),
+        metadata: toObject(row.metadata),
+        public_id_count: toInt(row.public_id_count, 0),
+        possible_duplicate: toInt(row.public_id_count, 0) !== 1,
+        created_at: normalizeOptionalTimestamp(row.created_at),
+        updated_at: normalizeOptionalTimestamp(row.updated_at),
+      }));
+
+      const summary = copies.reduce((acc, row) => {
+        acc.total += 1;
+        if (row.state === ITEM_INSTANCE_ACTIVE_STATE) acc.active += 1;
+        if (row.state === "locked") acc.frozen += 1;
+        if (row.state === "destroyed" || row.state === "consumed") acc.retired += 1;
+        if (row.possible_duplicate) acc.duplicate_public_ids += 1;
+        if (row.current_location === "inventory") acc.inventory += 1;
+        if (row.current_location === "vending") acc.vending += 1;
+        if (row.current_location === "trade") acc.trade += 1;
+        if (row.current_location === "world_drop") acc.world_drop += 1;
+        return acc;
+      }, {
+        total: 0,
+        active: 0,
+        frozen: 0,
+        retired: 0,
+        duplicate_public_ids: 0,
+        inventory: 0,
+        vending: 0,
+        trade: 0,
+        world_drop: 0,
+      });
+
+      return {
+        ok: true,
+        query: {
+          identifier: cleanIdentifier,
+          item_type: itemType,
+          anchored_public_item_instance_id: cleanName(anchor?.public_item_instance_id || ""),
+        },
+        summary,
+        copies,
+      };
+    } catch (error) {
+      this.logger("[postgres] item instance copies lookup failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
+    }
+  }
+
+  async getItemInstanceHistory(identifier, options = {}) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const cleanIdentifier = cleanName(identifier);
+    if (cleanIdentifier === "") return { ok: false, reason: "invalid_item_instance" };
+    const limit = Math.min(100, Math.max(1, toInt(options.limit, 40)));
+    const lookupByUuid = isUuid(cleanIdentifier);
+
+    try {
+      const instanceResult = await this.pool.query(
+        `
+        SELECT ii.item_instance_id,
+               ii.public_item_instance_id,
+               ii.item_type,
+               ii.item_category,
+               ii.owner_player_id,
+               owner_account.username::text AS owner_username,
+               ii.world_id,
+               iw.world_name::text AS world_name,
+               ii.state,
+               ii.created_by_source,
+               ii.current_location,
+               ii.metadata,
+               ii.created_at,
+               ii.updated_at,
+               (
+                 SELECT count(*)
+                   FROM ${this.table("item_instances")} dup
+                  WHERE dup.public_item_instance_id = ii.public_item_instance_id
+               )::int AS public_id_count
+          FROM ${this.table("item_instances")} ii
+          LEFT JOIN ${this.table("players")} owner_player ON owner_player.player_id = ii.owner_player_id
+          LEFT JOIN ${this.table("accounts")} owner_account ON owner_account.account_id = owner_player.account_id
+          LEFT JOIN ${this.table("worlds")} iw ON iw.world_id = ii.world_id
+         WHERE ${lookupByUuid ? "ii.item_instance_id = $1::uuid" : "lower(ii.public_item_instance_id) = lower($1)"}
+         LIMIT 1
+        `,
+        [cleanIdentifier]
+      );
+
+      const row = instanceResult.rows[0];
+      if (!row?.item_instance_id) return { ok: false, reason: "item_instance_not_found" };
+
+      const eventsResult = await this.pool.query(
+        `
+        SELECT e.item_instance_event_id,
+               e.item_instance_id,
+               e.event_type,
+               e.from_player_id,
+               from_account.username::text AS from_username,
+               e.to_player_id,
+               to_account.username::text AS to_username,
+               e.from_location,
+               e.to_location,
+               e.world_id,
+               ew.world_name::text AS world_name,
+               e.item_transaction_id,
+               e.correlation_id,
+               e.source,
+               e.metadata,
+               e.created_at
+          FROM ${this.table("item_instance_events")} e
+          LEFT JOIN ${this.table("players")} from_player ON from_player.player_id = e.from_player_id
+          LEFT JOIN ${this.table("accounts")} from_account ON from_account.account_id = from_player.account_id
+          LEFT JOIN ${this.table("players")} to_player ON to_player.player_id = e.to_player_id
+          LEFT JOIN ${this.table("accounts")} to_account ON to_account.account_id = to_player.account_id
+          LEFT JOIN ${this.table("worlds")} ew ON ew.world_id = e.world_id
+         WHERE e.item_instance_id = $1
+         ORDER BY e.created_at ASC, e.item_instance_event_id ASC
+         LIMIT $2
+        `,
+        [row.item_instance_id, limit]
+      );
+
+      const events = eventsResult.rows.map((eventRow) => ({
+        event_id: toInt(eventRow.item_instance_event_id, 0),
+        event_type: cleanName(eventRow.event_type || ""),
+        from_username: cleanName(eventRow.from_username || ""),
+        to_username: cleanName(eventRow.to_username || ""),
+        from_location: cleanName(eventRow.from_location || ""),
+        to_location: cleanName(eventRow.to_location || ""),
+        world_name: cleanName(eventRow.world_name || ""),
+        source: cleanName(eventRow.source || ""),
+        item_transaction_id: toInt(eventRow.item_transaction_id, 0),
+        correlation_id: cleanName(eventRow.correlation_id || ""),
+        metadata: summarizeItemInstanceEventMetadata(eventRow.metadata),
+        created_at: normalizeOptionalTimestamp(eventRow.created_at),
+      }));
+
+      const originEvent = events.find((event) => event.event_type === "created" || event.event_type === "reconciled") || events[0] || null;
+      const source = cleanName(row.created_by_source || originEvent?.source || "unknown");
+      const sourceLower = source.toLowerCase();
+      const reconstructedSource = sourceLower.includes("reconcile")
+        || sourceLower.includes("startup")
+        || sourceLower.includes("save_player_state")
+        || sourceLower.includes("inventory_snapshot");
+      const flags = [];
+      const publicIdCount = toInt(row.public_id_count, 0);
+      if (publicIdCount !== 1) flags.push("duplicate_public_id");
+      if (!originEvent) flags.push("no_origin_event");
+      if (reconstructedSource) flags.push("reconstructed_source");
+      if (cleanName(row.state || "") === "active" && cleanName(row.current_location || "") === "unknown") {
+        flags.push("active_unknown_location");
+      }
+
+      const ownerUsername = cleanName(row.owner_username || "");
+      const originOwnerUsername = cleanName(originEvent?.to_username || ownerUsername);
+
+      return {
+        ok: true,
+        item_instance: {
+          item_instance_id: cleanName(row.item_instance_id || ""),
+          public_item_instance_id: cleanName(row.public_item_instance_id || ""),
+          item_type: cleanName(row.item_type || ""),
+          item_category: cleanName(row.item_category || ""),
+          state: cleanName(row.state || ""),
+          current_location: cleanName(row.current_location || ""),
+          current_owner_username: ownerUsername,
+          original_owner_username: originOwnerUsername,
+          world_name: cleanName(row.world_name || ""),
+          created_by_source: source,
+          source_confidence: reconstructedSource ? "reconstructed" : "direct",
+          origin_source: cleanName(originEvent?.source || source),
+          origin_event_type: cleanName(originEvent?.event_type || ""),
+          created_at: normalizeOptionalTimestamp(row.created_at),
+          updated_at: normalizeOptionalTimestamp(row.updated_at),
+        },
+        integrity: {
+          public_id_count: publicIdCount,
+          event_count: events.length,
+          flags,
+          possible_duplicate: flags.includes("duplicate_public_id"),
+          reconstructed_source: reconstructedSource,
+        },
+        events,
+      };
+    } catch (error) {
+      this.logger("[postgres] item instance history lookup failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
+    }
+  }
+
+  async adjustInventoryForItemInstanceModeration(client, entry = {}) {
+    const e = toObject(entry);
+    const playerId = cleanName(e.player_id || "");
+    const itemType = cleanName(e.item_type || "");
+    const itemCategory = resolveItemCategory(itemType, e.item_category || "");
+    const delta = toInt(e.delta, 0);
+    if (!isUuid(playerId) || itemType === "" || itemCategory === "" || delta === 0) return null;
+
+    const stackLimit = getInventoryStackLimitForItem(itemType, e.stack_limit || DEFAULT_INVENTORY_STACK_LIMIT);
+    const inventoryResult = await client.query(
+      `
+      SELECT amount, stack_limit
+        FROM ${this.table("inventory")}
+       WHERE player_id = $1
+         AND item_type = $2
+         AND item_category = $3
+       FOR UPDATE
+      `,
+      [playerId, itemType, itemCategory]
+    );
+
+    const existing = inventoryResult.rows[0];
+    const beforeAmount = Math.max(0, toInt(existing?.amount || 0, 0));
+    const storedStackLimit = clampStackLimit(existing?.stack_limit || stackLimit, stackLimit);
+    const effectiveStackLimit = Math.max(stackLimit, storedStackLimit);
+    let afterAmount = beforeAmount + delta;
+    if (delta < 0) afterAmount = Math.max(0, afterAmount);
+
+    if (delta > 0 && afterAmount > effectiveStackLimit) {
+      return {
+        ok: false,
+        reason: "insufficient_capacity",
+        player_id: playerId,
+        item_type: itemType,
+        item_category: itemCategory,
+        before_amount: beforeAmount,
+        after_amount: afterAmount,
+        stack_limit: effectiveStackLimit,
+      };
+    }
+
+    if (existing) {
+      await client.query(
+        `
+        UPDATE ${this.table("inventory")}
+           SET amount = $4,
+               stack_limit = $5,
+               row_version = ${this.table("inventory")}.row_version + 1,
+               updated_at = now()
+         WHERE player_id = $1
+           AND item_type = $2
+           AND item_category = $3
+        `,
+        [playerId, itemType, itemCategory, afterAmount, effectiveStackLimit]
+      );
+    } else if (afterAmount > 0) {
+      await client.query(
+        `
+        INSERT INTO ${this.table("inventory")} (
+          player_id,
+          item_type,
+          item_category,
+          amount,
+          stack_limit,
+          row_version,
+          updated_at
+        )
+        VALUES ($1, $2, $3, $4, $5, 1, now())
+        `,
+        [playerId, itemType, itemCategory, afterAmount, effectiveStackLimit]
+      );
+    }
+
+    const transactionResult = await client.query(
+      `
+      INSERT INTO ${this.table("item_transactions")} (
+        player_id,
+        world_id,
+        source,
+        action,
+        item_type,
+        item_category,
+        delta,
+        before_amount,
+        after_amount,
+        request_id,
+        metadata,
+        created_at
+      )
+      VALUES ($1, $2, 'admin', $3, $4, $5, $6, $7, $8, NULLIF($9, ''), $10::jsonb, now())
+      RETURNING item_transaction_id
+      `,
+      [
+        playerId,
+        isUuid(e.world_id) ? cleanName(e.world_id) : null,
+        cleanName(e.action || "item_instance_admin") || "item_instance_admin",
+        itemType,
+        itemCategory,
+        delta,
+        beforeAmount,
+        afterAmount,
+        cleanName(e.request_id || ""),
+        JSON.stringify(safeJson(e.metadata || e.details || {})),
+      ]
+    );
+
+    return {
+      ok: true,
+      player_id: playerId,
+      username: await this.lookupUsernameByPlayerId(client, playerId),
+      item_type: itemType,
+      item_category: itemCategory,
+      delta,
+      before_amount: beforeAmount,
+      after_amount: afterAmount,
+      stack_limit: effectiveStackLimit,
+      item_transaction_id: toInt(transactionResult.rows[0]?.item_transaction_id, 0),
+    };
+  }
+
+  async moderateItemInstance(identifier, action, options = {}) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const itemIdentifier = cleanName(identifier);
+    const requestedAction = cleanName(action || options.action || "").toLowerCase().replace(/-/g, "_");
+    const actionAliases = {
+      delete: "retire",
+      remove: "retire",
+      destroy: "retire",
+      unfreeze: "unfreeze",
+      thaw: "unfreeze",
+    };
+    const normalizedAction = actionAliases[requestedAction] || requestedAction;
+    const allowedActions = new Set(["freeze", "unfreeze", "retire", "transfer", "flag"]);
+    if (itemIdentifier === "") return { ok: false, reason: "invalid_item_instance" };
+    if (!allowedActions.has(normalizedAction)) return { ok: false, reason: "invalid_action" };
+
+    const e = toObject(options);
+    const actorUsername = cleanName(e.actor_username || e.admin_username || "");
+    const reason = cleanName(e.reason || "") || "admin item moderation";
+    const requestId = cleanName(e.request_id || "");
+    const lookupByUuid = isUuid(itemIdentifier);
+
+    try {
+      return await this.withTransaction(async (client) => {
+        const instanceResult = await client.query(
+          `
+          SELECT item_instance_id,
+                 public_item_instance_id,
+                 item_type,
+                 item_category,
+                 owner_player_id,
+                 world_id,
+                 state,
+                 created_by_source,
+                 current_location,
+                 metadata,
+                 created_at,
+                 updated_at
+            FROM ${this.table("item_instances")}
+           WHERE ${lookupByUuid ? "item_instance_id = $1::uuid" : "lower(public_item_instance_id) = lower($1)"}
+           LIMIT 1
+           FOR UPDATE
+          `,
+          [itemIdentifier]
+        );
+
+        const previous = instanceResult.rows[0];
+        if (!previous?.item_instance_id) return { ok: false, reason: "item_instance_not_found" };
+
+        const itemType = cleanName(previous.item_type || "");
+        const itemCategory = resolveItemCategory(itemType, previous.item_category || "");
+        const previousOwnerId = isUuid(previous.owner_player_id) ? cleanName(previous.owner_player_id) : null;
+        const previousState = normalizeItemInstanceState(previous.state || ITEM_INSTANCE_ACTIVE_STATE);
+        const previousLocation = normalizeItemInstanceLocation(previous.current_location || "unknown", "unknown");
+        const previousOwnerUsername = previousOwnerId ? await this.lookupUsernameByPlayerId(client, previousOwnerId) : "";
+        const wasActiveInventory = previousState === ITEM_INSTANCE_ACTIVE_STATE && previousLocation === "inventory";
+        const inventoryEffects = [];
+
+        let targetPlayerId = previousOwnerId;
+        let targetUsername = previousOwnerUsername;
+        let nextState = previousState;
+        let nextLocation = previousLocation;
+        let eventType = "updated";
+        let eventTransactionId = null;
+
+        const moderationMetadata = {
+          anti_dupe_action: normalizedAction,
+          actor_username: actorUsername,
+          reason,
+          request_id: requestId,
+          previous_state: previousState,
+          previous_location: previousLocation,
+          previous_owner_username: previousOwnerUsername,
+        };
+
+        const applyInventoryEffect = async (playerId, delta) => {
+          const effect = await this.adjustInventoryForItemInstanceModeration(client, {
+            player_id: playerId,
+            world_id: previous.world_id,
+            item_type: itemType,
+            item_category: itemCategory,
+            delta,
+            action: `item_instance_${normalizedAction}`,
+            request_id: requestId,
+            metadata: {
+              ...moderationMetadata,
+              item_instance_id: cleanName(previous.item_instance_id || ""),
+              public_item_instance_id: cleanName(previous.public_item_instance_id || ""),
+            },
+          });
+          if (!effect) return null;
+          if (!effect.ok) return effect;
+          inventoryEffects.push(effect);
+          if (!eventTransactionId) eventTransactionId = effect.item_transaction_id || null;
+          return effect;
+        };
+
+        if (normalizedAction === "freeze") {
+          nextState = "locked";
+          nextLocation = "safe";
+          eventType = "state_changed";
+          if (previousOwnerId && wasActiveInventory) {
+            const effect = await applyInventoryEffect(previousOwnerId, -1);
+            if (effect && !effect.ok) return effect;
+          }
+        } else if (normalizedAction === "unfreeze") {
+          if (!previousOwnerId) return { ok: false, reason: "owner_required" };
+          nextState = ITEM_INSTANCE_ACTIVE_STATE;
+          nextLocation = "inventory";
+          eventType = "state_changed";
+          if (!wasActiveInventory) {
+            const effect = await applyInventoryEffect(previousOwnerId, 1);
+            if (effect && !effect.ok) return effect;
+          }
+        } else if (normalizedAction === "retire") {
+          nextState = "destroyed";
+          nextLocation = "unknown";
+          eventType = "retired";
+          if (previousOwnerId && wasActiveInventory) {
+            const effect = await applyInventoryEffect(previousOwnerId, -1);
+            if (effect && !effect.ok) return effect;
+          }
+        } else if (normalizedAction === "transfer") {
+          targetUsername = cleanName(e.target_username || e.to_username || e.username || "");
+          if (targetUsername === "") return { ok: false, reason: "target_required" };
+          targetPlayerId = await this.lookupPlayerIdByUsername(client, targetUsername);
+          if (!targetPlayerId) return { ok: false, reason: "target_not_found" };
+          targetUsername = await this.lookupUsernameByPlayerId(client, targetPlayerId) || targetUsername;
+
+          nextState = ITEM_INSTANCE_ACTIVE_STATE;
+          nextLocation = "inventory";
+          eventType = previousOwnerId !== targetPlayerId ? "owner_changed" : "location_changed";
+          moderationMetadata.target_username = targetUsername;
+          if (!wasActiveInventory || previousOwnerId !== targetPlayerId) {
+            const effect = await applyInventoryEffect(targetPlayerId, 1);
+            if (effect && !effect.ok) return effect;
+          }
+          if (previousOwnerId && previousOwnerId !== targetPlayerId && wasActiveInventory) {
+            const effect = await applyInventoryEffect(previousOwnerId, -1);
+            if (effect && !effect.ok) return effect;
+          }
+        } else if (normalizedAction === "flag") {
+          eventType = "updated";
+          moderationMetadata.flagged = true;
+          moderationMetadata.flagged_at = new Date().toISOString();
+        }
+
+        const updateResult = await client.query(
+          `
+          UPDATE ${this.table("item_instances")}
+             SET owner_player_id = $2,
+                 state = $3,
+                 current_location = $4,
+                 metadata = metadata || $5::jsonb,
+                 updated_at = now()
+           WHERE item_instance_id = $1
+          RETURNING item_instance_id,
+                    public_item_instance_id,
+                    item_type,
+                    item_category,
+                    owner_player_id,
+                    world_id,
+                    state,
+                    created_by_source,
+                    current_location,
+                    metadata,
+                    created_at,
+                    updated_at
+          `,
+          [
+            previous.item_instance_id,
+            targetPlayerId,
+            nextState,
+            nextLocation,
+            JSON.stringify(safeJson({
+              ...moderationMetadata,
+              target_username: targetUsername,
+            })),
+          ]
+        );
+
+        const row = updateResult.rows[0];
+        if (!row?.item_instance_id) return { ok: false, reason: "item_instance_not_found" };
+
+        await this.recordItemInstanceEvent(client, {
+          item_instance_id: row.item_instance_id,
+          event_type: eventType,
+          from_player_id: previousOwnerId,
+          to_player_id: targetPlayerId,
+          from_location: previousLocation,
+          to_location: nextLocation,
+          world_id: row.world_id || previous.world_id,
+          item_transaction_id: eventTransactionId,
+          source: `admin_${normalizedAction}`,
+          metadata: {
+            public_item_instance_id: cleanName(row.public_item_instance_id || ""),
+            item_type: itemType,
+            item_category: itemCategory,
+            action: normalizedAction,
+            actor_username: actorUsername,
+            reason,
+            target_username: targetUsername,
+            previous_state: previousState,
+            state: nextState,
+            previous_location: previousLocation,
+            current_location: nextLocation,
+          },
+        });
+
+        return {
+          ok: true,
+          action: normalizedAction,
+          item_instance: {
+            item_instance_id: cleanName(row.item_instance_id || ""),
+            public_item_instance_id: cleanName(row.public_item_instance_id || ""),
+            item_type: cleanName(row.item_type || ""),
+            item_category: cleanName(row.item_category || ""),
+            state: cleanName(row.state || ""),
+            current_location: cleanName(row.current_location || ""),
+            created_by_source: cleanName(row.created_by_source || ""),
+            current_owner_username: targetUsername,
+            previous_owner_username: previousOwnerUsername,
+            created_at: normalizeOptionalTimestamp(row.created_at),
+            updated_at: normalizeOptionalTimestamp(row.updated_at),
+          },
+          previous: {
+            state: previousState,
+            current_location: previousLocation,
+            owner_username: previousOwnerUsername,
+          },
+          inventory_effects: inventoryEffects,
+        };
+      });
+    } catch (error) {
+      this.logger("[postgres] item instance moderation failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
+    }
+  }
+
+  async auditItemInstances(options = {}) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const limit = Math.min(200, Math.max(1, toInt(options.limit, 50)));
+    const issues = [];
+    const scannedAt = new Date().toISOString();
+
+    const pushIssue = (issue) => {
+      if (issues.length >= limit) return;
+      issues.push(issue);
+    };
+
+    try {
+      const duplicateResult = await this.pool.query(
+        `
+        SELECT public_item_instance_id,
+               count(*)::int AS row_count,
+               array_agg(item_instance_id::text ORDER BY created_at ASC) AS item_instance_ids
+          FROM ${this.table("item_instances")}
+         GROUP BY public_item_instance_id
+        HAVING count(*) > 1
+         ORDER BY row_count DESC, public_item_instance_id ASC
+         LIMIT $1
+        `,
+        [limit]
+      );
+
+      for (const row of duplicateResult.rows) {
+        pushIssue({
+          type: "duplicate_public_id",
+          public_item_instance_id: cleanName(row.public_item_instance_id || ""),
+          row_count: toInt(row.row_count, 0),
+          item_instance_ids: Array.isArray(row.item_instance_ids) ? row.item_instance_ids.map(cleanName) : [],
+          severity: "critical",
+        });
+      }
+
+      const impossibleResult = await this.pool.query(
+        `
+        SELECT ii.item_instance_id,
+               ii.public_item_instance_id,
+               ii.item_type,
+               ii.item_category,
+               ii.state,
+               ii.current_location,
+               owner_account.username::text AS owner_username,
+               w.world_name::text AS world_name
+          FROM ${this.table("item_instances")} ii
+          LEFT JOIN ${this.table("players")} owner_player ON owner_player.player_id = ii.owner_player_id
+          LEFT JOIN ${this.table("accounts")} owner_account ON owner_account.account_id = owner_player.account_id
+          LEFT JOIN ${this.table("worlds")} w ON w.world_id = ii.world_id
+         WHERE (ii.state = 'active' AND (ii.owner_player_id IS NULL OR ii.current_location <> 'inventory'))
+            OR (ii.state = 'locked' AND ii.current_location NOT IN ('vending', 'safe'))
+            OR (ii.state = 'dropped' AND ii.current_location <> 'world_drop')
+            OR (ii.state IN ('consumed', 'destroyed', 'traded') AND ii.current_location = 'inventory')
+            OR (ii.owner_player_id IS NULL AND ii.current_location = 'inventory')
+         ORDER BY ii.updated_at DESC
+         LIMIT $1
+        `,
+        [limit]
+      );
+
+      for (const row of impossibleResult.rows) {
+        pushIssue({
+          type: "impossible_state",
+          item_instance_id: cleanName(row.item_instance_id || ""),
+          public_item_instance_id: cleanName(row.public_item_instance_id || ""),
+          item_type: cleanName(row.item_type || ""),
+          item_category: cleanName(row.item_category || ""),
+          state: cleanName(row.state || ""),
+          current_location: cleanName(row.current_location || ""),
+          owner_username: cleanName(row.owner_username || ""),
+          world_name: cleanName(row.world_name || ""),
+          severity: "high",
+        });
+      }
+
+      const inventoryResult = await this.pool.query(
+        `
+        SELECT inv.player_id,
+               a.username::text AS username,
+               inv.item_type,
+               inv.item_category,
+               inv.amount
+          FROM ${this.table("inventory")} inv
+          JOIN ${this.table("players")} p ON p.player_id = inv.player_id
+          JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
+         WHERE inv.amount > 0
+        `
+      );
+      const activeResult = await this.pool.query(
+        `
+        SELECT owner_player_id AS player_id,
+               item_type,
+               item_category,
+               count(*)::int AS active_count
+          FROM ${this.table("item_instances")}
+         WHERE state = 'active'
+           AND current_location = 'inventory'
+           AND owner_player_id IS NOT NULL
+         GROUP BY owner_player_id, item_type, item_category
+        `
+      );
+
+      const countsByKey = new Map();
+      for (const row of activeResult.rows) {
+        const itemType = cleanName(row.item_type || "");
+        const itemCategory = resolveItemCategory(itemType, row.item_category || "");
+        if (!shouldTrackItemInstance(itemType, itemCategory)) continue;
+        const playerId = cleanName(row.player_id || "");
+        countsByKey.set(`${playerId}\u0000${itemType}\u0000${itemCategory}`, {
+          active_count: Math.max(0, toInt(row.active_count, 0)),
+          inventory_amount: 0,
+          username: "",
+          player_id: playerId,
+          item_type: itemType,
+          item_category: itemCategory,
+        });
+      }
+
+      for (const row of inventoryResult.rows) {
+        const itemType = cleanName(row.item_type || "");
+        const itemCategory = resolveItemCategory(itemType, row.item_category || "");
+        if (!shouldTrackItemInstance(itemType, itemCategory)) continue;
+        const playerId = cleanName(row.player_id || "");
+        const key = `${playerId}\u0000${itemType}\u0000${itemCategory}`;
+        const existing = countsByKey.get(key) || {
+          active_count: 0,
+          inventory_amount: 0,
+          username: cleanName(row.username || ""),
+          player_id: playerId,
+          item_type: itemType,
+          item_category: itemCategory,
+        };
+        existing.inventory_amount = Math.max(0, toInt(row.amount, 0));
+        existing.username = cleanName(row.username || existing.username || "");
+        countsByKey.set(key, existing);
+      }
+
+      for (const entry of countsByKey.values()) {
+        if (entry.active_count === entry.inventory_amount) continue;
+        pushIssue({
+          type: "inventory_count_mismatch",
+          username: cleanName(entry.username || ""),
+          player_id: cleanName(entry.player_id || ""),
+          item_type: cleanName(entry.item_type || ""),
+          item_category: cleanName(entry.item_category || ""),
+          inventory_amount: Math.max(0, toInt(entry.inventory_amount, 0)),
+          active_instance_count: Math.max(0, toInt(entry.active_count, 0)),
+          difference: Math.max(0, toInt(entry.active_count, 0)) - Math.max(0, toInt(entry.inventory_amount, 0)),
+          severity: "high",
+        });
+        if (issues.length >= limit) break;
+      }
+
+      const summary = {
+        duplicate_public_ids: duplicateResult.rowCount,
+        impossible_states: impossibleResult.rowCount,
+        inventory_mismatches: issues.filter((issue) => issue.type === "inventory_count_mismatch").length,
+        total_issues: issues.length,
+        truncated: issues.length >= limit,
+      };
+
+      return {
+        ok: true,
+        scanned_at: scannedAt,
+        summary,
+        issues,
+      };
+    } catch (error) {
+      this.logger("[postgres] item instance audit failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
     }
   }
 
@@ -1280,6 +3168,8 @@ class PostgresStore {
         await this.reconcileItemInstancesForInventory(client, playerId, playerState, {
           source: "save_player_state",
           username: cleanUsername,
+          allow_create_missing: false,
+          allow_retire_extra: false,
         });
       });
       return true;
@@ -1411,6 +3301,8 @@ class PostgresStore {
     const state = toObject(worldState);
     const lock = toObject(state.world_lock);
     const isLocked = Boolean(lock.is_locked);
+    const cleanLockType = cleanName(lock.lock_block_type || lock.lock_type || "world_lock").toLowerCase();
+    const lockType = isLocked && cleanLockType === "super_world_lock" ? "super_world_lock" : (isLocked ? "world_lock" : "none");
 
     if (!isLocked) {
       await client.query(`DELETE FROM ${this.table("world_lock_access")} WHERE world_id = $1`, [worldId]);
@@ -1448,7 +3340,7 @@ class PostgresStore {
       `,
       [
         worldId,
-        isLocked ? "world_lock" : "none",
+        lockType,
         ownerPlayerId,
         isLocked,
         Number.isFinite(Number(lock.lock_grid_x)) ? Math.trunc(Number(lock.lock_grid_x)) : null,
@@ -1534,6 +3426,316 @@ class PostgresStore {
     } catch (error) {
       this.logger("[postgres] world state save failed:", error.message);
       return false;
+    }
+  }
+
+  async insertWorldBlockChange(client, worldId, entry = {}) {
+    if (!worldId) return null;
+    const e = toObject(entry);
+
+    let playerId = null;
+    const actor = cleanName(e.actor_username || "");
+    if (actor !== "") {
+      playerId = await this.ensurePlayerIdentity(client, actor);
+    }
+
+    const action = cleanName(e.action || "");
+    const mappedAction = action.includes("place")
+      ? "place"
+      : action.includes("break")
+        ? "break"
+        : "hit";
+    const reason = cleanName(e.reason || action || mappedAction) || mappedAction;
+    const layer = cleanName(e.layer || "").toLowerCase() === "background" ? "background" : "foreground";
+    const sourceId = cleanName(e.source_id || "");
+    const txUuid = isUuid(sourceId) ? sourceId : null;
+    const details = toObject(e.details);
+    const blockTypeBefore = cleanName(
+      e.block_type_before
+      || e.old_block_type
+      || e.old_block_id
+      || e.previous_block_type
+      || details.block_type_before
+      || details.old_block_type
+      || details.old_block_id
+      || ""
+    );
+    const blockTypeAfter = cleanName(
+      e.block_type_after
+      || e.new_block_type
+      || e.new_block_id
+      || e.block_type
+      || details.block_type_after
+      || details.new_block_type
+      || details.new_block_id
+      || ""
+    );
+    const rawHitCount = Number(e.hit_count ?? details.hit_count ?? details.damage ?? NaN);
+    const hitCount = Number.isFinite(rawHitCount) ? Math.max(0, Math.trunc(rawHitCount)) : null;
+
+    await client.query(
+      `
+      INSERT INTO ${this.table("world_block_changes")} (
+        world_id,
+        player_id,
+        action,
+        reason,
+        layer,
+        block_x,
+        block_y,
+        block_type_before,
+        block_type_after,
+        hit_count,
+        tx_uuid,
+        metadata,
+        created_at
+      )
+      VALUES (
+        $1,
+        $2,
+        $3,
+        NULLIF($4, ''),
+        $5,
+        $6,
+        $7,
+        NULLIF($8, ''),
+        NULLIF($9, ''),
+        $10,
+        $11::uuid,
+        $12::jsonb,
+        COALESCE(NULLIF($13, '')::timestamptz, now())
+      )
+      `,
+      [
+        worldId,
+        playerId,
+        mappedAction,
+        reason,
+        layer,
+        Number.isFinite(Number(e.x)) ? Math.trunc(Number(e.x)) : 0,
+        Number.isFinite(Number(e.y)) ? Math.trunc(Number(e.y)) : 0,
+        blockTypeBefore,
+        blockTypeAfter,
+        hitCount,
+        txUuid,
+        JSON.stringify({
+          source_type: cleanName(e.source_type || ""),
+          source_id: sourceId,
+          reason,
+          request_id: cleanName(e.request_id || ""),
+          details: safeJson(e.details),
+        }),
+        cleanName(e.at || ""),
+      ]
+    );
+
+    return { ok: true };
+  }
+
+  isWorldObjectChangeEntry(entry = {}) {
+    return shouldTreatAsWorldObjectChange(entry);
+  }
+
+  async insertWorldObjectChange(client, worldId, entry = {}) {
+    if (!worldId) return null;
+    const e = toObject(entry);
+
+    let playerId = null;
+    const actor = cleanName(e.actor_username || "");
+    if (actor !== "") {
+      playerId = await this.ensurePlayerIdentity(client, actor);
+    }
+
+    const objectType = normalizeWorldObjectType(e);
+    const objectId = normalizeWorldObjectId(e, cleanName(e.world || ""), objectType);
+    const action = normalizeWorldObjectAction(e.action || e.reason || "update") || "update";
+    const reason = cleanName(e.reason || action) || action;
+    const sourceType = cleanName(e.source_type || "");
+    const sourceId = cleanName(e.source_id || "");
+    const requestId = cleanName(e.request_id || "");
+    const x = Number.isFinite(Number(e.x)) ? Math.trunc(Number(e.x)) : null;
+    const y = Number.isFinite(Number(e.y)) ? Math.trunc(Number(e.y)) : null;
+    const oldData = clonePlainJson(e.old_data || e.previous_data || e.before || {});
+    const newData = clonePlainJson(e.new_data || e.next_data || e.after || e.state || {});
+
+    await client.query(
+      `
+      INSERT INTO ${this.table("world_object_changes")} (
+        world_id,
+        player_id,
+        object_type,
+        object_id,
+        block_x,
+        block_y,
+        action,
+        reason,
+        source_type,
+        source_id,
+        request_id,
+        old_data,
+        new_data,
+        metadata,
+        created_at
+      )
+      VALUES (
+        $1,
+        $2,
+        $3,
+        $4,
+        $5,
+        $6,
+        $7,
+        NULLIF($8, ''),
+        NULLIF($9, ''),
+        NULLIF($10, ''),
+        NULLIF($11, ''),
+        $12::jsonb,
+        $13::jsonb,
+        $14::jsonb,
+        COALESCE(NULLIF($15, '')::timestamptz, now())
+      )
+      `,
+      [
+        worldId,
+        playerId,
+        objectType,
+        objectId,
+        x,
+        y,
+        action,
+        reason,
+        sourceType,
+        sourceId,
+        requestId,
+        JSON.stringify(oldData),
+        JSON.stringify(newData),
+        JSON.stringify({
+          block_type: cleanName(e.block_type || ""),
+          layer: cleanName(e.layer || ""),
+          reason,
+          details: safeJson(e.details),
+        }),
+        cleanName(e.at || ""),
+      ]
+    );
+
+    return { ok: true };
+  }
+
+  async recordWorldChangeEntry(client, worldId, entry = {}) {
+    if (this.isWorldObjectChangeEntry(entry)) {
+      return this.insertWorldObjectChange(client, worldId, entry);
+    }
+    return this.insertWorldBlockChange(client, worldId, entry);
+  }
+
+  async recordWorldChangeAndTrackedDrops(client, worldId, change = {}) {
+    await this.recordWorldChangeEntry(client, worldId, change);
+    const changeDetails = toObject(change?.details);
+    const dropId = cleanName(changeDetails.drop_id || change?.drop_id || "");
+    if (this.shouldCreateTrackedWorldDropItemInstancesForChange(change)) {
+      await this.createTrackedWorldDropItemInstances(client, {
+        world_id: worldId,
+        actor_username: change?.actor_username || "",
+        source: cleanName(change?.source_type || "") || "world_block_break",
+        action: cleanName(change?.action || "") || "break_drop",
+        item_type: cleanName(change?.item_type || change?.block_type || ""),
+        item_category: cleanName(changeDetails.item_category || change?.item_category || "block") || "block",
+        amount: Math.max(1, toInt(changeDetails.amount || change?.amount || 1, 1)),
+        drop_id: dropId,
+        details: {
+          ...changeDetails,
+          source_id: cleanName(change?.source_id || ""),
+          source_block: cleanName(changeDetails.source_block || ""),
+        },
+      });
+    }
+  }
+
+  async loadWorldStateForUpdate(client, worldName) {
+    const cleanWorldName = cleanName(worldName || "");
+    if (cleanWorldName === "") return {};
+
+    const result = await client.query(
+      `
+      SELECT world_state
+        FROM ${this.table("worlds")}
+       WHERE world_name = $1
+       FOR UPDATE
+      `,
+      [cleanWorldName]
+    );
+
+    return toObject(result.rows[0]?.world_state);
+  }
+
+  buildWorldObjectChangesFromStateDiff(beforeState = {}, afterState = {}, context = {}) {
+    const e = toObject(context);
+    const worldName = cleanName(e.world || afterState?.world_name || beforeState?.world_name || "");
+    const beforeObjects = extractWorldObjectJournalMap(beforeState, worldName);
+    const afterObjects = extractWorldObjectJournalMap(afterState, worldName);
+    const keys = new Set([...beforeObjects.keys(), ...afterObjects.keys()]);
+    const changes = [];
+
+    for (const key of keys) {
+      if (changes.length >= WORLD_OBJECT_CHANGE_DIFF_LIMIT) break;
+      const beforeObject = beforeObjects.get(key) || null;
+      const afterObject = afterObjects.get(key) || null;
+      const beforeData = clonePlainJson(beforeObject?.data || {});
+      const afterData = clonePlainJson(afterObject?.data || {});
+      if (stableJsonString(beforeData) === stableJsonString(afterData)) continue;
+
+      const anchor = afterObject || beforeObject;
+      const action = normalizeWorldObjectAction(e.action || "");
+      changes.push({
+        ...e,
+        world: worldName,
+        action: action || (beforeObject && afterObject ? "update" : afterObject ? "create" : "remove"),
+        object_type: anchor.object_type,
+        object_id: anchor.object_id,
+        x: anchor.x,
+        y: anchor.y,
+        old_data: beforeData,
+        new_data: afterData,
+        details: {
+          ...safeJson(e.details),
+          diff_reason: beforeObject && afterObject ? "updated" : afterObject ? "created" : "removed",
+        },
+      });
+    }
+
+    return changes;
+  }
+
+  async saveWorldStateWithWorldChanges(worldName, state, changes = []) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const cleanWorldName = cleanName(worldName || state?.world_name || "START") || "START";
+    const worldChanges = Array.isArray(changes) ? changes : [];
+
+    try {
+      await this.withTransaction(async (client) => {
+        const previousWorldState = await this.loadWorldStateForUpdate(client, cleanWorldName);
+        const worldId = await this.upsertWorldState(client, cleanWorldName, state);
+        await this.mirrorWorldLockState(client, worldId, state);
+
+        const hasExplicitObjectChanges = worldChanges.some((change) => this.isWorldObjectChangeEntry(change));
+        const inferredObjectChanges = hasExplicitObjectChanges
+          ? []
+          : this.buildWorldObjectChangesFromStateDiff(previousWorldState, state, {
+            ...(toObject(worldChanges[0]) || {}),
+            world: cleanWorldName,
+            source_type: cleanName(worldChanges[0]?.source_type || "world_state_save"),
+            action: cleanName(worldChanges[0]?.action || "world_state_save"),
+          });
+
+        for (const change of [...worldChanges, ...inferredObjectChanges]) {
+          await this.recordWorldChangeAndTrackedDrops(client, worldId, change);
+        }
+      });
+      return { ok: true };
+    } catch (error) {
+      this.logger("[postgres] world state/change transaction failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
     }
   }
 
@@ -2154,9 +4356,1275 @@ class PostgresStore {
         await this.reconcileItemInstancesForInventory(client, playerId, playerState, {
           source: "mirror_inventory_snapshot",
           username: cleanUsername,
+          allow_create_missing: false,
+          allow_retire_extra: false,
         });
       });
     });
+  }
+
+  getItemInstanceLedgerDestination(source, action, delta) {
+    const label = `${cleanName(source)} ${cleanName(action)}`.toLowerCase();
+    if (delta >= 0) return { state: ITEM_INSTANCE_ACTIVE_STATE, location: "inventory" };
+    if (label.includes("spend") || label.includes("purchase") || label.includes("buy_cost")) {
+      return { state: ITEM_INSTANCE_RETIRED_STATE, location: "unknown" };
+    }
+    if (label.includes("vending") || label.includes("vend")) return { state: "locked", location: "vending" };
+    if (label.includes("trade")) return { state: "traded", location: "trade" };
+    if (label.includes("safe")) return { state: "locked", location: "safe" };
+    if (label.includes("drop")) return { state: "dropped", location: "world_drop" };
+    if (label.includes("trash") || label.includes("destroy")) return { state: "destroyed", location: "unknown" };
+    return { state: ITEM_INSTANCE_RETIRED_STATE, location: "unknown" };
+  }
+
+  shouldCreateTrackedWorldDropItemInstancesForChange(change = {}) {
+    const e = toObject(change);
+    const details = toObject(e.details);
+    const dropId = cleanName(details.drop_id || e.drop_id || "");
+    if (dropId === "") return false;
+
+    const source = cleanName(e.source_type || e.source || "").toLowerCase();
+    const action = cleanName(e.action || "").toLowerCase();
+
+    // Inventory drops already move exact owned PM-ITEM rows into world_drop.
+    // Creating rows again here would mint duplicates for the same drop.
+    if (source.includes("drop_inventory") || source.includes("world_item_drop_create")) return false;
+    if (action.includes("drop_inventory") || action.includes("world_item_drop_create")) return false;
+
+    // Server/world-generated drops do not come from a player's owned instance.
+    return (
+      source.includes("world_block_break") ||
+      source.includes("seed_harvest") ||
+      source.includes("server") ||
+      action === "break_drop" ||
+      action === "harvest_drop" ||
+      action === "drop_create"
+    );
+  }
+
+  async syncItemInstancesForLedger(client, entry = {}) {
+    const e = toObject(entry);
+    const playerId = cleanName(e.player_id || "");
+    const itemType = cleanName(e.item_type || e.item_id || "");
+    const itemCategory = resolveItemCategory(itemType, e.item_category || e.category || "");
+    if (!isUuid(playerId) || itemType === "" || !shouldTrackItemInstance(itemType, itemCategory)) {
+      return { ok: true, tracked: false, created: 0, moved: 0, item_instances: [] };
+    }
+
+    const delta = toInt(e.delta || e.quantity_delta || 0, 0);
+    const balanceAfter = Math.max(0, toInt(e.after_amount || e.balance_after || 0, 0));
+    const strict = Boolean(e.strict_item_instances || e.strict || e.instance_id_first);
+    const requestedAmount = Math.max(0, Math.abs(delta));
+    const amount = strict ? requestedAmount : Math.min(requestedAmount, ITEM_INSTANCE_RECONCILE_MAX_PER_ITEM);
+    if (amount <= 0) return { ok: true, tracked: true, created: 0, moved: 0, item_instances: [] };
+
+    const worldId = isUuid(e.world_id) ? cleanName(e.world_id) : null;
+    const itemTransactionId = toInt(e.item_transaction_id, 0) > 0 ? toInt(e.item_transaction_id, 0) : null;
+    const source = normalizeItemInstanceSource(e.source || e.source_type || "item_ledger");
+    const action = cleanName(e.action || e.reason || "");
+    const entryDetails = safeJson(e.details);
+
+    const activeCountResult = await client.query(
+      `
+      SELECT count(*)::integer AS active_count
+        FROM ${this.table("item_instances")}
+       WHERE owner_player_id = $1
+         AND item_type = $2
+         AND item_category = $3
+         AND state = 'active'
+      `,
+      [playerId, itemType, itemCategory]
+    );
+    const activeCount = Math.max(0, toInt(activeCountResult.rows[0]?.active_count, 0));
+
+    if (delta > 0) {
+      const label = `${source} ${action}`.toLowerCase();
+      const releasePlans = [];
+      const addReleasePlan = (location, metadataAction, metadataTransactionId, planAmount) => {
+        const cleanLocation = cleanName(location || "").toLowerCase();
+        if (!ITEM_INSTANCE_LOCATIONS.has(cleanLocation)) return;
+        const cleanAction = cleanName(metadataAction || "");
+        const cleanTransactionId = cleanName(metadataTransactionId || "");
+        const cleanAmount = Math.max(0, toInt(planAmount, 0));
+        if (cleanAmount <= 0) return;
+        releasePlans.push({
+          location: cleanLocation,
+          metadata_action: cleanAction,
+          metadata_transaction_id: cleanTransactionId,
+          amount: cleanAmount,
+        });
+      };
+
+      if (strict && label.includes("vend") && label.includes("break_return")) {
+        const returnedEntries = Array.isArray(entryDetails.returned_entries) ? entryDetails.returned_entries : [];
+        for (const rawReturnedEntry of returnedEntries) {
+          const returnedEntry = toObject(rawReturnedEntry);
+          const returnedItemType = cleanName(returnedEntry.item_id || returnedEntry.item_type || "");
+          const returnedItemCategory = resolveItemCategory(returnedItemType, returnedEntry.item_category || returnedEntry.category || "");
+          const returnedAmount = Math.max(0, toInt(returnedEntry.amount, 0));
+          if (returnedItemType !== itemType || returnedItemCategory !== itemCategory || returnedAmount <= 0) continue;
+
+          const reasonLabel = cleanName(returnedEntry.reason || "").toLowerCase();
+          const metadataAction = reasonLabel.includes("pending") || reasonLabel.includes("payment")
+            ? "payment"
+            : "vending_list";
+          addReleasePlan(
+            "vending",
+            metadataAction,
+            returnedEntry.listing_transaction_id || returnedEntry.source_transaction_id || entryDetails.listing_transaction_id || entryDetails.source_transaction_id || "",
+            returnedAmount
+          );
+        }
+
+        const plannedAmount = releasePlans.reduce((total, plan) => total + plan.amount, 0);
+        if (plannedAmount < amount) {
+          addReleasePlan("vending", "", "", amount - plannedAmount);
+        }
+      } else if (strict && label.includes("vend") && (label.includes("cancel") || label.includes("collect"))) {
+        addReleasePlan(
+          "vending",
+          label.includes("collect") ? "payment" : "vending_list",
+          entryDetails.listing_transaction_id || entryDetails.source_transaction_id || "",
+          amount
+        );
+      } else if (strict && label.includes("safe") && (label.includes("withdraw") || label.includes("break_return"))) {
+        addReleasePlan("safe", "safe_deposit", entryDetails.source_transaction_id || "", amount);
+      }
+
+      if (releasePlans.length > 0) {
+        const releasedInstances = [];
+        for (const plan of releasePlans) {
+          const lockedRows = await client.query(
+            `
+            SELECT item_instance_id, owner_player_id, world_id, state, current_location, public_item_instance_id
+              FROM ${this.table("item_instances")}
+             WHERE owner_player_id = $1
+               AND item_type = $2
+               AND item_category = $3
+               AND state = 'locked'
+               AND current_location = $4
+               AND ($5 = '' OR metadata->>'action' = $5)
+               AND (
+                 $6 = ''
+                 OR metadata->>'transaction_id' = $6
+                 OR metadata #>> '{details,transaction_id}' = $6
+                 OR metadata #>> '{details,listing_transaction_id}' = $6
+               )
+             ORDER BY updated_at ASC, created_at ASC
+             LIMIT $7
+             FOR UPDATE
+            `,
+            [playerId, itemType, itemCategory, plan.location, plan.metadata_action, plan.metadata_transaction_id, plan.amount]
+          );
+
+          if (lockedRows.rowCount < plan.amount) {
+            return {
+              ok: false,
+              tracked: true,
+              reason: "insufficient_locked_item_instances",
+              item_type: itemType,
+              item_category: itemCategory,
+              required_instances: plan.amount,
+              available_instances: lockedRows.rowCount,
+              current_location: plan.location,
+              metadata_action: plan.metadata_action,
+            };
+          }
+
+          for (const row of lockedRows.rows) {
+            await client.query(
+              `
+              UPDATE ${this.table("item_instances")}
+                 SET state = 'active',
+                     current_location = 'inventory',
+                     world_id = COALESCE($2, world_id),
+                     metadata = metadata || $3::jsonb,
+                     updated_at = now()
+               WHERE item_instance_id = $1
+              `,
+              [
+                row.item_instance_id,
+                worldId,
+                JSON.stringify({
+                  source,
+                  action,
+                  item_transaction_id: itemTransactionId,
+                  balance_after: balanceAfter,
+                  released_from: plan.location,
+                  release_action: plan.metadata_action,
+                  details: safeJson(e.details),
+                }),
+              ]
+            );
+            releasedInstances.push({
+              item_instance_id: row.item_instance_id,
+              public_item_instance_id: cleanName(row.public_item_instance_id || ""),
+              item_type: itemType,
+              item_category: itemCategory,
+              previous_state: cleanName(row.state || "locked"),
+              state: ITEM_INSTANCE_ACTIVE_STATE,
+              previous_location: cleanName(row.current_location || plan.location),
+              current_location: "inventory",
+              owner_player_id: row.owner_player_id,
+            });
+
+            await this.recordItemInstanceEvent(client, {
+              item_instance_id: row.item_instance_id,
+              event_type: "state_changed",
+              from_player_id: row.owner_player_id,
+              to_player_id: row.owner_player_id,
+              from_location: row.current_location || plan.location,
+              to_location: "inventory",
+              world_id: worldId || row.world_id,
+              item_transaction_id: itemTransactionId,
+              source,
+              metadata: {
+                public_item_instance_id: cleanName(row.public_item_instance_id || ""),
+                item_type: itemType,
+                item_category: itemCategory,
+                action,
+                previous_state: cleanName(row.state || "locked"),
+                state: ITEM_INSTANCE_ACTIVE_STATE,
+                released_from: plan.location,
+                release_action: plan.metadata_action,
+                balance_after: balanceAfter,
+                details: safeJson(e.details),
+              },
+            });
+          }
+        }
+
+        return { ok: true, tracked: true, created: 0, moved: releasedInstances.length, item_instances: releasedInstances };
+      }
+
+      const createCount = strict ? amount : Math.min(amount, Math.max(0, balanceAfter - activeCount));
+      if (createCount > 0 && strict && isVagueItemInstanceCreationSource(source)) {
+        return {
+          ok: false,
+          tracked: true,
+          reason: "missing_item_instance_source",
+          item_type: itemType,
+          item_category: itemCategory,
+          required_instances: createCount,
+          source,
+          action,
+          message: "Tracked item creation requires a clear source label.",
+        };
+      }
+
+      const createdInstances = [];
+      for (let i = 0; i < createCount; i += 1) {
+        const publicItemInstanceId = generatePublicItemInstanceId();
+        const result = await client.query(
+          `
+          INSERT INTO ${this.table("item_instances")} (
+            public_item_instance_id,
+            item_type,
+            item_category,
+            owner_player_id,
+            world_id,
+            state,
+            created_by_source,
+            current_location,
+            origin_transaction_id,
+            metadata,
+            created_at,
+            updated_at
+          )
+          VALUES ($1, $2, $3, $4, $5, 'active', $6, 'inventory', $7, $8::jsonb, now(), now())
+          RETURNING item_instance_id
+          `,
+          [
+            publicItemInstanceId,
+            itemType,
+            itemCategory,
+            playerId,
+            worldId,
+            source,
+            itemTransactionId,
+            JSON.stringify({
+              source,
+              action,
+              item_transaction_id: itemTransactionId,
+              details: safeJson(e.details),
+            }),
+          ]
+        );
+        const itemInstanceId = result.rows[0]?.item_instance_id || null;
+        createdInstances.push({
+          item_instance_id: itemInstanceId,
+          public_item_instance_id: publicItemInstanceId,
+          item_type: itemType,
+          item_category: itemCategory,
+          state: ITEM_INSTANCE_ACTIVE_STATE,
+          current_location: "inventory",
+          owner_player_id: playerId,
+        });
+
+        await this.recordItemInstanceEvent(client, {
+          item_instance_id: itemInstanceId,
+          event_type: "created",
+          to_player_id: playerId,
+          to_location: "inventory",
+          world_id: worldId,
+          item_transaction_id: itemTransactionId,
+          source,
+          metadata: {
+            public_item_instance_id: publicItemInstanceId,
+            item_type: itemType,
+            item_category: itemCategory,
+            action,
+            balance_after: balanceAfter,
+            details: safeJson(e.details),
+          },
+        });
+      }
+      return { ok: true, tracked: true, created: createCount, moved: 0, item_instances: createdInstances };
+    }
+
+    const movementCount = strict ? amount : Math.min(amount, Math.max(0, activeCount - balanceAfter));
+    if (movementCount <= 0) return { ok: true, tracked: true, created: 0, moved: 0, item_instances: [] };
+
+    const destination = this.getItemInstanceLedgerDestination(source, action, delta);
+    const movesToWorldDrop = destination.location === "world_drop";
+    const dropId = cleanName(entryDetails.drop_id || "");
+    const activeRows = await client.query(
+      `
+      SELECT item_instance_id, owner_player_id, world_id, state, current_location, public_item_instance_id
+        FROM ${this.table("item_instances")}
+       WHERE owner_player_id = $1
+         AND item_type = $2
+         AND item_category = $3
+         AND state = 'active'
+       ORDER BY created_at ASC
+       LIMIT $4
+       FOR UPDATE
+      `,
+      [playerId, itemType, itemCategory, movementCount]
+    );
+
+    if (strict && activeRows.rowCount < movementCount) {
+      return {
+        ok: false,
+        tracked: true,
+        reason: "insufficient_item_instances",
+        item_type: itemType,
+        item_category: itemCategory,
+        required_instances: movementCount,
+        available_instances: activeRows.rowCount,
+      };
+    }
+
+    const movedInstances = [];
+    for (const row of activeRows.rows) {
+      const previousLocation = cleanName(row.current_location || "inventory");
+      await client.query(
+        `
+        UPDATE ${this.table("item_instances")}
+           SET state = $2,
+               current_location = $3,
+               world_id = COALESCE($4, world_id),
+               owner_player_id = CASE WHEN $6::boolean THEN NULL ELSE owner_player_id END,
+               metadata = metadata || $5::jsonb,
+               updated_at = now()
+         WHERE item_instance_id = $1
+        `,
+        [
+          row.item_instance_id,
+          destination.state,
+          destination.location,
+          worldId,
+          JSON.stringify({
+            source,
+            action,
+            drop_id: dropId,
+            item_transaction_id: itemTransactionId,
+            balance_after: balanceAfter,
+            details: safeJson(e.details),
+          }),
+          movesToWorldDrop,
+        ]
+      );
+      movedInstances.push({
+        item_instance_id: row.item_instance_id,
+        public_item_instance_id: cleanName(row.public_item_instance_id || ""),
+        item_type: itemType,
+        item_category: itemCategory,
+        previous_state: cleanName(row.state || ITEM_INSTANCE_ACTIVE_STATE),
+        state: destination.state,
+        previous_location: previousLocation,
+        current_location: destination.location,
+        owner_player_id: movesToWorldDrop ? null : row.owner_player_id,
+        previous_owner_player_id: row.owner_player_id,
+        drop_id: dropId,
+      });
+
+      await this.recordItemInstanceEvent(client, {
+        item_instance_id: row.item_instance_id,
+        event_type: "state_changed",
+        from_player_id: row.owner_player_id,
+        to_player_id: movesToWorldDrop ? null : row.owner_player_id,
+        from_location: previousLocation,
+        to_location: destination.location,
+        world_id: worldId || row.world_id,
+        item_transaction_id: itemTransactionId,
+        source,
+        metadata: {
+          public_item_instance_id: cleanName(row.public_item_instance_id || ""),
+          item_type: itemType,
+          item_category: itemCategory,
+          action,
+          drop_id: dropId,
+          previous_state: cleanName(row.state || ITEM_INSTANCE_ACTIVE_STATE),
+          state: destination.state,
+          balance_after: balanceAfter,
+          details: safeJson(e.details),
+        },
+      });
+    }
+
+    return { ok: true, tracked: true, created: 0, moved: activeRows.rowCount, item_instances: movedInstances };
+  }
+
+  async transferTrackedItemInstances(client, entry = {}) {
+    const e = toObject(entry);
+    const fromPlayerId = cleanName(e.from_player_id || "");
+    const toPlayerId = cleanName(e.to_player_id || "");
+    const itemType = cleanName(e.item_type || e.item_id || "");
+    const itemCategory = resolveItemCategory(itemType, e.item_category || e.category || "");
+    if (!isUuid(fromPlayerId) || !isUuid(toPlayerId) || itemType === "" || !shouldTrackItemInstance(itemType, itemCategory)) {
+      return { ok: true, tracked: false, transferred: 0, item_instances: [] };
+    }
+
+    const strict = Boolean(e.strict_item_instances || e.strict || e.instance_id_first);
+    const rawIds = []
+      .concat(Array.isArray(e.public_item_instance_ids) ? e.public_item_instance_ids : [])
+      .concat(Array.isArray(e.item_instance_ids) ? e.item_instance_ids : []);
+    const requestedPublicIds = rawIds
+      .map((id) => cleanName(id))
+      .filter((id) => id !== "");
+    const amount = Math.max(
+      requestedPublicIds.length,
+      Math.max(0, toInt(e.amount || e.quantity || 0, 0))
+    );
+    if (amount <= 0) return { ok: true, tracked: true, transferred: 0, item_instances: [] };
+
+    const worldId = isUuid(e.world_id) ? cleanName(e.world_id) : null;
+    const correlationId = isUuid(e.correlation_id) ? cleanName(e.correlation_id) : null;
+    const source = normalizeItemInstanceSource(e.source || "transfer");
+    const action = cleanName(e.action || "transfer") || "transfer";
+    const toState = normalizeItemInstanceState(e.to_state || e.destination_state || ITEM_INSTANCE_ACTIVE_STATE);
+    const toLocation = normalizeItemInstanceLocation(e.to_location || e.destination_location || "inventory", "inventory");
+    const fromStates = Array.isArray(e.from_states)
+      ? e.from_states.map((state) => normalizeItemInstanceState(state, ITEM_INSTANCE_ACTIVE_STATE))
+      : [ITEM_INSTANCE_ACTIVE_STATE];
+    const fromLocations = Array.isArray(e.from_locations)
+      ? e.from_locations.map((location) => normalizeItemInstanceLocation(location, "unknown"))
+      : [];
+    const fromMetadataAction = cleanName(e.from_metadata_action || e.metadata_action || "");
+    const fromMetadataTransactionId = cleanName(e.from_metadata_transaction_id || e.listing_transaction_id || e.source_transaction_id || "");
+
+    const rows = requestedPublicIds.length > 0
+      ? await client.query(
+        `
+        SELECT item_instance_id, public_item_instance_id, owner_player_id, world_id, state, current_location
+          FROM ${this.table("item_instances")}
+         WHERE owner_player_id = $1
+           AND item_type = $2
+           AND item_category = $3
+           AND state = ANY($4::text[])
+           AND ($5::text[] = ARRAY[]::text[] OR current_location = ANY($5::text[]))
+           AND ($6 = '' OR metadata->>'action' = $6)
+           AND (
+             $7 = ''
+             OR metadata->>'transaction_id' = $7
+             OR metadata #>> '{details,transaction_id}' = $7
+             OR metadata #>> '{details,listing_transaction_id}' = $7
+           )
+           AND public_item_instance_id = ANY($8::text[])
+         ORDER BY created_at ASC
+         FOR UPDATE
+        `,
+        [fromPlayerId, itemType, itemCategory, fromStates, fromLocations, fromMetadataAction, fromMetadataTransactionId, requestedPublicIds]
+      )
+      : await client.query(
+        `
+        SELECT item_instance_id, public_item_instance_id, owner_player_id, world_id, state, current_location
+          FROM ${this.table("item_instances")}
+         WHERE owner_player_id = $1
+           AND item_type = $2
+           AND item_category = $3
+           AND state = ANY($4::text[])
+           AND ($5::text[] = ARRAY[]::text[] OR current_location = ANY($5::text[]))
+           AND ($6 = '' OR metadata->>'action' = $6)
+           AND (
+             $7 = ''
+             OR metadata->>'transaction_id' = $7
+             OR metadata #>> '{details,transaction_id}' = $7
+             OR metadata #>> '{details,listing_transaction_id}' = $7
+           )
+         ORDER BY created_at ASC
+         LIMIT $8
+         FOR UPDATE
+        `,
+        [fromPlayerId, itemType, itemCategory, fromStates, fromLocations, fromMetadataAction, fromMetadataTransactionId, amount]
+      );
+
+    if ((strict || requestedPublicIds.length > 0) && rows.rowCount < amount) {
+      return {
+        ok: false,
+        tracked: true,
+        reason: "insufficient_item_instances",
+        item_type: itemType,
+        item_category: itemCategory,
+        required_instances: amount,
+        available_instances: rows.rowCount,
+      };
+    }
+
+    const transferredInstances = [];
+    for (const row of rows.rows) {
+      await client.query(
+        `
+        UPDATE ${this.table("item_instances")}
+           SET owner_player_id = $2,
+               world_id = COALESCE($3, world_id),
+               state = $5,
+               current_location = $6,
+               metadata = metadata || $4::jsonb,
+               updated_at = now()
+         WHERE item_instance_id = $1
+        `,
+        [
+          row.item_instance_id,
+          toPlayerId,
+          worldId,
+          JSON.stringify({
+            source,
+            action,
+            correlation_id: correlationId,
+            details: safeJson(e.details),
+          }),
+          toState,
+          toLocation,
+        ]
+      );
+      transferredInstances.push({
+        item_instance_id: row.item_instance_id,
+        public_item_instance_id: cleanName(row.public_item_instance_id || ""),
+        item_type: itemType,
+        item_category: itemCategory,
+        from_player_id: fromPlayerId,
+        to_player_id: toPlayerId,
+        previous_state: cleanName(row.state || ITEM_INSTANCE_ACTIVE_STATE),
+        state: toState,
+        previous_location: cleanName(row.current_location || "inventory"),
+        current_location: toLocation,
+      });
+
+      await this.recordItemInstanceEvent(client, {
+        item_instance_id: row.item_instance_id,
+        event_type: "owner_changed",
+        from_player_id: fromPlayerId,
+        to_player_id: toPlayerId,
+        from_location: row.current_location || "inventory",
+        to_location: toLocation,
+        world_id: worldId || row.world_id,
+        correlation_id: correlationId,
+        source,
+        metadata: {
+          public_item_instance_id: cleanName(row.public_item_instance_id || ""),
+          item_type: itemType,
+          item_category: itemCategory,
+          action,
+          state: toState,
+          details: safeJson(e.details),
+        },
+      });
+    }
+
+    return { ok: true, tracked: true, transferred: rows.rowCount, item_instances: transferredInstances };
+  }
+
+  async claimTrackedWorldDropItemInstances(client, entry = {}) {
+    const e = toObject(entry);
+    const toPlayerId = cleanName(e.to_player_id || e.player_id || "");
+    const itemType = cleanName(e.item_type || e.item_id || "");
+    const itemCategory = resolveItemCategory(itemType, e.item_category || e.category || "");
+    if (!isUuid(toPlayerId) || itemType === "" || !shouldTrackItemInstance(itemType, itemCategory)) {
+      return { ok: true, tracked: false, claimed: 0, item_instances: [] };
+    }
+
+    const amount = Math.max(0, toInt(e.amount || e.quantity || 0, 0));
+    if (amount <= 0) return { ok: true, tracked: true, claimed: 0, item_instances: [] };
+
+    const worldId = isUuid(e.world_id) ? cleanName(e.world_id) : null;
+    const itemTransactionId = toInt(e.item_transaction_id, 0) > 0 ? toInt(e.item_transaction_id, 0) : null;
+    const correlationId = isUuid(e.correlation_id) ? cleanName(e.correlation_id) : null;
+    const dropId = cleanName(e.drop_id || "");
+    const source = normalizeItemInstanceSource(e.source || "world_drop");
+    const action = cleanName(e.action || "pickup") || "pickup";
+
+    const rows = await client.query(
+      `
+      SELECT item_instance_id, public_item_instance_id, owner_player_id, world_id, state, current_location
+        FROM ${this.table("item_instances")}
+       WHERE item_type = $1
+         AND item_category = $2
+         AND state = 'dropped'
+         AND current_location = 'world_drop'
+         AND ($3::uuid IS NULL OR world_id = $3)
+         AND (
+           $4 = ''
+           OR metadata->>'drop_id' = $4
+           OR metadata #>> '{details,drop_id}' = $4
+           OR metadata #>> '{details,details,drop_id}' = $4
+         )
+       ORDER BY updated_at ASC, created_at ASC
+       LIMIT $5
+       FOR UPDATE
+      `,
+      [itemType, itemCategory, worldId, dropId, amount]
+    );
+
+    if (rows.rowCount < amount) {
+      return {
+        ok: false,
+        tracked: true,
+        reason: "missing_world_drop_item_instances",
+        item_type: itemType,
+        item_category: itemCategory,
+        drop_id: dropId,
+        required_instances: amount,
+        available_instances: rows.rowCount,
+      };
+    }
+
+    const claimedInstances = [];
+    for (const row of rows.rows) {
+      await client.query(
+        `
+        UPDATE ${this.table("item_instances")}
+           SET owner_player_id = $2,
+               world_id = COALESCE($3, world_id),
+               state = 'active',
+               current_location = 'inventory',
+               metadata = metadata || $4::jsonb,
+               updated_at = now()
+         WHERE item_instance_id = $1
+        `,
+        [
+          row.item_instance_id,
+          toPlayerId,
+          worldId,
+          JSON.stringify({
+            source,
+            action,
+            drop_id: dropId,
+            item_transaction_id: itemTransactionId,
+            correlation_id: correlationId,
+            details: safeJson(e.details),
+          }),
+        ]
+      );
+
+      claimedInstances.push({
+        item_instance_id: row.item_instance_id,
+        public_item_instance_id: cleanName(row.public_item_instance_id || ""),
+        item_type: itemType,
+        item_category: itemCategory,
+        from_player_id: row.owner_player_id,
+        to_player_id: toPlayerId,
+        previous_state: cleanName(row.state || "dropped"),
+        state: ITEM_INSTANCE_ACTIVE_STATE,
+        previous_location: cleanName(row.current_location || "world_drop"),
+        current_location: "inventory",
+      });
+
+      await this.recordItemInstanceEvent(client, {
+        item_instance_id: row.item_instance_id,
+        event_type: "owner_changed",
+        from_player_id: row.owner_player_id,
+        to_player_id: toPlayerId,
+        from_location: row.current_location || "world_drop",
+        to_location: "inventory",
+        world_id: worldId || row.world_id,
+        item_transaction_id: itemTransactionId,
+        correlation_id: correlationId,
+        source,
+        metadata: {
+          public_item_instance_id: cleanName(row.public_item_instance_id || ""),
+          item_type: itemType,
+          item_category: itemCategory,
+          action,
+          drop_id: dropId,
+          details: safeJson(e.details),
+        },
+      });
+    }
+
+    return { ok: true, tracked: true, claimed: rows.rowCount, item_instances: claimedInstances };
+  }
+
+  async createTrackedWorldDropItemInstances(client, entry = {}) {
+    const e = toObject(entry);
+    const itemType = cleanName(e.item_type || e.item_id || "");
+    const itemCategory = resolveItemCategory(itemType, e.item_category || e.category || "");
+    if (itemType === "" || !shouldTrackItemInstance(itemType, itemCategory)) {
+      return { ok: true, tracked: false, created: 0, item_instances: [] };
+    }
+
+    const amount = Math.max(0, toInt(e.amount || e.quantity || 0, 0));
+    if (amount <= 0) return { ok: true, tracked: true, created: 0, item_instances: [] };
+
+    const worldId = isUuid(e.world_id) ? cleanName(e.world_id) : null;
+    let actorPlayerId = isUuid(e.actor_player_id || e.player_id) ? cleanName(e.actor_player_id || e.player_id) : null;
+    const actorUsername = cleanName(e.actor_username || e.username || "");
+    if (!actorPlayerId && actorUsername !== "") {
+      actorPlayerId = await this.ensurePlayerIdentity(client, actorUsername);
+    }
+    const itemTransactionId = toInt(e.item_transaction_id, 0) > 0 ? toInt(e.item_transaction_id, 0) : null;
+    const correlationId = isUuid(e.correlation_id) ? cleanName(e.correlation_id) : null;
+    const dropId = cleanName(e.drop_id || "");
+    const source = normalizeItemInstanceSource(e.source || "world_drop");
+    const action = cleanName(e.action || "drop_create") || "drop_create";
+    const details = safeJson(e.details);
+    const createdInstances = [];
+    let createCount = amount;
+
+    if (dropId !== "" && worldId) {
+      const existingResult = await client.query(
+        `
+        SELECT count(*)::integer AS existing_count
+          FROM ${this.table("item_instances")}
+         WHERE item_type = $1
+           AND item_category = $2
+           AND world_id = $3
+           AND state = 'dropped'
+           AND current_location = 'world_drop'
+           AND (
+             metadata->>'drop_id' = $4
+             OR metadata #>> '{details,drop_id}' = $4
+             OR metadata #>> '{details,details,drop_id}' = $4
+           )
+        `,
+        [itemType, itemCategory, worldId, dropId]
+      );
+      createCount = Math.max(0, amount - Math.max(0, toInt(existingResult.rows[0]?.existing_count, 0)));
+      if (createCount <= 0) {
+        return { ok: true, tracked: true, created: 0, item_instances: [] };
+      }
+    }
+
+    for (let i = 0; i < createCount; i += 1) {
+      const publicItemInstanceId = generatePublicItemInstanceId();
+      const result = await client.query(
+        `
+        INSERT INTO ${this.table("item_instances")} (
+          public_item_instance_id,
+          item_type,
+          item_category,
+          owner_player_id,
+          world_id,
+          state,
+          created_by_source,
+          current_location,
+          origin_transaction_id,
+          metadata,
+          created_at,
+          updated_at
+        )
+        VALUES ($1, $2, $3, NULL, $4, 'dropped', $5, 'world_drop', $6, $7::jsonb, now(), now())
+        RETURNING item_instance_id
+        `,
+        [
+          publicItemInstanceId,
+          itemType,
+          itemCategory,
+          worldId,
+          source,
+          itemTransactionId,
+          JSON.stringify({
+            source,
+            action,
+            drop_id: dropId,
+            item_transaction_id: itemTransactionId,
+            correlation_id: correlationId,
+            details,
+          }),
+        ]
+      );
+      const itemInstanceId = result.rows[0]?.item_instance_id || null;
+      createdInstances.push({
+        item_instance_id: itemInstanceId,
+        public_item_instance_id: publicItemInstanceId,
+        item_type: itemType,
+        item_category: itemCategory,
+        from_player_id: actorPlayerId,
+        to_player_id: null,
+        state: "dropped",
+        current_location: "world_drop",
+        drop_id: dropId,
+      });
+
+      await this.recordItemInstanceEvent(client, {
+        item_instance_id: itemInstanceId,
+        event_type: "created",
+        from_player_id: actorPlayerId,
+        to_location: "world_drop",
+        world_id: worldId,
+        item_transaction_id: itemTransactionId,
+        correlation_id: correlationId,
+        source,
+        metadata: {
+          public_item_instance_id: publicItemInstanceId,
+          item_type: itemType,
+          item_category: itemCategory,
+          action,
+          drop_id: dropId,
+          details,
+        },
+      });
+    }
+
+    return { ok: true, tracked: true, created: createdInstances.length, item_instances: createdInstances };
+  }
+
+  async applyInventoryDeltaTransaction(entry = {}) {
+    if (!this.isReady()) {
+      return { ok: false, reason: "postgres_unavailable" };
+    }
+
+    const e = toObject(entry);
+    const username = cleanName(e.account_username || e.username);
+    const rawDeltas = Array.isArray(e.deltas) ? e.deltas : [];
+    const worldName = cleanName(e.world || "START") || "START";
+    const source = normalizeLedgerSource(e.source || e.source_type || e.action || "system");
+    const action = cleanName(e.action || e.reason || "update") || "update";
+    const reason = cleanName(e.reason || action) || action;
+    const requestId = cleanName(e.request_id || "");
+    const correlationId = isUuid(cleanName(e.correlation_id || "")) ? cleanName(e.correlation_id || "") : null;
+    const at = cleanName(e.at || "");
+    const allowStateRepair = Boolean(e.allow_state_repair);
+    const strictItemInstances = e.strict_item_instances !== false;
+    const playerState = toObject(e.player_state);
+    const metadata = safeJson(e.metadata);
+    const worldState = toObject(e.world_state);
+    const worldChanges = Array.isArray(e.world_changes) ? e.world_changes : [];
+    const ipAddress = cleanName(e.ip_address || e.ip || "");
+    const userAgent = cleanName(e.user_agent || "");
+    const sessionTokenHash = cleanName(e.session_token_hash || "");
+    const deviceInfo = safeJson(e.device_info);
+
+    if (username === "") {
+      return { ok: false, reason: "invalid_username" };
+    }
+
+    const deltasByKey = new Map();
+    for (const rawDelta of rawDeltas) {
+      const parsed = toObject(rawDelta);
+      const itemType = cleanName(parsed.item_type || parsed.item_id || parsed.item || "");
+      const itemCategory = cleanName(parsed.item_category || parsed.category || "block") || "block";
+      const delta = toInt(parsed.delta, 0);
+      if (itemType === "" || itemCategory === "" || delta === 0) continue;
+
+      const key = `${itemType}\u0000${itemCategory}`;
+      const existing = deltasByKey.get(key) || {
+        item_type: itemType,
+        item_category: itemCategory,
+        delta: 0,
+        stack_limit: getInventoryStackLimitForItem(itemType, parsed.stack_limit || DEFAULT_INVENTORY_STACK_LIMIT),
+        expected_before_amount: null,
+      };
+      existing.delta += delta;
+      existing.stack_limit = Math.max(
+        existing.stack_limit,
+        getInventoryStackLimitForItem(itemType, parsed.stack_limit || DEFAULT_INVENTORY_STACK_LIMIT)
+      );
+
+      const expectedBeforeRaw = Number(parsed.expected_before_amount);
+      if (Number.isFinite(expectedBeforeRaw) && expectedBeforeRaw >= 0 && existing.expected_before_amount === null) {
+        existing.expected_before_amount = Math.max(0, toInt(expectedBeforeRaw, 0));
+      }
+      deltasByKey.set(key, existing);
+    }
+
+    const deltas = Array.from(deltasByKey.values()).filter((delta) => Number.isFinite(delta.delta) && delta.delta !== 0);
+    if (
+      deltas.length === 0
+      && Object.keys(playerState).length === 0
+      && Object.keys(worldState).length === 0
+      && worldChanges.length === 0
+    ) {
+      return { ok: true, ledger_entries: [] };
+    }
+
+    try {
+      return await this.withTransaction(async (client) => {
+        const playerId = await this.ensurePlayerIdentity(client, username, cleanName(e.email || ""), cleanName(e.actor_role || "player"), worldName);
+        if (!playerId) return { ok: false, reason: "player_not_found" };
+
+        const worldResult = await client.query(
+          `
+          INSERT INTO ${this.table("worlds")} (world_name, width, height, world_data_version, is_active, created_at, updated_at)
+          VALUES ($1, 100, 70, 1, true, now(), now())
+          ON CONFLICT (world_name) DO UPDATE
+            SET last_loaded_at = now()
+          RETURNING world_id
+          `,
+          [worldName]
+        );
+        let worldId = worldResult.rows[0]?.world_id || null;
+
+        const ledgerEntries = [];
+        const transactionLedgerEntries = [];
+        const inventoryBeforeHash = await this.getInventorySnapshotHash(client, playerId);
+        for (const deltaEntry of deltas) {
+          const itemInventory = await client.query(
+            `
+            SELECT amount, stack_limit
+              FROM ${this.table("inventory")}
+             WHERE player_id = $1
+               AND item_type = $2
+               AND item_category = $3
+             FOR UPDATE
+            `,
+            [playerId, deltaEntry.item_type, deltaEntry.item_category]
+          );
+
+          const existing = itemInventory.rows[0];
+          const storedBeforeAmount = Math.max(0, toInt(existing?.amount || 0, 0));
+          let beforeAmount = storedBeforeAmount;
+          let repairedFromAmount = null;
+          const requestedStackLimit = getInventoryStackLimitForItem(deltaEntry.item_type, deltaEntry.stack_limit);
+          const existingStackLimit = clampStackLimit(existing?.stack_limit || requestedStackLimit, requestedStackLimit);
+          const stackLimit = Math.max(existingStackLimit, requestedStackLimit);
+
+          if (
+            allowStateRepair &&
+            deltaEntry.expected_before_amount !== null &&
+            storedBeforeAmount !== deltaEntry.expected_before_amount
+          ) {
+            repairedFromAmount = storedBeforeAmount;
+            beforeAmount = deltaEntry.expected_before_amount;
+          }
+
+          const afterAmount = beforeAmount + deltaEntry.delta;
+          if (afterAmount < 0) {
+            return {
+              ok: false,
+              reason: "insufficient_inventory",
+              item_type: deltaEntry.item_type,
+              item_category: deltaEntry.item_category,
+              before_amount: beforeAmount,
+              delta: deltaEntry.delta,
+            };
+          }
+          if (afterAmount > stackLimit) {
+            return {
+              ok: false,
+              reason: "insufficient_capacity",
+              item_type: deltaEntry.item_type,
+              item_category: deltaEntry.item_category,
+              before_amount: beforeAmount,
+              after_amount: afterAmount,
+              stack_limit: stackLimit,
+            };
+          }
+
+          if (existing) {
+            await client.query(
+              `
+              UPDATE ${this.table("inventory")}
+                 SET amount = $4,
+                     stack_limit = $5,
+                     row_version = ${this.table("inventory")}.row_version + 1,
+                     updated_at = now()
+               WHERE player_id = $1
+                 AND item_type = $2
+                 AND item_category = $3
+              `,
+              [playerId, deltaEntry.item_type, deltaEntry.item_category, afterAmount, stackLimit]
+            );
+          } else {
+            await client.query(
+              `
+              INSERT INTO ${this.table("inventory")} (
+                player_id,
+                item_type,
+                item_category,
+                amount,
+                stack_limit,
+                row_version,
+                updated_at
+              )
+              VALUES ($1, $2, $3, $4, $5, 1, now())
+              `,
+              [playerId, deltaEntry.item_type, deltaEntry.item_category, afterAmount, stackLimit]
+            );
+          }
+
+          const itemTransactionResult = await client.query(
+            `
+            INSERT INTO ${this.table("item_transactions")} (
+              player_id,
+              world_id,
+              source,
+              action,
+              item_type,
+              item_category,
+              delta,
+              before_amount,
+              after_amount,
+              request_id,
+              correlation_id,
+              metadata,
+              created_at
+            )
+            VALUES (
+              $1,
+              $2,
+              $3,
+              $4,
+              $5,
+              $6,
+              $7,
+              $8,
+              $9,
+              NULLIF($10, ''),
+              $11::uuid,
+              $12::jsonb,
+              COALESCE(NULLIF($13, '')::timestamptz, now())
+            )
+            RETURNING item_transaction_id
+            `,
+            [
+              playerId,
+              worldId,
+              source,
+              action,
+              deltaEntry.item_type,
+              deltaEntry.item_category,
+              deltaEntry.delta,
+              beforeAmount,
+              afterAmount,
+              requestId,
+              correlationId,
+              JSON.stringify({
+                ...metadata,
+                reason,
+                repaired_inventory_before_amount: repairedFromAmount,
+                expected_before_amount: deltaEntry.expected_before_amount,
+              }),
+              at,
+            ]
+          );
+          const itemTransactionId = itemTransactionResult.rows[0]?.item_transaction_id || null;
+
+          let gemLedgerId = null;
+          const isGemLedgerRow = deltaEntry.item_type === "gem" || deltaEntry.item_category === "currency";
+          if (isGemLedgerRow) {
+            const gemLedgerResult = await client.query(
+              `
+              INSERT INTO ${this.table("gem_ledger")} (
+                player_id,
+                delta,
+                reason,
+                ref_type,
+                ref_id,
+                before_balance,
+                after_balance,
+                metadata,
+                created_at
+              )
+              VALUES (
+                $1,
+                $2,
+                $3,
+                NULLIF($4, ''),
+                NULLIF($5, ''),
+                $6,
+                $7,
+                $8::jsonb,
+                COALESCE(NULLIF($9, '')::timestamptz, now())
+              )
+              RETURNING gem_ledger_id
+              `,
+              [
+                playerId,
+                deltaEntry.delta,
+                reason,
+                source,
+                requestId || cleanName(e.source_id || ""),
+                beforeAmount,
+                afterAmount,
+                JSON.stringify({
+                  ...metadata,
+                  item_type: deltaEntry.item_type,
+                  item_category: deltaEntry.item_category,
+                }),
+                at,
+              ]
+            );
+            gemLedgerId = gemLedgerResult.rows[0]?.gem_ledger_id || null;
+          }
+
+          const instanceSyncResult = await this.syncItemInstancesForLedger(client, {
+            player_id: playerId,
+            world_id: worldId,
+            item_transaction_id: itemTransactionId,
+            source,
+            action,
+            item_type: deltaEntry.item_type,
+            item_category: deltaEntry.item_category,
+            delta: deltaEntry.delta,
+            after_amount: afterAmount,
+            details: {
+              ...metadata,
+              reason,
+              request_id: requestId,
+              correlation_id: correlationId,
+              repaired_inventory_before_amount: repairedFromAmount,
+              expected_before_amount: deltaEntry.expected_before_amount,
+            },
+            strict_item_instances: strictItemInstances,
+          });
+          if (!instanceSyncResult.ok) {
+            throw makeTrackedItemMovementError(instanceSyncResult);
+          }
+
+          transactionLedgerEntries.push({
+            transaction_type: normalizeTransactionLedgerType({
+              source,
+              action,
+              item_type: deltaEntry.item_type,
+              item_category: deltaEntry.item_category,
+              delta: deltaEntry.delta,
+            }),
+            player_id: playerId,
+            world_id: worldId,
+            item_transaction_id: itemTransactionId,
+            gem_ledger_id: gemLedgerId,
+            item_type: deltaEntry.item_type,
+            item_category: deltaEntry.item_category,
+            quantity: deltaEntry.delta,
+            gems_before: isGemLedgerRow ? beforeAmount : null,
+            gems_after: isGemLedgerRow ? afterAmount : null,
+            inventory_before_hash: inventoryBeforeHash,
+            request_id: requestId,
+            correlation_id: correlationId,
+            source,
+            action,
+            ip_address: ipAddress,
+            user_agent: userAgent,
+            session_token_hash: sessionTokenHash,
+            device_info: deviceInfo,
+            item_instances: instanceSyncResult.item_instances || [],
+            at,
+            metadata: {
+              ...metadata,
+              reason,
+              repaired_inventory_before_amount: repairedFromAmount,
+              expected_before_amount: deltaEntry.expected_before_amount,
+            },
+          });
+
+          ledgerEntries.push({
+            item_type: deltaEntry.item_type,
+            item_category: deltaEntry.item_category,
+            delta: deltaEntry.delta,
+            before_amount: beforeAmount,
+            after_amount: afterAmount,
+            stack_limit: stackLimit,
+          });
+        }
+
+        if (Object.keys(playerState).length > 0) {
+          const progression = await this.updatePlayerProgression(client, playerId, playerState);
+          await client.query(
+            `
+            UPDATE ${this.table("players")}
+               SET player_health = $2,
+                   player_state = $3::jsonb,
+                   current_world_name = COALESCE(NULLIF($4, ''), current_world_name),
+                   updated_at = now()
+             WHERE player_id = $1
+            `,
+            [
+              playerId,
+              Math.max(0, toInt(playerState.player_health, 100)),
+              JSON.stringify({
+                ...playerState,
+                ...(progression || {}),
+                account_username: username,
+              }),
+              worldName,
+            ]
+          );
+
+          await this.reconcileItemInstancesForInventory(client, playerId, playerState, {
+            source: source || "inventory_delta",
+            username,
+            action,
+            allow_create_missing: !strictItemInstances,
+            allow_retire_extra: !strictItemInstances,
+          });
+        }
+
+        let previousWorldState = {};
+        if (Object.keys(worldState).length > 0) {
+          previousWorldState = await this.loadWorldStateForUpdate(client, worldName);
+          const savedWorldId = await this.upsertWorldState(client, worldName, worldState);
+          worldId = savedWorldId || worldId;
+          await this.mirrorWorldLockState(client, worldId, worldState);
+        }
+
+        const hasExplicitObjectChanges = worldChanges.some((change) => this.isWorldObjectChangeEntry(change));
+        const inferredObjectChanges = Object.keys(worldState).length > 0 && !hasExplicitObjectChanges
+          ? this.buildWorldObjectChangesFromStateDiff(previousWorldState, worldState, {
+            actor_username: username,
+            actor_role: cleanName(e.actor_role || "player"),
+            source_type: source,
+            source_id: cleanName(e.source_id || requestId || ""),
+            request_id: requestId,
+            world: worldName,
+            action,
+            at,
+            details: {
+              ...metadata,
+              reason,
+              correlation_id: correlationId,
+            },
+          })
+          : [];
+
+        for (const change of [...worldChanges, ...inferredObjectChanges]) {
+          await this.recordWorldChangeAndTrackedDrops(client, worldId, change);
+        }
+
+        if (transactionLedgerEntries.length > 0) {
+          const inventoryAfterHash = await this.getInventorySnapshotHash(client, playerId);
+          for (const transactionLedgerEntry of transactionLedgerEntries) {
+            await this.recordTransactionLedger(client, {
+              ...transactionLedgerEntry,
+              inventory_after_hash: inventoryAfterHash,
+            });
+          }
+        }
+
+        return {
+          ok: true,
+          player_id: playerId,
+          world_id: worldId,
+          ledger_entries: ledgerEntries,
+        };
+      });
+    } catch (error) {
+      const trackedErrorResult = resultForTrackedItemMovementError(error);
+      if (trackedErrorResult) return trackedErrorResult;
+      this.logger("[postgres] inventory delta transaction failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
+    }
   }
 
   mirrorItemLedger(entry) {
@@ -2184,7 +5652,7 @@ class PostgresStore {
         );
         const worldId = worldIdResult.rows[0]?.world_id || null;
 
-        await client.query(
+        const itemTransactionResult = await client.query(
           `
           INSERT INTO ${this.table("item_transactions")} (
             player_id,
@@ -2212,6 +5680,7 @@ class PostgresStore {
             $10::jsonb,
             COALESCE(NULLIF($11, '')::timestamptz, now())
           )
+          RETURNING item_transaction_id
           `,
           [
             playerId,
@@ -2227,6 +5696,7 @@ class PostgresStore {
             cleanName(e.at || ""),
           ]
         );
+        const itemTransactionId = itemTransactionResult.rows[0]?.item_transaction_id || null;
 
         await client.query(
           `
@@ -2254,6 +5724,19 @@ class PostgresStore {
             getInventoryStackLimitForItem(itemType, e.stack_limit || DEFAULT_INVENTORY_STACK_LIMIT),
           ]
         );
+
+        await this.syncItemInstancesForLedger(client, {
+          player_id: playerId,
+          world_id: worldId,
+          item_transaction_id: itemTransactionId,
+          source: normalizeLedgerSource(e.source_type || "system"),
+          action: cleanName(e.reason || "update"),
+          item_type: itemType,
+          item_category: itemCategory || "block",
+          delta: toInt(e.quantity_delta, 0),
+          after_amount: Math.max(0, toInt(e.balance_after, 0)),
+          details: safeJson(e.details),
+        });
       });
     });
   }
@@ -2586,6 +6069,10 @@ class PostgresStore {
     const sourceId = cleanName(e.source_id || "");
     const at = cleanName(e.at || "");
     const correlationId = isUuid(cleanName(e.correlation_id || "")) ? cleanName(e.correlation_id || "") : null;
+    const ipAddress = cleanName(e.ip_address || e.ip || "");
+    const userAgent = cleanName(e.user_agent || "");
+    const sessionTokenHash = cleanName(e.session_token_hash || "");
+    const deviceInfo = safeJson(e.device_info);
 
     if (username === "" || itemType === "" || amount <= 0) {
       return { ok: false, reason: "invalid_payload" };
@@ -2607,6 +6094,7 @@ class PostgresStore {
           [worldName]
         );
         const worldId = worldResult.rows[0]?.world_id || null;
+        const inventoryBeforeHash = await this.getInventorySnapshotHash(client, playerId);
 
         const itemInventory = await client.query(
           `
@@ -2670,7 +6158,7 @@ class PostgresStore {
           );
         }
 
-        await client.query(
+        const pickupTransactionResult = await client.query(
           `
           INSERT INTO ${this.table("item_transactions")} (
             player_id,
@@ -2702,6 +6190,7 @@ class PostgresStore {
             $10::jsonb,
             COALESCE(NULLIF($11, '')::timestamptz, now())
           )
+          RETURNING item_transaction_id
           `,
           [
             playerId,
@@ -2721,6 +6210,137 @@ class PostgresStore {
             at,
           ]
         );
+        const pickupTransactionId = pickupTransactionResult.rows[0]?.item_transaction_id || null;
+        let gemLedgerId = null;
+        const isGemPickup = itemType === "gem" || itemCategory === "currency";
+        if (isGemPickup) {
+          const gemLedgerResult = await client.query(
+            `
+            INSERT INTO ${this.table("gem_ledger")} (
+              player_id,
+              delta,
+              reason,
+              ref_type,
+              ref_id,
+              before_balance,
+              after_balance,
+              metadata,
+              created_at
+            )
+            VALUES (
+              $1,
+              $2,
+              'drop_pickup',
+              'drop_pickup',
+              NULLIF($3, ''),
+              $4,
+              $5,
+              $6::jsonb,
+              COALESCE(NULLIF($7, '')::timestamptz, now())
+            )
+            RETURNING gem_ledger_id
+            `,
+            [
+              playerId,
+              amount,
+              dropId || requestId || sourceId,
+              beforeAmount,
+              afterAmount,
+              JSON.stringify({
+                drop_id: dropId,
+                source_id: sourceId,
+                request_id: requestId,
+                item_type: itemType,
+                item_category: itemCategory,
+                repaired_inventory_before_amount: repairedFromAmount,
+                expected_before_amount: hasExpectedBefore ? expectedBeforeAmount : null,
+              }),
+              at,
+            ]
+          );
+          gemLedgerId = gemLedgerResult.rows[0]?.gem_ledger_id || null;
+        }
+
+        const dropClaimResult = await this.claimTrackedWorldDropItemInstances(client, {
+          to_player_id: playerId,
+          world_id: worldId,
+          item_transaction_id: pickupTransactionId,
+          correlation_id: correlationId,
+          source: "world_drop",
+          action: "pickup",
+          item_type: itemType,
+          item_category: itemCategory || "block",
+          amount,
+          drop_id: dropId,
+          details: {
+            drop_id: dropId,
+            source_id: sourceId,
+            request_id: requestId,
+            repaired_inventory_before_amount: repairedFromAmount,
+            expected_before_amount: hasExpectedBefore ? expectedBeforeAmount : null,
+          },
+        });
+        if (!dropClaimResult.ok) {
+          throw makeTrackedItemMovementError(dropClaimResult);
+        }
+
+        let pickedUpItemInstances = dropClaimResult.item_instances || [];
+        if (!dropClaimResult.tracked) {
+          const instanceSyncResult = await this.syncItemInstancesForLedger(client, {
+            player_id: playerId,
+            world_id: worldId,
+            item_transaction_id: pickupTransactionId,
+            source: "drop_pickup",
+            action: "pickup",
+            item_type: itemType,
+            item_category: itemCategory || "block",
+            delta: amount,
+            after_amount: afterAmount,
+            details: {
+              drop_id: dropId,
+              source_id: sourceId,
+              request_id: requestId,
+              repaired_inventory_before_amount: repairedFromAmount,
+              expected_before_amount: hasExpectedBefore ? expectedBeforeAmount : null,
+            },
+          });
+          if (!instanceSyncResult.ok) {
+            throw makeTrackedItemMovementError(instanceSyncResult);
+          }
+          pickedUpItemInstances = instanceSyncResult.item_instances || [];
+        }
+
+        const inventoryAfterHash = await this.getInventorySnapshotHash(client, playerId);
+        await this.recordTransactionLedger(client, {
+          transaction_type: "ITEM_PICKUP",
+          player_id: playerId,
+          world_id: worldId,
+          item_transaction_id: pickupTransactionId,
+          gem_ledger_id: gemLedgerId,
+          item_type: itemType,
+          item_category: itemCategory || "block",
+          quantity: amount,
+          gems_before: isGemPickup ? beforeAmount : null,
+          gems_after: isGemPickup ? afterAmount : null,
+          inventory_before_hash: inventoryBeforeHash,
+          inventory_after_hash: inventoryAfterHash,
+          request_id: requestId,
+          correlation_id: correlationId,
+          source: "drop_pickup",
+          action: "pickup",
+          ip_address: ipAddress,
+          user_agent: userAgent,
+          session_token_hash: sessionTokenHash,
+          device_info: deviceInfo,
+          item_instances: pickedUpItemInstances,
+          at,
+          metadata: {
+            drop_id: dropId,
+            source_id: sourceId,
+            repaired_inventory_before_amount: repairedFromAmount,
+            expected_before_amount: hasExpectedBefore ? expectedBeforeAmount : null,
+          },
+        });
 
         return {
           ok: true,
@@ -2729,9 +6349,12 @@ class PostgresStore {
           item_type: itemType,
           item_category: itemCategory,
           repaired_inventory_before_amount: repairedFromAmount,
+          item_instances: pickedUpItemInstances,
         };
       });
     } catch (error) {
+      const trackedErrorResult = resultForTrackedItemMovementError(error);
+      if (trackedErrorResult) return trackedErrorResult;
       this.logger("[postgres] drop_pickup transaction failed:", error.message);
       return { ok: false, reason: "database_error", message: error.message };
     }
@@ -2750,6 +6373,11 @@ class PostgresStore {
     const worldName = cleanName(e.world || "START") || "START";
     const requestId = cleanName(e.request_id);
     const at = cleanName(e.at || "");
+    const allowStateRepair = Boolean(e.allow_state_repair);
+    const ipAddress = cleanName(e.ip_address || e.ip || "");
+    const userAgent = cleanName(e.user_agent || "");
+    const sessionTokenHash = cleanName(e.session_token_hash || "");
+    const deviceInfo = safeJson(e.device_info);
 
     const requesterOffers = Array.isArray(e.requester_offers) ? e.requester_offers : [];
     const targetOffers = Array.isArray(e.target_offers) ? e.target_offers : [];
@@ -2853,7 +6481,7 @@ class PostgresStore {
         const existingStackLimit = clampStackLimit(inventoryRow?.stack_limit || itemDefaultStackLimit, itemDefaultStackLimit);
         const baselineStackLimit = baselineEntry ? clampStackLimit(baselineEntry.stack_limit, itemDefaultStackLimit) : itemDefaultStackLimit;
         const stackLimit = Math.max(existingStackLimit, baselineStackLimit);
-        if (baselineEntry) {
+        if (allowStateRepair && baselineEntry) {
           const expectedBeforeAmount = Math.max(0, toInt(baselineEntry.amount, 0));
           if (storedBeforeAmount !== expectedBeforeAmount) {
             repairedFromAmount = storedBeforeAmount;
@@ -2951,6 +6579,8 @@ class PostgresStore {
           [worldName]
         );
         const worldId = worldResult.rows[0]?.world_id || null;
+        const requesterInventoryBeforeHash = await this.getInventorySnapshotHash(client, requesterId);
+        const targetInventoryBeforeHash = await this.getInventorySnapshotHash(client, targetId);
 
         const requesterInventory = await applyInventoryDeltas(client, requesterId, netRequester, requesterBaseline);
         if (!requesterInventory || requesterInventory.ok === false) return requesterInventory;
@@ -3056,9 +6686,123 @@ class PostgresStore {
           );
         }
 
+        const trackedInstanceMovements = [];
+        for (const item of normalizedRequesterOffers) {
+          const transferResult = await this.transferTrackedItemInstances(client, {
+            from_player_id: requesterId,
+            to_player_id: targetId,
+            world_id: worldId,
+            correlation_id: tradeId,
+            source: "trade",
+            action: "completed",
+            item_type: item.item_id,
+            item_category: item.item_category || "block",
+            amount: item.amount,
+            strict_item_instances: true,
+            details: {
+              trade_id: String(tradeId),
+              from_username: requester,
+              to_username: target,
+            },
+          });
+          if (!transferResult.ok) {
+            throw makeTrackedItemMovementError({ ...transferResult, reason: "trade_missing_item_instances" });
+          }
+          if (transferResult.tracked) {
+            trackedInstanceMovements.push(...(transferResult.item_instances || []));
+          }
+        }
+
+        for (const item of normalizedTargetOffers) {
+          const transferResult = await this.transferTrackedItemInstances(client, {
+            from_player_id: targetId,
+            to_player_id: requesterId,
+            world_id: worldId,
+            correlation_id: tradeId,
+            source: "trade",
+            action: "completed",
+            item_type: item.item_id,
+            item_category: item.item_category || "block",
+            amount: item.amount,
+            strict_item_instances: true,
+            details: {
+              trade_id: String(tradeId),
+              from_username: target,
+              to_username: requester,
+            },
+          });
+          if (!transferResult.ok) {
+            throw makeTrackedItemMovementError({ ...transferResult, reason: "trade_missing_item_instances" });
+          }
+          if (transferResult.tracked) {
+            trackedInstanceMovements.push(...(transferResult.item_instances || []));
+          }
+        }
+
+        const tradeLedgerContextByEntry = new Map();
+        const tradeLedgerEntryKey = (playerId, entry) => `${playerId}\u0000${entry.item_type}\u0000${entry.item_category}\u0000${entry.delta}`;
+        const rememberTradeLedgerContext = (playerId, entry, context = {}) => {
+          tradeLedgerContextByEntry.set(tradeLedgerEntryKey(playerId, entry), {
+            ...(tradeLedgerContextByEntry.get(tradeLedgerEntryKey(playerId, entry)) || {}),
+            ...context,
+          });
+        };
+        const getTradeLedgerContext = (playerId, entry) => tradeLedgerContextByEntry.get(tradeLedgerEntryKey(playerId, entry)) || {};
+        const isGemLedgerEntry = (entry) => cleanName(entry?.item_type || "") === "gem" || cleanName(entry?.item_category || "") === "currency";
+        const recordTradeGemLedger = async (client, playerId, counterpartyUsername, entry) => {
+          if (!isGemLedgerEntry(entry)) return null;
+          const action = entry.delta > 0 ? "trade_receive" : "trade_send";
+          const result = await client.query(
+            `
+            INSERT INTO ${this.table("gem_ledger")} (
+              player_id,
+              delta,
+              reason,
+              ref_type,
+              ref_id,
+              before_balance,
+              after_balance,
+              metadata,
+              created_at
+            )
+            VALUES (
+              $1,
+              $2,
+              $3,
+              'trade',
+              NULLIF($4, ''),
+              $5,
+              $6,
+              $7::jsonb,
+              COALESCE(NULLIF($8, '')::timestamptz, now())
+            )
+            RETURNING gem_ledger_id
+            `,
+            [
+              playerId,
+              entry.delta,
+              action,
+              String(tradeId || requestId || ""),
+              entry.before_amount,
+              entry.after_amount,
+              JSON.stringify({
+                role: entry.delta > 0 ? "receiver" : "sender",
+                counterparty: counterpartyUsername,
+                trade_id: String(tradeId),
+                item_type: entry.item_type,
+                item_category: entry.item_category,
+                repaired_inventory_before_amount: entry.repaired_inventory_before_amount,
+              }),
+              at,
+            ]
+          );
+          return result.rows[0]?.gem_ledger_id || null;
+        };
+
         for (const entry of requesterInventory.ledgerEntries) {
+          let itemTransactionResult = null;
           if (entry.delta > 0) {
-            await client.query(
+            itemTransactionResult = await client.query(
               `
               INSERT INTO ${this.table("item_transactions")} (
                 player_id,
@@ -3090,6 +6834,7 @@ class PostgresStore {
                 $10::jsonb,
                 COALESCE(NULLIF($11, '')::timestamptz, now())
               )
+              RETURNING item_transaction_id
               `,
               [
                 requesterId,
@@ -3110,7 +6855,7 @@ class PostgresStore {
               ]
             );
           } else {
-            await client.query(
+            itemTransactionResult = await client.query(
               `
               INSERT INTO ${this.table("item_transactions")} (
                 player_id,
@@ -3142,6 +6887,7 @@ class PostgresStore {
                 $10::jsonb,
                 COALESCE(NULLIF($11, '')::timestamptz, now())
               )
+              RETURNING item_transaction_id
               `,
               [
                 requesterId,
@@ -3161,115 +6907,262 @@ class PostgresStore {
                 at,
               ]
             );
+          }
+          const itemTransactionId = itemTransactionResult?.rows?.[0]?.item_transaction_id || null;
+          const gemLedgerId = await recordTradeGemLedger(client, requesterId, target, entry);
+          rememberTradeLedgerContext(requesterId, entry, {
+            item_transaction_id: itemTransactionId,
+            gem_ledger_id: gemLedgerId,
+          });
+        }
+
+        for (const entry of targetInventory.ledgerEntries) {
+          let itemTransactionResult = null;
+          if (entry.delta > 0) {
+            itemTransactionResult = await client.query(
+              `
+              INSERT INTO ${this.table("item_transactions")} (
+                player_id,
+                world_id,
+                source,
+                action,
+                item_type,
+                item_category,
+                delta,
+                before_amount,
+                after_amount,
+                request_id,
+                correlation_id,
+                metadata,
+                created_at
+              )
+              VALUES (
+                $1,
+                $2,
+                'trade',
+                'receive',
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                NULLIF($8, ''),
+                $9::uuid,
+                $10::jsonb,
+                COALESCE(NULLIF($11, '')::timestamptz, now())
+              )
+              RETURNING item_transaction_id
+              `,
+              [
+                targetId,
+                worldId,
+                entry.item_type,
+                entry.item_category,
+                entry.delta,
+                entry.before_amount,
+                entry.after_amount,
+                requestId,
+                tradeId,
+                JSON.stringify({
+                  role: entry.delta > 0 ? "receiver" : "sender",
+                  counterparty: requester,
+                  trade_id: String(tradeId),
+                }),
+                at,
+              ]
+            );
+          } else {
+            itemTransactionResult = await client.query(
+              `
+              INSERT INTO ${this.table("item_transactions")} (
+                player_id,
+                world_id,
+                source,
+                action,
+                item_type,
+                item_category,
+                delta,
+                before_amount,
+                after_amount,
+                request_id,
+                correlation_id,
+                metadata,
+                created_at
+              )
+              VALUES (
+                $1,
+                $2,
+                'trade',
+                'send',
+                $3,
+                $4,
+                $5,
+                $6,
+                $7,
+                NULLIF($8, ''),
+                $9::uuid,
+                $10::jsonb,
+                COALESCE(NULLIF($11, '')::timestamptz, now())
+              )
+              RETURNING item_transaction_id
+              `,
+              [
+                targetId,
+                worldId,
+                entry.item_type,
+                entry.item_category,
+                entry.delta,
+                entry.before_amount,
+                entry.after_amount,
+                requestId,
+                tradeId,
+                JSON.stringify({
+                  role: entry.delta > 0 ? "receiver" : "sender",
+                  counterparty: requester,
+                  trade_id: String(tradeId),
+                }),
+                at,
+              ]
+            );
+          }
+          const itemTransactionId = itemTransactionResult?.rows?.[0]?.item_transaction_id || null;
+          const gemLedgerId = await recordTradeGemLedger(client, targetId, requester, entry);
+          rememberTradeLedgerContext(targetId, entry, {
+            item_transaction_id: itemTransactionId,
+            gem_ledger_id: gemLedgerId,
+          });
+        }
+
+        for (const entry of requesterInventory.ledgerEntries) {
+          if (shouldTrackItemInstance(entry.item_type, entry.item_category)) continue;
+          const instanceSyncResult = await this.syncItemInstancesForLedger(client, {
+            player_id: requesterId,
+            world_id: worldId,
+            source: "trade",
+            action: entry.delta > 0 ? "receive" : "send",
+            item_type: entry.item_type,
+            item_category: entry.item_category,
+            delta: entry.delta,
+            after_amount: entry.after_amount,
+            details: {
+              trade_id: String(tradeId),
+              counterparty: target,
+              repaired_inventory_before_amount: entry.repaired_inventory_before_amount,
+            },
+          });
+          if (!instanceSyncResult.ok) {
+            throw makeTrackedItemMovementError(instanceSyncResult);
           }
         }
 
         for (const entry of targetInventory.ledgerEntries) {
-          if (entry.delta > 0) {
-            await client.query(
-              `
-              INSERT INTO ${this.table("item_transactions")} (
-                player_id,
-                world_id,
-                source,
-                action,
-                item_type,
-                item_category,
-                delta,
-                before_amount,
-                after_amount,
-                request_id,
-                correlation_id,
-                metadata,
-                created_at
-              )
-              VALUES (
-                $1,
-                $2,
-                'trade',
-                'receive',
-                $3,
-                $4,
-                $5,
-                $6,
-                $7,
-                NULLIF($8, ''),
-                $9::uuid,
-                $10::jsonb,
-                COALESCE(NULLIF($11, '')::timestamptz, now())
-              )
-              `,
-              [
-                targetId,
-                worldId,
-                entry.item_type,
-                entry.item_category,
-                entry.delta,
-                entry.before_amount,
-                entry.after_amount,
-                requestId,
-                tradeId,
-                JSON.stringify({
-                  role: entry.delta > 0 ? "receiver" : "sender",
-                  counterparty: requester,
-                  trade_id: String(tradeId),
-                }),
-                at,
-              ]
-            );
-          } else {
-            await client.query(
-              `
-              INSERT INTO ${this.table("item_transactions")} (
-                player_id,
-                world_id,
-                source,
-                action,
-                item_type,
-                item_category,
-                delta,
-                before_amount,
-                after_amount,
-                request_id,
-                correlation_id,
-                metadata,
-                created_at
-              )
-              VALUES (
-                $1,
-                $2,
-                'trade',
-                'send',
-                $3,
-                $4,
-                $5,
-                $6,
-                $7,
-                NULLIF($8, ''),
-                $9::uuid,
-                $10::jsonb,
-                COALESCE(NULLIF($11, '')::timestamptz, now())
-              )
-              `,
-              [
-                targetId,
-                worldId,
-                entry.item_type,
-                entry.item_category,
-                entry.delta,
-                entry.before_amount,
-                entry.after_amount,
-                requestId,
-                tradeId,
-                JSON.stringify({
-                  role: entry.delta > 0 ? "receiver" : "sender",
-                  counterparty: requester,
-                  trade_id: String(tradeId),
-                }),
-                at,
-              ]
-            );
+          if (shouldTrackItemInstance(entry.item_type, entry.item_category)) continue;
+          const instanceSyncResult = await this.syncItemInstancesForLedger(client, {
+            player_id: targetId,
+            world_id: worldId,
+            source: "trade",
+            action: entry.delta > 0 ? "receive" : "send",
+            item_type: entry.item_type,
+            item_category: entry.item_category,
+            delta: entry.delta,
+            after_amount: entry.after_amount,
+            details: {
+              trade_id: String(tradeId),
+              counterparty: requester,
+              repaired_inventory_before_amount: entry.repaired_inventory_before_amount,
+            },
+          });
+          if (!instanceSyncResult.ok) {
+            throw makeTrackedItemMovementError(instanceSyncResult);
           }
+        }
+
+        const requesterInventoryAfterHash = await this.getInventorySnapshotHash(client, requesterId);
+        const targetInventoryAfterHash = await this.getInventorySnapshotHash(client, targetId);
+        const tradeLedgerTransactionId = isUuid(tradeId) ? tradeId : null;
+        const instancesForTradeEntry = (playerId, entry) => {
+          if (!shouldTrackItemInstance(entry.item_type, entry.item_category)) return [];
+          return trackedInstanceMovements.filter((instance) => {
+            const item = toObject(instance);
+            if (cleanName(item.item_type) !== entry.item_type || cleanName(item.item_category) !== entry.item_category) return false;
+            if (entry.delta > 0) return cleanName(item.to_player_id || "") === playerId;
+            if (entry.delta < 0) return cleanName(item.from_player_id || "") === playerId;
+            return false;
+          });
+        };
+
+        for (const entry of requesterInventory.ledgerEntries) {
+          const ledgerContext = getTradeLedgerContext(requesterId, entry);
+          await this.recordTransactionLedger(client, {
+            transaction_id: tradeLedgerTransactionId,
+            transaction_type: "TRADE_COMPLETE",
+            player_id: requesterId,
+            other_player_id: targetId,
+            world_id: worldId,
+            item_transaction_id: ledgerContext.item_transaction_id,
+            gem_ledger_id: ledgerContext.gem_ledger_id,
+            trade_id: tradeId,
+            item_type: entry.item_type,
+            item_category: entry.item_category,
+            quantity: entry.delta,
+            gems_before: isGemLedgerEntry(entry) ? entry.before_amount : null,
+            gems_after: isGemLedgerEntry(entry) ? entry.after_amount : null,
+            inventory_before_hash: requesterInventoryBeforeHash,
+            inventory_after_hash: requesterInventoryAfterHash,
+            request_id: requestId,
+            correlation_id: tradeId,
+            source: "trade",
+            action: entry.delta > 0 ? "receive" : "send",
+            ip_address: ipAddress,
+            user_agent: userAgent,
+            session_token_hash: sessionTokenHash,
+            device_info: deviceInfo,
+            item_instances: instancesForTradeEntry(requesterId, entry),
+            at,
+            metadata: {
+              role: entry.delta > 0 ? "receiver" : "sender",
+              counterparty: target,
+              trade_id: String(tradeId),
+              repaired_inventory_before_amount: entry.repaired_inventory_before_amount,
+            },
+          });
+        }
+
+        for (const entry of targetInventory.ledgerEntries) {
+          const ledgerContext = getTradeLedgerContext(targetId, entry);
+          await this.recordTransactionLedger(client, {
+            transaction_id: tradeLedgerTransactionId,
+            transaction_type: "TRADE_COMPLETE",
+            player_id: targetId,
+            other_player_id: requesterId,
+            world_id: worldId,
+            item_transaction_id: ledgerContext.item_transaction_id,
+            gem_ledger_id: ledgerContext.gem_ledger_id,
+            trade_id: tradeId,
+            item_type: entry.item_type,
+            item_category: entry.item_category,
+            quantity: entry.delta,
+            gems_before: isGemLedgerEntry(entry) ? entry.before_amount : null,
+            gems_after: isGemLedgerEntry(entry) ? entry.after_amount : null,
+            inventory_before_hash: targetInventoryBeforeHash,
+            inventory_after_hash: targetInventoryAfterHash,
+            request_id: requestId,
+            correlation_id: tradeId,
+            source: "trade",
+            action: entry.delta > 0 ? "receive" : "send",
+            ip_address: ipAddress,
+            user_agent: userAgent,
+            session_token_hash: sessionTokenHash,
+            device_info: deviceInfo,
+            item_instances: instancesForTradeEntry(targetId, entry),
+            at,
+            metadata: {
+              role: entry.delta > 0 ? "receiver" : "sender",
+              counterparty: requester,
+              trade_id: String(tradeId),
+              repaired_inventory_before_amount: entry.repaired_inventory_before_amount,
+            },
+          });
         }
 
         return {
@@ -3283,10 +7176,13 @@ class PostgresStore {
             requester: requesterInventory.ledgerEntries,
             target: targetInventory.ledgerEntries,
           },
+          item_instance_movements: trackedInstanceMovements,
           timestamp: txTimestamp,
         };
       });
     } catch (error) {
+      const trackedErrorResult = resultForTrackedItemMovementError(error);
+      if (trackedErrorResult) return trackedErrorResult;
       this.logger("[postgres] trade finalization transaction failed:", error.message);
       return { ok: false, reason: "database_error", message: error.message };
     }
@@ -3310,7 +7206,13 @@ class PostgresStore {
     const y = toInt(e.y, 0);
     const at = cleanName(e.at || "");
     const transactionId = cleanName(e.transaction_id || "");
+    const listingTransactionId = cleanName(e.listing_id || e.listing_transaction_id || e.source_transaction_id || "");
     const correlationId = isUuid(transactionId) ? transactionId : null;
+    const allowStateRepair = Boolean(e.allow_state_repair);
+    const ipAddress = cleanName(e.ip_address || e.ip || "");
+    const userAgent = cleanName(e.user_agent || "");
+    const sessionTokenHash = cleanName(e.session_token_hash || "");
+    const deviceInfo = safeJson(e.device_info);
 
     if (owner === "" || buyer === "" || itemType === "" || amount <= 0 || priceWls <= 0) {
       return { ok: false, reason: "invalid_payload" };
@@ -3353,6 +7255,8 @@ class PostgresStore {
         );
         const worldId = worldResult.rows[0]?.world_id;
         if (!worldId) return { ok: false, reason: "world_record_failed" };
+        const buyerInventoryBeforeHash = await this.getInventorySnapshotHash(client, buyerId);
+        const ownerInventoryBeforeHash = await this.getInventorySnapshotHash(client, ownerId);
 
         const lockRow = await client.query(
           `
@@ -3375,7 +7279,7 @@ class PostgresStore {
           clampStackLimit(lockInventory?.stack_limit || lockDefaultStackLimit, lockDefaultStackLimit),
           lockBaseline ? clampStackLimit(lockBaseline.stack_limit, lockDefaultStackLimit) : lockDefaultStackLimit
         );
-        if (lockBaseline) {
+        if (allowStateRepair && lockBaseline) {
           const expectedBeforeLock = Math.max(0, toInt(lockBaseline.amount, 0));
           if (storedBeforeLock !== expectedBeforeLock) {
             repairedBeforeLock = storedBeforeLock;
@@ -3439,7 +7343,7 @@ class PostgresStore {
           clampStackLimit(itemInventory?.stack_limit || itemDefaultStackLimit, itemDefaultStackLimit),
           itemBaseline ? clampStackLimit(itemBaseline.stack_limit, itemDefaultStackLimit) : itemDefaultStackLimit
         );
-        if (itemBaseline) {
+        if (allowStateRepair && itemBaseline) {
           const expectedBeforeItem = Math.max(0, toInt(itemBaseline.amount, 0));
           if (storedBeforeItem !== expectedBeforeItem) {
             repairedBeforeItem = storedBeforeItem;
@@ -3484,7 +7388,7 @@ class PostgresStore {
           );
         }
 
-        await client.query(
+        const vendingTransactionResult = await client.query(
           `
           INSERT INTO ${this.table("vending_transactions")} (
             world_id,
@@ -3516,6 +7420,7 @@ class PostgresStore {
             $12::jsonb,
             COALESCE(NULLIF($13, '')::timestamptz, now())
           )
+          RETURNING vending_transaction_id
           `,
           [
             worldId,
@@ -3532,12 +7437,15 @@ class PostgresStore {
             JSON.stringify({
               source: "vending_buy",
               request_id: requestId,
+              transaction_id: transactionId,
+              listing_transaction_id: listingTransactionId,
             }),
             at,
           ]
         );
+        const vendingTransactionId = vendingTransactionResult.rows[0]?.vending_transaction_id || null;
 
-        await client.query(
+        const spendTransactionResult = await client.query(
           `
           INSERT INTO ${this.table("item_transactions")} (
             player_id,
@@ -3569,6 +7477,7 @@ class PostgresStore {
             $8::jsonb,
             COALESCE(NULLIF($9, '')::timestamptz, now())
           )
+          RETURNING item_transaction_id
           `,
           [
             buyerId,
@@ -3584,13 +7493,71 @@ class PostgresStore {
               world_y: y,
               lock_spent: priceWls,
               transaction_id: transactionId,
+              listing_transaction_id: listingTransactionId,
               repaired_inventory_before_amount: repairedBeforeLock,
             }),
             at,
           ]
         );
+        const spendTransactionId = spendTransactionResult.rows[0]?.item_transaction_id || null;
 
-        await client.query(
+        let spendInstanceMovementResult = await this.transferTrackedItemInstances(client, {
+          from_player_id: buyerId,
+          to_player_id: ownerId,
+          world_id: worldId,
+          correlation_id: correlationId,
+          source: "vending",
+          action: "payment",
+          item_type: "world_lock",
+          item_category: "block",
+          amount: priceWls,
+          strict_item_instances: true,
+          to_state: "locked",
+          to_location: "vending",
+          from_states: ["active"],
+          from_locations: ["inventory"],
+          details: {
+            kind: "vend_buy",
+            transaction_id: transactionId,
+            listing_transaction_id: listingTransactionId,
+            request_id: requestId,
+            owner_username: owner,
+            buyer_username: buyer,
+            world_x: x,
+            world_y: y,
+            repaired_inventory_before_amount: repairedBeforeLock,
+          },
+        });
+        if (!spendInstanceMovementResult.ok) {
+          throw makeTrackedItemMovementError({ ...spendInstanceMovementResult, reason: "vending_payment_missing_item_instances" });
+        }
+
+        if (!spendInstanceMovementResult.tracked) {
+          spendInstanceMovementResult = await this.syncItemInstancesForLedger(client, {
+            player_id: buyerId,
+            world_id: worldId,
+            item_transaction_id: spendTransactionId,
+            source: "vending",
+            action: "spend",
+            item_type: "world_lock",
+            item_category: "block",
+            delta: -priceWls,
+            after_amount: afterLock,
+            details: {
+              kind: "vend_buy",
+              transaction_id: transactionId,
+              listing_transaction_id: listingTransactionId,
+              world_x: x,
+              world_y: y,
+              repaired_inventory_before_amount: repairedBeforeLock,
+            },
+          });
+          if (!spendInstanceMovementResult.ok) {
+            throw makeTrackedItemMovementError({ ...spendInstanceMovementResult, reason: "vending_payment_missing_item_instances" });
+          }
+        }
+
+        const receiveTransactionResult = await client.query(
           `
           INSERT INTO ${this.table("item_transactions")} (
             player_id,
@@ -3622,6 +7589,7 @@ class PostgresStore {
             $10::jsonb,
             COALESCE(NULLIF($11, '')::timestamptz, now())
           )
+          RETURNING item_transaction_id
           `,
           [
             buyerId,
@@ -3636,6 +7604,7 @@ class PostgresStore {
             JSON.stringify({
               kind: "vend_buy",
               transaction_id: transactionId,
+              listing_transaction_id: listingTransactionId,
               item_id: itemType,
               world_x: x,
               world_y: y,
@@ -3644,6 +7613,142 @@ class PostgresStore {
             at,
           ]
         );
+        const receiveTransactionId = receiveTransactionResult.rows[0]?.item_transaction_id || null;
+
+        const soldItemTransferResult = await this.transferTrackedItemInstances(client, {
+          from_player_id: ownerId,
+          to_player_id: buyerId,
+          world_id: worldId,
+          correlation_id: correlationId,
+          source: "vending",
+          action: "buy",
+          item_type: itemType,
+          item_category: itemCategory,
+          amount,
+          strict_item_instances: true,
+          from_states: ["locked", "active"],
+          from_locations: ["vending", "inventory"],
+          from_metadata_action: "vending_list",
+          from_metadata_transaction_id: listingTransactionId,
+          details: {
+            kind: "vend_buy",
+            transaction_id: transactionId,
+            listing_transaction_id: listingTransactionId,
+            request_id: requestId,
+            owner_username: owner,
+            buyer_username: buyer,
+            world_x: x,
+            world_y: y,
+          },
+        });
+        if (!soldItemTransferResult.ok) {
+          throw makeTrackedItemMovementError({ ...soldItemTransferResult, reason: "vending_missing_item_instances" });
+        }
+
+        if (!soldItemTransferResult.tracked) {
+          const receiveInstanceSyncResult = await this.syncItemInstancesForLedger(client, {
+            player_id: buyerId,
+            world_id: worldId,
+            item_transaction_id: receiveTransactionId,
+            source: "vending",
+            action: "receive",
+            item_type: itemType,
+            item_category: itemCategory,
+            delta: amount,
+            after_amount: afterItem,
+            details: {
+              kind: "vend_buy",
+              transaction_id: transactionId,
+              listing_transaction_id: listingTransactionId,
+              request_id: requestId,
+              owner_username: owner,
+              buyer_username: buyer,
+              world_x: x,
+              world_y: y,
+              repaired_inventory_before_amount: repairedBeforeItem,
+            },
+          });
+          if (!receiveInstanceSyncResult.ok) {
+            throw makeTrackedItemMovementError(receiveInstanceSyncResult);
+          }
+        }
+
+        const buyerInventoryAfterHash = await this.getInventorySnapshotHash(client, buyerId);
+        const ownerInventoryAfterHash = await this.getInventorySnapshotHash(client, ownerId);
+        await this.recordTransactionLedger(client, {
+          transaction_id: correlationId,
+          transaction_type: "VENDING_BUY",
+          player_id: buyerId,
+          other_player_id: ownerId,
+          world_id: worldId,
+          item_transaction_id: spendTransactionId,
+          vending_transaction_id: vendingTransactionId,
+          item_type: "world_lock",
+          item_category: "block",
+          quantity: -priceWls,
+          inventory_before_hash: buyerInventoryBeforeHash,
+          inventory_after_hash: buyerInventoryAfterHash,
+          request_id: requestId,
+          correlation_id: correlationId,
+          source: "vending",
+          action: "spend",
+          ip_address: ipAddress,
+          user_agent: userAgent,
+          session_token_hash: sessionTokenHash,
+          device_info: deviceInfo,
+          item_instances: spendInstanceMovementResult.item_instances || [],
+          at,
+          metadata: {
+            kind: "vend_buy",
+            role: "buyer_payment",
+            owner_username: owner,
+            buyer_username: buyer,
+            world_x: x,
+            world_y: y,
+            transaction_id: transactionId,
+            listing_transaction_id: listingTransactionId,
+            owner_inventory_before_hash: ownerInventoryBeforeHash,
+            owner_inventory_after_hash: ownerInventoryAfterHash,
+            repaired_inventory_before_amount: repairedBeforeLock,
+          },
+        });
+        await this.recordTransactionLedger(client, {
+          transaction_id: correlationId,
+          transaction_type: "VENDING_BUY",
+          player_id: buyerId,
+          other_player_id: ownerId,
+          world_id: worldId,
+          item_transaction_id: receiveTransactionId,
+          vending_transaction_id: vendingTransactionId,
+          item_type: itemType,
+          item_category: itemCategory,
+          quantity: amount,
+          inventory_before_hash: buyerInventoryBeforeHash,
+          inventory_after_hash: buyerInventoryAfterHash,
+          request_id: requestId,
+          correlation_id: correlationId,
+          source: "vending",
+          action: "receive",
+          ip_address: ipAddress,
+          user_agent: userAgent,
+          session_token_hash: sessionTokenHash,
+          device_info: deviceInfo,
+          item_instances: soldItemTransferResult.item_instances || [],
+          at,
+          metadata: {
+            kind: "vend_buy",
+            role: "buyer_receive",
+            owner_username: owner,
+            buyer_username: buyer,
+            world_x: x,
+            world_y: y,
+            transaction_id: transactionId,
+            listing_transaction_id: listingTransactionId,
+            owner_inventory_before_hash: ownerInventoryBeforeHash,
+            owner_inventory_after_hash: ownerInventoryAfterHash,
+            repaired_inventory_before_amount: repairedBeforeItem,
+          },
+        });
 
         return {
           ok: true,
@@ -3655,10 +7760,16 @@ class PostgresStore {
             item_type: itemType,
             item_category: itemCategory,
           },
+          item_instance_movements: [
+            ...(spendInstanceMovementResult.item_instances || []),
+            ...(soldItemTransferResult.item_instances || []),
+          ],
           world_id: worldId,
         };
       });
     } catch (error) {
+      const trackedErrorResult = resultForTrackedItemMovementError(error);
+      if (trackedErrorResult) return trackedErrorResult;
       this.logger("[postgres] vend buy transaction failed:", error.message);
       return { ok: false, reason: "database_error", message: error.message };
     }
@@ -3909,65 +8020,7 @@ class PostgresStore {
         const worldId = worldResult.rows[0]?.world_id;
         if (!worldId) return;
 
-        let playerId = null;
-        const actor = cleanName(e.actor_username || "");
-        if (actor !== "") {
-          playerId = await this.ensurePlayerIdentity(client, actor);
-        }
-
-        const action = cleanName(e.action || "");
-        const mappedAction = action.includes("place")
-          ? "place"
-          : action.includes("break")
-            ? "break"
-            : "hit";
-        const layer = cleanName(e.layer || "").toLowerCase() === "background" ? "background" : "foreground";
-        const sourceId = cleanName(e.source_id || "");
-        const txUuid = isUuid(sourceId) ? sourceId : null;
-
-        await client.query(
-          `
-          INSERT INTO ${this.table("world_block_changes")} (
-            world_id,
-            player_id,
-            action,
-            layer,
-            block_x,
-            block_y,
-            block_type_after,
-            tx_uuid,
-            metadata,
-            created_at
-          )
-          VALUES (
-            $1,
-            $2,
-            $3,
-            $4,
-            $5,
-            $6,
-            NULLIF($7, ''),
-            $8::uuid,
-            $9::jsonb,
-            COALESCE(NULLIF($10, '')::timestamptz, now())
-          )
-          `,
-          [
-            worldId,
-            playerId,
-            mappedAction,
-            layer,
-            Number.isFinite(Number(e.x)) ? Math.trunc(Number(e.x)) : 0,
-            Number.isFinite(Number(e.y)) ? Math.trunc(Number(e.y)) : 0,
-            cleanName(e.block_type || ""),
-            txUuid,
-            JSON.stringify({
-              source_type: cleanName(e.source_type || ""),
-              details: safeJson(e.details),
-            }),
-            cleanName(e.at || ""),
-          ]
-        );
+        await this.recordWorldChangeEntry(client, worldId, e);
       });
     });
   }

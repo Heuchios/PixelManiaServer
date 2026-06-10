@@ -117,6 +117,11 @@ function blockType(entry) {
   return cleanText(entry.block_type || entry.item_id || entry.type || entry.foreground_item_id);
 }
 
+function isWorldLockBlockType(value) {
+  const clean = cleanName(value);
+  return clean === "world_lock" || clean === "super_world_lock";
+}
+
 function usage() {
   console.log("PixelMania integrity scanner");
   console.log("");
@@ -600,7 +605,7 @@ function scanWorldFile(report, filePath) {
   const storageBlocks = [];
   for (const [cell, block] of foregroundMap.entries()) {
     const type = blockType(block);
-    if (type === "world_lock") worldLockBlocks.push({ cell, block });
+    if (isWorldLockBlockType(type)) worldLockBlocks.push({ cell, block });
     if (STORAGE_BLOCKS.has(type)) storageBlocks.push({ cell, type });
   }
 
@@ -616,7 +621,7 @@ function scanWorldFile(report, filePath) {
   if (isLocked) {
     const lockCell = `${Math.trunc(Number(worldLock.lock_grid_x))},${Math.trunc(Number(worldLock.lock_grid_y))}`;
     const lockBlock = foregroundMap.get(lockCell);
-    if (!lockBlock || blockType(lockBlock) !== "world_lock") {
+    if (!lockBlock || !isWorldLockBlockType(blockType(lockBlock))) {
       addIssue(report, "error", "world_lock_metadata_without_block", filePath, "World lock metadata points to a missing world_lock block.", {
         world: worldName,
         lock_cell: lockCell,

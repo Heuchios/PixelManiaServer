@@ -1,5 +1,6 @@
 const fs = require("fs");
 const path = require("path");
+const PostgresStore = require("../postgres_store");
 
 const ROOT = path.resolve(__dirname, "..");
 
@@ -31,6 +32,7 @@ const ROLLBACK_LOG_PATH = resolveConfiguredPath(
   process.env.ROLLBACK_LOG_PATH,
   path.join(INTEGRITY_LOG_FOLDER, "rollback_jobs.log")
 );
+const POSTGRES_ENABLED = String(process.env.POSTGRES_ENABLED || "false").trim().toLowerCase() === "true";
 
 const args = process.argv.slice(2);
 const command = String(args[0] || "help").toLowerCase();
@@ -71,6 +73,56 @@ function writeJsonAtomic(filePath, data) {
 function appendJsonl(filePath, record) {
   fs.mkdirSync(path.dirname(filePath), { recursive: true });
   fs.appendFileSync(filePath, `${JSON.stringify(record)}\n`, "utf8");
+}
+
+async function recordRollbackLedger(record) {
+  if (!POSTGRES_ENABLED) return;
+
+  const store = new PostgresStore({
+    enabled: true,
+    autoBootstrap: String(process.env.POSTGRES_AUTO_BOOTSTRAP || "false").trim().toLowerCase() === "true",
+    bootstrapSqlPath: resolveConfiguredPath(
+      process.env.POSTGRES_BOOTSTRAP_SQL_PATH,
+      path.join(ROOT, "docs", "postgres_security_foundation.sql")
+    ),
+    connectionString: String(process.env.POSTGRES_CONNECTION_STRING || process.env.DATABASE_URL || "").trim(),
+    host: String(process.env.POSTGRES_HOST || "").trim(),
+    port: Math.max(1, Math.trunc(Number(process.env.POSTGRES_PORT) || 5432)),
+    database: String(process.env.POSTGRES_DATABASE || "").trim(),
+    user: String(process.env.POSTGRES_USER || "").trim(),
+    password: String(process.env.POSTGRES_PASSWORD || ""),
+    ssl: String(process.env.POSTGRES_SSL || "false").trim().toLowerCase() === "true",
+    schema: String(process.env.POSTGRES_SCHEMA || "pixelmania").trim() || "pixelmania",
+    poolMax: 2,
+    logger: (...args) => console.warn(...args),
+  });
+
+  try {
+    await store.init();
+    if (!store.isReady()) {
+      console.warn("[postgres] rollback ledger skipped because PostgreSQL is not ready.");
+      return;
+    }
+    const result = await store.recordTransactionLedgerEvent({
+      transaction_type: "ROLLBACK_RESTORE",
+      status: "reversed",
+      world: record.target_world || "",
+      source: "rollback",
+      action: "world_snapshot_restore",
+      request_id: record.job_id || "",
+      quantity: 0,
+      metadata: {
+        ...record,
+        rollback_applied: true,
+        admin_corrected: true,
+      },
+    });
+    if (!result?.ok) {
+      console.warn(`[postgres] rollback ledger write skipped: ${result?.reason || "unknown_error"}`);
+    }
+  } finally {
+    await store.close();
+  }
 }
 
 function usage(exitCode = 0) {
@@ -270,7 +322,7 @@ function createSnapshot() {
   console.log(`Drops:    ${summary.drop_count}`);
 }
 
-function restoreSnapshot() {
+async function restoreSnapshot() {
   const worldName = cleanWorld(args[1] || getOption("--world", ""));
   if (!worldName) usage(1);
 
@@ -313,7 +365,7 @@ function restoreSnapshot() {
   }
 
   writeJsonAtomic(targetPath, worldState);
-  appendJsonl(ROLLBACK_LOG_PATH, {
+  const rollbackRecord = {
     job_id: `rollback_${Date.now()}_${Math.random().toString(16).slice(2)}`,
     at: new Date().toISOString(),
     status: "applied",
@@ -333,7 +385,13 @@ function restoreSnapshot() {
       interactions: selected.interaction_count,
       drops: selected.drop_count,
     },
-  });
+  };
+  appendJsonl(ROLLBACK_LOG_PATH, rollbackRecord);
+  try {
+    await recordRollbackLedger(rollbackRecord);
+  } catch (error) {
+    console.warn(`[postgres] rollback ledger write failed: ${error.message}`);
+  }
   console.log(`Rollback log written: ${ROLLBACK_LOG_PATH}`);
   console.log("Restore applied. Restart or reload the PixelMania server before testing the world.");
 }
@@ -361,7 +419,7 @@ async function main() {
   }
 
   if (command === "restore") {
-    restoreSnapshot();
+    await restoreSnapshot();
     return;
   }
 
