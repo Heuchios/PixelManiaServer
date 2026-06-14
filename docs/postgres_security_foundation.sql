@@ -23,6 +23,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 	email citext NOT NULL UNIQUE,
 	password_salt text NOT NULL DEFAULT '',
 	password_hash text NOT NULL,
+	password_algorithm text NOT NULL DEFAULT 'legacy_scrypt',
 	role text NOT NULL DEFAULT 'player' CHECK (role IN ('player', 'moderator', 'admin', 'owner')),
 	is_active boolean NOT NULL DEFAULT true,
 	last_login_at timestamptz,
@@ -48,6 +49,9 @@ CREATE TABLE IF NOT EXISTS players (
 	last_level_up_at timestamptz,
 	current_world_name text,
 	player_state jsonb NOT NULL DEFAULT '{}'::jsonb,
+	inventory_hash text NOT NULL DEFAULT '',
+	inventory_hash_algorithm text NOT NULL DEFAULT 'sha256:v1',
+	inventory_hash_updated_at timestamptz,
 	created_at timestamptz NOT NULL DEFAULT now(),
 	updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -56,17 +60,46 @@ CREATE TABLE IF NOT EXISTS sessions (
 	session_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
 	account_id uuid NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
 	session_token_hash text NOT NULL UNIQUE,
+	refresh_token_hash text UNIQUE,
+	refresh_expires_at timestamptz,
+	token_family uuid NOT NULL DEFAULT gen_random_uuid(),
 	ip_address inet,
 	user_agent text,
+	device_info jsonb NOT NULL DEFAULT '{}'::jsonb,
+	session_mode text NOT NULL DEFAULT 'one_active',
 	issued_at timestamptz NOT NULL DEFAULT now(),
 	expires_at timestamptz NOT NULL,
 	last_seen_at timestamptz NOT NULL DEFAULT now(),
-	revoked_at timestamptz
+	revoked_at timestamptz,
+	revoked_reason text,
+	rotated_from_session_id uuid
 );
 
 CREATE INDEX IF NOT EXISTS idx_sessions_account_id ON sessions(account_id);
 CREATE INDEX IF NOT EXISTS idx_sessions_expires_at ON sessions(expires_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_refresh_expires_at ON sessions(refresh_expires_at);
 CREATE INDEX IF NOT EXISTS idx_sessions_last_seen_at ON sessions(last_seen_at);
+CREATE INDEX IF NOT EXISTS idx_sessions_token_family ON sessions(token_family);
+
+CREATE TABLE IF NOT EXISTS account_login_attempts (
+	login_attempt_id bigserial PRIMARY KEY,
+	account_id uuid REFERENCES accounts(account_id) ON DELETE SET NULL,
+	username text NOT NULL DEFAULT '',
+	action text NOT NULL DEFAULT 'login',
+	success boolean NOT NULL DEFAULT false,
+	reason text NOT NULL DEFAULT '',
+	ip_address inet,
+	user_agent text,
+	device_info jsonb NOT NULL DEFAULT '{}'::jsonb,
+	request_id text,
+	created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_login_attempts_username_time
+ON account_login_attempts(lower(username), created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_account_login_attempts_ip_time
+ON account_login_attempts(ip_address, created_at DESC)
+WHERE ip_address IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS worlds (
 	world_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -86,6 +119,7 @@ CREATE TABLE IF NOT EXISTS worlds (
 
 ALTER TABLE accounts
 ADD COLUMN IF NOT EXISTS password_salt text NOT NULL DEFAULT '',
+ADD COLUMN IF NOT EXISTS password_algorithm text NOT NULL DEFAULT 'legacy_scrypt',
 ADD COLUMN IF NOT EXISTS email_verified boolean NOT NULL DEFAULT false,
 ADD COLUMN IF NOT EXISTS email_verified_at timestamptz,
 ADD COLUMN IF NOT EXISTS email_verification_token_hash text NOT NULL DEFAULT '',
@@ -102,10 +136,26 @@ ADD COLUMN IF NOT EXISTS player_xp_needed bigint NOT NULL DEFAULT 300,
 ADD COLUMN IF NOT EXISTS player_total_xp bigint NOT NULL DEFAULT 0,
 ADD COLUMN IF NOT EXISTS player_title text NOT NULL DEFAULT 'Explorer',
 ADD COLUMN IF NOT EXISTS last_level_up_at timestamptz,
-ADD COLUMN IF NOT EXISTS player_state jsonb NOT NULL DEFAULT '{}'::jsonb;
+ADD COLUMN IF NOT EXISTS player_state jsonb NOT NULL DEFAULT '{}'::jsonb,
+ADD COLUMN IF NOT EXISTS inventory_hash text NOT NULL DEFAULT '',
+ADD COLUMN IF NOT EXISTS inventory_hash_algorithm text NOT NULL DEFAULT 'sha256:v1',
+ADD COLUMN IF NOT EXISTS inventory_hash_updated_at timestamptz;
 
 ALTER TABLE worlds
 ADD COLUMN IF NOT EXISTS world_state jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE sessions
+ADD COLUMN IF NOT EXISTS refresh_token_hash text,
+ADD COLUMN IF NOT EXISTS refresh_expires_at timestamptz,
+ADD COLUMN IF NOT EXISTS token_family uuid NOT NULL DEFAULT gen_random_uuid(),
+ADD COLUMN IF NOT EXISTS device_info jsonb NOT NULL DEFAULT '{}'::jsonb,
+ADD COLUMN IF NOT EXISTS session_mode text NOT NULL DEFAULT 'one_active',
+ADD COLUMN IF NOT EXISTS revoked_reason text,
+ADD COLUMN IF NOT EXISTS rotated_from_session_id uuid;
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_refresh_token_hash
+ON sessions(refresh_token_hash)
+WHERE refresh_token_hash IS NOT NULL;
 
 CREATE TABLE IF NOT EXISTS player_progression_events (
 	player_progression_event_id bigserial PRIMARY KEY,
@@ -421,6 +471,8 @@ CREATE TABLE IF NOT EXISTS transaction_ledger (
 	gems_after bigint,
 	inventory_before_hash text,
 	inventory_after_hash text,
+	transaction_hash text,
+	transaction_hash_algorithm text NOT NULL DEFAULT 'sha256:v1',
 	ip_address inet,
 	session_token_hash text,
 	user_agent text,
@@ -433,6 +485,10 @@ CREATE TABLE IF NOT EXISTS transaction_ledger (
 	server_time timestamptz NOT NULL DEFAULT now(),
 	created_at timestamptz NOT NULL DEFAULT now()
 );
+
+ALTER TABLE transaction_ledger
+ADD COLUMN IF NOT EXISTS transaction_hash text,
+ADD COLUMN IF NOT EXISTS transaction_hash_algorithm text NOT NULL DEFAULT 'sha256:v1';
 
 CREATE INDEX IF NOT EXISTS idx_transaction_ledger_player_time
 ON transaction_ledger(player_id, server_time DESC);
@@ -450,6 +506,24 @@ WHERE request_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS idx_transaction_ledger_correlation_id
 ON transaction_ledger(correlation_id)
 WHERE correlation_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_transaction_ledger_hash
+ON transaction_ledger(transaction_hash)
+WHERE transaction_hash IS NOT NULL;
+
+CREATE TABLE IF NOT EXISTS integrity_audit_runs (
+	integrity_audit_run_id bigserial PRIMARY KEY,
+	run_type text NOT NULL DEFAULT 'integrity_hash_audit',
+	status text NOT NULL DEFAULT 'success',
+	summary jsonb NOT NULL DEFAULT '{}'::jsonb,
+	issues jsonb NOT NULL DEFAULT '[]'::jsonb,
+	metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+	created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_integrity_audit_runs_type_time
+ON integrity_audit_runs(run_type, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_integrity_audit_runs_status_time
+ON integrity_audit_runs(status, created_at DESC);
 
 CREATE TABLE IF NOT EXISTS rollback_jobs (
 	rollback_job_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -541,6 +615,8 @@ CREATE TABLE IF NOT EXISTS world_snapshots (
 	world_id uuid NOT NULL REFERENCES worlds(world_id) ON DELETE CASCADE,
 	snapshot_version integer NOT NULL CHECK (snapshot_version > 0),
 	checksum text,
+	snapshot_hash text,
+	snapshot_hash_algorithm text NOT NULL DEFAULT 'sha256:v1',
 	storage_uri text,
 	snapshot_data jsonb,
 	reason text NOT NULL DEFAULT 'snapshot',
@@ -548,6 +624,10 @@ CREATE TABLE IF NOT EXISTS world_snapshots (
 	created_at timestamptz NOT NULL DEFAULT now(),
 	UNIQUE (world_id, snapshot_version)
 );
+
+ALTER TABLE world_snapshots
+ADD COLUMN IF NOT EXISTS snapshot_hash text,
+ADD COLUMN IF NOT EXISTS snapshot_hash_algorithm text NOT NULL DEFAULT 'sha256:v1';
 
 CREATE INDEX IF NOT EXISTS idx_world_snapshots_world_time
 ON world_snapshots(world_id, created_at DESC);

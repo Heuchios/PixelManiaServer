@@ -15,6 +15,31 @@ param(
 
 $ErrorActionPreference = "Stop"
 
+function Resolve-RepoDoc {
+  param([string]$FileName)
+
+  $candidateRoots = @()
+  if ($env:PIXELMANIA_CLIENT_ROOT) {
+    $candidateRoots += $env:PIXELMANIA_CLIENT_ROOT
+  }
+  $candidateRoots += Split-Path -Parent $PSScriptRoot
+  $candidateRoots += Join-Path (Split-Path -Parent $PSScriptRoot) "pixel-mania"
+  $candidateRoots += (Get-Location).Path
+
+  foreach ($candidateRoot in $candidateRoots) {
+    if (-not $candidateRoot) {
+      continue
+    }
+
+    $candidatePath = Join-Path $candidateRoot "docs/$FileName"
+    if (Test-Path $candidatePath) {
+      return $candidatePath
+    }
+  }
+
+  throw "Could not find docs/$FileName. Run from the Godot repo root or set PIXELMANIA_CLIENT_ROOT."
+}
+
 $localBackend = Join-Path $PSScriptRoot "server.js"
 $localServerItemDatabase = Join-Path $PSScriptRoot "server_item_database.js"
 $localClientItemDatabase = Join-Path (Split-Path -Parent $PSScriptRoot) "Scripts/item_database.gd"
@@ -27,6 +52,9 @@ $localEcosystem = Join-Path $PSScriptRoot "ecosystem.config.js"
 $localPackage = Join-Path $PSScriptRoot "package.json"
 $localSmoke = Join-Path $PSScriptRoot "smoke_postdeploy.ps1"
 $localPostgresSchema = Join-Path $PSScriptRoot "docs/postgres_security_foundation.sql"
+$localBackendPersistenceRules = Resolve-RepoDoc "backend_persistence_rules.md"
+$localCodexHandoffStatus = Resolve-RepoDoc "codex_handoff_status.md"
+$localProductionBackendWiring = Resolve-RepoDoc "production_backend_wiring.md"
 $localPostgresBackup = Join-Path $PSScriptRoot "scripts/postgres_backup.sh"
 $localPostgresRestoreCheck = Join-Path $PSScriptRoot "scripts/postgres_restore_check.sh"
 $localPostgresMaintenance = Join-Path $PSScriptRoot "scripts/postgres_maintenance.sh"
@@ -39,6 +67,14 @@ $localTransactionLedgerWiringCheck = Join-Path $PSScriptRoot "scripts/check_tran
 $localGemLedgerWiringCheck = Join-Path $PSScriptRoot "scripts/check_gem_ledger_wiring.js"
 $localWorldJournalWiringCheck = Join-Path $PSScriptRoot "scripts/check_world_journal_wiring.js"
 $localRollbackWiringCheck = Join-Path $PSScriptRoot "scripts/check_rollback_wiring.js"
+$localServerValidationWiringCheck = Join-Path $PSScriptRoot "scripts/check_server_validation_wiring.js"
+$localAntiDupeLockingCheck = Join-Path $PSScriptRoot "scripts/check_anti_dupe_locking_wiring.js"
+$localAdminActionWiringCheck = Join-Path $PSScriptRoot "scripts/check_admin_action_wiring.js"
+$localAccountSessionSecurityWiringCheck = Join-Path $PSScriptRoot "scripts/check_account_session_security_wiring.js"
+$localBotRateLimitWiringCheck = Join-Path $PSScriptRoot "scripts/check_bot_rate_limit_wiring.js"
+$localIntegrityHashWiringCheck = Join-Path $PSScriptRoot "scripts/check_integrity_hash_wiring.js"
+$localMonitoringDashboardWiringCheck = Join-Path $PSScriptRoot "scripts/check_monitoring_dashboard_wiring.js"
+$localIntegrityHashAudit = Join-Path $PSScriptRoot "scripts/integrity_hash_audit.js"
 
 function Assert-VersionValue {
   param(
@@ -147,6 +183,15 @@ if ($RunSmokeChecks -and -not (Test-Path $localSmoke)) {
 if (-not (Test-Path $localPostgresSchema)) {
   throw "Missing file: $localPostgresSchema"
 }
+if (-not (Test-Path $localBackendPersistenceRules)) {
+  throw "Missing file: $localBackendPersistenceRules"
+}
+if (-not (Test-Path $localCodexHandoffStatus)) {
+  throw "Missing file: $localCodexHandoffStatus"
+}
+if (-not (Test-Path $localProductionBackendWiring)) {
+  throw "Missing file: $localProductionBackendWiring"
+}
 if (-not (Test-Path $localPostgresBackup)) {
   throw "Missing file: $localPostgresBackup"
 }
@@ -182,6 +227,30 @@ if (-not (Test-Path $localWorldJournalWiringCheck)) {
 }
 if (-not (Test-Path $localRollbackWiringCheck)) {
   throw "Missing file: $localRollbackWiringCheck"
+}
+if (-not (Test-Path $localServerValidationWiringCheck)) {
+  throw "Missing file: $localServerValidationWiringCheck"
+}
+if (-not (Test-Path $localAntiDupeLockingCheck)) {
+  throw "Missing file: $localAntiDupeLockingCheck"
+}
+if (-not (Test-Path $localAdminActionWiringCheck)) {
+  throw "Missing file: $localAdminActionWiringCheck"
+}
+if (-not (Test-Path $localAccountSessionSecurityWiringCheck)) {
+  throw "Missing file: $localAccountSessionSecurityWiringCheck"
+}
+if (-not (Test-Path $localBotRateLimitWiringCheck)) {
+  throw "Missing file: $localBotRateLimitWiringCheck"
+}
+if (-not (Test-Path $localIntegrityHashWiringCheck)) {
+  throw "Missing file: $localIntegrityHashWiringCheck"
+}
+if (-not (Test-Path $localMonitoringDashboardWiringCheck)) {
+  throw "Missing file: $localMonitoringDashboardWiringCheck"
+}
+if (-not (Test-Path $localIntegrityHashAudit)) {
+  throw "Missing file: $localIntegrityHashAudit"
 }
 
 $sshTarget = "${RemoteUser}@${RemoteIp}"
@@ -231,6 +300,9 @@ Invoke-RemoteCommand "mkdir -p ~/pixel-mania/Scripts"
 & scp @sshBaseArgs $localEcosystem "${sshTarget}:$remotePath/"
 & scp @sshBaseArgs $localPackage "${sshTarget}:$remotePath/"
 & scp @sshBaseArgs $localPostgresSchema "${sshTarget}:$remotePath/docs/"
+& scp @sshBaseArgs $localBackendPersistenceRules "${sshTarget}:$remotePath/docs/"
+& scp @sshBaseArgs $localCodexHandoffStatus "${sshTarget}:$remotePath/docs/"
+& scp @sshBaseArgs $localProductionBackendWiring "${sshTarget}:$remotePath/docs/"
 & scp @sshBaseArgs $localPostgresBackup "${sshTarget}:$remotePath/scripts/"
 & scp @sshBaseArgs $localPostgresRestoreCheck "${sshTarget}:$remotePath/scripts/"
 & scp @sshBaseArgs $localPostgresMaintenance "${sshTarget}:$remotePath/scripts/"
@@ -243,6 +315,14 @@ Invoke-RemoteCommand "mkdir -p ~/pixel-mania/Scripts"
 & scp @sshBaseArgs $localGemLedgerWiringCheck "${sshTarget}:$remotePath/scripts/"
 & scp @sshBaseArgs $localWorldJournalWiringCheck "${sshTarget}:$remotePath/scripts/"
 & scp @sshBaseArgs $localRollbackWiringCheck "${sshTarget}:$remotePath/scripts/"
+& scp @sshBaseArgs $localServerValidationWiringCheck "${sshTarget}:$remotePath/scripts/"
+& scp @sshBaseArgs $localAntiDupeLockingCheck "${sshTarget}:$remotePath/scripts/"
+& scp @sshBaseArgs $localAdminActionWiringCheck "${sshTarget}:$remotePath/scripts/"
+& scp @sshBaseArgs $localAccountSessionSecurityWiringCheck "${sshTarget}:$remotePath/scripts/"
+& scp @sshBaseArgs $localBotRateLimitWiringCheck "${sshTarget}:$remotePath/scripts/"
+& scp @sshBaseArgs $localIntegrityHashWiringCheck "${sshTarget}:$remotePath/scripts/"
+& scp @sshBaseArgs $localMonitoringDashboardWiringCheck "${sshTarget}:$remotePath/scripts/"
+& scp @sshBaseArgs $localIntegrityHashAudit "${sshTarget}:$remotePath/scripts/"
 
 Write-Host "Restarting PM2 and verifying health..."
 $remoteCommand = @'
@@ -258,12 +338,27 @@ node --check scripts/rollback_plan.js
 node --check scripts/rollback_apply.js
 node --check scripts/world_recover_at_crash.js
 node --check scripts/world_snapshot_tool.js
+node --check scripts/check_server_validation_wiring.js
+node --check scripts/check_anti_dupe_locking_wiring.js
+node --check scripts/check_admin_action_wiring.js
+node --check scripts/check_account_session_security_wiring.js
+node --check scripts/check_bot_rate_limit_wiring.js
+node --check scripts/check_integrity_hash_wiring.js
+node --check scripts/check_monitoring_dashboard_wiring.js
+node --check scripts/integrity_hash_audit.js
 npm run check:item-db
 npm run check:item-instances
 npm run check:transaction-ledger
 npm run check:gem-ledger
 npm run check:world-journal
 npm run check:rollback
+npm run check:server-validation
+npm run check:anti-dupe
+npm run check:admin-actions
+npm run check:account-security
+npm run check:bot-rate-limits
+npm run check:integrity-hashes
+npm run check:monitoring-dashboard
 chmod +x scripts/postgres_backup.sh scripts/postgres_restore_check.sh
 chmod +x scripts/postgres_maintenance.sh
 __RELEASE_ENV_EXPORTS__

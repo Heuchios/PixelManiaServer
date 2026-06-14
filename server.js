@@ -23,6 +23,7 @@ const WORLD_SAVE_FOLDER = process.env.WORLD_SAVE_FOLDER ? path.resolve(process.e
 const PLAYER_SAVE_FOLDER = process.env.PLAYER_SAVE_FOLDER ? path.resolve(process.env.PLAYER_SAVE_FOLDER) : path.join(DATA_FOLDER, "players");
 const ACCOUNTS_SAVE_PATH = process.env.ACCOUNTS_SAVE_PATH ? path.resolve(process.env.ACCOUNTS_SAVE_PATH) : path.join(DATA_FOLDER, "accounts.json");
 const ADMIN_LOG_PATH = process.env.ADMIN_LOG_PATH ? path.resolve(process.env.ADMIN_LOG_PATH) : path.join(DATA_FOLDER, "admin_actions.log");
+const CRASH_REPORT_PATH = process.env.CRASH_REPORT_PATH ? path.resolve(process.env.CRASH_REPORT_PATH) : path.join(DATA_FOLDER, "crash_reports.log");
 const INTEGRITY_LOG_FOLDER = process.env.INTEGRITY_LOG_FOLDER ? path.resolve(process.env.INTEGRITY_LOG_FOLDER) : path.join(DATA_FOLDER, "integrity_logs");
 const WORLD_SNAPSHOT_FOLDER = process.env.WORLD_SNAPSHOT_FOLDER ? path.resolve(process.env.WORLD_SNAPSHOT_FOLDER) : path.join(DATA_FOLDER, "world_snapshots");
 const WORLD_SNAPSHOT_STORAGE = String(process.env.WORLD_SNAPSHOT_STORAGE || "local").trim().toLowerCase() || "local";
@@ -41,6 +42,7 @@ const LEGACY_DATA_FOLDERS = [
   path.join(__dirname, "node_modules"),
 ];
 const SAVE_DEBOUNCE_MS = 250;
+const WORLD_JSON_BACKUP_DEBOUNCE_MS = Math.max(0, Math.trunc(Number(process.env.WORLD_JSON_BACKUP_DEBOUNCE_MS) || 1000));
 const PERIODIC_SAVE_MS = 30000;
 const MIN_USERNAME_LENGTH = 3;
 const MAX_USERNAME_LENGTH = 16;
@@ -52,6 +54,9 @@ const BEDROCK_START_Y = Math.max(0, WORLD_HEIGHT - 4);
 const TILE_SIZE = Math.max(1, Math.trunc(Number(process.env.TILE_SIZE) || 32));
 const POSITION_MARGIN_PIXELS = TILE_SIZE * 4;
 const MAX_PACKET_BYTES = 64 * 1024;
+const MAX_DAMAGE_FLASH_MS = 2000;
+const PLAYER_POSITION_BROADCAST_INTERVAL_MS = Math.max(0, Math.trunc(Number(process.env.PLAYER_POSITION_BROADCAST_INTERVAL_MS) || 16));
+const MAX_BLOCK_HIT_METRIC = 1024;
 const MAX_CHAT_LENGTH = 220;
 const MAX_SIGN_TEXT_LENGTH = 500;
 const MAX_DOOR_ID_LENGTH = 32;
@@ -65,9 +70,13 @@ const ADMIN_INVENTORY_LOOKUP_PURPOSE = "admin_inventory_lookup";
 const ADMIN_ITEM_INSTANCE_LOOKUP_PURPOSE = "admin_item_instance_lookup";
 const ADMIN_ITEM_INSTANCE_HISTORY_LOOKUP_PURPOSE = "admin_item_instance_history_lookup";
 const ADMIN_TRANSACTION_LEDGER_LOOKUP_PURPOSE = "admin_transaction_ledger_lookup";
+const ADMIN_MONITORING_DASHBOARD_PURPOSE = "admin_monitoring_dashboard";
 const ADMIN_ITEM_INSTANCE_LOOKUP_LIMIT = 250;
 const ADMIN_TRANSACTION_LEDGER_LOOKUP_LIMIT = 150;
+const ADMIN_MONITORING_DASHBOARD_LOOKUP_LIMIT = 40;
+const ADMIN_MONITORING_DASHBOARD_WINDOW_HOURS = Math.max(1, Math.trunc(Number(process.env.ADMIN_MONITORING_DASHBOARD_WINDOW_HOURS) || 24));
 const ADMIN_ITEM_INSTANCE_LOOKUP_TIMEOUT_MS = Math.max(1000, Math.trunc(Number(process.env.ADMIN_ITEM_INSTANCE_LOOKUP_TIMEOUT_MS) || 7000));
+const SERVER_TICK_MONITOR_INTERVAL_MS = Math.max(100, Math.trunc(Number(process.env.SERVER_TICK_MONITOR_INTERVAL_MS) || 1000));
 const antiDupeAuditIntervalEnv = process.env.ANTI_DUPE_AUDIT_INTERVAL_MS;
 const antiDupeAuditIntervalParsed = antiDupeAuditIntervalEnv == null || String(antiDupeAuditIntervalEnv).trim() === ""
   ? NaN
@@ -84,6 +93,8 @@ const WORLD_SNAPSHOT_INTERVAL_PARSED = WORLD_SNAPSHOT_INTERVAL_ENV == null || St
   : Number(WORLD_SNAPSHOT_INTERVAL_ENV);
 const WORLD_SNAPSHOT_INTERVAL_MINUTES = Math.max(0, Math.trunc(Number.isFinite(WORLD_SNAPSHOT_INTERVAL_PARSED) ? WORLD_SNAPSHOT_INTERVAL_PARSED : 15));
 const WORLD_SNAPSHOT_INTERVAL_MS = WORLD_SNAPSHOT_INTERVAL_MINUTES * 60 * 1000;
+const WORLD_SNAPSHOT_MAX_WORLDS_PER_CYCLE = Math.max(0, Math.trunc(Number(process.env.WORLD_SNAPSHOT_MAX_WORLDS_PER_CYCLE) || 5));
+const WORLD_SNAPSHOT_STARTUP_RUN = ["1", "true", "yes"].includes(String(process.env.WORLD_SNAPSHOT_STARTUP_RUN || "false").trim().toLowerCase());
 const ADMIN_PUNISHMENT_LOOKUP_PURPOSE = "admin_punishment_lookup";
 const PUNISHMENT_CACHE_TTL_MS = Math.max(1000, Math.trunc(Number(process.env.PUNISHMENT_CACHE_TTL_MS) || 5000));
 const PUNISHMENT_MAX_DURATION_MINUTES = Math.max(1, Math.trunc(Number(process.env.PUNISHMENT_MAX_DURATION_MINUTES) || (3650 * 24 * 60)));
@@ -110,15 +121,24 @@ const PLAYER_LEVEL_MIN = 1;
 const PLAYER_LEVEL_MAX = 100;
 const PLAYER_XP_FIRST_LEVEL = 300;
 const ALLOW_LEGACY_PLAYER_STATE_IMPORT = ["1", "true", "yes"].includes(String(process.env.ALLOW_LEGACY_PLAYER_STATE_IMPORT || "false").trim().toLowerCase());
-const MAX_MOVE_PIXELS_PER_SECOND = 900;
+const MAX_MOVE_PIXELS_PER_SECOND = Math.max(100, Math.trunc(Number(process.env.MAX_MOVE_PIXELS_PER_SECOND) || 900));
 const LAVA_REBOUND_MOVE_EXTRA_PIXELS = TILE_SIZE * 4;
 const LAVA_REBOUND_MOVE_RADIUS_TILES = 1;
 const MAX_PICKUP_DISTANCE_PIXELS = TILE_SIZE * 6;
 const MAX_GRID_ACTION_DISTANCE_PIXELS = TILE_SIZE * 6;
 const MAX_DROP_CREATE_DISTANCE_PIXELS = TILE_SIZE * 6;
+const MAX_FISHING_CAST_DISTANCE_PIXELS = TILE_SIZE * 4;
 const SERVER_DROP_PICKUP_DELAY = 0.25;
 const TRADE_SLOT_COUNT = 6;
+const HOTBAR_SLOT_COUNT = 6;
 const MAX_TRADE_DISTANCE_PIXELS = TILE_SIZE * 10;
+const PLAYER_PUNCH_RANGE_PIXELS = TILE_SIZE * 2.25;
+const PLAYER_PUNCH_VERTICAL_TOLERANCE_PIXELS = TILE_SIZE * 2.15;
+const PLAYER_PUNCH_DIRECT_DISTANCE_PIXELS = TILE_SIZE * 3.0;
+const PLAYER_PUNCH_BACKSIDE_TOLERANCE_PIXELS = TILE_SIZE * 0.45;
+const PLAYER_PUNCH_KNOCKBACK_X = 340;
+const PLAYER_PUNCH_KNOCKBACK_Y = 0;
+const PLAYER_PUNCH_COOLDOWN_MS = 180;
 const VEND_BLOCK_EMPTY = "vend_empty";
 const VEND_BLOCK_PENDING = "vend_pending";
 const VEND_BLOCK_SOLD = "vend_sold";
@@ -138,13 +158,25 @@ const MATURE_SEED_EXTRA_DROP_CHANCE = Math.max(0, Math.min(1, Number(process.env
 const CONFIGURED_SEED_MUTATION_CHANCE = Number(process.env.SEED_MUTATION_CHANCE);
 const SEED_MUTATION_CHANCE = Math.max(0, Math.min(1, Number.isFinite(CONFIGURED_SEED_MUTATION_CHANCE) ? CONFIGURED_SEED_MUTATION_CHANCE : 0.005));
 const SNOW_STORM_EVENT_TYPE = "snow_storm";
-const SNOW_STORM_SYSTEM_MESSAGE = "Snow Storm is coming, find shelter!";
-const SNOW_STORM_EVENT_DURATION_MS = 5 * 60 * 1000;
-const SNOW_STORM_RANDOM_EVENTS_ENABLED = !["0", "false", "no"].includes(String(process.env.SNOW_STORM_RANDOM_EVENTS_ENABLED || "true").trim().toLowerCase());
+const SNOW_STORM_SYSTEM_MESSAGE = "Snow Storm is coming, find shelter! 10 minutes left.";
+const SNOW_STORM_EVENT_DURATION_MS = 10 * 60 * 1000;
+const SNOW_STORM_COUNTDOWN_MESSAGES = Object.freeze([
+  Object.freeze({ remainingMs: 7 * 60 * 1000, label: "7 minutes" }),
+  Object.freeze({ remainingMs: 3 * 60 * 1000, label: "3 minutes" }),
+  Object.freeze({ remainingMs: 1 * 60 * 1000, label: "1 minute" }),
+]);
+const SNOW_STORM_RANDOM_EVENTS_ENABLED = ["1", "true", "yes"].includes(String(process.env.SNOW_STORM_RANDOM_EVENTS_ENABLED || "false").trim().toLowerCase());
 const SNOW_STORM_RANDOM_INTERVAL_MS = Math.max(10000, Math.trunc(Number(process.env.SNOW_STORM_RANDOM_INTERVAL_MS) || 60000));
 const SNOW_STORM_RANDOM_CHANCE = Math.max(0, Math.min(1, Number(process.env.SNOW_STORM_RANDOM_CHANCE) || 0.05));
 const SNOW_STORM_PILE_OF_SNOW_CHANCE = Math.max(0, Math.min(1, Number(process.env.SNOW_STORM_PILE_OF_SNOW_CHANCE) || 0.08));
+const SNOW_STORM_ICE_VARIANT_SALT = 9047;
 const SNOW_STORM_EVENT_TILE_BATCH_SIZE = Math.max(25, Math.min(250, Math.trunc(Number(process.env.SNOW_STORM_EVENT_TILE_BATCH_SIZE) || 150)));
+const CONFIGURED_SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS = Number(process.env.SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS);
+const SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS = Math.max(0, Math.min(250, Math.trunc(Number.isFinite(CONFIGURED_SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS) ? CONFIGURED_SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS : 20)));
+const SNOW_STORM_MAX_CHANGED_TILES = Math.max(100, Math.min(WORLD_WIDTH * WORLD_HEIGHT, Math.trunc(Number(process.env.SNOW_STORM_MAX_CHANGED_TILES) || (WORLD_WIDTH * WORLD_HEIGHT))));
+const CONFIGURED_SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS = Number(process.env.SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS);
+const SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS = Math.max(0, Math.min(10000, Math.trunc(Number.isFinite(CONFIGURED_SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS) ? CONFIGURED_SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS : 1000)));
+const SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT = Math.max(256 * 1024, Math.min(32 * 1024 * 1024, Math.trunc(Number(process.env.SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT) || (4 * 1024 * 1024))));
 const SERVER_TERRAIN_SURFACE_VERTICAL_OFFSET = -8;
 const SERVER_TERRAIN_EXTRA_HILL_RANGE = 3;
 const SERVER_BOTTOM_LAVA_STONE_HEIGHT = 4;
@@ -180,10 +212,34 @@ const MIN_BLOCK_BREAK_INTERVAL_MS = Math.max(50, Math.trunc(Number(process.env.M
 const BLOCK_DAMAGE_RESET_MS = Math.max(500, Math.trunc(Number(process.env.BLOCK_DAMAGE_RESET_MS) || 3500));
 const EMAIL_VERIFICATION_TTL_MS = Math.max(5 * 60 * 1000, Math.trunc(Number(process.env.EMAIL_VERIFICATION_TTL_MINUTES) || 60) * 60 * 1000);
 const SESSION_TOKEN_TTL_MS = Math.max(15 * 60 * 1000, Math.trunc(Number(process.env.SESSION_TOKEN_TTL_MINUTES) || 1440) * 60 * 1000);
+const SESSION_REFRESH_TOKEN_TTL_MS = Math.max(SESSION_TOKEN_TTL_MS, Math.trunc(Number(process.env.SESSION_REFRESH_TOKEN_TTL_MINUTES) || (30 * 24 * 60)) * 60 * 1000);
+const ACCOUNT_ONE_ACTIVE_SESSION = String(process.env.ACCOUNT_ONE_ACTIVE_SESSION || "true").trim().toLowerCase() !== "false";
+const LOGIN_ATTEMPT_LIMIT_IP = Math.max(3, Math.trunc(Number(process.env.LOGIN_ATTEMPT_LIMIT_IP) || 20));
+const LOGIN_ATTEMPT_LIMIT_ACCOUNT = Math.max(3, Math.trunc(Number(process.env.LOGIN_ATTEMPT_LIMIT_ACCOUNT) || 10));
+const LOGIN_ATTEMPT_WINDOW_MS = Math.max(30 * 1000, Math.trunc(Number(process.env.LOGIN_ATTEMPT_WINDOW_SECONDS) || 300) * 1000);
+const PASSWORD_SCRYPT_N = Math.max(16384, Math.trunc(Number(process.env.PASSWORD_SCRYPT_N) || 16384));
+const PASSWORD_SCRYPT_R = Math.max(8, Math.trunc(Number(process.env.PASSWORD_SCRYPT_R) || 8));
+const PASSWORD_SCRYPT_P = Math.max(1, Math.trunc(Number(process.env.PASSWORD_SCRYPT_P) || 1));
+const PASSWORD_SCRYPT_KEYLEN = Math.max(32, Math.trunc(Number(process.env.PASSWORD_SCRYPT_KEYLEN) || 64));
+const PASSWORD_HASH_ALGORITHM = `scrypt:n=${PASSWORD_SCRYPT_N},r=${PASSWORD_SCRYPT_R},p=${PASSWORD_SCRYPT_P},keylen=${PASSWORD_SCRYPT_KEYLEN}`;
 const DEV_PIN = String(process.env.DEV_PIN || "").trim();
 const DEV_PIN_HASH = String(process.env.DEV_PIN_HASH || "").trim().toLowerCase();
 const DEV_PIN_REQUIRED = String(process.env.DEV_PIN_REQUIRED || "false").trim().toLowerCase() === "true" && (DEV_PIN !== "" || DEV_PIN_HASH !== "");
 const DEV_PIN_UNLOCK_TTL_MS = Math.max(60 * 1000, Math.trunc(Number(process.env.DEV_PIN_UNLOCK_TTL_MINUTES) || 15) * 60 * 1000);
+const ADMIN_2FA_REQUIRED = String(process.env.ADMIN_2FA_REQUIRED || "false").trim().toLowerCase() === "true";
+const ADMIN_2FA_SECRET = String(process.env.ADMIN_2FA_SECRET || "").trim();
+const ADMIN_2FA_SECRETS = String(process.env.ADMIN_2FA_SECRETS || "").trim();
+const ADMIN_2FA_UNLOCK_TTL_MS = Math.max(60 * 1000, Math.trunc(Number(process.env.ADMIN_2FA_UNLOCK_TTL_MINUTES) || 15) * 60 * 1000);
+const ADMIN_2FA_WINDOW_STEPS = Math.max(0, Math.min(2, Math.trunc(Number(process.env.ADMIN_2FA_WINDOW_STEPS) || 1)));
+const ADMIN_COMMAND_COOLDOWN_MS = Math.max(0, Math.trunc(Number(process.env.ADMIN_COMMAND_COOLDOWN_MS) || 1000));
+const ADMIN_COMMAND_CONFIRMATION_REQUIRED = String(process.env.ADMIN_COMMAND_CONFIRMATION_REQUIRED || "false").trim().toLowerCase() === "true";
+const ADMIN_COMMAND_CONFIRMATION_TTL_MS = Math.max(15 * 1000, Math.trunc(Number(process.env.ADMIN_COMMAND_CONFIRMATION_TTL_SECONDS) || 60) * 1000);
+const ADMIN_COMMAND_CONFIRMATION_ACTIONS = new Set(
+  String(process.env.ADMIN_COMMAND_CONFIRMATION_ACTIONS || "clear,resetworld,reset_world,reworld,give,remove,ban,unban,mute,unmute,itemfreeze,itemunfreeze,itemretire,itemtransfer,itemflag")
+    .split(",")
+    .map((entry) => entry.trim().toLowerCase())
+    .filter(Boolean)
+);
 const SMTP_HOST = String(process.env.SMTP_HOST || "").trim();
 const SMTP_PORT = Math.max(1, Math.trunc(Number(process.env.SMTP_PORT) || 587));
 const SMTP_SECURE = String(process.env.SMTP_SECURE || "").trim().toLowerCase() === "true";
@@ -218,6 +274,44 @@ const REDIS_ACTION_LOCK_GUARD_MS = Math.max(3000, REDIS_ACTION_LOCK_TTL_MS + 300
 const REDIS_PRESENCE_TTL_MS = Math.max(10000, Math.trunc(Number(process.env.REDIS_PRESENCE_TTL_MS) || 45000));
 const REDIS_ACTIVE_SESSION_TTL_MS = Math.max(REDIS_PRESENCE_TTL_MS, Math.trunc(Number(process.env.REDIS_ACTIVE_SESSION_TTL_MS) || 120000));
 const ADMIN_USERNAMES = new Set(["uso"]);
+function readPositiveIntEnv(name, fallback, min = 1, max = 100000) {
+  const parsed = Math.trunc(Number(process.env[name]));
+  const value = Number.isFinite(parsed) ? parsed : Math.trunc(Number(fallback) || min);
+  return Math.max(min, Math.min(max, value));
+}
+
+function readRateWindowMsEnv(msName, secondsName, fallbackMs) {
+  const parsedMs = Math.trunc(Number(process.env[msName]));
+  if (Number.isFinite(parsedMs) && parsedMs > 0) {
+    return Math.max(100, Math.min(24 * 60 * 60 * 1000, parsedMs));
+  }
+
+  const parsedSeconds = Math.trunc(Number(process.env[secondsName]));
+  if (Number.isFinite(parsedSeconds) && parsedSeconds > 0) {
+    return Math.max(100, Math.min(24 * 60 * 60 * 1000, parsedSeconds * 1000));
+  }
+
+  return Math.max(100, Math.min(24 * 60 * 60 * 1000, Math.trunc(Number(fallbackMs) || 1000)));
+}
+
+function makeBotRateLimitConfig(prefix, fallbackLimit, fallbackWindowMs, maxLimit = 100000) {
+  return Object.freeze({
+    limit: readPositiveIntEnv(`${prefix}_LIMIT`, fallbackLimit, 1, maxLimit),
+    windowMs: readRateWindowMsEnv(`${prefix}_WINDOW_MS`, `${prefix}_WINDOW_SECONDS`, fallbackWindowMs),
+  });
+}
+
+const BOT_RATE_LIMITS = Object.freeze({
+  block_place: makeBotRateLimitConfig("BOT_BLOCK_PLACE", 12, 1000),
+  block_break: makeBotRateLimitConfig("BOT_BLOCK_BREAK", 16, 1000),
+  pickup_attempt: makeBotRateLimitConfig("BOT_PICKUP_ATTEMPT", 12, 1000),
+  chat_message: makeBotRateLimitConfig("BOT_CHAT_MESSAGE", 3, 1000),
+  player_punch: makeBotRateLimitConfig("BOT_PLAYER_PUNCH", 10, 1000),
+  trade_request: makeBotRateLimitConfig("BOT_TRADE_REQUEST", 20, 60 * 1000),
+  world_join: makeBotRateLimitConfig("BOT_WORLD_JOIN", 20, 60 * 1000),
+  vending_purchase: makeBotRateLimitConfig("BOT_VENDING_PURCHASE", 5, 1000),
+});
+const BOT_RATE_LIMIT_SECURITY_LOG_WINDOW_MS = Math.max(1000, Math.trunc(Number(process.env.BOT_RATE_LIMIT_SECURITY_LOG_WINDOW_MS) || 5000));
 const MESSAGE_RATE_LIMITS = {
   login: { limit: 10, windowMs: 10000 },
   account_register: { limit: 6, windowMs: 15000 },
@@ -238,10 +332,11 @@ const MESSAGE_RATE_LIMITS = {
   pull_player_request: { limit: 6, windowMs: 5000 },
   player_state_save: { limit: 6, windowMs: 10000 },
   join_world: { limit: 12, windowMs: 10000 },
-  chat: { limit: 8, windowMs: 5000 },
+  leave_world: { limit: 20, windowMs: 10000 },
+  chat: BOT_RATE_LIMITS.chat_message,
   broadcast: { limit: 3, windowMs: 10000 },
   developer_pin_unlock: { limit: 5, windowMs: 15000 },
-  developer_command_request: { limit: 5, windowMs: 5000 },
+  developer_command_request: { limit: 30, windowMs: 5000 },
   world_block_update: { limit: 35, windowMs: 1000 },
   world_seed_update: { limit: 25, windowMs: 1000 },
   world_interaction_update: { limit: 20, windowMs: 1000 },
@@ -250,11 +345,12 @@ const MESSAGE_RATE_LIMITS = {
   world_drop_create: { limit: 20, windowMs: 1000 },
   world_item_drop_update: { limit: 30, windowMs: 1000 },
   world_drop_update: { limit: 30, windowMs: 1000 },
-  world_item_drop_pickup: { limit: 30, windowMs: 1000 },
+  world_item_drop_pickup: BOT_RATE_LIMITS.pickup_attempt,
   world_item_drop_remove: { limit: 30, windowMs: 1000 },
-  world_drop_pickup: { limit: 30, windowMs: 1000 },
+  world_drop_pickup: BOT_RATE_LIMITS.pickup_attempt,
   world_drop_remove: { limit: 30, windowMs: 1000 },
-  player_position: { limit: 75, windowMs: 1000 },
+  player_position: { limit: 120, windowMs: 1000 },
+  player_punch: BOT_RATE_LIMITS.player_punch,
 };
 const DEBUG_ACTION_POSITION_FLOW = ["1", "true", "yes"].includes(String(process.env.DEBUG_ACTION_POSITION_FLOW || "false").trim().toLowerCase());
 const DEBUG_PLAYER_PROGRESSION = ["1", "true", "yes"].includes(String(process.env.DEBUG_PLAYER_PROGRESSION || "false").trim().toLowerCase());
@@ -270,7 +366,10 @@ const SHOP_CATALOG = new Map([
   ["basic_items_pack", { item_id: "basic_items_pack", item_category: "material", amount: 1, price: 500, pack_size: 1 }],
   ["prestige_coloured_block_pack", { item_id: "prestige_coloured_block_pack", item_category: "material", amount: 1, price: 500, pack_size: 5 }],
   ["entrance_mover", { item_id: "entrance_mover", item_category: "tool", amount: 1, price: 200 }],
-  ["fishing_rod", { item_id: "fishing_rod", item_category: "tool", amount: 1, price: 5000 }],
+  ["bamboo_rod", { item_id: "bamboo_rod", item_category: "tool", amount: 1, price: 5000 }],
+  ["fishing_rod", { item_id: "bamboo_rod", item_category: "tool", amount: 1, price: 5000 }],
+  ["fiberglass_rod", { item_id: "fiberglass_rod", item_category: "tool", amount: 1, price: 15000 }],
+  ["tungsten_rod", { item_id: "tungsten_rod", item_category: "tool", amount: 1, price: 50000 }],
   ["lure_pack", { item_id: "lure_pack", item_category: "lure", amount: 1, price: 25, pack_size: 5 }],
 ]);
 const BASIC_ITEMS_PACK_TABLE = [
@@ -301,13 +400,43 @@ const PRESTIGE_COLOURED_BLOCK_PACK_TABLE = [
   { item_id: "ps_yellow_block", item_category: "block", weight: 100 },
 ];
 const LURE_PACK_TABLE = [
-  { item_id: "worm_lure", item_category: "lure", weight: 65 },
-  { item_id: "shiny_lure", item_category: "lure", weight: 28 },
-  { item_id: "golden_lure", item_category: "lure", weight: 7 },
+  { item_id: "hook", item_category: "lure", weight: 300 },
+  { item_id: "worm_lure", item_category: "lure", weight: 300 },
+  { item_id: "shiny_lure", item_category: "lure", weight: 180 },
+  { item_id: "golden_lure", item_category: "lure", weight: 100 },
+  { item_id: "magnet_lure", item_category: "lure", weight: 60 },
+  { item_id: "bonito_lure", item_category: "lure", weight: 30 },
+  { item_id: "cotton_cordel_lure", item_category: "lure", weight: 25 },
+  { item_id: "void_worm_lure", item_category: "lure", weight: 5 },
 ];
 
 const httpServer = http.createServer(handleHttpRequest);
 const wss = new WebSocket.Server({ server: httpServer });
+
+httpServer.on("error", (error) => {
+  const code = String(error?.code || "");
+  if (code === "EADDRINUSE" || code === "EACCES") {
+    handleFatalProcessError("http_server_error", error);
+    return;
+  }
+
+  const details = errorToCrashDetails(error);
+  writeCrashReport("http_server_error", {
+    error: details,
+    runtime: getCrashRuntimeState(),
+  });
+  console.error("[http_server_error]", details.stack || details.message);
+});
+
+wss.on("error", (error) => {
+  const details = errorToCrashDetails(error);
+  writeCrashReport("websocket_server_error", {
+    error: details,
+    runtime: getCrashRuntimeState(),
+  });
+  console.error("[websocket_server_error]", details.stack || details.message);
+});
+
 const players = new Map();
 const worldStates = new Map();
 const playerStates = new Map();
@@ -317,14 +446,23 @@ const activeTrades = new Map();
 const tradeByPlayerId = new Map();
 const worldDropActionLocks = new Set();
 const worldVendActionLocks = new Set();
+const worldSafeActionLocks = new Set();
+const playerInventoryActionLocks = new Set();
 const worldEventActionLocks = new Set();
 const worldFrozenTreasureOpenLocks = new Set();
+const localLoginAttemptBuckets = new Map();
 const punishmentCache = new Map();
 const activeFishingSessions = new Map();
 const blockDamage = new Map();
+const pendingPlayerPositionBroadcasts = new Map();
+const pendingPlayerPositionBroadcastTimers = new Map();
 const worldSaveTimers = new Map();
+const worldJsonBackupTimers = new Map();
+const pendingWorldJsonBackups = new Map();
 const playerSaveTimers = new Map();
 const worldEventTimers = new Map();
+const worldEventCountdownTimers = new Map();
+const worldEventCommandCooldowns = new Map();
 const pendingPersistenceWrites = new Set();
 const worldSnapshotStorageWarnings = new Set();
 let accountsSaveTimer = null;
@@ -333,13 +471,29 @@ let antiDupeAuditTimer = null;
 let antiDupeAuditRunning = false;
 let worldSnapshotSchedulerTimer = null;
 let worldSnapshotSchedulerRunning = false;
+let worldSnapshotSchedulerCursor = 0;
 let worldEventRandomTimer = null;
+let serverTickMonitorTimer = null;
+let serverTickMonitorLastHrtime = null;
 const worldSnapshotSchedulerState = {
   enabled: false,
   last_run_at: "",
   last_duration_ms: 0,
   last_world_count: 0,
   last_error: "",
+};
+const serverTickStats = {
+  enabled: false,
+  started_at: "",
+  last_sample_at: "",
+  interval_ms: SERVER_TICK_MONITOR_INTERVAL_MS,
+  sample_count: 0,
+  tps: 0,
+  tick_time_ms: 0,
+  avg_tick_time_ms: 0,
+  max_tick_time_ms: 0,
+  event_loop_lag_ms: 0,
+  max_event_loop_lag_ms: 0,
 };
 const postgresStore = new PostgresStore({
   enabled: POSTGRES_ENABLED,
@@ -380,6 +534,159 @@ function debugActionPositionFlow(label, player, extra = {}) {
   });
 }
 
+let fatalCrashReportWritten = false;
+
+function trimCrashText(value, maxLength = 4000) {
+  const text = String(value == null ? "" : value);
+  return text.length > maxLength ? `${text.slice(0, maxLength)}...` : text;
+}
+
+function crashValueToString(value) {
+  if (typeof value === "string") return trimCrashText(value);
+  if (value == null) return String(value);
+  try {
+    return trimCrashText(JSON.stringify(value, (_key, nestedValue) => {
+      if (typeof nestedValue === "bigint") return nestedValue.toString();
+      if (typeof nestedValue === "function") return `[Function ${nestedValue.name || "anonymous"}]`;
+      return nestedValue;
+    }));
+  } catch (_error) {
+    return trimCrashText(String(value));
+  }
+}
+
+function errorToCrashDetails(error) {
+  if (error instanceof Error) {
+    return {
+      name: error.name || "Error",
+      message: trimCrashText(error.message || ""),
+      stack: trimCrashText(error.stack || ""),
+      code: error.code ? String(error.code) : "",
+      cause: error.cause ? crashValueToString(error.cause) : "",
+    };
+  }
+
+  return {
+    name: typeof error,
+    message: crashValueToString(error),
+    stack: "",
+    code: "",
+  };
+}
+
+function getCrashRuntimeState() {
+  try {
+    return {
+      connected_sockets: wss.clients.size,
+      tracked_players: players.size,
+      loaded_worlds: worldStates.size,
+      loaded_player_states: playerStates.size,
+      pending_persistence_writes: pendingPersistenceWrites.size,
+      postgres_ready: postgresStore.isReady(),
+      redis_ready: redisStore.isReady(),
+    };
+  } catch (error) {
+    return {
+      snapshot_error: error && error.message ? error.message : String(error),
+    };
+  }
+}
+
+function getServerTickSnapshot() {
+  return {
+    enabled: Boolean(serverTickStats.enabled),
+    started_at: serverTickStats.started_at || "",
+    last_sample_at: serverTickStats.last_sample_at || "",
+    interval_ms: clampInteger(serverTickStats.interval_ms || SERVER_TICK_MONITOR_INTERVAL_MS, 100, 60_000),
+    sample_count: clampInteger(serverTickStats.sample_count || 0, 0, Number.MAX_SAFE_INTEGER),
+    tps: Number(serverTickStats.tps || 0),
+    tick_time_ms: Number(serverTickStats.tick_time_ms || 0),
+    avg_tick_time_ms: Number(serverTickStats.avg_tick_time_ms || 0),
+    max_tick_time_ms: Number(serverTickStats.max_tick_time_ms || 0),
+    event_loop_lag_ms: Number(serverTickStats.event_loop_lag_ms || 0),
+    max_event_loop_lag_ms: Number(serverTickStats.max_event_loop_lag_ms || 0),
+  };
+}
+
+function startServerTickMonitor() {
+  if (serverTickMonitorTimer) return;
+
+  serverTickStats.enabled = true;
+  serverTickStats.started_at = new Date().toISOString();
+  serverTickStats.last_sample_at = "";
+  serverTickStats.sample_count = 0;
+  serverTickMonitorLastHrtime = process.hrtime.bigint();
+
+  serverTickMonitorTimer = setInterval(() => {
+    const now = process.hrtime.bigint();
+    const elapsedMs = Number(now - serverTickMonitorLastHrtime) / 1_000_000;
+    serverTickMonitorLastHrtime = now;
+    const lagMs = Math.max(0, elapsedMs - SERVER_TICK_MONITOR_INTERVAL_MS);
+    const sampleCount = serverTickStats.sample_count + 1;
+    const previousAverage = Number(serverTickStats.avg_tick_time_ms || 0);
+
+    serverTickStats.last_sample_at = new Date().toISOString();
+    serverTickStats.sample_count = sampleCount;
+    serverTickStats.tick_time_ms = Number(elapsedMs.toFixed(2));
+    serverTickStats.event_loop_lag_ms = Number(lagMs.toFixed(2));
+    serverTickStats.tps = elapsedMs > 0 ? Number((1000 / elapsedMs).toFixed(2)) : 0;
+    serverTickStats.avg_tick_time_ms = Number((((previousAverage * (sampleCount - 1)) + elapsedMs) / sampleCount).toFixed(2));
+    serverTickStats.max_tick_time_ms = Number(Math.max(serverTickStats.max_tick_time_ms || 0, elapsedMs).toFixed(2));
+    serverTickStats.max_event_loop_lag_ms = Number(Math.max(serverTickStats.max_event_loop_lag_ms || 0, lagMs).toFixed(2));
+  }, SERVER_TICK_MONITOR_INTERVAL_MS);
+
+  if (typeof serverTickMonitorTimer.unref === "function") serverTickMonitorTimer.unref();
+}
+
+function writeCrashReport(event, details = {}) {
+  try {
+    const entry = {
+      report_id: crypto.randomUUID(),
+      at: new Date().toISOString(),
+      event: String(event || "unknown"),
+      pid: process.pid,
+      ppid: process.ppid,
+      uptime_seconds: Math.round(process.uptime()),
+      node_version: process.version,
+      platform: process.platform,
+      arch: process.arch,
+      cwd: process.cwd(),
+      memory_usage: process.memoryUsage(),
+      ...details,
+    };
+    fs.mkdirSync(path.dirname(CRASH_REPORT_PATH), { recursive: true });
+    fs.appendFileSync(CRASH_REPORT_PATH, `${JSON.stringify(entry)}\n`, "utf8");
+  } catch (error) {
+    console.error("[crash-report] failed to write crash report:", error && error.message ? error.message : error);
+  }
+}
+
+function handleFatalProcessError(event, error) {
+  fatalCrashReportWritten = true;
+  const errorDetails = errorToCrashDetails(error);
+  writeCrashReport(event, {
+    error: errorDetails,
+    runtime: getCrashRuntimeState(),
+  });
+  console.error(`[crash-report] ${event}:`, errorDetails.stack || errorDetails.message);
+  process.exit(1);
+}
+
+process.on("uncaughtException", (error) => {
+  handleFatalProcessError("uncaughtException", error);
+});
+
+process.on("unhandledRejection", (reason) => {
+  handleFatalProcessError("unhandledRejection", reason);
+});
+
+process.on("warning", (warning) => {
+  writeCrashReport("process_warning", {
+    warning: errorToCrashDetails(warning),
+    runtime: getCrashRuntimeState(),
+  });
+});
+
 const periodicSaveTimer = setInterval(() => {
   flushPendingSaves();
 }, PERIODIC_SAVE_MS);
@@ -387,6 +694,11 @@ if (typeof periodicSaveTimer.unref === "function") periodicSaveTimer.unref();
 
 ensureDataFolders();
 bootstrapServer().catch((error) => {
+  fatalCrashReportWritten = true;
+  writeCrashReport("startup_failure", {
+    error: errorToCrashDetails(error),
+    runtime: getCrashRuntimeState(),
+  });
   console.error("PixelMania server failed to start:", error);
   process.exit(1);
 });
@@ -412,6 +724,10 @@ wss.on("connection", (socket, request = null) => {
     velocity_x: 0,
     velocity_y: 0,
     on_floor: true,
+    in_water: false,
+    in_lava_fire: false,
+    damage_flash_expires_at: 0,
+    damage_flash_token: 0,
     equipment_slots: {},
     client_version: "",
     last_position_at: 0,
@@ -419,6 +735,9 @@ wss.on("connection", (socket, request = null) => {
     last_block_break_at: 0,
     noclip_enabled: false,
     developer_pin_unlocked_until: 0,
+    admin_2fa_verified_until: 0,
+    developer_command_cooldowns: new Map(),
+    pending_admin_confirmations: new Map(),
   });
 
   socket.playerId = playerId;
@@ -426,12 +745,20 @@ wss.on("connection", (socket, request = null) => {
   socket.remoteAddress = String(request?.socket?.remoteAddress || "");
   socket.rateLimits = new Map();
   socket.rateLimitWarnings = new Map();
+  socket.rateLimitSecurityWarnings = new Map();
   socket.authRequiredNotices = new Map();
 
-  socket.send(JSON.stringify({
+  socket.on("error", (error) => {
+    console.warn("[socket_error]", {
+      player_id: playerId,
+      message: error && error.message ? error.message : String(error),
+    });
+  });
+
+  sendJson(socket, {
     type: "connected",
     player_id: playerId,
-  }));
+  });
 
   socket.on("message", async (raw) => {
     try {
@@ -453,7 +780,8 @@ wss.on("connection", (socket, request = null) => {
       const player = players.get(playerId);
       if (!player) return;
 
-      if (!(await checkMessageRateLimit(socket, player, String(data.type || "unknown")))) return;
+      if (!(await checkMessageRateLimit(socket, player, String(data.type || "unknown"), data))) return;
+      if (!(await checkBotActionRateLimit(socket, player, String(data.type || "unknown"), data))) return;
 
       const clientVersion = getClientVersion(data);
       if (!isClientVersionAllowed(clientVersion)) {
@@ -469,13 +797,13 @@ wss.on("connection", (socket, request = null) => {
     if (data.type === "login") {
       player.name = cleanName(data.name);
 
-      socket.send(JSON.stringify({
+      sendJson(socket, {
         type: "login_ok",
         player_id: playerId,
         name: player.name,
         username: player.account_username,
         email: player.account_email,
-      }));
+      });
       return;
     }
 
@@ -582,6 +910,10 @@ wss.on("connection", (socket, request = null) => {
         await handleAdminTransactionLedgerLookupRequest(socket, player, data, username, requestId, purpose);
         return;
       }
+      if (purpose === ADMIN_MONITORING_DASHBOARD_PURPOSE) {
+        await handleAdminMonitoringDashboardRequest(socket, player, data, username, requestId, purpose);
+        return;
+      }
       if (!isPlayerOwnAccount(player, username)) {
         if (purpose === "world_lock_access_check" || purpose === "remote_player_profile") {
           const publicProfile = buildPublicPlayerProfilePayload(username, requestId, purpose);
@@ -593,6 +925,9 @@ wss.on("connection", (socket, request = null) => {
 
       const state = ensurePlayerState(username);
       const publicProfile = buildPublicPlayerProfilePayload(username, requestId, purpose);
+      const playerData = state
+        ? buildPlayerStateForClient(state, { selectFirstHotbarSlot: purpose === "active_profile" })
+        : {};
       sendJson(socket, {
         type: "player_state",
         request_id: requestId,
@@ -606,7 +941,7 @@ wss.on("connection", (socket, request = null) => {
         friend_status: getFriendStatus(player.account_username, username),
         account: publicProfile.account || { username },
         equipment_slots: player.equipment_slots || {},
-        player_data: state || {},
+        player_data: playerData,
       });
       return;
     }
@@ -667,6 +1002,7 @@ wss.on("connection", (socket, request = null) => {
       if (oldWorld && oldWorld !== newWorld) {
         cancelActiveTradeForPlayer(playerId, "Trade canceled because a player changed worlds.");
         activeFishingSessions.delete(playerId);
+        clearPlayerFishingPresence(player);
       }
 
       if (player.joined_world && oldWorld && oldWorld !== newWorld) {
@@ -679,7 +1015,14 @@ wss.on("connection", (socket, request = null) => {
       player.current_world_id = newWorld;
       player.joined_world = true;
       player.last_position_at = 0;
-      ensureWorldState(player.world);
+      const joinSpawn = getJoinWorldSpawnForWorld(player.world);
+      player.x = joinSpawn.x;
+      player.y = joinSpawn.y;
+      player.velocity_x = 0;
+      player.velocity_y = 0;
+      player.animation_state = "idle";
+      player.on_floor = true;
+      player.facing = Number(data.facing) < 0 ? -1 : 1;
       postgresStore.mirrorPlayerWorld(player.account_username, player.world);
 
       const existingPlayers = getPlayersInWorld(player.world, playerId);
@@ -689,16 +1032,29 @@ wss.on("connection", (socket, request = null) => {
         existing_players: existingPlayers.length,
       });
 
-      socket.send(JSON.stringify({
+      sendJson(socket, {
         type: "join_world_ok",
         world: player.world,
         players: existingPlayers,
-      }));
+        spawn_x: joinSpawn.x,
+        spawn_y: joinSpawn.y,
+        spawn_grid_x: joinSpawn.grid_x,
+        spawn_grid_y: joinSpawn.grid_y,
+      });
 
-      socket.send(JSON.stringify(buildWorldStateMessage(player.world, {
+      sendJson(socket, buildWorldStateMessage(player.world, {
         respawn_player: true,
+        force_player_position: true,
         world_state_reason: "join_world",
-      })));
+        spawn_x: joinSpawn.x,
+        spawn_y: joinSpawn.y,
+        spawn_grid_x: joinSpawn.grid_x,
+        spawn_grid_y: joinSpawn.grid_y,
+        portal_spawn_x: joinSpawn.x,
+        portal_spawn_y: joinSpawn.y,
+        x: joinSpawn.x,
+        y: joinSpawn.y,
+      }));
       sendActiveWorldEventState(socket, player.world);
 
       broadcastToWorld(player.world, buildPublicPlayerPresencePayload("player_joined", player, player.world), playerId);
@@ -706,6 +1062,29 @@ wss.on("connection", (socket, request = null) => {
       broadcastSystemToWorld(player.world, `${player.name} joined ${player.world}`, playerId);
       touchLivePresence(socket, player, { force: true });
       notifyOnlineFriendsOfFriendState(player.account_username);
+      return;
+    }
+
+    if (data.type === "leave_world") {
+      if (!requireAuthenticated(socket, player, "leave worlds")) return;
+
+      const requestedWorld = cleanWorld(data.world || player.world || "");
+      const currentWorld = cleanWorld(player.world || "");
+      if (!player.joined_world || !currentWorld || (requestedWorld && requestedWorld !== currentWorld)) {
+        player.joined_world = false;
+        return;
+      }
+
+      cancelActiveTradeForPlayer(playerId, "Trade canceled because a player left the world.");
+      activeFishingSessions.delete(playerId);
+      clearPlayerFishingPresence(player);
+      broadcastToWorld(currentWorld, buildPublicPlayerPresencePayload("player_left", player, currentWorld), playerId);
+      broadcastSystemToWorld(currentWorld, `${player.name} left ${currentWorld}`, playerId);
+      player.joined_world = false;
+      player.world = "";
+      player.current_world = "";
+      player.current_world_id = "";
+      touchLivePresence(socket, player, { force: true });
       return;
     }
 
@@ -772,6 +1151,7 @@ wss.on("connection", (socket, request = null) => {
     }
 
     if (data.type === "world_block_update") {
+      try {
       if (!requireAuthenticated(socket, player, "edit worlds")) return;
 
       const worldName = getPlayerCurrentWorldName(player);
@@ -783,6 +1163,13 @@ wss.on("connection", (socket, request = null) => {
 
       const update = sanitizeBlockUpdate(data, worldName);
       if (!update) return;
+      update.source_tool = clampString(player?.equipment_slots?.hand || update.source_tool || data.source_tool || "");
+      update.player_id = String(player?.id || socket?.playerId || "");
+      update.username = cleanAccountName(player?.account_username || player?.name || "");
+      update.account_username = update.username;
+      update.actor_x = Number(player?.x || 0);
+      update.actor_y = Number(player?.y || 0);
+      update.actor_facing = Number(player?.facing || 1) < 0 ? -1 : 1;
       if (update.action === "break" || update.action === "hit") {
         debugActionPositionFlow("world_block_update break request start", player, {
           action: update.action,
@@ -811,7 +1198,10 @@ wss.on("connection", (socket, request = null) => {
 
       const validation = await validateBlockUpdateAgainstServerState(socket, player, worldName, update, makeRequestId(data));
       if (!validation.ok) return;
-      if (validation.pendingHit) return;
+      if (validation.pendingHit) {
+        sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
+        return;
+      }
       if (update.action === "break" && update.block_type === "frozen_treasure") {
         await handleFrozenTreasureOpen(socket, player, worldName, update, makeRequestId(data));
         return;
@@ -967,6 +1357,35 @@ wss.on("connection", (socket, request = null) => {
           player_data: requesterPlayerState,
         });
       }
+      } catch (error) {
+        const requestId = makeRequestId(data);
+        const rawX = Number(data?.x);
+        const rawY = Number(data?.y);
+        const details = {
+          request_id: requestId,
+          player_id: String(player?.id || socket?.playerId || ""),
+          username: cleanAccountName(player?.account_username || player?.name || ""),
+          world: cleanWorld(data?.world || player?.world || "START"),
+          action: String(data?.action || ""),
+          layer: String(data?.layer || ""),
+          x: Number.isFinite(rawX) ? Math.trunc(rawX) : null,
+          y: Number.isFinite(rawY) ? Math.trunc(rawY) : null,
+          block_type: clampString(data?.block_type || ""),
+          error: errorToCrashDetails(error),
+          runtime: getCrashRuntimeState(),
+        };
+        writeCrashReport("world_block_update_exception", details);
+        console.warn("[world_block_update_exception]", error && error.stack ? error.stack : error);
+        sendActionRejected(socket, "world_block_update", "Block update failed safely. Check crash_reports.log for details.", {
+          request_id: requestId,
+          reason: "exception",
+          world: details.world,
+          action: details.action,
+          x: details.x,
+          y: details.y,
+          block_type: details.block_type,
+        });
+      }
       return;
     }
 
@@ -1036,6 +1455,13 @@ wss.on("connection", (socket, request = null) => {
 
       if (update.action === "springboard_animation") {
         if (!prepareSpringboardAnimationUpdate(socket, player, worldName, update)) return;
+        broadcastToWorld(worldName, update, player.id);
+        touchLivePresence(socket, player);
+        return;
+      }
+
+      if (update.action === "entrance_pass") {
+        if (!prepareEntrancePassUpdate(socket, player, worldName, update)) return;
         broadcastToWorld(worldName, update, player.id);
         touchLivePresence(socket, player);
         return;
@@ -1214,6 +1640,7 @@ wss.on("connection", (socket, request = null) => {
         player.facing = update.action_position.facing;
       }
 
+      let inventoryLocks = null;
       try {
         const pickupPlan = prepareDropPickup(worldName, player, update);
         if (!pickupPlan.ok) {
@@ -1243,6 +1670,15 @@ wss.on("connection", (socket, request = null) => {
           }
           logDropPickupNotAvailable(player, worldName, update.drop_id);
           sendActionRejected(socket, "world_item_drop_pickup", "That drop is not available.", {
+            drop_id: update.drop_id,
+            world: worldName,
+          });
+          return;
+        }
+
+        inventoryLocks = await acquirePlayerInventoryLocks([player.account_username], `drop:${worldName}:${update.drop_id}`);
+        if (!inventoryLocks.acquired) {
+          sendActionRejected(socket, "world_item_drop_pickup", "Your inventory is busy. Try again.", {
             drop_id: update.drop_id,
             world: worldName,
           });
@@ -1350,11 +1786,16 @@ wss.on("connection", (socket, request = null) => {
           amount: pickupPlan.pickedAmount,
         });
       } finally {
+        releasePlayerInventoryLocks(inventoryLocks);
         releaseLiveActionLock(dropLock);
       }
       return;
     }
 
+      if (data.type === "player_punch") {
+        handlePlayerPunch(socket, player, data);
+        return;
+      }
 
       if (data.type === "player_position") {
         if (!requireAuthenticated(socket, player, "move online")) return;
@@ -1375,6 +1816,12 @@ wss.on("connection", (socket, request = null) => {
         player.velocity_x = sanitizePlayerVelocity(data.velocity_x);
         player.velocity_y = sanitizePlayerVelocity(data.velocity_y);
         player.on_floor = data.on_floor !== false;
+        player.in_water = position.in_water === true;
+        player.in_lava_fire = position.in_lava_fire === true;
+        const damageFlash = sanitizePlayerDamageFlash(data);
+        player.damage_flash_expires_at = damageFlash.active ? Date.now() + damageFlash.remaining_ms : 0;
+        player.damage_flash_token = damageFlash.token;
+        refreshPlayerFishingPresence(player, position.world);
 
         if (data.equipment_slots && typeof data.equipment_slots === "object" && !Array.isArray(data.equipment_slots)) {
           player.equipment_slots = sanitizeEquipmentSlots(data.equipment_slots, player.account_username);
@@ -1409,7 +1856,7 @@ wss.on("connection", (socket, request = null) => {
         }
 
         const presencePayload = buildPublicPlayerPresencePayload("player_position", player, position.world);
-        broadcastToWorld(player.world, presencePayload, playerId);
+        queuePlayerPositionBroadcast(player.world, presencePayload, playerId);
         if (equipmentChanged || animationChanged) {
           console.log("[APPEARANCE][Server] broadcast appearance update", {
             player: player.account_username,
@@ -1432,6 +1879,7 @@ wss.on("connection", (socket, request = null) => {
     if (player) {
       cancelActiveTradeForPlayer(playerId, "Trade canceled because a player disconnected.");
       activeFishingSessions.delete(playerId);
+      clearPlayerFishingPresence(player);
       markAccountSeen(player.account_username);
       releaseActiveAccountSession(player);
 
@@ -1548,12 +1996,15 @@ async function handleHttpRequest(request, response) {
           enabled: worldSnapshotSchedulerState.enabled,
           interval_minutes: WORLD_SNAPSHOT_INTERVAL_MINUTES,
           interval_ms: WORLD_SNAPSHOT_INTERVAL_MS,
+          max_worlds_per_cycle: WORLD_SNAPSHOT_MAX_WORLDS_PER_CYCLE,
+          startup_run_enabled: WORLD_SNAPSHOT_STARTUP_RUN,
           running: worldSnapshotSchedulerRunning,
           last_run_at: worldSnapshotSchedulerState.last_run_at || null,
           last_duration_ms: worldSnapshotSchedulerState.last_duration_ms,
           last_world_count: worldSnapshotSchedulerState.last_world_count,
           last_error: worldSnapshotSchedulerState.last_error || "",
         },
+        server_tick: getServerTickSnapshot(),
       },
     }));
     return;
@@ -1573,6 +2024,7 @@ async function bootstrapServer() {
   await postgresStore.init();
   await loadPersistentState();
   await recoverWorldEventsAfterLoad();
+  startServerTickMonitor();
   startWorldEventRandomScheduler();
   startAntiDupeAuditScanner();
   startPeriodicWorldSnapshotScheduler();
@@ -1616,6 +2068,25 @@ function startAntiDupeAuditScanner() {
   if (typeof firstAuditTimer.unref === "function") firstAuditTimer.unref();
 }
 
+function selectWorldsForSnapshotCycle(loadedWorldNames) {
+  const worlds = Array.isArray(loadedWorldNames) ? loadedWorldNames.filter(Boolean) : [];
+  if (worlds.length === 0) return [];
+
+  const maxWorlds = WORLD_SNAPSHOT_MAX_WORLDS_PER_CYCLE;
+  if (maxWorlds <= 0 || maxWorlds >= worlds.length) {
+    worldSnapshotSchedulerCursor = 0;
+    return worlds;
+  }
+
+  const selected = [];
+  const startIndex = worldSnapshotSchedulerCursor % worlds.length;
+  for (let i = 0; i < maxWorlds; i += 1) {
+    selected.push(worlds[(startIndex + i) % worlds.length]);
+  }
+  worldSnapshotSchedulerCursor = (startIndex + maxWorlds) % worlds.length;
+  return selected;
+}
+
 function startPeriodicWorldSnapshotScheduler() {
   if (WORLD_SNAPSHOT_INTERVAL_MS <= 0) {
     worldSnapshotSchedulerState.enabled = false;
@@ -1633,17 +2104,20 @@ function startPeriodicWorldSnapshotScheduler() {
 
     try {
       const loadedWorldNames = Array.from(worldStates.keys()).sort((a, b) => a.localeCompare(b));
+      const scheduledWorldNames = selectWorldsForSnapshotCycle(loadedWorldNames);
       let createdCount = 0;
       let failedCount = 0;
 
-      for (const worldName of loadedWorldNames) {
+      for (const worldName of scheduledWorldNames) {
         const snapshot = createWorldSnapshot(worldName, "periodic_checkpoint", null, null, {
           scheduler: true,
           interval_minutes: WORLD_SNAPSHOT_INTERVAL_MINUTES,
           world_count: loadedWorldNames.length,
+          scheduled_world_count: scheduledWorldNames.length,
         });
         if (snapshot?.snapshotId) {
           createdCount += 1;
+          await waitForPersistenceWrites();
         } else {
           failedCount += 1;
         }
@@ -1654,6 +2128,7 @@ function startPeriodicWorldSnapshotScheduler() {
         worldSnapshotSchedulerState.last_error = `some_world_snapshots_failed_${failedCount}`;
         console.warn("[snapshot] periodic world checkpoint completed with failures", {
           scheduled_worlds: loadedWorldNames.length,
+          processed_worlds: scheduledWorldNames.length,
           created: createdCount,
           failed: failedCount,
         });
@@ -1675,15 +2150,17 @@ function startPeriodicWorldSnapshotScheduler() {
   }, WORLD_SNAPSHOT_INTERVAL_MS);
 
   if (typeof worldSnapshotSchedulerTimer.unref === "function") worldSnapshotSchedulerTimer.unref();
-  const startupDelayMs = Math.min(60_000, WORLD_SNAPSHOT_INTERVAL_MS);
-  const startupTimer = setTimeout(() => {
-    runSnapshotCycle().catch((error) => {
-      worldSnapshotSchedulerState.last_error = cleanText(error?.message || error || "unknown");
-      console.warn("[snapshot] periodic world checkpoint startup run failed:", worldSnapshotSchedulerState.last_error);
-    });
-  }, startupDelayMs);
-  if (typeof startupTimer.unref === "function") startupTimer.unref();
-  console.log(`[snapshot] periodic world checkpoint every ${WORLD_SNAPSHOT_INTERVAL_MINUTES} minute(s).`);
+  if (WORLD_SNAPSHOT_STARTUP_RUN) {
+    const startupDelayMs = Math.min(60_000, WORLD_SNAPSHOT_INTERVAL_MS);
+    const startupTimer = setTimeout(() => {
+      runSnapshotCycle().catch((error) => {
+        worldSnapshotSchedulerState.last_error = cleanText(error?.message || error || "unknown");
+        console.warn("[snapshot] periodic world checkpoint startup run failed:", worldSnapshotSchedulerState.last_error);
+      });
+    }, startupDelayMs);
+    if (typeof startupTimer.unref === "function") startupTimer.unref();
+  }
+  console.log(`[snapshot] periodic world checkpoint every ${WORLD_SNAPSHOT_INTERVAL_MINUTES} minute(s), max ${WORLD_SNAPSHOT_MAX_WORLDS_PER_CYCLE || "all"} world(s) per cycle.`);
 }
 
 function startHttpServer() {
@@ -1719,6 +2196,7 @@ function ensureDataFolders() {
   fs.mkdirSync(WORLD_SAVE_FOLDER, { recursive: true });
   fs.mkdirSync(PLAYER_SAVE_FOLDER, { recursive: true });
   fs.mkdirSync(path.dirname(ADMIN_LOG_PATH), { recursive: true });
+  fs.mkdirSync(path.dirname(CRASH_REPORT_PATH), { recursive: true });
   fs.mkdirSync(INTEGRITY_LOG_FOLDER, { recursive: true });
   fs.mkdirSync(WORLD_SNAPSHOT_FOLDER, { recursive: true });
   migrateLegacyDataFolders();
@@ -1750,6 +2228,22 @@ function writeJsonFileAtomic(filePath, data) {
   const tempPath = `${filePath}.tmp`;
   fs.writeFileSync(tempPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
   fs.renameSync(tempPath, filePath);
+}
+
+async function writeJsonFileAtomicAsync(filePath, data) {
+  const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
+  try {
+    await fs.promises.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.promises.writeFile(tempPath, `${JSON.stringify(data, null, 2)}\n`, "utf8");
+    await fs.promises.rename(tempPath, filePath);
+  } catch (error) {
+    try {
+      await fs.promises.unlink(tempPath);
+    } catch (_unlinkError) {
+      // Best effort cleanup for failed async temp writes.
+    }
+    throw error;
+  }
 }
 
 function trackPersistenceWrite(promise, label = "persistence write") {
@@ -2261,7 +2755,7 @@ function isClientVersionAllowed(clientVersion) {
 function sendClientUpdateRequired(socket, data, clientVersion = "") {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
 
-  socket.send(JSON.stringify({
+  sendJson(socket, {
     type: "client_update_required",
     ok: false,
     request_id: makeRequestId(data || {}),
@@ -2270,11 +2764,15 @@ function sendClientUpdateRequired(socket, data, clientVersion = "") {
     min_client_version: MIN_CLIENT_VERSION,
     update_url: UPDATE_URL,
     message: `This PixelMania version is out of date. Please update to version ${MIN_CLIENT_VERSION} or newer.`,
-  }));
+  });
 }
 
 function cloneJson(value) {
   return JSON.parse(JSON.stringify(value || {}));
+}
+
+function makeAuditHash(value) {
+  return crypto.createHash("sha256").update(JSON.stringify(value || {})).digest("hex");
 }
 
 function validateUsername(value) {
@@ -2318,15 +2816,56 @@ function validatePassword(value) {
   return { ok: true, password };
 }
 
-function makePasswordHash(password, salt = crypto.randomBytes(16).toString("hex")) {
-  const hash = crypto.scryptSync(String(password || ""), salt, 64).toString("hex");
-  return { salt, hash };
+function parsePasswordHashAlgorithm(algorithm = "") {
+  const raw = String(algorithm || "").trim().toLowerCase();
+  if (!raw || raw === "scrypt" || raw === "legacy_scrypt") {
+    return {
+      name: "scrypt",
+      N: 16384,
+      r: 8,
+      p: 1,
+      keylen: 64,
+      algorithm: "legacy_scrypt",
+    };
+  }
+
+  const match = raw.match(/^scrypt:n=(\d+),r=(\d+),p=(\d+),keylen=(\d+)$/);
+  if (!match) {
+    return {
+      name: "scrypt",
+      N: PASSWORD_SCRYPT_N,
+      r: PASSWORD_SCRYPT_R,
+      p: PASSWORD_SCRYPT_P,
+      keylen: PASSWORD_SCRYPT_KEYLEN,
+      algorithm: PASSWORD_HASH_ALGORITHM,
+    };
+  }
+
+  return {
+    name: "scrypt",
+    N: Math.max(16384, Math.trunc(Number(match[1]) || PASSWORD_SCRYPT_N)),
+    r: Math.max(8, Math.trunc(Number(match[2]) || PASSWORD_SCRYPT_R)),
+    p: Math.max(1, Math.trunc(Number(match[3]) || PASSWORD_SCRYPT_P)),
+    keylen: Math.max(32, Math.trunc(Number(match[4]) || PASSWORD_SCRYPT_KEYLEN)),
+    algorithm: raw,
+  };
+}
+
+function makePasswordHash(password, salt = crypto.randomBytes(16).toString("hex"), algorithm = PASSWORD_HASH_ALGORITHM) {
+  const parsed = parsePasswordHashAlgorithm(algorithm);
+  const hash = crypto.scryptSync(String(password || ""), salt, parsed.keylen, {
+    N: parsed.N,
+    r: parsed.r,
+    p: parsed.p,
+    maxmem: Math.max(64 * 1024 * 1024, 256 * parsed.N * parsed.r),
+  }).toString("hex");
+  return { salt, hash, algorithm: parsed.algorithm };
 }
 
 function verifyPassword(account, password) {
   if (!account || !account.password_salt || !account.password_hash) return false;
 
-  const result = makePasswordHash(password, account.password_salt);
+  const result = makePasswordHash(password, account.password_salt, account.password_algorithm || "legacy_scrypt");
   const expected = Buffer.from(account.password_hash, "hex");
   const actual = Buffer.from(result.hash, "hex");
   if (expected.length !== actual.length) return false;
@@ -2337,13 +2876,31 @@ function makeTokenHash(token) {
   return crypto.createHash("sha256").update(String(token || "")).digest("hex");
 }
 
+function makeSecureToken(byteLength = 32) {
+  return crypto.randomBytes(Math.max(16, Math.trunc(Number(byteLength) || 32))).toString("hex");
+}
+
 function issueSessionToken(account) {
-  const token = crypto.randomBytes(32).toString("hex");
-  account.session_token_hash = makeTokenHash(token);
+  const token = makeSecureToken(32);
   account.session_token_expires_at = new Date(Date.now() + SESSION_TOKEN_TTL_MS).toISOString();
+  account.session_token_hash = makeTokenHash(token);
+  account.refresh_token_hash = "";
+  account.refresh_token_expires_at = "";
   account.last_seen_at = new Date().toISOString();
   queueAccountsSave();
   return token;
+}
+
+function issueSessionTokens(account) {
+  const sessionToken = makeSecureToken(32);
+  const refreshToken = makeSecureToken(48);
+  account.session_token_hash = makeTokenHash(sessionToken);
+  account.session_token_expires_at = new Date(Date.now() + SESSION_TOKEN_TTL_MS).toISOString();
+  account.refresh_token_hash = makeTokenHash(refreshToken);
+  account.refresh_token_expires_at = new Date(Date.now() + SESSION_REFRESH_TOKEN_TTL_MS).toISOString();
+  account.last_seen_at = new Date().toISOString();
+  queueAccountsSave();
+  return { sessionToken, refreshToken };
 }
 
 function clearSessionToken(account) {
@@ -2351,6 +2908,8 @@ function clearSessionToken(account) {
   const username = cleanAccountName(account.username || "");
   account.session_token_hash = "";
   account.session_token_expires_at = "";
+  account.refresh_token_hash = "";
+  account.refresh_token_expires_at = "";
   queueAccountsSave();
   if (username !== "") {
     postgresStore.revokeSessionsByUsername(username);
@@ -2520,7 +3079,12 @@ function getPublicPlayerIdentity(player, fallbackName = "Player") {
 }
 
 function buildPublicPlayerPresencePayload(type, player, worldName = "") {
+  if (player) refreshPlayerFishingPresence(player, worldName || player.world || "");
   const equipmentSlots = player?.equipment_slots || {};
+  const fishingTargetX = Number.isInteger(player?.fishing_target_x) ? player.fishing_target_x : -1;
+  const fishingTargetY = Number.isInteger(player?.fishing_target_y) ? player.fishing_target_y : -1;
+  const fishingActive = player?.fishing_active === true && isGridInWorld(fishingTargetX, fishingTargetY);
+  const damageFlash = getPublicPlayerDamageFlash(player);
   return {
     type,
     player_id: String(player?.id || ""),
@@ -2533,6 +3097,14 @@ function buildPublicPlayerPresencePayload(type, player, worldName = "") {
     velocity_x: sanitizePlayerVelocity(player?.velocity_x || 0),
     velocity_y: sanitizePlayerVelocity(player?.velocity_y || 0),
     on_floor: player?.on_floor !== false,
+    in_water: player?.in_water === true,
+    in_lava_fire: player?.in_lava_fire === true,
+    ...damageFlash,
+    fishing_active: fishingActive,
+    fishing_target_x: fishingActive ? fishingTargetX : -1,
+    fishing_target_y: fishingActive ? fishingTargetY : -1,
+    fishing_lure_id: fishingActive ? clampString(player?.fishing_lure_id || "") : "",
+    fishing_rod_id: fishingActive ? clampString(player?.fishing_rod_id || "") : "",
     equipment_slots: equipmentSlots,
     equipped_tool: clampString(equipmentSlots.hand || ""),
     equipped_back_item: clampString(equipmentSlots.back || ""),
@@ -2569,6 +3141,7 @@ function replaceActiveAccountSession(username, replacementPlayerId) {
   if (existingPlayer) {
     cancelActiveTradeForPlayer(activePlayerId, "Trade canceled because the account signed on somewhere else.");
     activeFishingSessions.delete(activePlayerId);
+    clearPlayerFishingPresence(existingPlayer);
   }
 
   if (existingSocket) {
@@ -2690,6 +3263,42 @@ function releaseLiveActionLock(lockHandle) {
   });
 }
 
+function getInventoryLockResource(username) {
+  return accountKey(username || "");
+}
+
+async function acquirePlayerInventoryLocks(usernames, owner = "") {
+  const resources = [...new Set((Array.isArray(usernames) ? usernames : [usernames])
+    .map(getInventoryLockResource)
+    .filter((resource) => resource !== ""))]
+    .sort();
+
+  if (resources.length === 0) {
+    return { acquired: false, locks: [], blocked_resource: "" };
+  }
+
+  const locks = [];
+  for (const resource of resources) {
+    const lock = await acquireLiveActionLock(playerInventoryActionLocks, "inventory", resource, owner || resource);
+    if (!lock.acquired) {
+      for (let i = locks.length - 1; i >= 0; i -= 1) {
+        releaseLiveActionLock(locks[i]);
+      }
+      return { acquired: false, locks: [], blocked_resource: resource };
+    }
+    locks.push(lock);
+  }
+
+  return { acquired: true, locks, resources };
+}
+
+function releasePlayerInventoryLocks(lockHandle) {
+  const locks = Array.isArray(lockHandle?.locks) ? lockHandle.locks : [];
+  for (let i = locks.length - 1; i >= 0; i -= 1) {
+    releaseLiveActionLock(locks[i]);
+  }
+}
+
 function activatePlayerAccount(socket, player, account, options = {}) {
   if (!canActivateAccount(account.username, player.id) && options.replaceExisting) {
     replaceActiveAccountSession(account.username, player.id);
@@ -2719,36 +3328,42 @@ function isPlayerOwnAccount(player, username) {
 }
 
 function sendAuthError(socket, requestId, action, message, extra = {}) {
-  socket.send(JSON.stringify({
+  sendJson(socket, {
     type: "account_auth_error",
     ok: false,
     request_id: requestId,
     action,
     message,
     ...extra,
-  }));
+  });
 }
 
-function sendAuthOk(socket, requestId, action, account, token) {
+function sendAuthOk(socket, requestId, action, account, tokens) {
   const role = getAccountRole(account.username);
-  socket.send(JSON.stringify({
+  const tokenPayload = typeof tokens === "string" ? { sessionToken: tokens, refreshToken: "" } : (tokens || {});
+  sendJson(socket, {
     type: "account_auth_ok",
     ok: true,
     request_id: requestId,
     action,
     username: account.username,
     email: cleanEmail(account.email || ""),
-    session_token: token,
+    session_token: tokenPayload.sessionToken || "",
     session_token_expires_at: String(account.session_token_expires_at || ""),
+    refresh_token: tokenPayload.refreshToken || "",
+    refresh_token_expires_at: String(account.refresh_token_expires_at || ""),
+    one_active_session: ACCOUNT_ONE_ACTIVE_SESSION,
     role,
     email_verified: isAccountEmailVerified(account),
     developer_pin_required: isDeveloperRole(role) && DEV_PIN_REQUIRED,
     developer_pin_unlocked: !DEV_PIN_REQUIRED,
-  }));
+    admin_2fa_required: isDeveloperRole(role) && ADMIN_2FA_REQUIRED,
+    admin_2fa_verified: !ADMIN_2FA_REQUIRED,
+  });
 }
 
 function sendVerificationRequired(socket, requestId, action, account, message) {
-  socket.send(JSON.stringify({
+  sendJson(socket, {
     type: "account_auth_ok",
     ok: true,
     request_id: requestId,
@@ -2759,7 +3374,7 @@ function sendVerificationRequired(socket, requestId, action, account, message) {
     email_verified: false,
     requires_email_verification: true,
     message,
-  }));
+  });
 }
 
 function findAccountByEmail(email) {
@@ -2824,7 +3439,10 @@ function handleAccountRegister(socket, player, data) {
     email: emailValidation.email,
     password_salt: passwordHash.salt,
     password_hash: passwordHash.hash,
+    password_algorithm: passwordHash.algorithm,
     session_token_hash: "",
+    refresh_token_hash: "",
+    refresh_token_expires_at: "",
     email_verified: false,
     email_verified_at: "",
     role: getAccountRole(usernameValidation.username),
@@ -2847,35 +3465,57 @@ async function handleAccountLogin(socket, player, data) {
   const requestId = makeRequestId(data);
   const username = cleanAccountName(data.username);
   const email = cleanEmail(data.email || "");
+  const fail = (message, reason, extra = {}) => {
+    sendAuthError(socket, requestId, "login", message, extra);
+    recordLoginAttempt(socket, player, username, "login", false, reason || message, data);
+  };
+
   if (username === "") {
-    sendAuthError(socket, requestId, "login", "Enter your username.");
+    fail("Enter your username.", "missing_username");
+    return;
+  }
+
+  const rateLimit = await checkLoginAttemptAllowed(socket, username, "login");
+  if (!rateLimit.ok) {
+    fail(`Too many login attempts. Try again in ${rateLimit.retry_after_seconds}s.`, "rate_limited", {
+      retry_after_seconds: rateLimit.retry_after_seconds,
+      retry_ms: rateLimit.retry_ms,
+    });
     return;
   }
 
   if (email === "") {
-    sendAuthError(socket, requestId, "login", "Enter your email address.");
+    fail("Enter your email address.", "missing_email");
     return;
   }
 
   const account = accounts.get(accountKey(username));
   if (!account || !hasPassword(account)) {
-    sendAuthError(socket, requestId, "login", "Username not found.");
+    fail("Username not found.", "username_not_found");
     return;
   }
 
   if (email !== cleanEmail(account.email || "")) {
-    sendAuthError(socket, requestId, "login", "Email does not match that username.");
+    fail("Email does not match that username.", "email_mismatch");
     return;
   }
 
   if (!verifyPassword(account, data.password)) {
-    sendAuthError(socket, requestId, "login", "Password does not match.");
+    fail("Password does not match.", "password_mismatch");
     return;
+  }
+
+  if (!account.password_algorithm || account.password_algorithm === "legacy_scrypt") {
+    const upgradedPasswordHash = makePasswordHash(data.password);
+    account.password_salt = upgradedPasswordHash.salt;
+    account.password_hash = upgradedPasswordHash.hash;
+    account.password_algorithm = upgradedPasswordHash.algorithm;
+    queueAccountsSave();
   }
 
   if (!isAccountEmailVerified(account)) {
     if (hasActiveEmailVerificationToken(account)) {
-      sendAuthError(socket, requestId, "login", "Verify your email before signing on. Check your email for the verification link.", {
+      fail("Verify your email before signing on. Check your email for the verification link.", "email_not_verified", {
         requires_email_verification: true,
         email: cleanEmail(account.email || ""),
       });
@@ -2885,7 +3525,7 @@ async function handleAccountLogin(socket, player, data) {
     const verificationToken = makeEmailVerificationToken(account);
     queueAccountsSave();
     queueVerificationEmail(account, verificationToken);
-    sendAuthError(socket, requestId, "login", "Verify your email before signing on. I sent a new verification email.", {
+    fail("Verify your email before signing on. I sent a new verification email.", "email_not_verified_new_link", {
       requires_email_verification: true,
       email: cleanEmail(account.email || ""),
     });
@@ -2896,7 +3536,7 @@ async function handleAccountLogin(socket, player, data) {
     scope: PUNISHMENT_SCOPE_GLOBAL,
   });
   if (loginPunishment) {
-    sendAuthError(socket, requestId, "login", formatPunishmentBlockMessage("login", loginPunishment), {
+    fail(formatPunishmentBlockMessage("login", loginPunishment), "punishment_blocked", {
       punishment: publicPunishmentPayload(loginPunishment),
     });
     logSecurityEvent(socket, player, "punishment_blocked_login", {
@@ -2910,44 +3550,57 @@ async function handleAccountLogin(socket, player, data) {
   account.last_seen_at = new Date().toISOString();
   const previousSessionHash = cleanAccountName(account.session_token_hash || "");
   const previousSessionExpiresAt = String(account.session_token_expires_at || "");
-  const token = issueSessionToken(account);
+  const previousRefreshHash = cleanAccountName(account.refresh_token_hash || "");
+  const previousRefreshExpiresAt = String(account.refresh_token_expires_at || "");
+  const tokens = issueSessionTokens(account);
 
   if (isPostgresAuthoritativeReady()) {
-    const revokeResult = await postgresStore.revokeSessionsForUsername(account.username);
-    if (!revokeResult.ok) {
-      account.session_token_hash = previousSessionHash;
-      account.session_token_expires_at = previousSessionExpiresAt;
-      queueAccountsSave();
-      sendAuthError(socket, requestId, "login", "Could not rotate your saved login. Try again.");
-      return;
+    if (ACCOUNT_ONE_ACTIVE_SESSION) {
+      const revokeResult = await postgresStore.revokeSessionsForUsername(account.username);
+      if (!revokeResult.ok) {
+        account.session_token_hash = previousSessionHash;
+        account.session_token_expires_at = previousSessionExpiresAt;
+        account.refresh_token_hash = previousRefreshHash;
+        account.refresh_token_expires_at = previousRefreshExpiresAt;
+        queueAccountsSave();
+        fail("Could not rotate your saved login. Try again.", "session_revoke_failed");
+        return;
+      }
     }
 
     const sessionResult = await postgresStore.saveSession(account, {
       ip: getSocketAddress(socket),
-      userAgent: String(data.user_agent || data.userAgent || ""),
+      userAgent: getSocketUserAgent(socket, data),
+      deviceInfo: getSocketDeviceInfo(socket, data),
+      sessionMode: ACCOUNT_ONE_ACTIVE_SESSION ? "one_active" : "multi_session",
     });
     if (!sessionResult.ok) {
       account.session_token_hash = "";
       account.session_token_expires_at = "";
+      account.refresh_token_hash = "";
+      account.refresh_token_expires_at = "";
       queueAccountsSave();
-      sendAuthError(socket, requestId, "login", "Could not create your saved login session. Try again.");
+      fail("Could not create your saved login session. Try again.", "session_create_failed");
       return;
     }
   } else {
     postgresStore.mirrorSession(account, {
       ip: getSocketAddress(socket),
-      userAgent: String(data.user_agent || data.userAgent || ""),
+      userAgent: getSocketUserAgent(socket, data),
+      deviceInfo: getSocketDeviceInfo(socket, data),
+      sessionMode: ACCOUNT_ONE_ACTIVE_SESSION ? "one_active" : "multi_session",
     });
   }
 
   const activation = activatePlayerAccount(socket, player, account, { replaceExisting: true });
   if (!activation.ok) {
-    sendAuthError(socket, requestId, "login", activation.message);
+    fail(activation.message, "activation_failed");
     return;
   }
 
   postgresStore.mirrorAccount(account, { touchLogin: true });
-  sendAuthOk(socket, requestId, "login", account, token);
+  recordLoginAttempt(socket, player, account.username, "login", true, "success", data);
+  sendAuthOk(socket, requestId, "login", account, tokens);
   sendFriendState(socket, account.username, requestId);
   notifyOnlineFriendsOfFriendState(account.username);
 }
@@ -2955,9 +3608,24 @@ async function handleAccountLogin(socket, player, data) {
 async function handleAccountTokenLogin(socket, player, data) {
   const requestId = makeRequestId(data);
   const username = cleanAccountName(data.username);
-  const token = String(data.session_token || "").trim();
+  const token = String(data.refresh_token || data.session_token || "").trim();
+  const usingRefreshToken = String(data.refresh_token || "").trim() !== "";
+  const fail = (message, reason, extra = {}) => {
+    sendAuthError(socket, requestId, "token_login", message, extra);
+    recordLoginAttempt(socket, player, username, usingRefreshToken ? "refresh_token_login" : "token_login", false, reason || message, data);
+  };
+
   if (username === "" || token === "") {
-    sendAuthError(socket, requestId, "token_login", "Saved login expired. Sign on again.");
+    fail("Saved login expired. Sign on again.", "missing_token");
+    return;
+  }
+
+  const rateLimit = await checkLoginAttemptAllowed(socket, username, usingRefreshToken ? "refresh_token_login" : "token_login");
+  if (!rateLimit.ok) {
+    fail(`Too many login attempts. Try again in ${rateLimit.retry_after_seconds}s.`, "rate_limited", {
+      retry_after_seconds: rateLimit.retry_after_seconds,
+      retry_ms: rateLimit.retry_ms,
+    });
     return;
   }
 
@@ -2965,20 +3633,24 @@ async function handleAccountTokenLogin(socket, player, data) {
   let account = accounts.get(accountKey(username));
   let previousSessionHash = cleanAccountName(account?.session_token_hash || tokenHash);
   let previousSessionExpiresAt = String(account?.session_token_expires_at || "");
+  let previousRefreshHash = cleanAccountName(account?.refresh_token_hash || "");
+  let previousRefreshExpiresAt = String(account?.refresh_token_expires_at || "");
 
   if (isPostgresAuthoritativeReady()) {
     const validation = await postgresStore.validateSessionToken(username, tokenHash, {
       ip: getSocketAddress(socket),
-      userAgent: String(data.user_agent || data.userAgent || ""),
+      userAgent: getSocketUserAgent(socket, data),
+      deviceInfo: getSocketDeviceInfo(socket, data),
+      tokenKind: usingRefreshToken ? "refresh" : "session_or_refresh",
     });
     if (!validation.ok) {
-      sendAuthError(socket, requestId, "token_login", "Saved login expired. Sign on again.");
+      fail("Saved login expired. Sign on again.", validation.reason || "invalid_or_expired");
       return;
     }
 
     const validatedAccount = sanitizeAccountState(validation.account);
     if (!validatedAccount) {
-      sendAuthError(socket, requestId, "token_login", "Saved login expired. Sign on again.");
+      fail("Saved login expired. Sign on again.", "invalid_account_state");
       return;
     }
 
@@ -2987,13 +3659,15 @@ async function handleAccountTokenLogin(socket, player, data) {
     accounts.set(accountKey(account.username), account);
     previousSessionHash = tokenHash;
     previousSessionExpiresAt = String(account.session_token_expires_at || validation.expires_at || "");
-  } else if (!isSessionTokenValid(account, token)) {
-    sendAuthError(socket, requestId, "token_login", "Saved login expired. Sign on again.");
+    previousRefreshHash = cleanAccountName(account.refresh_token_hash || validation.refresh_token_hash || "");
+    previousRefreshExpiresAt = String(account.refresh_token_expires_at || validation.refresh_expires_at || "");
+  } else if (!isSessionTokenValid(account, token) && !isRefreshTokenValid(account, token)) {
+    fail("Saved login expired. Sign on again.", "invalid_or_expired");
     return;
   }
 
   if (!isAccountEmailVerified(account)) {
-    sendAuthError(socket, requestId, "token_login", "Verify your email before signing on.", {
+    fail("Verify your email before signing on.", "email_not_verified", {
       requires_email_verification: true,
       email: cleanEmail(account.email || ""),
     });
@@ -3004,7 +3678,7 @@ async function handleAccountTokenLogin(socket, player, data) {
     scope: PUNISHMENT_SCOPE_GLOBAL,
   });
   if (loginPunishment) {
-    sendAuthError(socket, requestId, "token_login", formatPunishmentBlockMessage("login", loginPunishment), {
+    fail(formatPunishmentBlockMessage("login", loginPunishment), "punishment_blocked", {
       punishment: publicPunishmentPayload(loginPunishment),
     });
     logSecurityEvent(socket, player, "punishment_blocked_token_login", {
@@ -3016,39 +3690,50 @@ async function handleAccountTokenLogin(socket, player, data) {
   }
 
   account.last_seen_at = new Date().toISOString();
-  const nextToken = issueSessionToken(account);
+  const nextTokens = issueSessionTokens(account);
 
   if (isPostgresAuthoritativeReady()) {
     const sessionResult = await postgresStore.saveSession(account, {
       ip: getSocketAddress(socket),
-      userAgent: String(data.user_agent || data.userAgent || ""),
+      userAgent: getSocketUserAgent(socket, data),
+      deviceInfo: getSocketDeviceInfo(socket, data),
+      rotatedFromTokenHash: tokenHash,
+      sessionMode: ACCOUNT_ONE_ACTIVE_SESSION ? "one_active" : "multi_session",
     });
     if (!sessionResult.ok) {
       account.session_token_hash = previousSessionHash;
       account.session_token_expires_at = previousSessionExpiresAt;
+      account.refresh_token_hash = previousRefreshHash;
+      account.refresh_token_expires_at = previousRefreshExpiresAt;
       queueAccountsSave();
-      sendAuthError(socket, requestId, "token_login", "Could not refresh your saved login. Sign on again.");
+      fail("Could not refresh your saved login. Sign on again.", "session_refresh_failed");
       return;
     }
 
-    if (previousSessionHash !== "" && previousSessionHash !== account.session_token_hash) {
-      await postgresStore.revokeSessionByTokenHash(previousSessionHash);
+    if (tokenHash !== "" && tokenHash !== account.session_token_hash && tokenHash !== account.refresh_token_hash) {
+      await postgresStore.revokeSessionByTokenHash(tokenHash, "rotated");
+    }
+    if (ACCOUNT_ONE_ACTIVE_SESSION) {
+      await postgresStore.revokeOtherSessionsForUsername(account.username, account.session_token_hash, "one_active_session");
     }
   } else {
     postgresStore.mirrorSession(account, {
       ip: getSocketAddress(socket),
-      userAgent: String(data.user_agent || data.userAgent || ""),
+      userAgent: getSocketUserAgent(socket, data),
+      deviceInfo: getSocketDeviceInfo(socket, data),
+      sessionMode: ACCOUNT_ONE_ACTIVE_SESSION ? "one_active" : "multi_session",
     });
   }
 
   const activation = activatePlayerAccount(socket, player, account, { replaceExisting: true });
   if (!activation.ok) {
-    sendAuthError(socket, requestId, "token_login", activation.message);
+    fail(activation.message, "activation_failed");
     return;
   }
 
   postgresStore.mirrorAccount(account, { touchLogin: true });
-  sendAuthOk(socket, requestId, "token_login", account, nextToken);
+  recordLoginAttempt(socket, player, account.username, usingRefreshToken ? "refresh_token_login" : "token_login", true, "success", data);
+  sendAuthOk(socket, requestId, "token_login", account, nextTokens);
   sendFriendState(socket, account.username, requestId);
   notifyOnlineFriendsOfFriendState(account.username);
 }
@@ -3067,21 +3752,21 @@ function requireAuthenticated(socket, player, action) {
   }
   socket.authRequiredNotices.set(noticeKey, now);
 
-  socket.send(JSON.stringify({
+  sendJson(socket, {
     type: "auth_required",
     message: `Sign on before you ${action}.`,
-  }));
+  });
   return false;
 }
 
 function sendPlayerState(socket, username) {
   const state = ensurePlayerState(username);
-  socket.send(JSON.stringify({
+  sendJson(socket, {
     type: "player_state",
     found: state !== null,
     username: cleanAccountName(username),
-    player_data: state || {},
-  }));
+    player_data: state ? buildPlayerStateForClient(state) : {},
+  });
 }
 
 function sendInventoryTransactionResult(socket, payload) {
@@ -3108,7 +3793,7 @@ function sendInventoryTransactionResult(socket, payload) {
     delete response.player_data;
   }
 
-  socket.send(JSON.stringify(response));
+  sendJson(socket, response);
 }
 
 function sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload, requesterFields = null) {
@@ -3134,7 +3819,59 @@ function sendInventoryTransactionRejected(socket, data, message) {
 
 function sendJson(socket, payload) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
-  socket.send(JSON.stringify(payload));
+  let raw;
+  try {
+    raw = JSON.stringify(payload);
+  } catch (error) {
+    console.warn("[socket_serialize_error]", error && error.message ? error.message : error);
+    return;
+  }
+  sendRawJsonToSocket(socket, raw, "direct_send", {
+    message_type: String(payload?.type || ""),
+  });
+}
+
+function getSocketBufferedAmount(socket) {
+  const amount = Number(socket?.bufferedAmount || 0);
+  return Number.isFinite(amount) ? amount : 0;
+}
+
+function shouldLogSocketBackpressure(socket) {
+  const now = Date.now();
+  const previous = Number(socket?._lastBackpressureWarningAt || 0);
+  if (now - previous < 5000) return false;
+  if (socket) socket._lastBackpressureWarningAt = now;
+  return true;
+}
+
+function sendRawJsonToSocket(socket, raw, context = "send", details = {}) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return false;
+  const bufferedAmount = getSocketBufferedAmount(socket);
+  if (bufferedAmount > SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT) {
+    if (shouldLogSocketBackpressure(socket)) {
+      console.warn("[socket_backpressure_skip]", {
+        context,
+        player_id: String(socket.playerId || ""),
+        buffered_amount: bufferedAmount,
+        limit: SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT,
+        ...details,
+      });
+    }
+    return false;
+  }
+
+  try {
+    socket.send(raw);
+    return true;
+  } catch (error) {
+    console.warn("[socket_send_error]", {
+      context,
+      player_id: String(socket.playerId || ""),
+      message: error && error.message ? error.message : String(error),
+      ...details,
+    });
+    return false;
+  }
 }
 
 function normalizeServerPunishmentType(value) {
@@ -3475,12 +4212,12 @@ function buildTradeStateMessage(trade, message = "") {
 }
 
 function sendTradeState(trade, message = "") {
-  const payload = JSON.stringify(buildTradeStateMessage(trade, message));
+  const payload = buildTradeStateMessage(trade, message);
 
   for (const playerId of getTradePartyIds(trade)) {
     const record = getTradeParticipantRecord(playerId);
     if (!record) continue;
-    record.socket.send(payload);
+    sendJson(record.socket, payload);
   }
 }
 
@@ -4249,23 +4986,44 @@ async function executeTrade(trade) {
     return;
   }
 
-  const stateA = ensureWritablePlayerState(trade.requester_username);
-  const stateB = ensureWritablePlayerState(trade.target_username);
-  if (!stateA || !stateB) {
-    cancelTrade(trade, "Trade canceled because server inventory could not be loaded.");
+  const tradeWorld = cleanWorld(trade.world || "START");
+  if (cleanWorld(requesterRecord.player.world || "START") !== tradeWorld || cleanWorld(targetRecord.player.world || "START") !== tradeWorld) {
+    cancelTrade(trade, "Trade canceled because a player left the trade world.");
     return;
   }
 
-  const validation = validateFullTradeInventory(trade, stateA, stateB);
-  if (!validation.ok) {
-    cancelTrade(trade, validation.message);
+  if (!arePlayersCloseEnoughForTrade(requesterRecord.player, targetRecord.player)) {
+    cancelTrade(trade, "Trade canceled because players moved too far apart.");
     return;
   }
 
   trade._finalizing = true;
+  let inventoryLocks = null;
   const tradeTransactionId = makeAuditId("trade");
 
   try {
+    inventoryLocks = await acquirePlayerInventoryLocks(
+      [trade.requester_username, trade.target_username],
+      `trade:${trade.id}`
+    );
+    if (!inventoryLocks.acquired) {
+      cancelTrade(trade, "Trade canceled because an inventory is busy. Try again.");
+      return;
+    }
+
+    const stateA = ensureWritablePlayerState(trade.requester_username);
+    const stateB = ensureWritablePlayerState(trade.target_username);
+    if (!stateA || !stateB) {
+      cancelTrade(trade, "Trade canceled because server inventory could not be loaded.");
+      return;
+    }
+
+    const validation = validateFullTradeInventory(trade, stateA, stateB);
+    if (!validation.ok) {
+      cancelTrade(trade, validation.message);
+      return;
+    }
+
     const tradeResult = await postgresStore.applyTradeFinalizationTransaction({
       requester_username: trade.requester_username,
       target_username: trade.target_username,
@@ -4334,6 +5092,7 @@ async function executeTrade(trade) {
     sendTradeChat(trade.target_id, "Trade completed.");
     clearTrade(trade);
   } finally {
+    releasePlayerInventoryLocks(inventoryLocks);
     trade._finalizing = false;
   }
 }
@@ -4961,6 +5720,22 @@ function sendVendStateUpdateToWorld(worldName, vend) {
   });
 }
 
+function sendVendPurchaseSoundToRequesterAndWorld(socket, player, worldName, vend) {
+  if (!vend) return;
+
+  const x = Math.trunc(Number(vend.x));
+  const y = Math.trunc(Number(vend.y));
+  if (!isGridInWorld(x, y)) return;
+
+  sendWorldUpdateToRequesterAndWorld(socket, player, worldName, {
+    type: "world_interaction_update",
+    action: "vend_purchase_sound",
+    x,
+    y,
+    world: cleanWorld(worldName),
+  });
+}
+
 function validateVendAccess(socket, player, data, worldName, grid) {
   if (!grid) {
     sendInventoryTransactionRejected(socket, data, "Vending machine position is missing.");
@@ -5008,6 +5783,7 @@ async function handleVendingTransaction(socket, player, data) {
   const action = String(data.action || "").trim();
   const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "use that vending machine")) return;
+  if (await rejectIfWorldBanned(socket, player, worldName, "vending")) return;
 
   const grid = getTransactionGrid(data);
   if (!validateVendAccess(socket, player, data, worldName, grid)) return;
@@ -5052,6 +5828,17 @@ async function handleVendingTransaction(socket, player, data) {
   rejectVendTransaction(socket, data, "Unknown vending action.");
 }
 
+async function acquireVendMutationLock(socket, player, data, worldName, vend) {
+  const vendActionKey = `${worldName}:${vend.x},${vend.y}`;
+  const vendLock = await acquireLiveActionLock(worldVendActionLocks, "vend", vendActionKey, player.id);
+  if (!vendLock.acquired) {
+    rejectVendTransaction(socket, data, "That vending machine is busy.");
+    return null;
+  }
+
+  return vendLock;
+}
+
 async function handleVendSetListing(socket, player, data, worldName, vend) {
   const hasOwner = accountKey(vend.owner_username || "") !== "";
   if (!hasOwner && !canPlayerPlaceVendingMachine(player, worldName)) {
@@ -5074,6 +5861,10 @@ async function handleVendSetListing(socket, player, data, worldName, vend) {
     return;
   }
 
+  const vendLock = await acquireVendMutationLock(socket, player, data, worldName, vend);
+  if (!vendLock) return;
+
+  try {
   const itemId = clampString(data.item_id || data.item_type || "");
   const itemCategory = resolveInventoryCategory(itemId, data.item_category || data.category || "");
   const stock = clampInteger(data.stock || data.amount || 0, 1, ItemDatabase.getStackLimit(itemId));
@@ -5173,6 +5964,9 @@ async function handleVendSetListing(socket, player, data, worldName, vend) {
   }, { skipPostgres: commit.postgres_committed });
   sendVendStateUpdateToWorld(worldName, savedVend);
   sendVendTransactionResult(socket, data, player, savedVend, true, "Vending machine listing saved.", committedState);
+  } finally {
+    releaseLiveActionLock(vendLock);
+  }
 }
 
 async function handleVendBuy(socket, player, data, worldName, vend) {
@@ -5225,7 +6019,17 @@ async function handleVendBuy(socket, player, data, worldName, vend) {
     return;
   }
 
+  let inventoryLocks = null;
   try {
+    inventoryLocks = await acquirePlayerInventoryLocks(
+      [player.account_username, vend.owner_username],
+      `vend:${worldName}:${vend.x},${vend.y}`
+    );
+    if (!inventoryLocks.acquired) {
+      rejectVendTransaction(socket, data, "An inventory is busy. Try again.");
+      return;
+    }
+
     const vendTransactionId = makeAuditId("vend");
     const originalVend = cloneJson(vend);
     const transaction = await postgresStore.applyVendBuyTransaction({
@@ -5348,8 +6152,10 @@ async function handleVendBuy(socket, player, data, worldName, vend) {
       owner_username: vend.owner_username,
     }, { skipPostgres: true });
     sendVendStateUpdateToWorld(worldName, savedVend);
+    sendVendPurchaseSoundToRequesterAndWorld(socket, player, worldName, savedVend);
     sendVendTransactionResult(socket, data, player, savedVend, true, "Purchase complete.", buyerState);
   } finally {
+    releasePlayerInventoryLocks(inventoryLocks);
     releaseLiveActionLock(vendLock);
   }
 }
@@ -5366,6 +6172,10 @@ async function handleVendCollect(socket, player, data, worldName, vend) {
     return;
   }
 
+  const vendLock = await acquireVendMutationLock(socket, player, data, worldName, vend);
+  if (!vendLock) return;
+
+  try {
   const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     rejectVendTransaction(socket, data, "Could not load your server inventory.");
@@ -5427,6 +6237,9 @@ async function handleVendCollect(socket, player, data, worldName, vend) {
   }, { skipPostgres: commit.postgres_committed });
   sendVendStateUpdateToWorld(worldName, savedVend);
   sendVendTransactionResult(socket, data, player, savedVend, true, `Collected ${pendingWls} World Locks.`, committedState);
+  } finally {
+    releaseLiveActionLock(vendLock);
+  }
 }
 
 async function handleVendCancel(socket, player, data, worldName, vend) {
@@ -5441,6 +6254,10 @@ async function handleVendCancel(socket, player, data, worldName, vend) {
   }
 
   const listing = vend.listing;
+  const vendLock = await acquireVendMutationLock(socket, player, data, worldName, vend);
+  if (!vendLock) return;
+
+  try {
   const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     rejectVendTransaction(socket, data, "Could not load your server inventory.");
@@ -5515,6 +6332,9 @@ async function handleVendCancel(socket, player, data, worldName, vend) {
   }, { skipPostgres: commit.postgres_committed });
   sendVendStateUpdateToWorld(worldName, savedVend);
   sendVendTransactionResult(socket, data, player, savedVend, true, "Vending listing canceled.", committedState);
+  } finally {
+    releaseLiveActionLock(vendLock);
+  }
 }
 
 function isSafeBlockType(blockType) {
@@ -5705,6 +6525,7 @@ async function handleSafeTransaction(socket, player, data) {
   const action = String(data.action || "").trim();
   const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "use that safe")) return;
+  if (await rejectIfWorldBanned(socket, player, worldName, "safe")) return;
 
   const grid = getTransactionGrid(data);
   if (!validateSafeAccess(socket, player, data, worldName, grid)) return;
@@ -5762,6 +6583,17 @@ function findSafeMergeSlot(safe, itemId, itemCategory, amount) {
   return -1;
 }
 
+async function acquireSafeMutationLock(socket, player, data, worldName, safe) {
+  const safeActionKey = `${worldName}:${safe.x},${safe.y}`;
+  const safeLock = await acquireLiveActionLock(worldSafeActionLocks, "safe", safeActionKey, player.id);
+  if (!safeLock.acquired) {
+    rejectSafeTransaction(socket, data, "That safe is busy.");
+    return null;
+  }
+
+  return safeLock;
+}
+
 async function handleSafeDeposit(socket, player, data, worldName, safe) {
   const itemId = clampString(data.item_id || data.item_type || "");
   const itemCategory = resolveInventoryCategory(itemId, data.item_category || data.category || "");
@@ -5778,6 +6610,10 @@ async function handleSafeDeposit(socket, player, data, worldName, safe) {
     return;
   }
 
+  const safeLock = await acquireSafeMutationLock(socket, player, data, worldName, safe);
+  if (!safeLock) return;
+
+  try {
   const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     rejectSafeTransaction(socket, data, "Could not load your server inventory.");
@@ -5843,10 +6679,18 @@ async function handleSafeDeposit(socket, player, data, worldName, safe) {
   }, { skipPostgres: commit.postgres_committed });
   sendSafeStateUpdateToWorld(worldName, savedSafe);
   sendSafeTransactionResult(socket, data, player, savedSafe, true, `Stored ${itemId} x${amount}.`, committedState);
+  } finally {
+    releaseLiveActionLock(safeLock);
+  }
 }
 
 async function handleSafeWithdraw(socket, player, data, worldName, safe) {
   const slotIndex = clampInteger(data.slot_index || data.slot || 0, 0, SAFE_SLOT_COUNT - 1);
+
+  const safeLock = await acquireSafeMutationLock(socket, player, data, worldName, safe);
+  if (!safeLock) return;
+
+  try {
   if (slotIndex < 0 || slotIndex >= safe.slots.length) {
     rejectSafeTransaction(socket, data, "That safe slot is empty.");
     return;
@@ -5925,6 +6769,9 @@ async function handleSafeWithdraw(socket, player, data, worldName, safe) {
   }, { skipPostgres: commit.postgres_committed });
   sendSafeStateUpdateToWorld(worldName, savedSafe);
   sendSafeTransactionResult(socket, data, player, savedSafe, true, `Withdrew ${slot.item_id} x${amount}.`, committedState);
+  } finally {
+    releaseLiveActionLock(safeLock);
+  }
 }
 
 async function prepareSafeBreakInventoryReturn(socket, player, worldName, update) {
@@ -6074,6 +6921,7 @@ async function handleStationRecipeTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
   const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "use that station")) return;
+  if (await rejectIfWorldBanned(socket, player, worldName, "station_recipe")) return;
 
   const stationId = getStationIdForTransaction(data);
   const recipeId = clampString(data.recipe_id || data.id || "");
@@ -6108,14 +6956,14 @@ async function handleStationRecipeTransaction(socket, player, data) {
   const beforeState = cloneJson(state);
   const stagedState = cloneJson(state);
   for (const cost of costs) {
-    if (getInventoryCount(stagedState, cost.item_id, cost.item_category) < cost.amount) {
+    if (getCraftingCostInventoryCount(stagedState, cost.item_id, cost.item_category) < cost.amount) {
       sendInventoryTransactionRejected(socket, data, `Not enough ${cost.item_id}.`);
       return;
     }
   }
 
   for (const cost of costs) {
-    if (!spendItemFromState(stagedState, cost.item_id, cost.item_category, cost.amount)) {
+    if (!spendCraftingCostFromState(stagedState, cost.item_id, cost.item_category, cost.amount)) {
       sendInventoryTransactionRejected(socket, data, "Server inventory changed. Try again.");
       return;
     }
@@ -6173,14 +7021,14 @@ function validateFishingTarget(socket, player, worldName, grid, data) {
     return false;
   }
 
-  if (!isPlayerNearGrid(player, grid.x, grid.y, MAX_GRID_ACTION_DISTANCE_PIXELS)) {
-    sendInventoryTransactionRejected(socket, data, "Water is too far away.");
+  if (!isPlayerNearGrid(player, grid.x, grid.y, MAX_FISHING_CAST_DISTANCE_PIXELS)) {
+    sendInventoryTransactionRejected(socket, data, "Water must be within 4 tiles.");
     return false;
   }
 
   const worldState = ensureWorldState(worldName);
   const serverBlock = worldState.foreground.get(gridKey(grid.x, grid.y));
-  if (serverBlock && String(serverBlock.block_type || "") !== "water") {
+  if (!serverBlock || String(serverBlock.block_type || "") !== "water") {
     sendInventoryTransactionRejected(socket, data, "Cast the fishing rod on water.");
     return false;
   }
@@ -6192,11 +7040,16 @@ function rollFishingReward(lureId, rodId = "") {
   const entry = rollWeightedReward(ItemDatabase.getFishingTable(lureId, { rod_id: rodId }));
   if (!entry) return null;
 
-  const fishId = clampString(entry.fish_id || "");
-  if (!ItemDatabase.hasItem(fishId) || resolveInventoryCategory(fishId) !== "fish") return null;
+  const itemId = clampString(entry.item_id || entry.fish_id || "");
+  if (!ItemDatabase.hasItem(itemId)) return null;
+
+  const itemCategory = resolveInventoryCategory(itemId, entry.item_category || entry.category || (entry.fish_id ? "fish" : ""));
+  if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) return null;
 
   return {
-    fish_id: fishId,
+    item_id: itemId,
+    item_category: itemCategory,
+    fish_id: itemCategory === "fish" ? itemId : "",
     difficulty: clampInteger(entry.difficulty || 1, 1, 10),
   };
 }
@@ -6204,6 +7057,39 @@ function rollFishingReward(lureId, rodId = "") {
 function getFishingServerCatchChance(difficulty) {
   const safeDifficulty = clampInteger(difficulty || 1, 1, 10);
   return Math.max(0.7, Math.min(0.98, 1.02 - safeDifficulty * 0.035));
+}
+
+function getFishingRewardFxRarity(itemId) {
+  const definition = ItemDatabase.getItemDefinition(itemId);
+  return String(definition?.rarity || "common").trim().toLowerCase();
+}
+
+function isFishingRewardConfettiRarity(rarity) {
+  return rarity === "epic" || rarity === "legendary";
+}
+
+function buildFishingRewardFxPayload(player, session, rewardItemId, rewardCategory) {
+  const rarity = getFishingRewardFxRarity(rewardItemId);
+  if (!isFishingRewardConfettiRarity(rarity)) return null;
+
+  const playerX = Number(player?.x);
+  const playerY = Number(player?.y);
+  const targetX = Number(session?.target_x);
+  const targetY = Number(session?.target_y);
+
+  return {
+    type: "fishing_reward_fx",
+    action: "fishing_reward",
+    world: String(session?.world || player?.world || ""),
+    player_id: String(player?.id || ""),
+    ...getPublicPlayerIdentity(player),
+    x: Number.isFinite(playerX) ? playerX : (Number.isFinite(targetX) ? targetX * TILE_SIZE : 0),
+    y: Number.isFinite(playerY) ? playerY : (Number.isFinite(targetY) ? targetY * TILE_SIZE : 0),
+    item_id: clampString(rewardItemId || ""),
+    item_category: resolveInventoryCategory(rewardItemId, rewardCategory || ""),
+    fish_id: clampString(session?.fish_id || ""),
+    rarity,
+  };
 }
 
 function resolveFishingRodForTransaction(player, state, data = {}) {
@@ -6238,6 +7124,7 @@ async function handleFishingStartTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
   const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "fish in that world")) return;
+  if (await rejectIfWorldBanned(socket, player, worldName, "fishing_start")) return;
 
   if (activeFishingSessions.has(player.id)) {
     sendInventoryTransactionRejected(socket, data, "Finish your current cast first.");
@@ -6307,12 +7194,16 @@ async function handleFishingStartTransaction(socket, player, data) {
     world: worldName,
     rod_id: rodId,
     lure_id: lureId,
+    item_id: reward.item_id,
+    item_category: reward.item_category,
     fish_id: reward.fish_id,
     difficulty: reward.difficulty,
     target_x: grid.x,
     target_y: grid.y,
     expires_at: Date.now() + FISHING_SESSION_TTL_MS,
   });
+  applyPlayerFishingPresenceFromSession(player, activeFishingSessions.get(player.id));
+  broadcastToWorld(worldName, buildPublicPlayerPresencePayload("player_position", player, worldName), player.id);
 
   sendInventoryTransactionResult(socket, {
     ok: true,
@@ -6323,6 +7214,8 @@ async function handleFishingStartTransaction(socket, player, data) {
     rod_id: rodId,
     lure_id: lureId,
     session_id: sessionId,
+    item_id: reward.item_id,
+    item_category: reward.item_category,
     fish_id: reward.fish_id,
     difficulty: reward.difficulty,
     target_x: grid.x,
@@ -6346,11 +7239,15 @@ async function handleFishingCompleteTransaction(socket, player, data) {
   }
 
   activeFishingSessions.delete(player.id);
+  clearPlayerFishingPresence(player);
+  broadcastToWorld(session.world, buildPublicPlayerPresencePayload("player_position", player, session.world), player.id);
 
   if (Date.now() > session.expires_at || player.world !== session.world) {
     sendInventoryTransactionRejected(socket, data, "The fish got away.");
     return;
   }
+
+  if (await rejectIfWorldBanned(socket, player, session.world, "fishing_complete")) return;
 
   const success = Boolean(data.success) && randomChance(getFishingServerCatchChance(session.difficulty));
   if (!success) {
@@ -6358,9 +7255,11 @@ async function handleFishingCompleteTransaction(socket, player, data) {
       ok: true,
       request_id: requestId,
       action: "fishing_complete",
-      message: "The fish got away.",
+      message: "The catch got away.",
       username: player.account_username,
       fish_id: "",
+      item_id: "",
+      item_category: "",
       player_data: ensurePlayerState(player.account_username) || {},
     });
     return;
@@ -6374,14 +7273,18 @@ async function handleFishingCompleteTransaction(socket, player, data) {
 
   const beforeState = cloneJson(state);
   const stagedState = cloneJson(state);
-  if (!addItemToState(stagedState, session.fish_id, "fish", 1)) {
-    sendInventoryTransactionRejected(socket, data, "Could not save caught fish.");
+  const rewardItemId = clampString(session.item_id || session.fish_id || "");
+  const rewardCategory = resolveInventoryCategory(rewardItemId, session.item_category || (session.fish_id ? "fish" : ""));
+  if (!addItemToState(stagedState, rewardItemId, rewardCategory, 1)) {
+    sendInventoryTransactionRejected(socket, data, "Could not save fishing reward.");
     return;
   }
 
-  const progression = grantExperienceToState(stagedState, getFishingXp(session.fish_id, session.difficulty), "fishing_complete", {
+  const progression = grantExperienceToState(stagedState, getFishingXp(rewardItemId, session.difficulty), "fishing_complete", {
     world: session.world,
     rod_id: session.rod_id || "",
+    item_id: rewardItemId,
+    item_category: rewardCategory,
     fish_id: session.fish_id,
     lure_id: session.lure_id,
     difficulty: session.difficulty,
@@ -6397,37 +7300,53 @@ async function handleFishingCompleteTransaction(socket, player, data) {
       transaction_id: session.session_id,
       rod_id: session.rod_id || "",
       lure_id: session.lure_id,
+      item_id: rewardItemId,
+      item_category: rewardCategory,
+      fish_id: session.fish_id,
       difficulty: session.difficulty,
       target_x: session.target_x,
       target_y: session.target_y,
     },
-    failure_message: "Could not save caught fish.",
+    failure_message: "Could not save fishing reward.",
   });
   if (!commit.ok) {
     sendInventoryTransactionRejected(socket, data, commit.message);
     return;
   }
   const committedState = commit.state;
-  logItemLedgerForState(socket, player, player.account_username, committedState, session.fish_id, "fish", 1, "fishing_complete", session.session_id, "fishing_reward", session.world, {
+  logItemLedgerForState(socket, player, player.account_username, committedState, rewardItemId, rewardCategory, 1, "fishing_complete", session.session_id, "fishing_reward", session.world, {
     rod_id: session.rod_id || "",
     lure_id: session.lure_id,
+    fish_id: session.fish_id,
     difficulty: session.difficulty,
     target_x: session.target_x,
     target_y: session.target_y,
   }, { skipPostgres: commit.postgres_committed });
 
+  const rewardFxPayload = buildFishingRewardFxPayload(player, session, rewardItemId, rewardCategory);
+  const rewardFxSent = Boolean(rewardFxPayload);
+
   sendInventoryTransactionResult(socket, {
     ok: true,
     request_id: requestId,
     action: "fishing_complete",
-    message: getProgressionMessage(progression, `Caught ${session.fish_id}.`),
+    message: getProgressionMessage(progression, `Caught ${rewardItemId}.`),
     username: player.account_username,
     rod_id: session.rod_id || "",
+    lure_id: session.lure_id,
+    item_id: rewardItemId,
+    item_category: rewardCategory,
     fish_id: session.fish_id,
-    rewards: [{ item_id: session.fish_id, item_category: "fish", amount: 1 }],
+    rarity: getFishingRewardFxRarity(rewardItemId),
+    reward_fx_sent: rewardFxSent,
+    rewards: [{ item_id: rewardItemId, item_category: rewardCategory, amount: 1 }],
     progression: buildProgressionPayload(progression),
     player_data: committedState,
   });
+
+  if (rewardFxPayload) {
+    sendWorldUpdateToRequesterAndWorld(socket, player, session.world, rewardFxPayload);
+  }
 }
 
 function isSellableFishItem(itemId) {
@@ -6488,6 +7407,7 @@ async function handleFishMongerTransaction(socket, player, data) {
     sendInventoryTransactionRejected(socket, data, "Join that world before selling fish.");
     return;
   }
+  if (await rejectIfWorldBanned(socket, player, worldName, "fish_monger")) return;
 
   const grid = getTransactionGrid(data);
   const fishMongerGrid = validateFishMongerAccess(socket, player, data, worldName, grid);
@@ -6682,6 +7602,7 @@ async function handleDropInventoryItemTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
   const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "drop items in that world")) return;
+  if (await rejectIfWorldBanned(socket, player, worldName, "drop_inventory_item")) return;
 
   if (tradeByPlayerId.has(player.id)) {
     sendInventoryTransactionRejected(socket, data, "Finish or cancel your trade before dropping items.");
@@ -6960,6 +7881,15 @@ function getSeedGrowthRemaining(seed) {
   return Math.max(0, maxGrowTime - elapsed);
 }
 
+function getSeedConfiguredGrowTime(seedType) {
+  const definition = ItemDatabase.getItemDefinition(seedType);
+  const configured = Number(definition?.max_grow_time || definition?.grow_time || 0);
+  if (Number.isFinite(configured) && configured > 0) {
+    return Math.max(1, Math.min(86400, configured));
+  }
+  return SERVER_SEED_GROW_TIME_SECONDS;
+}
+
 function isSeedMature(seed) {
   return getSeedGrowthRemaining(seed) <= 0;
 }
@@ -6979,12 +7909,13 @@ function serializeSeedForMessage(seed) {
 }
 
 function makeServerSeedEntry(x, y, seedType) {
+  const maxGrowTime = getSeedConfiguredGrowTime(seedType);
   return {
     x,
     y,
     seed_type: seedType,
-    grow_time: SERVER_SEED_GROW_TIME_SECONDS,
-    max_grow_time: SERVER_SEED_GROW_TIME_SECONDS,
+    grow_time: maxGrowTime,
+    max_grow_time: maxGrowTime,
     planted_at: Date.now(),
     mutated: randomChance(SEED_MUTATION_CHANCE),
   };
@@ -6994,6 +7925,7 @@ async function handleSeedPlaceTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
   const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "plant seeds in that world")) return;
+  if (await rejectIfWorldBanned(socket, player, worldName, "seed_place")) return;
   if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) return;
 
   const grid = getTransactionGrid(data);
@@ -7033,14 +7965,15 @@ async function handleSeedPlaceTransaction(socket, player, data) {
     return;
   }
 
+  const seedGrowTime = getSeedConfiguredGrowTime(seedType);
   const update = {
     type: "world_seed_update",
     action: "place",
     x: grid.x,
     y: grid.y,
     seed_type: seedType,
-    grow_time: SERVER_SEED_GROW_TIME_SECONDS,
-    max_grow_time: SERVER_SEED_GROW_TIME_SECONDS,
+    grow_time: seedGrowTime,
+    max_grow_time: seedGrowTime,
     world: worldName,
   };
 
@@ -7109,6 +8042,7 @@ async function handleSeedSpliceTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
   const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "splice seeds in that world")) return;
+  if (await rejectIfWorldBanned(socket, player, worldName, "seed_splice")) return;
   if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) return;
 
   const grid = getTransactionGrid(data);
@@ -7155,6 +8089,7 @@ async function handleSeedSpliceTransaction(socket, player, data) {
     return;
   }
 
+  const seedGrowTime = getSeedConfiguredGrowTime(resultSeed);
   const update = {
     type: "world_seed_update",
     action: "splice",
@@ -7162,8 +8097,8 @@ async function handleSeedSpliceTransaction(socket, player, data) {
     y: grid.y,
     seed_type: resultSeed,
     previous_seed_type: seed.seed_type,
-    grow_time: SERVER_SEED_GROW_TIME_SECONDS,
-    max_grow_time: SERVER_SEED_GROW_TIME_SECONDS,
+    grow_time: seedGrowTime,
+    max_grow_time: seedGrowTime,
     world: worldName,
   };
 
@@ -7209,6 +8144,7 @@ async function handleSeedHarvestTransaction(socket, player, data) {
   const requestId = makeRequestId(data);
   const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "harvest seeds in that world")) return;
+  if (await rejectIfWorldBanned(socket, player, worldName, "seed_harvest")) return;
   if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) return;
 
   const grid = getTransactionGrid(data);
@@ -7246,10 +8182,22 @@ async function handleSeedHarvestTransaction(socket, player, data) {
     } else {
       const blockType = getBlockTypeForSeed(seed.seed_type);
       if (blockType !== "") {
-        drops.push({ item_id: blockType, item_category: "block", amount: 1, y_offset: 0 });
-      }
-      if (randomChance(MATURE_SEED_EXTRA_DROP_CHANCE)) {
-        drops.push({ item_id: seed.seed_type, item_category: "seed", amount: 1, y_offset: -8 });
+        const configuredTreeDrops = getTreeHarvestDropsForBlock(blockType);
+        if (Array.isArray(configuredTreeDrops)) {
+          for (const drop of configuredTreeDrops) {
+            drops.push({
+              item_id: drop.item_id,
+              item_category: drop.item_category,
+              amount: drop.amount,
+              y_offset: drop.item_category === "seed" ? -8 : 0,
+            });
+          }
+        } else {
+          drops.push({ item_id: blockType, item_category: "block", amount: 1, y_offset: 0 });
+          if (randomChance(MATURE_SEED_EXTRA_DROP_CHANCE)) {
+            drops.push({ item_id: seed.seed_type, item_category: "seed", amount: 1, y_offset: -8 });
+          }
+        }
       }
     }
   } else {
@@ -7394,54 +8342,141 @@ function getRateLimitSubject(socket, player) {
   return `socket:${socket?.playerId || "unknown"}`;
 }
 
-function notifyRateLimited(socket, bucketKey) {
+function notifyRateLimited(socket, bucketKey, data = null) {
   const now = Date.now();
+  if (bucketKey === "developer_command_request") {
+    sendDeveloperDenied(
+      socket,
+      makeRequestId(data || {}),
+      String(data?.command || "").trim(),
+      "Developer command rate limited. Slow down a little.",
+      { reason: "rate_limited" }
+    );
+    return;
+  }
+
   if (!socket.rateLimitWarnings) socket.rateLimitWarnings = new Map();
   const lastWarnedAt = socket.rateLimitWarnings.get(bucketKey) || 0;
   if (now - lastWarnedAt <= 1000 || socket.readyState !== WebSocket.OPEN) return;
 
   socket.rateLimitWarnings.set(bucketKey, now);
-  socket.send(JSON.stringify({
+  sendJson(socket, {
     type: "rate_limited",
     action: bucketKey,
     message: "Slow down a little.",
-  }));
+  });
 }
 
-async function checkMessageRateLimit(socket, player, messageType) {
-  const limits = MESSAGE_RATE_LIMITS[messageType] || { limit: 60, windowMs: 1000 };
+function logRateLimitSecurityEvent(socket, player, scope, bucketKey, limits, result = {}, data = null) {
   const now = Date.now();
-  const bucketKey = messageType || "unknown";
+  const key = `${scope}:${bucketKey}`;
+  if (!socket.rateLimitSecurityWarnings) socket.rateLimitSecurityWarnings = new Map();
+  const lastLoggedAt = socket.rateLimitSecurityWarnings.get(key) || 0;
+  if (now - lastLoggedAt < BOT_RATE_LIMIT_SECURITY_LOG_WINDOW_MS) return;
+  socket.rateLimitSecurityWarnings.set(key, now);
+
+  logSecurityEvent(socket, player, "rate_limit_exceeded", {
+    scope,
+    bucket: bucketKey,
+    message_type: String(data?.type || ""),
+    action: String(data?.action || ""),
+    request_id: makeRequestId(data || {}),
+    world: cleanWorld(data?.world || player?.world || ""),
+    limit: Number(limits?.limit || 0),
+    window_ms: Number(limits?.windowMs || 0),
+    observed_count: Number(result?.count || 0),
+    retry_ms: Math.max(0, Math.trunc(Number(result?.resetInMs) || 0)),
+    redis_fallback: Boolean(result?.fallback),
+    subject: getRateLimitSubject(socket, player),
+  }, scope === "bot" ? "warning" : "info");
+}
+
+async function consumeScopedRateLimit(socket, player, scope, bucketKey, limits, data = null, options = {}) {
+  const safeLimits = {
+    limit: Math.max(1, Math.trunc(Number(limits?.limit) || 60)),
+    windowMs: Math.max(100, Math.trunc(Number(limits?.windowMs) || 1000)),
+  };
+  const cleanScope = String(scope || "message").trim().toLowerCase() || "message";
+  const cleanBucketKey = String(bucketKey || "unknown").trim().toLowerCase() || "unknown";
 
   if (redisStore.isReady()) {
     const subject = getRateLimitSubject(socket, player);
-    const result = await redisStore.checkRateLimit(`message:${bucketKey}`, subject, limits.limit, limits.windowMs);
+    const result = await redisStore.checkRateLimit(`${cleanScope}:${cleanBucketKey}`, subject, safeLimits.limit, safeLimits.windowMs);
     if (result.allowed) {
       return true;
     }
-    notifyRateLimited(socket, bucketKey);
+    notifyRateLimited(socket, cleanBucketKey, data);
+    if (options.logSecurityEvent) {
+      logRateLimitSecurityEvent(socket, player, cleanScope, cleanBucketKey, safeLimits, result, data);
+    }
     return false;
   }
 
-  const bucket = socket.rateLimits.get(bucketKey) || {
+  const now = Date.now();
+  const localBucketKey = `${cleanScope}:${cleanBucketKey}`;
+  const bucket = socket.rateLimits.get(localBucketKey) || {
     count: 0,
-    resetAt: now + limits.windowMs,
+    resetAt: now + safeLimits.windowMs,
   };
 
   if (now >= bucket.resetAt) {
     bucket.count = 0;
-    bucket.resetAt = now + limits.windowMs;
+    bucket.resetAt = now + safeLimits.windowMs;
   }
 
   bucket.count += 1;
-  socket.rateLimits.set(bucketKey, bucket);
+  socket.rateLimits.set(localBucketKey, bucket);
 
-  if (bucket.count <= limits.limit) {
+  if (bucket.count <= safeLimits.limit) {
     return true;
   }
 
-  notifyRateLimited(socket, bucketKey);
+  notifyRateLimited(socket, cleanBucketKey, data);
+  if (options.logSecurityEvent) {
+    logRateLimitSecurityEvent(socket, player, cleanScope, cleanBucketKey, safeLimits, {
+      allowed: false,
+      fallback: true,
+      count: bucket.count,
+      resetInMs: Math.max(0, bucket.resetAt - now),
+    }, data);
+  }
   return false;
+}
+
+async function checkMessageRateLimit(socket, player, messageType, data = null) {
+  const bucketKey = String(messageType || "unknown").trim().toLowerCase() || "unknown";
+  const limits = MESSAGE_RATE_LIMITS[bucketKey] || { limit: 60, windowMs: 1000 };
+  return consumeScopedRateLimit(socket, player, "message", bucketKey, limits, data);
+}
+
+function getBotRateLimitAction(messageType, data = {}) {
+  const type = String(messageType || "").trim().toLowerCase();
+  const action = String(data?.action || "").trim().toLowerCase();
+
+  if (type === "world_block_update") {
+    if (action === "place") return "block_place";
+    if (action === "break" || action === "hit") return "block_break";
+    return "";
+  }
+
+  if (type === "world_item_drop_pickup" || type === "world_drop_pickup") return "pickup_attempt";
+  if (type === "chat") return "chat_message";
+  if (type === "player_punch") return "player_punch";
+  if (type === "trade_request") return "trade_request";
+  if (type === "join_world") return "world_join";
+  if (type === "inventory_transaction_request" && action === "vend_buy") return "vending_purchase";
+
+  return "";
+}
+
+async function checkBotActionRateLimit(socket, player, messageType, data = null) {
+  const actionKey = getBotRateLimitAction(messageType, data || {});
+  if (actionKey === "") return true;
+  const limits = BOT_RATE_LIMITS[actionKey];
+  if (!limits) return true;
+  return consumeScopedRateLimit(socket, player, "bot", actionKey, limits, data, {
+    logSecurityEvent: true,
+  });
 }
 
 function shouldRecordFailedTransactionLedgerAction(action) {
@@ -7572,7 +8607,7 @@ function sendActionRejected(socket, action, message, extra = null) {
     }
   }
 
-  socket.send(JSON.stringify(payload));
+  sendJson(socket, payload);
 }
 
 function requireSameWorld(socket, player, worldName, action) {
@@ -7980,7 +9015,52 @@ function writeWorldStateJsonBackup(worldName, serialized = null) {
   const worldState = serialized && typeof serialized === "object" && !Array.isArray(serialized)
     ? serialized
     : serializeWorldState(clean);
-  writeJsonFileAtomic(getWorldSavePath(clean), worldState);
+  pendingWorldJsonBackups.set(clean, worldState);
+
+  const shouldDebounce = isPostgresAuthoritativeReady() && WORLD_JSON_BACKUP_DEBOUNCE_MS > 0;
+  if (!shouldDebounce) {
+    flushWorldStateJsonBackup(clean);
+    return;
+  }
+
+  const existingTimer = worldJsonBackupTimers.get(clean);
+  if (existingTimer) clearTimeout(existingTimer);
+
+  const timer = setTimeout(() => {
+    flushWorldStateJsonBackup(clean);
+  }, WORLD_JSON_BACKUP_DEBOUNCE_MS);
+  if (typeof timer.unref === "function") timer.unref();
+  worldJsonBackupTimers.set(clean, timer);
+}
+
+function flushWorldStateJsonBackup(worldName, options = {}) {
+  const clean = cleanWorld(worldName);
+  const timer = worldJsonBackupTimers.get(clean);
+  if (timer) {
+    clearTimeout(timer);
+    worldJsonBackupTimers.delete(clean);
+  }
+
+  const worldState = pendingWorldJsonBackups.get(clean);
+  if (!worldState) return;
+  pendingWorldJsonBackups.delete(clean);
+
+  if (options.sync === true) {
+    writeJsonFileAtomic(getWorldSavePath(clean), worldState);
+    return;
+  }
+
+  trackPersistenceWrite(writeJsonFileAtomicAsync(getWorldSavePath(clean), worldState), `world JSON backup ${clean}`);
+}
+
+function flushWorldStateJsonBackups(options = {}) {
+  const worlds = new Set([
+    ...worldJsonBackupTimers.keys(),
+    ...pendingWorldJsonBackups.keys(),
+  ]);
+  for (const worldName of worlds) {
+    flushWorldStateJsonBackup(worldName, options);
+  }
 }
 
 function persistWorldStateAfterInventoryCommit(worldName, postgresCommitted, serialized = null) {
@@ -8030,6 +9110,15 @@ async function commitPlayerInventoryState(socket, player, username, beforeState,
     return { ok: false, message: "Could not load your server inventory." };
   }
 
+  let inventoryLock = null;
+  if (options.skip_inventory_lock !== true) {
+    inventoryLock = await acquirePlayerInventoryLocks([cleanUsername], options.inventory_lock_owner || options.action || "inventory_commit");
+    if (!inventoryLock.acquired) {
+      return { ok: false, reason: "inventory_locked", message: "Your inventory is busy. Try again." };
+    }
+  }
+
+  try {
   afterState.saved_at = new Date().toISOString();
   const deltas = buildInventoryDeltasBetweenStates(beforeState || {}, afterState);
 
@@ -8086,6 +9175,9 @@ async function commitPlayerInventoryState(socket, player, username, beforeState,
   }
 
   return { ok: true, state: persistPlayerInventoryChange(cleanUsername, afterState), postgres_committed: false, deltas };
+  } finally {
+    releasePlayerInventoryLocks(inventoryLock);
+  }
 }
 
 function persistPlayerInventoryChange(username, state, options = {}) {
@@ -8224,11 +9316,12 @@ function applyServerBlockDamage(player, worldName, update) {
   const key = makeBlockDamageKey(worldName, update);
   const now = Date.now();
   const requiredDamage = ItemDatabase.getBlockHealth(update.block_type);
+  const hitPower = getPlayerBreakPower(player, update.block_type);
   const previous = blockDamage.get(key);
   const currentDamage = previous && now - previous.updatedAt <= BLOCK_DAMAGE_RESET_MS
     ? Math.max(0, Math.trunc(Number(previous.damage) || 0))
     : 0;
-  const nextDamage = Math.min(requiredDamage, currentDamage + getPlayerBreakPower(player, update.block_type));
+  const nextDamage = Math.min(requiredDamage, currentDamage + hitPower);
 
   if (nextDamage < requiredDamage) {
     blockDamage.set(key, {
@@ -8240,6 +9333,7 @@ function applyServerBlockDamage(player, worldName, update) {
       shouldBreak: false,
       damage: nextDamage,
       required: requiredDamage,
+      hitPower,
     };
   }
 
@@ -8249,6 +9343,7 @@ function applyServerBlockDamage(player, worldName, update) {
     shouldBreak: true,
     damage: requiredDamage,
     required: requiredDamage,
+    hitPower,
   };
 }
 
@@ -8344,6 +9439,94 @@ function createServerDrop(worldName, itemType, itemCategory, amount, x, y, picku
   return payload;
 }
 
+function getFixedBreakDropAmount(fixedDrop) {
+  if (!fixedDrop || typeof fixedDrop !== "object") return 0;
+
+  const amountRange = Array.isArray(fixedDrop.amount_range)
+    ? fixedDrop.amount_range
+    : (Array.isArray(fixedDrop.amountRange) ? fixedDrop.amountRange : null);
+  if (amountRange && amountRange.length >= 2) {
+    const minAmount = clampInteger(amountRange[0], 0, MAX_DROP_TILE_AMOUNT);
+    const maxAmount = clampInteger(amountRange[1], minAmount, MAX_DROP_TILE_AMOUNT);
+    return randomRangeInclusive(Math.min(minAmount, maxAmount), Math.max(minAmount, maxAmount));
+  }
+
+  return clampInteger(fixedDrop.amount || 1, 1, MAX_DROP_TILE_AMOUNT);
+}
+
+function getBreakDropFromRuleEntry(ruleEntry) {
+  if (!ruleEntry || typeof ruleEntry !== "object") return null;
+
+  const dropItemId = clampString(ruleEntry.item_id || ruleEntry.item_type || "");
+  if (dropItemId === "" || !ItemDatabase.hasItem(dropItemId)) return null;
+
+  const dropCategory = resolveInventoryCategory(dropItemId, ruleEntry.item_category || ruleEntry.category || "");
+  if (!ItemDatabase.canStoreItemInCategory(dropItemId, dropCategory)) return null;
+
+  const amount = getFixedBreakDropAmount(ruleEntry);
+  if (amount <= 0) return null;
+
+  return {
+    item_id: dropItemId,
+    item_category: dropCategory,
+    amount,
+  };
+}
+
+function rollWeightedBreakDrop(lootTable) {
+  if (!Array.isArray(lootTable)) return null;
+
+  const candidates = [];
+  let totalWeight = 0;
+  for (const entry of lootTable) {
+    if (!entry || typeof entry !== "object") continue;
+    const drop = getBreakDropFromRuleEntry(entry);
+    if (!drop) continue;
+
+    const weight = Math.max(0, Number(entry.weight) || 0);
+    if (weight <= 0) continue;
+
+    totalWeight += weight;
+    candidates.push({ drop, weight });
+  }
+
+  if (totalWeight <= 0 || candidates.length === 0) return null;
+
+  let roll = Math.random() * totalWeight;
+  for (const candidate of candidates) {
+    roll -= candidate.weight;
+    if (roll < 0) return candidate.drop;
+  }
+
+  return candidates[candidates.length - 1].drop;
+}
+
+function getConfiguredDropsFromRules(rules) {
+  if (!rules || typeof rules !== "object") return null;
+
+  const lootTable = Array.isArray(rules.loot_table)
+    ? rules.loot_table
+    : (Array.isArray(rules.weighted_drops) ? rules.weighted_drops : null);
+  if (lootTable) {
+    const weightedDrop = rollWeightedBreakDrop(lootTable);
+    return weightedDrop ? [weightedDrop] : [];
+  }
+
+  if (!Array.isArray(rules.fixed_drops)) return null;
+
+  const drops = [];
+  for (const fixedDrop of rules.fixed_drops) {
+    const chance = Object.prototype.hasOwnProperty.call(fixedDrop, "chance")
+      ? Math.max(0, Math.min(1, Number(fixedDrop.chance) || 0))
+      : 1;
+    if (Math.random() > chance) continue;
+
+    const drop = getBreakDropFromRuleEntry(fixedDrop);
+    if (drop) drops.push(drop);
+  }
+  return drops;
+}
+
 function getBreakDropsForBlock(blockType, layer) {
   const itemId = clampString(blockType || "");
   const definition = ItemDatabase.getItemDefinition(itemId);
@@ -8351,20 +9534,8 @@ function getBreakDropsForBlock(blockType, layer) {
 
   const drops = [];
   const rules = definition.drop_rules && typeof definition.drop_rules === "object" ? definition.drop_rules : {};
-  if (Array.isArray(rules.fixed_drops)) {
-    for (const fixedDrop of rules.fixed_drops) {
-      const dropItemId = clampString(fixedDrop?.item_id || fixedDrop?.item_type || "");
-      if (dropItemId === "" || !ItemDatabase.hasItem(dropItemId)) continue;
-      const dropCategory = resolveInventoryCategory(dropItemId, fixedDrop?.item_category || fixedDrop?.category || "");
-      if (!ItemDatabase.canStoreItemInCategory(dropItemId, dropCategory)) continue;
-      drops.push({
-        item_id: dropItemId,
-        item_category: dropCategory,
-        amount: clampInteger(fixedDrop?.amount || 1, 1, MAX_DROP_TILE_AMOUNT),
-      });
-    }
-    return drops;
-  }
+  const configuredDrops = getConfiguredDropsFromRules(rules);
+  if (configuredDrops) return configuredDrops;
 
   if (isVendBlockType(itemId)) {
     drops.push({ item_id: VEND_BLOCK_EMPTY, item_category: "block", amount: 1 });
@@ -8394,6 +9565,17 @@ function getBreakDropsForBlock(blockType, layer) {
   }
 
   return drops;
+}
+
+function getTreeHarvestDropsForBlock(blockType) {
+  const itemId = clampString(blockType || "");
+  const definition = ItemDatabase.getItemDefinition(itemId);
+  if (!definition || definition.category !== "block") return null;
+
+  const rules = definition.tree_drop_rules && typeof definition.tree_drop_rules === "object"
+    ? definition.tree_drop_rules
+    : (definition.harvest_drop_rules && typeof definition.harvest_drop_rules === "object" ? definition.harvest_drop_rules : null);
+  return getConfiguredDropsFromRules(rules);
 }
 
 function createBreakDrops(worldName, update) {
@@ -8641,11 +9823,12 @@ async function validateBlockUpdateAgainstServerState(socket, player, worldName, 
 
     const damageResult = applyServerBlockDamage(player, worldName, update);
     if (!damageResult.ok) return { ok: false };
+    update.hit_power = clampInteger(damageResult.hitPower || 1, 1, MAX_BLOCK_HIT_METRIC);
+    update.hit_count = clampInteger(damageResult.damage || 0, 0, MAX_BLOCK_HIT_METRIC);
+    update.max_hits = clampInteger(damageResult.required || 1, 1, MAX_BLOCK_HIT_METRIC);
+    update.damage_reset_ms = BLOCK_DAMAGE_RESET_MS;
     if (!damageResult.shouldBreak) {
-      if (update.action === "break") {
-        sendActionRejected(socket, "world_block_update", `Keep breaking that block (${damageResult.damage}/${damageResult.required}).`);
-        return { ok: false };
-      }
+      update.action = "hit";
       return { ok: true, pendingHit: true };
     }
 
@@ -8964,6 +10147,31 @@ function prepareSpringboardAnimationUpdate(socket, player, worldName, update) {
   return true;
 }
 
+function prepareEntrancePassUpdate(socket, player, worldName, update) {
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
+  if (!block || !isEntranceBlockType(block.block_type)) {
+    sendActionRejected(socket, "world_interaction_update", "Entrance missing.");
+    return false;
+  }
+
+  if (!isPlayerNearGrid(player, update.x, update.y)) {
+    sendActionRejected(socket, "world_interaction_update", "Too far away.");
+    return false;
+  }
+
+  const existing = state.interactions.get(gridKey(update.x, update.y)) || {};
+  const locked = Boolean(existing.locked || block.entrance_locked);
+  if (locked && !canPlayerPassWoodenEntrance(player, worldName)) {
+    sendActionRejected(socket, "world_interaction_update", "Entrance locked.");
+    return false;
+  }
+
+  update.block_type = block.block_type;
+  update.walk_direction = Number(update.walk_direction) < 0 ? -1 : 1;
+  return true;
+}
+
 function prepareWoodenEntranceStateUpdate(socket, player, worldName, update) {
   const state = ensureWorldState(worldName);
   const block = state.foreground.get(gridKey(update.x, update.y));
@@ -9135,6 +10343,7 @@ async function handleDoorEnterRequest(socket, player, data) {
   if (changedWorld) {
     cancelActiveTradeForPlayer(player.id, "Trade canceled because a player changed worlds.");
     activeFishingSessions.delete(player.id);
+    clearPlayerFishingPresence(player);
 
     if (player.joined_world) {
       broadcastSystemToWorld(oldWorld, `${player.name} left ${oldWorld}`, player.id);
@@ -9339,7 +10548,71 @@ function sanitizePlayerPosition(data, player) {
     y,
     facing: Number(data.facing) < 0 ? -1 : 1,
     world: cleanWorld(data.world || player.world || "START"),
+    in_water: data.in_water === true,
+    in_lava_fire: data.in_lava_fire === true,
   };
+}
+
+function sanitizePlayerDamageFlash(data) {
+  const remainingMs = clampInteger(data?.damage_flash_remaining_ms || 0, 0, MAX_DAMAGE_FLASH_MS);
+  const token = clampInteger(data?.damage_flash_token || 0, 0, 2147483647);
+  return {
+    active: data?.damage_flash_active === true && remainingMs > 0,
+    remaining_ms: remainingMs,
+    token,
+  };
+}
+
+function getPublicPlayerDamageFlash(player) {
+  const expiresAt = Number(player?.damage_flash_expires_at || 0);
+  const remainingMs = Math.max(0, Math.min(MAX_DAMAGE_FLASH_MS, Math.trunc(expiresAt - Date.now())));
+  return {
+    damage_flash_active: remainingMs > 0,
+    damage_flash_remaining_ms: remainingMs,
+    damage_flash_token: clampInteger(player?.damage_flash_token || 0, 0, 2147483647),
+  };
+}
+
+function clearPlayerFishingPresence(player) {
+  if (!player) return;
+  player.fishing_active = false;
+  player.fishing_target_x = -1;
+  player.fishing_target_y = -1;
+  player.fishing_lure_id = "";
+  player.fishing_rod_id = "";
+}
+
+function applyPlayerFishingPresenceFromSession(player, session) {
+  if (!player || !session) {
+    clearPlayerFishingPresence(player);
+    return false;
+  }
+
+  const targetX = Math.trunc(Number(session.target_x));
+  const targetY = Math.trunc(Number(session.target_y));
+  if (!isGridInWorld(targetX, targetY)) {
+    clearPlayerFishingPresence(player);
+    return false;
+  }
+
+  player.fishing_active = true;
+  player.fishing_target_x = targetX;
+  player.fishing_target_y = targetY;
+  player.fishing_lure_id = clampString(session.lure_id || "");
+  player.fishing_rod_id = clampString(session.rod_id || "");
+  return true;
+}
+
+function refreshPlayerFishingPresence(player, worldName = "") {
+  if (!player) return false;
+  const session = activeFishingSessions.get(player.id);
+  const clean = cleanWorld(worldName || player.world || "START");
+  if (!session || session.world !== clean || Date.now() > Number(session.expires_at || 0)) {
+    clearPlayerFishingPresence(player);
+    return false;
+  }
+
+  return applyPlayerFishingPresenceFromSession(player, session);
 }
 
 function sanitizePlayerAnimationState(value) {
@@ -9373,13 +10646,125 @@ function acceptPlayerMovement(socket, player, position, options = {}) {
 
   if (distance > maxDistance) {
     if (!silent) {
-      sendActionRejected(socket, "player_position", "Movement was too fast.");
+      sendActionRejected(socket, "player_position", "Movement was too fast.", {
+        position_correction: true,
+        server_x: Number(player.x || 0),
+        server_y: Number(player.y || 0),
+        server_facing: Number(player.facing || 1) < 0 ? -1 : 1,
+        server_world: cleanWorld(player.world || position.world || "START"),
+      });
     }
     return false;
   }
 
   player.last_position_at = now;
   return true;
+}
+
+function sanitizePlayerPunchFacing(data, player) {
+  const requestedFacing = Number(data?.facing);
+  if (requestedFacing < 0) return -1;
+  if (requestedFacing > 0) return 1;
+  return Number(player?.facing) < 0 ? -1 : 1;
+}
+
+function resolvePlayerPunchTarget(player, data) {
+  const targetPlayerId = String(data?.target_player_id || data?.target_id || "").trim();
+  if (targetPlayerId !== "" && targetPlayerId !== player.id) {
+    const byId = findOnlinePlayerByPlayerId(targetPlayerId);
+    if (byId) return byId;
+  }
+
+  const targetUsername = cleanAccountName(data?.target_username || data?.username || "");
+  if (targetUsername !== "" && accountKey(targetUsername) !== accountKey(player.account_username)) {
+    const byUsername = findOnlinePlayerByUsername(targetUsername);
+    if (byUsername) return byUsername;
+  }
+
+  return null;
+}
+
+function isPlayerPunchTargetReachable(player, target, facing) {
+  if (!player || !target) return false;
+  if (player.id === target.id) return false;
+  if (cleanWorld(player.world || "START") !== cleanWorld(target.world || "START")) return false;
+
+  const ax = Number(player.x);
+  const ay = Number(player.y);
+  const tx = Number(target.x);
+  const ty = Number(target.y);
+  if (![ax, ay, tx, ty].every(Number.isFinite)) return false;
+
+  const dx = tx - ax;
+  const dy = ty - ay;
+  const forwardDistance = dx * facing;
+  if (forwardDistance < -PLAYER_PUNCH_BACKSIDE_TOLERANCE_PIXELS) return false;
+  if (Math.abs(dx) > PLAYER_PUNCH_RANGE_PIXELS) return false;
+  if (Math.abs(dy) > PLAYER_PUNCH_VERTICAL_TOLERANCE_PIXELS) return false;
+  return Math.hypot(dx, dy) <= PLAYER_PUNCH_DIRECT_DISTANCE_PIXELS;
+}
+
+function handlePlayerPunch(socket, player, data) {
+  if (!requireAuthenticated(socket, player, "punch players")) return;
+
+  const worldName = cleanWorld(data?.world || player.world || "START");
+  if (!requireSameWorld(socket, player, worldName, "player_punch")) return;
+
+  const now = Date.now();
+  const lastPunchAt = Number(player.last_player_punch_at || 0);
+  if (lastPunchAt > 0 && now - lastPunchAt < PLAYER_PUNCH_COOLDOWN_MS) {
+    return;
+  }
+
+  const targetRecord = resolvePlayerPunchTarget(player, data);
+  if (!targetRecord || !targetRecord.player) {
+    sendActionRejected(socket, "player_punch", "Could not find that player.");
+    return;
+  }
+
+  const target = targetRecord.player;
+  if (cleanWorld(target.world || "START") !== worldName) {
+    sendActionRejected(socket, "player_punch", "That player is not in this world.");
+    return;
+  }
+
+  const facing = sanitizePlayerPunchFacing(data, player);
+  if (!isPlayerPunchTargetReachable(player, target, facing)) {
+    sendActionRejected(socket, "player_punch", "Too far away.");
+    return;
+  }
+
+  const dx = Number(target.x) - Number(player.x);
+  const knockbackDirection = Math.abs(dx) > 4 ? (dx < 0 ? -1 : 1) : facing;
+  const knockbackX = knockbackDirection * PLAYER_PUNCH_KNOCKBACK_X;
+  const knockbackY = PLAYER_PUNCH_KNOCKBACK_Y;
+
+  player.last_player_punch_at = now;
+  player.facing = facing;
+  player.animation_state = "punch";
+  target.velocity_x = sanitizePlayerVelocity(knockbackX);
+  target.velocity_y = sanitizePlayerVelocity(knockbackY);
+  target.on_floor = true;
+  target.animation_state = "hurt";
+
+  broadcastToWorld(worldName, {
+    type: "player_punch_knockback",
+    world: worldName,
+    attacker_player_id: String(player.id || ""),
+    attacker_username: cleanAccountName(player.account_username || player.name || ""),
+    target_player_id: String(target.id || ""),
+    target_username: cleanAccountName(target.account_username || target.name || ""),
+    facing,
+    knockback_x: knockbackX,
+    knockback_y: knockbackY,
+    source_x: Number(player.x || 0),
+    source_y: Number(player.y || 0),
+    target_x: Number(target.x || 0),
+    target_y: Number(target.y || 0),
+    server_time: now,
+  });
+
+  touchLivePresence(socket, player);
 }
 
 function isMovementNearLavaRebound(player, position) {
@@ -9421,6 +10806,272 @@ function isLavaReboundBlockType(blockType) {
 
 function getSocketAddress(socket) {
   return String(socket?._socket?.remoteAddress || socket?.remoteAddress || "").replace(/^::ffff:/, "");
+}
+
+function getSocketUserAgent(socket, data = {}) {
+  return String(data?.user_agent || data?.userAgent || socket?.userAgent || "").slice(0, 500);
+}
+
+function getSocketDeviceInfo(socket, data = {}) {
+  const rawDevice = data && typeof data.device_info === "object" && !Array.isArray(data.device_info)
+    ? data.device_info
+    : {};
+  return {
+    user_agent: getSocketUserAgent(socket, data),
+    client_version: getClientVersion(data || {}),
+    device_id: clampString(data?.device_id || rawDevice.device_id || "", 120),
+    platform: clampString(data?.platform || rawDevice.platform || "", 80),
+    os: clampString(data?.os || rawDevice.os || "", 80),
+    build: clampString(data?.build || rawDevice.build || "", 80),
+  };
+}
+
+function getLoginAttemptSubject(socket, username = "") {
+  const cleanUsername = accountKey(username || "");
+  const ip = getSocketAddress(socket);
+  return {
+    username: cleanUsername,
+    ip,
+    ipSubject: ip !== "" ? `ip:${ip}` : `socket:${socket?.playerId || "unknown"}`,
+    accountSubject: cleanUsername !== "" ? `account:${cleanUsername}` : "",
+  };
+}
+
+function consumeLocalLoginAttempt(scope, subject, limit, windowMs) {
+  const key = `${scope}:${subject}`;
+  const now = Date.now();
+  const bucket = localLoginAttemptBuckets.get(key) || {
+    count: 0,
+    resetAt: now + windowMs,
+  };
+
+  if (now >= bucket.resetAt) {
+    bucket.count = 0;
+    bucket.resetAt = now + windowMs;
+  }
+
+  bucket.count += 1;
+  localLoginAttemptBuckets.set(key, bucket);
+  return {
+    allowed: bucket.count <= limit,
+    count: bucket.count,
+    resetInMs: Math.max(0, bucket.resetAt - now),
+  };
+}
+
+async function checkLoginAttemptAllowed(socket, username, action = "login") {
+  const subject = getLoginAttemptSubject(socket, username);
+  const checks = [];
+
+  if (redisStore.isReady()) {
+    checks.push(await redisStore.checkRateLimit("auth:login:ip", subject.ipSubject, LOGIN_ATTEMPT_LIMIT_IP, LOGIN_ATTEMPT_WINDOW_MS));
+    if (subject.accountSubject) {
+      checks.push(await redisStore.checkRateLimit("auth:login:account", subject.accountSubject, LOGIN_ATTEMPT_LIMIT_ACCOUNT, LOGIN_ATTEMPT_WINDOW_MS));
+    }
+  } else {
+    checks.push(consumeLocalLoginAttempt("auth:login:ip", subject.ipSubject, LOGIN_ATTEMPT_LIMIT_IP, LOGIN_ATTEMPT_WINDOW_MS));
+    if (subject.accountSubject) {
+      checks.push(consumeLocalLoginAttempt("auth:login:account", subject.accountSubject, LOGIN_ATTEMPT_LIMIT_ACCOUNT, LOGIN_ATTEMPT_WINDOW_MS));
+    }
+  }
+
+  const blocked = checks.find((entry) => !entry.allowed);
+  if (!blocked) return { ok: true };
+
+  const retryMs = Math.max(1000, Math.trunc(Number(blocked.resetInMs) || LOGIN_ATTEMPT_WINDOW_MS));
+  return {
+    ok: false,
+    action,
+    retry_ms: retryMs,
+    retry_after_seconds: Math.ceil(retryMs / 1000),
+  };
+}
+
+function recordLoginAttempt(socket, player, username, action, ok, reason, data = {}) {
+  const details = {
+    action: String(action || "login"),
+    username: cleanAccountName(username || ""),
+    ip: getSocketAddress(socket),
+    user_agent: getSocketUserAgent(socket, data),
+    device_info: getSocketDeviceInfo(socket, data),
+    request_id: makeRequestId(data || {}),
+    reason: String(reason || ""),
+    ok: Boolean(ok),
+  };
+  logSecurityEvent(socket, player, ok ? "account_login_success" : "account_login_failed", details, ok ? "info" : "warning");
+  postgresStore.recordLoginAttempt({
+    ...details,
+    success: Boolean(ok),
+    at: new Date().toISOString(),
+  });
+}
+
+function parseAdminTwoFactorSecrets() {
+  const map = new Map();
+  for (const pair of ADMIN_2FA_SECRETS.split(",")) {
+    const [rawUsername, ...secretParts] = String(pair || "").split(":");
+    const username = accountKey(rawUsername || "");
+    const secret = secretParts.join(":").trim();
+    if (username !== "" && secret !== "") map.set(username, secret);
+  }
+  return map;
+}
+
+const adminTwoFactorSecretMap = parseAdminTwoFactorSecrets();
+
+function getAdminTwoFactorSecret(username) {
+  const key = accountKey(username || "");
+  return adminTwoFactorSecretMap.get(key) || ADMIN_2FA_SECRET;
+}
+
+function base32ToBuffer(value) {
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const clean = String(value || "").toUpperCase().replace(/[^A-Z2-7]/g, "");
+  let bits = "";
+  const bytes = [];
+
+  for (const char of clean) {
+    const index = alphabet.indexOf(char);
+    if (index < 0) continue;
+    bits += index.toString(2).padStart(5, "0");
+    while (bits.length >= 8) {
+      bytes.push(parseInt(bits.slice(0, 8), 2));
+      bits = bits.slice(8);
+    }
+  }
+
+  return Buffer.from(bytes);
+}
+
+function makeTotpCode(secret, timeStep = Math.floor(Date.now() / 30000)) {
+  const secretBytes = base32ToBuffer(secret);
+  if (secretBytes.length === 0) return "";
+  const counter = Buffer.alloc(8);
+  counter.writeUInt32BE(Math.floor(timeStep / 0x100000000), 0);
+  counter.writeUInt32BE(timeStep >>> 0, 4);
+  const digest = crypto.createHmac("sha1", secretBytes).update(counter).digest();
+  const offset = digest[digest.length - 1] & 0x0f;
+  const binary = ((digest[offset] & 0x7f) << 24)
+    | ((digest[offset + 1] & 0xff) << 16)
+    | ((digest[offset + 2] & 0xff) << 8)
+    | (digest[offset + 3] & 0xff);
+  return String(binary % 1000000).padStart(6, "0");
+}
+
+function timingSafeCodeEqual(left, right) {
+  const cleanLeft = String(left || "").replace(/\s+/g, "");
+  const cleanRight = String(right || "").replace(/\s+/g, "");
+  if (cleanLeft.length !== cleanRight.length) return false;
+  return crypto.timingSafeEqual(Buffer.from(cleanLeft), Buffer.from(cleanRight));
+}
+
+function verifyAdminTwoFactorCode(username, code) {
+  if (!ADMIN_2FA_REQUIRED) return { ok: true, required: false };
+  const secret = getAdminTwoFactorSecret(username);
+  if (!secret) return { ok: false, required: true, reason: "admin_2fa_not_configured" };
+  const cleanCode = String(code || "").replace(/\s+/g, "");
+  if (!/^\d{6}$/.test(cleanCode)) return { ok: false, required: true, reason: "missing_or_invalid_code" };
+
+  const currentStep = Math.floor(Date.now() / 30000);
+  for (let offset = -ADMIN_2FA_WINDOW_STEPS; offset <= ADMIN_2FA_WINDOW_STEPS; offset += 1) {
+    if (timingSafeCodeEqual(cleanCode, makeTotpCode(secret, currentStep + offset))) {
+      return { ok: true, required: true };
+    }
+  }
+  return { ok: false, required: true, reason: "invalid_code" };
+}
+
+function isAdminTwoFactorVerified(player) {
+  if (!ADMIN_2FA_REQUIRED) return true;
+  return Boolean(player && Number(player.admin_2fa_verified_until || 0) > Date.now());
+}
+
+function getDeveloperSecurityRequirement(player) {
+  if (!isDeveloperPinUnlocked(player)) {
+    return {
+      ok: false,
+      message: "Developer PIN required.",
+      extra: {
+        requires_developer_pin: true,
+        developer_pin_required: DEV_PIN_REQUIRED,
+      },
+      reason: "developer_pin_required",
+    };
+  }
+  if (!isAdminTwoFactorVerified(player)) {
+    return {
+      ok: false,
+      message: "Admin 2FA required.",
+      extra: {
+        requires_admin_2fa: true,
+        admin_2fa_required: ADMIN_2FA_REQUIRED,
+      },
+      reason: "admin_2fa_required",
+    };
+  }
+  return { ok: true };
+}
+
+function consumeAdminCommandCooldown(player, commandName) {
+  if (!player || ADMIN_COMMAND_COOLDOWN_MS <= 0) return { ok: true };
+  if (!player.developer_command_cooldowns) player.developer_command_cooldowns = new Map();
+  const key = String(commandName || "command").trim().toLowerCase() || "command";
+  const now = Date.now();
+  const nextAllowedAt = Number(player.developer_command_cooldowns.get(key) || 0);
+  if (nextAllowedAt > now) {
+    return {
+      ok: false,
+      retry_ms: nextAllowedAt - now,
+    };
+  }
+  player.developer_command_cooldowns.set(key, now + ADMIN_COMMAND_COOLDOWN_MS);
+  return { ok: true };
+}
+
+function commandNeedsAdminConfirmation(commandName) {
+  if (!ADMIN_COMMAND_CONFIRMATION_REQUIRED) return false;
+  const clean = String(commandName || "").trim().toLowerCase();
+  return clean !== "" && ADMIN_COMMAND_CONFIRMATION_ACTIONS.has(clean);
+}
+
+function makeAdminConfirmationKey(player, commandName, command) {
+  return makeAuditHash({
+    username: accountKey(player?.account_username || ""),
+    command_name: String(commandName || "").trim().toLowerCase(),
+    command: String(command || "").trim(),
+  });
+}
+
+function validateAdminCommandConfirmation(socket, player, data, commandName, command, deny) {
+  if (!commandNeedsAdminConfirmation(commandName)) return true;
+  if (!player.pending_admin_confirmations) player.pending_admin_confirmations = new Map();
+
+  const confirmationKey = makeAdminConfirmationKey(player, commandName, command);
+  const providedToken = String(data.confirmation_token || data.admin_confirmation_token || "").trim();
+  const pending = player.pending_admin_confirmations.get(confirmationKey);
+  if (pending && pending.expires_at_ms > Date.now() && providedToken !== "" && makeTokenHash(providedToken) === pending.token_hash) {
+    player.pending_admin_confirmations.delete(confirmationKey);
+    return true;
+  }
+
+  const token = makeSecureToken(18);
+  const expiresAtMs = Date.now() + ADMIN_COMMAND_CONFIRMATION_TTL_MS;
+  player.pending_admin_confirmations.set(confirmationKey, {
+    token_hash: makeTokenHash(token),
+    expires_at_ms: expiresAtMs,
+  });
+
+  deny("Admin confirmation required. Confirm this command before it runs.", {
+    reason: "admin_confirmation_required",
+    confirmation_command_name: commandName,
+    confirmation_expires_at: new Date(expiresAtMs).toISOString(),
+  }, {
+    requires_admin_confirmation: true,
+    admin_confirmation_required: true,
+    confirmation_token: token,
+    confirmation_expires_at: new Date(expiresAtMs).toISOString(),
+  });
+  return false;
 }
 
 function makeAuditId(prefix = "audit") {
@@ -9734,7 +11385,6 @@ function createWorldSnapshot(worldName, reason, socket = null, player = null, de
     const snapshotDir = path.join(WORLD_SNAPSHOT_FOLDER, safeFileName(clean, "START"));
     const snapshotFileName = `${stamp}_${safeFileName(reason, "snapshot")}.json`;
     const snapshotPath = path.join(snapshotDir, snapshotFileName);
-    fs.mkdirSync(snapshotDir, { recursive: true });
 
     const snapshotPayload = {
       snapshot_id: snapshotId,
@@ -9745,14 +11395,22 @@ function createWorldSnapshot(worldName, reason, socket = null, player = null, de
       world_state: serializeWorldState(clean),
     };
 
-    writeJsonFileAtomic(snapshotPath, snapshotPayload);
-    const objectStorageWrite = uploadWorldSnapshotToObjectStorage(snapshotPath, clean, snapshotFileName);
+    const snapshotFileWrite = writeJsonFileAtomicAsync(snapshotPath, snapshotPayload)
+      .then(() => true)
+      .catch((error) => {
+        console.warn(`[snapshots] local snapshot write failed for ${clean}:`, error.message);
+        return false;
+      });
+    const objectStorageWrite = snapshotFileWrite.then((fileSaved) => (
+      fileSaved ? uploadWorldSnapshotToObjectStorage(snapshotPath, clean, snapshotFileName) : null
+    ));
     if (postgresStore.isReady()) {
       trackPersistenceWrite((async () => {
+        const fileSaved = await snapshotFileWrite;
         const objectStorageUri = await objectStorageWrite;
         return postgresStore.saveWorldSnapshot(clean, snapshotPayload.world_state, {
           reason: String(reason || "snapshot"),
-          storageUri: objectStorageUri || snapshotPath,
+          storageUri: objectStorageUri || (fileSaved ? snapshotPath : ""),
           createdBy: cleanAccountName(player?.account_username || player?.name || "system") || "system",
           storeSnapshotData: !objectStorageUri || WORLD_SNAPSHOT_POSTGRES_INLINE,
         });
@@ -9778,16 +11436,37 @@ function createWorldSnapshot(worldName, reason, socket = null, player = null, de
 
 function logAdminAction(socket, player, action, details = {}, ok = true, message = "") {
   const username = cleanAccountName(player?.account_username || player?.name || "");
+  const detailObject = details && typeof details === "object" && !Array.isArray(details) ? details : {};
+  const socketAudit = getSocketAuditContext(socket, player);
+  const targetAudit = inferAdminActionTarget(detailObject);
   const entry = {
+    admin_action_event_id: makeAuditId("admin_action"),
     at: new Date().toISOString(),
+    admin_id: username,
     admin_username: username,
     admin_role: getAccountRole(username),
+    admin_player_id: String(player?.id || ""),
     player_id: String(player?.id || ""),
-    ip: getSocketAddress(socket),
+    ip: socketAudit.ip,
+    session_token_hash: socketAudit.session_token_hash,
+    user_agent: socketAudit.user_agent,
+    device_info: socketAudit.device_info,
     action: String(action || "admin_action"),
+    action_type: String(action || "admin_action"),
+    target_type: targetAudit.target_type,
+    target_id: targetAudit.target_id,
+    target_username: targetAudit.target_username,
+    target_world: targetAudit.target_world,
+    affected_item_id: cleanAccountName(detailObject.affected_item_id || detailObject.item_id || detailObject.item_type || ""),
+    affected_item_category: cleanAccountName(detailObject.affected_item_category || detailObject.item_category || ""),
+    affected_world: cleanWorld(detailObject.affected_world || detailObject.target_world || detailObject.world || ""),
+    amount: Number.isFinite(Number(detailObject.amount ?? detailObject.removed ?? detailObject.requested ?? detailObject.delta))
+      ? Math.trunc(Number(detailObject.amount ?? detailObject.removed ?? detailObject.requested ?? detailObject.delta))
+      : null,
+    reason: String(detailObject.reason || detailObject.command_name || detailObject.command_type || ""),
     ok: Boolean(ok),
     message: String(message || ""),
-    ...details,
+    ...detailObject,
   };
 
   appendJsonLine(ADMIN_LOG_PATH, entry, "admin action");
@@ -9926,6 +11605,29 @@ function putProtectedEntry(target, entry) {
   target.set(gridKey(entry.x, entry.y), entry);
 }
 
+function summarizeWorldAuditState(state) {
+  const safeState = state || {};
+  return {
+    cleared: Boolean(safeState.cleared),
+    foreground_count: safeState.foreground instanceof Map ? safeState.foreground.size : 0,
+    background_count: safeState.background instanceof Map ? safeState.background.size : 0,
+    seed_count: safeState.seeds instanceof Map ? safeState.seeds.size : 0,
+    drop_count: safeState.drops instanceof Map ? safeState.drops.size : 0,
+    has_world_lock: Boolean(safeState.world_lock?.is_locked),
+  };
+}
+
+function buildInventoryAdminAuditContext(beforeState, afterState, itemId, itemCategory) {
+  const cleanItemId = clampString(itemId || "");
+  const cleanCategory = resolveInventoryCategory(cleanItemId, itemCategory || "");
+  return {
+    inventory_before_hash: makeAuditHash(beforeState || {}),
+    inventory_after_hash: makeAuditHash(afterState || {}),
+    before_count: getInventoryCount(beforeState || {}, cleanItemId, cleanCategory),
+    after_count: getInventoryCount(afterState || {}, cleanItemId, cleanCategory),
+  };
+}
+
 function getActiveWorldLockKeyForState(state) {
   const lock = state.world_lock || {};
   if (!lock.is_locked) return "";
@@ -10009,6 +11711,7 @@ function replaceWorldStateAndBroadcast(worldName, state, extraMessageData = {}) 
 function clearWorldByAdmin(worldName, data, socket = null, player = null) {
   const clean = cleanWorld(worldName);
   const currentState = ensureWorldState(clean);
+  const beforeSummary = summarizeWorldAuditState(currentState);
   const nextState = createEmptyWorldState();
   nextState.cleared = true;
 
@@ -10019,7 +11722,7 @@ function clearWorldByAdmin(worldName, data, socket = null, player = null) {
     currentState.seeds.size +
     currentState.drops.size;
 
-  createWorldSnapshot(clean, "before_clear_world", socket, player, {
+  const snapshot = createWorldSnapshot(clean, "before_clear_world", socket, player, {
     removed_count: removedCount,
     protected_count: protectedEntries.size,
   });
@@ -10037,17 +11740,31 @@ function clearWorldByAdmin(worldName, data, socket = null, player = null) {
     force_respawn: true,
     world_state_reason: "admin_clear",
   });
-  return { removedCount, protectedCount: protectedEntries.size };
+  return {
+    removedCount,
+    protectedCount: protectedEntries.size,
+    snapshotId: snapshot?.snapshotId || "",
+    beforeSummary,
+    afterSummary: summarizeWorldAuditState(nextState),
+  };
 }
 
 function resetWorldByAdmin(worldName, socket = null, player = null) {
   const clean = cleanWorld(worldName);
-  createWorldSnapshot(clean, "before_reset_world", socket, player);
-  replaceWorldStateAndBroadcast(clean, createEmptyWorldState(), {
+  const currentState = ensureWorldState(clean);
+  const beforeSummary = summarizeWorldAuditState(currentState);
+  const snapshot = createWorldSnapshot(clean, "before_reset_world", socket, player);
+  const nextState = createEmptyWorldState();
+  replaceWorldStateAndBroadcast(clean, nextState, {
     respawn_player: true,
     force_respawn: true,
     world_state_reason: "admin_reset",
   });
+  return {
+    snapshotId: snapshot?.snapshotId || "",
+    beforeSummary,
+    afterSummary: summarizeWorldAuditState(nextState),
+  };
 }
 
 function parseGiveCommand(data, command) {
@@ -10098,6 +11815,45 @@ function parseRemoveCommand(data, command) {
     itemId: clampString(parts[2]),
     itemCategory: resolveInventoryCategory(parts[2]),
     amount: clampInteger(parts[3] || 1, 1, getDeveloperItemAmountLimit(parts[2])),
+  };
+}
+
+function getSocketAuditContext(socket, player) {
+  const username = cleanAccountName(player?.account_username || player?.name || "");
+  const account = username !== "" ? accounts.get(accountKey(username)) : null;
+  const userAgent = String(socket?.userAgent || "");
+  return {
+    ip: getSocketAddress(socket),
+    session_token_hash: cleanAccountName(account?.session_token_hash || ""),
+    user_agent: userAgent,
+    device_info: {
+      user_agent: userAgent,
+      client_version: String(player?.client_version || ""),
+    },
+  };
+}
+
+function inferAdminActionTarget(details = {}) {
+  const d = details && typeof details === "object" && !Array.isArray(details) ? details : {};
+  const targetUsername = cleanAccountName(d.target_username || d.username || d.target_player || "");
+  const targetWorld = cleanWorld(d.target_world || d.world_name || "");
+  const worldName = cleanWorld(d.world || "");
+  const targetItem = cleanAccountName(d.public_item_instance_id || d.item_instance_id || "");
+
+  const targetType = cleanAccountName(d.target_type || (
+    targetUsername !== "" ? "player" :
+    targetWorld !== "" ? "world" :
+    targetItem !== "" ? "item_instance" :
+    worldName !== "" ? "world" :
+    "server"
+  ));
+
+  const targetId = cleanAccountName(d.target_id || targetUsername || targetWorld || targetItem || worldName || "");
+  return {
+    target_type: targetType || "server",
+    target_id: targetId,
+    target_username: targetUsername,
+    target_world: targetWorld || worldName,
   };
 }
 
@@ -10432,7 +12188,12 @@ async function handleDeveloperPunishmentCommand(socket, player, data, command, p
     });
     approve(
       formatPunishmentList(displayUsername, rows),
-      { target_username: displayUsername, punishment_count: rows.length },
+      {
+        target_username: displayUsername,
+        target_type: "player",
+        punishment_count: rows.length,
+        reason: "developer_lookup",
+      },
       {
         command_type: "punishments",
         target_username: displayUsername,
@@ -10524,11 +12285,15 @@ async function handleDeveloperPunishmentCommand(socket, player, data, command, p
       `${getPunishmentTypeLabel(punishmentType)} issued for ${displayUsername} (${formatPunishmentExpires(punishmentPayload)}).`,
       {
         target_username: displayUsername,
+        target_type: "player",
         punishment_type: punishmentType,
         punishment_id: result.punishment_id,
         scope,
         world: worldName,
         duration_minutes: parsed.durationMinutes,
+        before_active: false,
+        after_active: true,
+        reason: parsed.reason,
       },
       {
         command_type: "punishment_issue",
@@ -10540,6 +12305,11 @@ async function handleDeveloperPunishmentCommand(socket, player, data, command, p
   }
 
   if (parsed.mode === "revoke") {
+    const activeBefore = await postgresStore.getActivePunishments(displayUsername, {
+      punishment_type: punishmentType,
+      scope,
+      world: worldName,
+    });
     const result = await postgresStore.revokePunishment({
       target_username: displayUsername,
       punishment_type: punishmentType,
@@ -10574,10 +12344,14 @@ async function handleDeveloperPunishmentCommand(socket, player, data, command, p
         : `No active ${getPunishmentTypeLabel(punishmentType)} matched ${displayUsername}.`,
       {
         target_username: displayUsername,
+        target_type: "player",
         punishment_type: punishmentType,
         scope,
         world: worldName,
         revoked_count: result.revoked_count,
+        before_active_punishment_ids: activeBefore.map((row) => row.punishment_id).filter((id) => Number(id) > 0),
+        after_active: false,
+        reason: parsed.reason,
       },
       {
         command_type: "punishment_revoke",
@@ -10726,23 +12500,33 @@ async function handleDeveloperItemInstanceAdminCommand(socket, player, data, com
   const targetUsername = cleanAccountName(result.item_instance?.current_owner_username || "");
   const target = targetUsername !== "" ? findOnlinePlayerByUsername(targetUsername) : null;
   if (target && accountKey(target.player.account_username) !== accountKey(actorUsername)) {
-    target.socket.send(JSON.stringify({
+    sendJson(target.socket, {
       type: "chat",
       sender: "System",
       message: `An admin updated tracked item ${result.item_instance.public_item_instance_id || itemInstanceId}.`,
-    }));
+    });
   }
 
-  approve(
-    formatItemInstanceModerationMessage(result),
-    {
-      command_type: "item_instance_admin",
-      action: result.action,
-      item_instance_id: result.item_instance?.item_instance_id || itemInstanceId,
-      public_item_instance_id: result.item_instance?.public_item_instance_id || "",
-      target_username: targetUsername,
-      inventory_effects: localUpdates,
-    },
+    approve(
+      formatItemInstanceModerationMessage(result),
+      {
+        command_type: "item_instance_admin",
+        target_type: "item_instance",
+        action: result.action,
+        item_instance_id: result.item_instance?.item_instance_id || itemInstanceId,
+        public_item_instance_id: result.item_instance?.public_item_instance_id || "",
+        target_username: targetUsername,
+        item_id: result.item_instance?.item_type || "",
+        item_category: result.item_instance?.item_category || "",
+        before_item_instance: result.previous || {},
+        after_item_instance: {
+          state: result.item_instance?.state || "",
+          current_location: result.item_instance?.current_location || "",
+          owner_username: result.item_instance?.current_owner_username || "",
+        },
+        reason: parsed.reason || "developer_command",
+        inventory_effects: localUpdates,
+      },
     {
       command_type: "item_instance_admin",
       item_instance_result: result,
@@ -10854,9 +12638,7 @@ function getBlockBreakXp(blockType, layer) {
   const definition = ItemDatabase.getItemDefinition(clampString(blockType || ""));
   if (!definition || definition.category !== "block") return 0;
 
-  const health = Math.max(1, Math.trunc(Number(definition.block_health) || 1));
-  const layerBonus = layer === "background" ? 0 : 2;
-  return Math.max(1, 3 + health + layerBonus + getRarityXpBonus(blockType));
+  return 3;
 }
 
 function getRecipeXp(stationId, output) {
@@ -10873,10 +12655,7 @@ function getFishingXp(fishId, difficulty) {
 function getSeedHarvestXp(rewards, matured) {
   if (!matured || !Array.isArray(rewards) || rewards.length === 0) return 0;
 
-  return rewards.reduce((total, reward) => {
-    const amount = clampInteger(reward?.amount || 1, 1, MAX_ITEM_STACK);
-    return total + 8 + Math.min(60, amount * 3) + getRarityXpBonus(reward?.item_id || reward?.item_type || "");
-  }, 0);
+  return 3;
 }
 
 function grantExperienceToState(state, amount, source = "system", details = {}) {
@@ -11011,12 +12790,130 @@ function getInventoryFieldForCategory(category, itemId) {
   return ItemDatabase.getInventoryFieldForItem(itemId, category) || "inventory";
 }
 
+function sanitizePrimaryHotbarTool(value) {
+  const clean = clampString(value || "");
+  return clean === "wrench" ? "wrench" : "punch";
+}
+
+function isServerHotbarItemAllowed(state, itemId, itemCategory, options = {}) {
+  const cleanItemId = clampString(itemId || "");
+  if (cleanItemId === "") return false;
+
+  const cleanCategory = cleanInventoryCategory(itemCategory || "");
+  if (cleanItemId === "punch" && cleanCategory === "tool") return true;
+  if (!ItemDatabase.hasItem(cleanItemId)) return false;
+
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, cleanCategory);
+  if (resolvedCategory === "") return false;
+  if (!ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory)) return false;
+
+  const definition = ItemDatabase.getItemDefinition(cleanItemId) || {};
+  if (definition.hidden) return false;
+  if (options.allowEmptyCount === true) return true;
+
+  return getInventoryCount(state, cleanItemId, resolvedCategory) > 0;
+}
+
+function appendServerHotbarItem(state, items, categories, itemId, itemCategory, options = {}) {
+  if (!Array.isArray(items) || !Array.isArray(categories)) return;
+  if (items.length >= HOTBAR_SLOT_COUNT) return;
+
+  const cleanItemId = clampString(itemId || "");
+  if (cleanItemId === "") return;
+  if (cleanItemId === "punch") return;
+
+  let resolvedCategory = cleanInventoryCategory(itemCategory || "");
+  if (cleanItemId !== "punch" && ItemDatabase.hasItem(cleanItemId)) {
+    resolvedCategory = resolveInventoryCategory(cleanItemId, resolvedCategory);
+  }
+  if (resolvedCategory === "") return;
+
+  if (!isServerHotbarItemAllowed(state, cleanItemId, resolvedCategory, options)) return;
+
+  const key = `${resolvedCategory}:${cleanItemId}`;
+  for (let i = 0; i < items.length; i += 1) {
+    if (`${categories[i]}:${items[i]}` === key) return;
+  }
+
+  items.push(cleanItemId);
+  categories.push(resolvedCategory);
+}
+
+function normalizePlayerHotbarState(state) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return state;
+
+  const rawItems = Array.isArray(state.hotbar_items) ? state.hotbar_items : [];
+  const rawCategories = Array.isArray(state.hotbar_item_categories) ? state.hotbar_item_categories : [];
+  const primaryTool = sanitizePrimaryHotbarTool(state.primary_hotbar_tool || rawItems[0]);
+  const items = [primaryTool];
+  const categories = ["tool"];
+  const savedCount = Math.min(rawItems.length, rawCategories.length, HOTBAR_SLOT_COUNT);
+
+  for (let i = 1; i < savedCount; i += 1) {
+    appendServerHotbarItem(state, items, categories, rawItems[i], rawCategories[i]);
+  }
+
+  const selectedItem = clampString(state.selected_item_type || "");
+  const selectedCategory = cleanInventoryCategory(state.selected_item_category || "");
+  const selectedKey = `${selectedCategory}:${selectedItem}`;
+  const selectedAlreadyPinned = items.some((item, index) => `${categories[index]}:${item}` === selectedKey);
+  if (selectedItem !== "punch" && !selectedAlreadyPinned && isServerHotbarItemAllowed(state, selectedItem, selectedCategory)) {
+    items.splice(1, 0, selectedItem);
+    categories.splice(1, 0, resolveInventoryCategory(selectedItem, selectedCategory));
+  }
+
+  while (items.length > HOTBAR_SLOT_COUNT) {
+    items.pop();
+    categories.pop();
+  }
+
+  state.primary_hotbar_tool = primaryTool;
+  state.hotbar_items = items;
+  state.hotbar_item_categories = categories;
+
+  if (!isServerHotbarItemAllowed(state, state.selected_item_type, state.selected_item_category)) {
+    state.selected_item_type = primaryTool;
+    state.selected_item_category = "tool";
+  }
+
+  return state;
+}
+
+function selectFirstHotbarSlotInState(state) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return state;
+
+  normalizePlayerHotbarState(state);
+  const firstItem = clampString(Array.isArray(state.hotbar_items) ? state.hotbar_items[0] || "" : "");
+  const firstCategory = cleanInventoryCategory(Array.isArray(state.hotbar_item_categories) ? state.hotbar_item_categories[0] || "" : "");
+  if (firstItem !== "" && firstCategory !== "") {
+    state.selected_item_type = firstItem;
+    state.selected_item_category = firstCategory;
+  }
+  return state;
+}
+
+function buildPlayerStateForClient(state, options = {}) {
+  if (!state || typeof state !== "object" || Array.isArray(state)) return {};
+
+  const payload = {
+    ...state,
+    hotbar_items: Array.isArray(state.hotbar_items) ? state.hotbar_items.slice(0, HOTBAR_SLOT_COUNT) : [],
+    hotbar_item_categories: Array.isArray(state.hotbar_item_categories) ? state.hotbar_item_categories.slice(0, HOTBAR_SLOT_COUNT) : [],
+  };
+
+  normalizePlayerHotbarState(payload);
+  if (options.selectFirstHotbarSlot === true) {
+    selectFirstHotbarSlotInState(payload);
+  }
+  return payload;
+}
+
 function createDefaultPlayerState(username) {
   const state = sanitizePlayerState({
     account_username: username,
     inventory: {},
     seed_inventory: {},
-    tool_inventory: { pickaxe: 1 },
+    tool_inventory: {},
     back_inventory: {},
     hair_inventory: {},
     shirt_inventory: {},
@@ -11105,6 +13002,7 @@ function mergeClientPlayerStateIntoServerState(username, incomingState, options 
       : merged.equipped_shoes_item;
   }
 
+  normalizePlayerHotbarState(merged);
   return merged;
 }
 
@@ -11205,6 +13103,42 @@ function spendItemFromState(state, itemId, itemCategory, amount) {
 
   state[inventoryField][cleanItemId] = currentCount - safeAmount;
   return true;
+}
+
+function getCraftingCostItemIds(itemId, itemCategory) {
+  const cleanItemId = clampString(itemId || "");
+  const cleanCategory = cleanInventoryCategory(itemCategory || "");
+  const ids = [cleanItemId];
+  if (cleanCategory !== "tool") return ids;
+
+  if (cleanItemId === "bamboo_rod") ids.push("fishing_rod");
+  if (cleanItemId === "pristine_tungsten_rod") ids.push("platinum_prestige_rod");
+  return ids.filter((id, index) => id !== "" && ids.indexOf(id) === index);
+}
+
+function getCraftingCostInventoryCount(state, itemId, itemCategory) {
+  let total = 0;
+  for (const candidateId of getCraftingCostItemIds(itemId, itemCategory)) {
+    total += getInventoryCount(state, candidateId, itemCategory);
+  }
+  return total;
+}
+
+function spendCraftingCostFromState(state, itemId, itemCategory, amount) {
+  let remaining = clampInteger(amount || 0, 0, ItemDatabase.getStackLimit(itemId));
+  if (remaining <= 0) return true;
+
+  for (const candidateId of getCraftingCostItemIds(itemId, itemCategory)) {
+    const available = getInventoryCount(state, candidateId, itemCategory);
+    if (available <= 0) continue;
+
+    const spendAmount = Math.min(available, remaining);
+    if (!spendItemFromState(state, candidateId, itemCategory, spendAmount)) return false;
+    remaining -= spendAmount;
+    if (remaining <= 0) return true;
+  }
+
+  return false;
 }
 
 function setInventoryCountInState(state, itemId, itemCategory, amount) {
@@ -11447,6 +13381,113 @@ function sendAdminTransactionLedgerLookupFailure(socket, requestId, targetUserna
   });
 }
 
+function sendAdminMonitoringDashboardFailure(socket, requestId, targetUsername, message, extra = {}) {
+  sendJson(socket, {
+    type: "player_state",
+    ok: false,
+    found: false,
+    request_id: requestId,
+    purpose: ADMIN_MONITORING_DASHBOARD_PURPOSE,
+    action: ADMIN_MONITORING_DASHBOARD_PURPOSE,
+    username: cleanAccountName(targetUsername),
+    message,
+    ...extra,
+  });
+}
+
+function buildAdminMonitoringOnlinePlayers(limit = 100) {
+  const rows = [];
+  const cappedLimit = clampInteger(limit, 1, 250);
+  for (const player of players.values()) {
+    if (!player || !player.authenticated) continue;
+    rows.push({
+      username: cleanAccountName(player.account_username || player.name || ""),
+      display_name: cleanText(player.name || player.account_username || ""),
+      role: cleanName(player.role || getAccountRole(player.account_username || "")),
+      world: cleanWorld(player.world || player.current_world || ""),
+      x: clampInteger(player.x || 0, -999999, 999999),
+      y: clampInteger(player.y || 0, -999999, 999999),
+      joined_world: Boolean(player.joined_world),
+      connected_at: String(player.connected_at || ""),
+      last_seen_at: String(player.last_seen_at || ""),
+    });
+  }
+  rows.sort((a, b) => {
+    const worldCompare = String(a.world || "").localeCompare(String(b.world || ""));
+    if (worldCompare !== 0) return worldCompare;
+    return String(a.username || "").localeCompare(String(b.username || ""));
+  });
+  return rows.slice(0, cappedLimit);
+}
+
+function buildAdminMonitoringWorldRows(limit = 100) {
+  const worldRows = [];
+  const playerCounts = new Map();
+  for (const player of players.values()) {
+    if (!player || !player.authenticated) continue;
+    const worldName = cleanWorld(player.world || player.current_world || "");
+    if (worldName === "") continue;
+    playerCounts.set(worldName, (playerCounts.get(worldName) || 0) + 1);
+  }
+
+  for (const [worldName, state] of worldStates.entries()) {
+    const drops = state?.drops && typeof state.drops === "object" && !Array.isArray(state.drops)
+      ? Object.keys(state.drops).length
+      : 0;
+    worldRows.push({
+      world_name: cleanWorld(worldName),
+      online_players: clampInteger(playerCounts.get(cleanWorld(worldName)) || 0, 0, 999999),
+      drop_count: clampInteger(drops, 0, 999999),
+      saved_at: String(state?.saved_at || ""),
+      updated_at: String(state?.updated_at || ""),
+    });
+  }
+
+  worldRows.sort((a, b) => {
+    const playerCompare = clampInteger(b.online_players || 0, 0, 999999) - clampInteger(a.online_players || 0, 0, 999999);
+    if (playerCompare !== 0) return playerCompare;
+    return String(a.world_name || "").localeCompare(String(b.world_name || ""));
+  });
+  return worldRows.slice(0, clampInteger(limit, 1, 250));
+}
+
+function buildAdminMonitoringRuntimeSnapshot(limit = 100) {
+  const memory = process.memoryUsage();
+  return {
+    generated_at: new Date().toISOString(),
+    uptime_seconds: Math.max(0, Math.round(process.uptime())),
+    connected_sockets: wss.clients.size,
+    online_player_count: players.size,
+    authenticated_player_count: Array.from(players.values()).filter((player) => player?.authenticated).length,
+    loaded_world_count: worldStates.size,
+    loaded_player_state_count: playerStates.size,
+    tracked_account_count: accounts.size,
+    active_trade_count: activeTrades.size,
+    pending_persistence_writes: pendingPersistenceWrites.size,
+    redis_ready: redisStore.isReady(),
+    postgres_ready: postgresStore.isReady(),
+    memory: {
+      rss_mb: Number((memory.rss / 1024 / 1024).toFixed(2)),
+      heap_used_mb: Number((memory.heapUsed / 1024 / 1024).toFixed(2)),
+      heap_total_mb: Number((memory.heapTotal / 1024 / 1024).toFixed(2)),
+      external_mb: Number((memory.external / 1024 / 1024).toFixed(2)),
+    },
+    server_tick: getServerTickSnapshot(),
+    world_snapshot_scheduler: {
+      enabled: Boolean(worldSnapshotSchedulerState.enabled),
+      interval_minutes: WORLD_SNAPSHOT_INTERVAL_MINUTES,
+      max_worlds_per_cycle: WORLD_SNAPSHOT_MAX_WORLDS_PER_CYCLE,
+      running: Boolean(worldSnapshotSchedulerRunning),
+      last_run_at: worldSnapshotSchedulerState.last_run_at || "",
+      last_duration_ms: clampInteger(worldSnapshotSchedulerState.last_duration_ms || 0, 0, 999999999),
+      last_world_count: clampInteger(worldSnapshotSchedulerState.last_world_count || 0, 0, 999999),
+      last_error: cleanText(worldSnapshotSchedulerState.last_error || ""),
+    },
+    online_players: buildAdminMonitoringOnlinePlayers(limit),
+    loaded_worlds: buildAdminMonitoringWorldRows(limit),
+  };
+}
+
 function buildAdminItemInstanceLookupRows(itemInstances) {
   const rows = Array.isArray(itemInstances) ? itemInstances : [];
   return rows.map((entry) => ({
@@ -11512,12 +13553,9 @@ function handleAdminInventoryLookupRequest(socket, player, data, username, reque
     return;
   }
 
-  if (!isDeveloperPinUnlocked(player)) {
-    deny("Developer PIN required.", { reason: "developer_pin_required" }, {
-      requires_developer_pin: true,
-      developer_pin_required: DEV_PIN_REQUIRED,
-      developer_pin_unlocked: false,
-    });
+  const securityRequirement = getDeveloperSecurityRequirement(player);
+  if (!securityRequirement.ok) {
+    deny(securityRequirement.message, { reason: securityRequirement.reason }, securityRequirement.extra);
     return;
   }
 
@@ -11591,12 +13629,9 @@ async function handleAdminItemInstanceLookupRequest(socket, player, data, userna
     return;
   }
 
-  if (!isDeveloperPinUnlocked(player)) {
-    deny("Developer PIN required.", { reason: "developer_pin_required" }, {
-      requires_developer_pin: true,
-      developer_pin_required: DEV_PIN_REQUIRED,
-      developer_pin_unlocked: false,
-    });
+  const securityRequirement = getDeveloperSecurityRequirement(player);
+  if (!securityRequirement.ok) {
+    deny(securityRequirement.message, { reason: securityRequirement.reason }, securityRequirement.extra);
     return;
   }
 
@@ -11734,12 +13769,9 @@ async function handleAdminItemInstanceHistoryLookupRequest(socket, player, data,
     return;
   }
 
-  if (!isDeveloperPinUnlocked(player)) {
-    deny("Developer PIN required.", { reason: "developer_pin_required" }, {
-      requires_developer_pin: true,
-      developer_pin_required: DEV_PIN_REQUIRED,
-      developer_pin_unlocked: false,
-    });
+  const securityRequirement = getDeveloperSecurityRequirement(player);
+  if (!securityRequirement.ok) {
+    deny(securityRequirement.message, { reason: securityRequirement.reason }, securityRequirement.extra);
     return;
   }
 
@@ -11857,12 +13889,9 @@ async function handleAdminTransactionLedgerLookupRequest(socket, player, data, u
     return;
   }
 
-  if (!isDeveloperPinUnlocked(player)) {
-    deny("Developer PIN required.", { reason: "developer_pin_required" }, {
-      requires_developer_pin: true,
-      developer_pin_required: DEV_PIN_REQUIRED,
-      developer_pin_unlocked: false,
-    });
+  const securityRequirement = getDeveloperSecurityRequirement(player);
+  if (!securityRequirement.ok) {
+    deny(securityRequirement.message, { reason: securityRequirement.reason }, securityRequirement.extra);
     return;
   }
 
@@ -11981,6 +14010,109 @@ async function handleAdminTransactionLedgerLookupRequest(socket, player, data, u
       transaction_ledger_count: 0,
       transaction_ledger_limit: rawLimit,
     });
+  }
+}
+
+async function handleAdminMonitoringDashboardRequest(socket, player, data, username, requestId, purpose) {
+  const targetUsername = cleanAccountName(data.target_username || data.requested_username || username || player.account_username || player.name);
+  const rawLimit = clampInteger(data.limit || ADMIN_MONITORING_DASHBOARD_LOOKUP_LIMIT, 1, ADMIN_MONITORING_DASHBOARD_LOOKUP_LIMIT);
+  const windowHours = clampInteger(data.window_hours || ADMIN_MONITORING_DASHBOARD_WINDOW_HOURS, 1, 24 * 14);
+  const logBase = {
+    request_id: requestId,
+    purpose,
+    target_username: targetUsername,
+    window_hours: windowHours,
+    limit: rawLimit,
+    world: cleanWorld(data.world || player.world || "START"),
+  };
+
+  const deny = (message, details = {}, extra = {}) => {
+    logAdminAction(socket, player, "admin_monitoring_dashboard_denied", { ...logBase, ...details }, false, message);
+    logSecurityEvent(socket, player, "admin_monitoring_dashboard_denied", { ...logBase, ...details, message }, "warning");
+    sendAdminMonitoringDashboardFailure(socket, requestId, targetUsername, message, extra);
+  };
+
+  if (!isAdmin(player)) {
+    deny("Monitoring dashboard is only available to admins.");
+    return;
+  }
+
+  const securityRequirement = getDeveloperSecurityRequirement(player);
+  if (!securityRequirement.ok) {
+    deny(securityRequirement.message, { reason: securityRequirement.reason }, securityRequirement.extra);
+    return;
+  }
+
+  if (!isPostgresAuthoritativeReady()) {
+    logAdminAction(socket, player, "admin_monitoring_dashboard", logBase, false, "PostgreSQL is not ready.");
+    sendAdminMonitoringDashboardFailure(socket, requestId, targetUsername, "PostgreSQL is not ready.");
+    return;
+  }
+
+  try {
+    const runtime = buildAdminMonitoringRuntimeSnapshot(rawLimit);
+    const postgresDashboard = await withTimeout(
+      postgresStore.getAdminMonitoringDashboard({
+        window_hours: windowHours,
+        limit: rawLimit,
+        dupe_limit: Math.min(rawLimit, 20),
+      }),
+      ADMIN_ITEM_INSTANCE_LOOKUP_TIMEOUT_MS,
+      "admin monitoring dashboard"
+    );
+
+    if (!postgresDashboard?.ok) {
+      const message = `Monitoring dashboard unavailable: ${postgresDashboard?.message || postgresDashboard?.reason || "unknown_error"}`;
+      logAdminAction(socket, player, "admin_monitoring_dashboard", {
+        ...logBase,
+        lookup_ok: false,
+        reason: String(postgresDashboard?.reason || ""),
+      }, false, message);
+      sendAdminMonitoringDashboardFailure(socket, requestId, targetUsername, message);
+      return;
+    }
+
+    const dashboard = {
+      ok: true,
+      generated_at: new Date().toISOString(),
+      window_hours: windowHours,
+      limit: rawLimit,
+      live: runtime,
+      postgres: postgresDashboard,
+    };
+
+    logAdminAction(socket, player, "admin_monitoring_dashboard", {
+      ...logBase,
+      lookup_ok: true,
+      online_player_count: runtime.online_player_count,
+      authenticated_player_count: runtime.authenticated_player_count,
+      world_count: postgresDashboard.world_count,
+      dupe_warning_count: postgresDashboard.dupe_warning_count,
+      suspicious_account_count: Array.isArray(postgresDashboard.suspicious_accounts) ? postgresDashboard.suspicious_accounts.length : 0,
+    }, true, "Monitoring dashboard loaded.");
+
+    sendJson(socket, {
+      type: "player_state",
+      ok: true,
+      found: true,
+      request_id: requestId,
+      purpose: ADMIN_MONITORING_DASHBOARD_PURPOSE,
+      action: ADMIN_MONITORING_DASHBOARD_PURPOSE,
+      username: targetUsername,
+      dashboard,
+      message: "Monitoring dashboard loaded.",
+    });
+  } catch (error) {
+    const message = `Monitoring dashboard failed: ${error.message}`;
+    console.warn("[admin_monitoring_dashboard] failed", {
+      request_id: requestId,
+      message,
+    });
+    logAdminAction(socket, player, "admin_monitoring_dashboard", {
+      ...logBase,
+      error: error.message,
+    }, false, message);
+    sendAdminMonitoringDashboardFailure(socket, requestId, targetUsername, message);
   }
 }
 
@@ -12222,45 +14354,115 @@ function handleDeveloperPinUnlock(socket, player, data) {
 
   if (!DEV_PIN_REQUIRED) {
     player.developer_pin_unlocked_until = Date.now() + DEV_PIN_UNLOCK_TTL_MS;
-    logAdminAction(socket, player, "developer_pin_unlock", { request_id: requestId, pin_required: false }, true, "Developer PIN not required.");
-    sendJson(socket, {
-      type: "developer_pin_unlock_result",
-      ok: true,
-      request_id: requestId,
-      message: "Developer PIN is not required on this server.",
-      developer_pin_required: false,
-      developer_pin_unlocked: true,
-    });
-    return;
+  } else {
+    if (!verifyDeveloperPin(data.pin)) {
+      logAdminAction(socket, player, "developer_pin_unlock", { request_id: requestId }, false, "Invalid developer PIN.");
+      sendJson(socket, {
+        type: "developer_pin_unlock_result",
+        ok: false,
+        request_id: requestId,
+        message: "Invalid developer PIN.",
+        developer_pin_required: true,
+        developer_pin_unlocked: false,
+      });
+      return;
+    }
+
+    player.developer_pin_unlocked_until = Date.now() + DEV_PIN_UNLOCK_TTL_MS;
   }
 
-  if (!verifyDeveloperPin(data.pin)) {
-    logAdminAction(socket, player, "developer_pin_unlock", { request_id: requestId }, false, "Invalid developer PIN.");
+  const twoFactor = verifyAdminTwoFactorCode(player.account_username, data.totp_code || data.two_factor_code || data.admin_2fa_code || data.code || "");
+  if (!twoFactor.ok) {
+    player.admin_2fa_verified_until = 0;
+    logAdminAction(socket, player, "admin_2fa_unlock", {
+      request_id: requestId,
+      pin_required: DEV_PIN_REQUIRED,
+      admin_2fa_required: ADMIN_2FA_REQUIRED,
+      reason: twoFactor.reason || "invalid_2fa",
+    }, false, twoFactor.reason === "admin_2fa_not_configured" ? "Admin 2FA is required but not configured." : "Invalid admin 2FA code.");
+    logSecurityEvent(socket, player, "admin_2fa_unlock_failed", {
+      request_id: requestId,
+      reason: twoFactor.reason || "invalid_2fa",
+      admin_2fa_required: ADMIN_2FA_REQUIRED,
+    }, "warning");
     sendJson(socket, {
       type: "developer_pin_unlock_result",
       ok: false,
       request_id: requestId,
-      message: "Invalid developer PIN.",
-      developer_pin_required: true,
-      developer_pin_unlocked: false,
+      message: twoFactor.reason === "admin_2fa_not_configured" ? "Admin 2FA is required but not configured on the server." : "Admin 2FA required.",
+      developer_pin_required: DEV_PIN_REQUIRED,
+      developer_pin_unlocked: true,
+      admin_2fa_required: ADMIN_2FA_REQUIRED,
+      admin_2fa_verified: false,
+      requires_admin_2fa: ADMIN_2FA_REQUIRED,
     });
     return;
   }
 
-  player.developer_pin_unlocked_until = Date.now() + DEV_PIN_UNLOCK_TTL_MS;
-  logAdminAction(socket, player, "developer_pin_unlock", { request_id: requestId }, true, "Developer PIN unlocked.");
+  player.admin_2fa_verified_until = ADMIN_2FA_REQUIRED ? Date.now() + ADMIN_2FA_UNLOCK_TTL_MS : 0;
+  logAdminAction(socket, player, "developer_pin_unlock", {
+    request_id: requestId,
+    pin_required: DEV_PIN_REQUIRED,
+    admin_2fa_required: ADMIN_2FA_REQUIRED,
+    admin_2fa_verified: isAdminTwoFactorVerified(player),
+  }, true, DEV_PIN_REQUIRED ? "Developer PIN unlocked." : "Developer PIN not required.");
+  if (ADMIN_2FA_REQUIRED) {
+    logAdminAction(socket, player, "admin_2fa_unlock", {
+      request_id: requestId,
+      admin_2fa_required: true,
+      verified_until: new Date(player.admin_2fa_verified_until).toISOString(),
+    }, true, "Admin 2FA verified.");
+  }
   sendJson(socket, {
     type: "developer_pin_unlock_result",
     ok: true,
     request_id: requestId,
     message: "Developer panel unlocked.",
-    developer_pin_required: true,
+    developer_pin_required: DEV_PIN_REQUIRED,
     developer_pin_unlocked: true,
     unlocked_until: new Date(player.developer_pin_unlocked_until).toISOString(),
+    admin_2fa_required: ADMIN_2FA_REQUIRED,
+    admin_2fa_verified: isAdminTwoFactorVerified(player),
+    admin_2fa_verified_until: player.admin_2fa_verified_until ? new Date(player.admin_2fa_verified_until).toISOString() : "",
   });
 }
 
 async function handleDeveloperCommandRequest(socket, player, data) {
+  try {
+    await handleDeveloperCommandRequestUnsafe(socket, player, data);
+  } catch (error) {
+    const safeData = data && typeof data === "object" ? data : {};
+    const requestId = makeRequestId(safeData);
+    const command = String(safeData.command || "").trim();
+    const commandName = getDeveloperCommandName(command);
+    const details = {
+      request_id: requestId,
+      command,
+      command_name: commandName,
+      world: cleanWorld(safeData.world || player?.world || "START"),
+      error: errorToCrashDetails(error),
+      runtime: getCrashRuntimeState(),
+    };
+    writeCrashReport("developer_command_exception", details);
+    console.warn("[developer_command_exception]", error && error.stack ? error.stack : error);
+    try {
+      logSecurityEvent(socket, player, "developer_command_exception", {
+        request_id: requestId,
+        command,
+        command_name: commandName,
+        message: String(error?.message || error || "unknown"),
+      }, "error");
+    } catch (logError) {
+      console.warn("[developer_command_exception_log_failed]", logError && logError.message ? logError.message : logError);
+    }
+    sendDeveloperDenied(socket, requestId, command, "Developer command failed safely. Check crash_reports.log for details.", {
+      reason: "exception",
+      command_name: commandName,
+    });
+  }
+}
+
+async function handleDeveloperCommandRequestUnsafe(socket, player, data) {
   if (!requireAuthenticated(socket, player, "use admin commands")) return;
 
   const requestId = makeRequestId(data);
@@ -12291,8 +14493,25 @@ async function handleDeveloperCommandRequest(socket, player, data) {
     return;
   }
 
-  if (!isDeveloperPinUnlocked(player)) {
-    deny("Developer PIN required.", { reason: "developer_pin_required" }, { requires_developer_pin: true });
+  const securityRequirement = getDeveloperSecurityRequirement(player);
+  if (!securityRequirement.ok) {
+    deny(securityRequirement.message, { reason: securityRequirement.reason }, securityRequirement.extra);
+    return;
+  }
+
+  if (!validateAdminCommandConfirmation(socket, player, data, commandName, command, deny)) {
+    return;
+  }
+
+  const commandCooldown = consumeAdminCommandCooldown(player, commandName);
+  if (!commandCooldown.ok) {
+    deny(`Admin command is cooling down. Try again in ${Math.ceil(commandCooldown.retry_ms / 1000)}s.`, {
+      reason: "admin_command_cooldown",
+      retry_ms: commandCooldown.retry_ms,
+    }, {
+      retry_ms: commandCooldown.retry_ms,
+      retry_after_seconds: Math.ceil(commandCooldown.retry_ms / 1000),
+    });
     return;
   }
 
@@ -12301,7 +14520,16 @@ async function handleDeveloperCommandRequest(socket, player, data) {
     const result = clearWorldByAdmin(commandWorld, data, socket, player);
     approve(
       `Server cleared ${commandWorld}. Removed ${result.removedCount} saved objects and preserved ${result.protectedCount} protected blocks.`,
-      { target_world: commandWorld, removed_count: result.removedCount, protected_count: result.protectedCount },
+      {
+        target_world: commandWorld,
+        affected_world: commandWorld,
+        removed_count: result.removedCount,
+        protected_count: result.protectedCount,
+        snapshot_id: result.snapshotId,
+        before_world: result.beforeSummary,
+        after_world: result.afterSummary,
+        reason: "developer_command",
+      },
       { command_type: "clear_world", target_world: commandWorld, removed_count: result.removedCount, protected_count: result.protectedCount }
     );
     return;
@@ -12309,8 +14537,15 @@ async function handleDeveloperCommandRequest(socket, player, data) {
 
   if (commandName === "resetworld" || commandName === "reset_world" || commandName === "reworld") {
     const commandWorld = getDeveloperCommandWorldName(player, data);
-    resetWorldByAdmin(commandWorld, socket, player);
-    approve(`Server reset ${commandWorld}.`, { target_world: commandWorld }, { command_type: "reset_world", target_world: commandWorld });
+    const result = resetWorldByAdmin(commandWorld, socket, player);
+    approve(`Server reset ${commandWorld}.`, {
+      target_world: commandWorld,
+      affected_world: commandWorld,
+      snapshot_id: result.snapshotId,
+      before_world: result.beforeSummary,
+      after_world: result.afterSummary,
+      reason: "developer_command",
+    }, { command_type: "reset_world", target_world: commandWorld });
     return;
   }
 
@@ -12326,7 +14561,13 @@ async function handleDeveloperCommandRequest(socket, player, data) {
     }
     approve(
       `Server snapshot created for ${commandWorld}.`,
-      { target_world: commandWorld, snapshot_id: snapshot.snapshotId, snapshot_path: snapshot.snapshotPath },
+      {
+        target_world: commandWorld,
+        affected_world: commandWorld,
+        snapshot_id: snapshot.snapshotId,
+        snapshot_path: snapshot.snapshotPath,
+        reason: "developer_command",
+      },
       { command_type: "snapshot_world", target_world: commandWorld, snapshot_id: snapshot.snapshotId, snapshot_path: snapshot.snapshotPath }
     );
     return;
@@ -12413,12 +14654,13 @@ async function handleDeveloperCommandRequest(socket, player, data) {
 
     const target = findOnlinePlayerByUsername(giveCommand.targetUsername);
     const targetState = commit.state || ensurePlayerState(giveCommand.targetUsername) || {};
+    const inventoryAudit = buildInventoryAdminAuditContext(targetBeforeState, targetState, giveCommand.itemId, giveCommand.itemCategory);
     if (target) {
       sendPlayerState(target.socket, target.player.account_username);
     }
 
     if (target && accountKey(target.player.account_username) !== accountKey(player.account_username)) {
-      target.socket.send(JSON.stringify({
+      sendJson(target.socket, {
         type: "item_grant",
         username: target.player.account_username,
         target_username: target.player.account_username,
@@ -12428,7 +14670,7 @@ async function handleDeveloperCommandRequest(socket, player, data) {
         amount: giveCommand.amount,
         granted_by: player.account_username,
         player_data: targetState,
-      }));
+      });
     }
 
     approve(
@@ -12437,9 +14679,15 @@ async function handleDeveloperCommandRequest(socket, player, data) {
         : (target ? "Item delivered to online player." : "Item saved to offline account."),
       {
         target_username: cleanAccountName(giveCommand.targetUsername),
+        target_type: "player",
         item_id: giveCommand.itemId,
         item_category: giveCommand.itemCategory,
         amount: giveCommand.amount,
+        before_count: inventoryAudit.before_count,
+        after_count: inventoryAudit.after_count,
+        inventory_before_hash: inventoryAudit.inventory_before_hash,
+        inventory_after_hash: inventoryAudit.inventory_after_hash,
+        reason: "developer_command",
         delivery: accountKey(giveCommand.targetUsername) === accountKey(player.account_username)
           ? "self_saved"
           : (target ? "online" : "offline_saved"),
@@ -12539,16 +14787,17 @@ async function handleDeveloperCommandRequest(socket, player, data) {
       return;
     }
     removal.count = getInventoryCount(commit.state, cleanRemoveItemId, removal.itemCategory);
+    const inventoryAudit = buildInventoryAdminAuditContext(targetBeforeState, commit.state, cleanRemoveItemId, removal.itemCategory);
 
     const target = findOnlinePlayerByUsername(removeCommand.targetUsername);
     if (target) {
       sendPlayerState(target.socket, target.player.account_username);
       if (accountKey(target.player.account_username) !== accountKey(player.account_username)) {
-        target.socket.send(JSON.stringify({
+        sendJson(target.socket, {
           type: "chat",
           sender: "System",
           message: `${player.account_username} removed ${removal.removed} ${removeCommand.itemId} from your inventory.`,
-        }));
+        });
       }
     }
 
@@ -12560,10 +14809,16 @@ async function handleDeveloperCommandRequest(socket, player, data) {
       target ? `Server updated ${cleanAccountName(removeCommand.targetUsername)}.${partialMessage}` : `Server updated offline account.${partialMessage}`,
       {
         target_username: cleanAccountName(removeCommand.targetUsername),
+        target_type: "player",
         item_id: removeCommand.itemId,
         item_category: removal.itemCategory,
         requested: removal.requested,
         removed: removal.removed,
+        before_count: inventoryAudit.before_count,
+        after_count: inventoryAudit.after_count,
+        inventory_before_hash: inventoryAudit.inventory_before_hash,
+        inventory_after_hash: inventoryAudit.inventory_after_hash,
+        reason: "developer_command",
         delivery: target ? "online" : "offline_saved",
       },
       {
@@ -12601,6 +14856,8 @@ async function handleDeveloperCommandRequest(socket, player, data) {
       return;
     }
 
+    const beforeHealth = clampInteger(state.player_health || 0, 0, 100);
+    const beforeHash = makeAuditHash(state);
     state.player_health = requestedHealth;
     persistPlayerInventoryChange(targetUsername, state);
 
@@ -12611,7 +14868,17 @@ async function handleDeveloperCommandRequest(socket, player, data) {
 
     approve(
       target ? `Health set to ${requestedHealth}.` : `Health saved for offline account.`,
-      { target_username: targetUsername, amount: requestedHealth, delivery: target ? "online" : "offline_saved" },
+      {
+        target_username: targetUsername,
+        target_type: "player",
+        amount: requestedHealth,
+        before_health: beforeHealth,
+        after_health: requestedHealth,
+        inventory_before_hash: beforeHash,
+        inventory_after_hash: makeAuditHash(state),
+        reason: "developer_command",
+        delivery: target ? "online" : "offline_saved",
+      },
       { command_type: "health", target_username: targetUsername, amount: requestedHealth, player_data: state }
     );
     return;
@@ -12630,6 +14897,7 @@ async function handleDeveloperCommandRequest(socket, player, data) {
       return;
     }
 
+    const beforePosition = { x: player.x, y: player.y, world: player.world };
     const pos = getGridCenterPixels(gridX, gridY);
     player.x = pos.x;
     player.y = pos.y;
@@ -12639,17 +14907,35 @@ async function handleDeveloperCommandRequest(socket, player, data) {
 
     approve(
       `Teleported to ${gridX}, ${gridY}.`,
-      { target_username: player.account_username, grid_x: gridX, grid_y: gridY, x: player.x, y: player.y },
+      {
+        target_username: player.account_username,
+        target_type: "player",
+        grid_x: gridX,
+        grid_y: gridY,
+        before_position: beforePosition,
+        after_position: { x: player.x, y: player.y, world: player.world },
+        x: player.x,
+        y: player.y,
+        reason: "developer_command",
+      },
       { command_type: "teleport", grid_x: gridX, grid_y: gridY, x: player.x, y: player.y }
     );
     return;
   }
 
   if (commandName === "noc" || commandName === "noclip") {
+    const beforeNoclip = Boolean(player.noclip_enabled);
     player.noclip_enabled = data.enabled === undefined ? !player.noclip_enabled : Boolean(data.enabled);
     approve(
       player.noclip_enabled ? "Noclip enabled by server." : "Noclip disabled by server.",
-      { target_username: player.account_username, noclip_enabled: player.noclip_enabled },
+      {
+        target_username: player.account_username,
+        target_type: "player",
+        before_noclip_enabled: beforeNoclip,
+        after_noclip_enabled: Boolean(player.noclip_enabled),
+        noclip_enabled: player.noclip_enabled,
+        reason: "developer_command",
+      },
       { command_type: "noclip", noclip_enabled: player.noclip_enabled }
     );
     return;
@@ -12663,7 +14949,14 @@ async function handleDeveloperCommandRequest(socket, player, data) {
     replaceWorldStateAndBroadcast(commandWorld, state);
     approve(
       `Cleared ${removedCount} drops in ${commandWorld}.`,
-      { target_world: commandWorld, removed_count: removedCount },
+      {
+        target_world: commandWorld,
+        affected_world: commandWorld,
+        before_drop_count: removedCount,
+        after_drop_count: 0,
+        removed_count: removedCount,
+        reason: "developer_command",
+      },
       { command_type: "clear_drops", target_world: commandWorld, removed_count: removedCount }
     );
     return;
@@ -12675,6 +14968,17 @@ async function handleDeveloperCommandRequest(socket, player, data) {
 
     if (eventType !== SNOW_STORM_EVENT_TYPE) {
       deny("Use: /forceevent snow_storm", { target_world: commandWorld, event_type: eventType });
+      return;
+    }
+
+    const cooldown = consumeSnowStormCommandCooldown(commandWorld);
+    if (!cooldown.ok) {
+      deny(`Snow Storm command is cooling down. Try again in ${Math.ceil(cooldown.retry_ms / 1000)}s.`, {
+        target_world: commandWorld,
+        event_type: eventType,
+        reason: "cooldown",
+        retry_ms: cooldown.retry_ms,
+      });
       return;
     }
 
@@ -12710,7 +15014,7 @@ async function handleDeveloperCommandRequest(socket, player, data) {
     }
 
     approve(
-      `Snow Storm force-started in ${commandWorld}. Visual skin active.`,
+      `Snow Storm force-started in ${commandWorld}. Changed ${result.changed_tiles || 0} tiles.`,
       {
         target_world: commandWorld,
         event_type: eventType,
@@ -12729,49 +15033,76 @@ async function handleDeveloperCommandRequest(socket, player, data) {
   }
 
   if (commandName === "event" || commandName === "world_event") {
-    const parts = command.split(/\s+/).filter(Boolean);
-    const eventType = String(data.event_type || parts[1] || "").trim().toLowerCase();
-    const action = String(data.event_action || data.action || parts[2] || "start").trim().toLowerCase();
-    const commandWorld = getDeveloperCommandWorldName(player, data);
+    try {
+      const parts = splitCommand(command);
+      const eventType = String(data.event_type || parts[1] || "").trim().toLowerCase();
+      const action = String(data.event_action || data.action || parts[2] || "start").trim().toLowerCase();
+      const commandWorld = getDeveloperCommandWorldName(player, data);
 
-    if (eventType !== SNOW_STORM_EVENT_TYPE) {
-      deny("Use: /event snow_storm start|end", { target_world: commandWorld, event_type: eventType });
+      if (eventType !== SNOW_STORM_EVENT_TYPE) {
+        deny("Use: /event snow_storm start|end", { target_world: commandWorld, event_type: eventType });
+        return;
+      }
+
+      const cooldown = consumeSnowStormCommandCooldown(commandWorld);
+      if (!cooldown.ok) {
+        deny(`Snow Storm command is cooling down. Try again in ${Math.ceil(cooldown.retry_ms / 1000)}s.`, {
+          target_world: commandWorld,
+          event_type: eventType,
+          event_action: action,
+          reason: "cooldown",
+          retry_ms: cooldown.retry_ms,
+        });
+        return;
+      }
+
+      const result = action === "end"
+        ? await endSnowStormEvent(commandWorld, { reason: "developer_command" })
+        : await startSnowStormEvent(commandWorld, { reason: "developer_command" });
+
+      if (!result.ok) {
+        deny(`Snow Storm event ${action === "end" ? "end" : "start"} failed: ${result.reason || "unknown"}.`, {
+          target_world: commandWorld,
+          event_type: eventType,
+          event_action: action,
+          reason: result.reason || "",
+          message: result.message || "",
+        });
+        return;
+      }
+
+      approve(
+        action === "end"
+          ? `Snow Storm ended in ${commandWorld}.`
+          : `Snow Storm started in ${commandWorld}. Changed ${result.changed_tiles || 0} tiles.`,
+        {
+          target_world: commandWorld,
+          event_type: eventType,
+          event_action: action,
+          event_id: result.event_id || "",
+        },
+        {
+          command_type: "world_event",
+          target_world: commandWorld,
+          event_type: eventType,
+          event_action: action,
+          event_id: result.event_id || "",
+        }
+      );
       return;
-    }
-
-    const result = action === "end"
-      ? await endSnowStormEvent(commandWorld, { reason: "developer_command" })
-      : await startSnowStormEvent(commandWorld, { reason: "developer_command" });
-
-    if (!result.ok) {
-      deny(`Snow Storm event ${action === "end" ? "end" : "start"} failed: ${result.reason || "unknown"}.`, {
-        target_world: commandWorld,
-        event_type: eventType,
-        event_action: action,
-        reason: result.reason || "",
+    } catch (error) {
+      writeCrashReport("developer_event_command_exception", {
+        error: errorToCrashDetails(error),
+        command: commandLogBase,
+        runtime: getCrashRuntimeState(),
+      });
+      deny("Snow Storm command failed safely. Check crash_reports.log for details.", {
+        event_type: SNOW_STORM_EVENT_TYPE,
+        reason: "exception",
+        message: String(error?.message || error || "unknown"),
       });
       return;
     }
-
-    approve(
-      action === "end"
-        ? `Snow Storm ended in ${commandWorld}.`
-        : `Snow Storm started in ${commandWorld}. Visual skin active.`,
-      {
-        target_world: commandWorld,
-        event_type: eventType,
-        event_action: action,
-        event_id: result.event_id || "",
-      },
-      {
-        command_type: "world_event",
-        target_world: commandWorld,
-        event_type: eventType,
-        event_action: action,
-        event_id: result.event_id || "",
-      }
-    );
-    return;
   }
 
   if (commandName === "save") {
@@ -12838,7 +15169,17 @@ async function handleDeveloperCommandRequest(socket, player, data) {
     broadcastToWorld(commandWorld, update);
     approve(
       `Spawned ${itemId} in ${commandWorld}.`,
-      { target_world: commandWorld, item_id: itemId, grid_x: gridX, grid_y: gridY },
+      {
+        target_world: commandWorld,
+        affected_world: commandWorld,
+        item_id: itemId,
+        item_category: "block",
+        grid_x: gridX,
+        grid_y: gridY,
+        old_block_id: "",
+        new_block_id: itemId,
+        reason: "developer_command",
+      },
       { command_type: "spawn", target_world: commandWorld, item_id: itemId, grid_x: gridX, grid_y: gridY }
     );
     return;
@@ -13089,7 +15430,8 @@ function normalizeSeedEntry(rawEntry) {
   if (seedType.length === 0) return null;
   if (!ItemDatabase.hasItem(seedType) || resolveInventoryCategory(seedType) !== "seed") return null;
 
-  const maxGrowTime = Math.max(1, Math.min(86400, Number(rawEntry.max_grow_time) || SERVER_SEED_GROW_TIME_SECONDS));
+  const configuredGrowTime = getSeedConfiguredGrowTime(seedType);
+  const maxGrowTime = Math.max(1, Math.min(86400, Number(rawEntry.max_grow_time) || configuredGrowTime));
   const rawMature = Boolean(rawEntry.mature);
   const growTime = rawMature ? 0 : Math.max(0, Math.min(maxGrowTime, Number(rawEntry.grow_time) || maxGrowTime));
   let plantedAt = Number(rawEntry.planted_at || 0);
@@ -13223,6 +15565,7 @@ function sanitizeBlockUpdate(data, worldName) {
     x: gridX,
     y: gridY,
     block_type: blockType,
+    source_tool: clampString(data.source_tool || ""),
     world: cleanWorld(worldName),
   };
 }
@@ -13242,7 +15585,7 @@ function sanitizeSeedUpdate(data, worldName) {
   if (action === "place" && seedType.length === 0) return null;
   if (seedType !== "" && (!ItemDatabase.hasItem(seedType) || resolveInventoryCategory(seedType) !== "seed")) return null;
 
-  const maxGrowTime = SERVER_SEED_GROW_TIME_SECONDS;
+  const maxGrowTime = action === "place" ? getSeedConfiguredGrowTime(seedType) : SERVER_SEED_GROW_TIME_SECONDS;
 
   return {
     type: "world_seed_update",
@@ -13299,8 +15642,8 @@ function applySeedUpdateToWorldState(worldName, update) {
   if (update.action === "place" || update.action === "splice") {
     const seedEntry = makeServerSeedEntry(update.x, update.y, update.seed_type);
     state.seeds.set(key, seedEntry);
-    update.grow_time = SERVER_SEED_GROW_TIME_SECONDS;
-    update.max_grow_time = SERVER_SEED_GROW_TIME_SECONDS;
+    update.grow_time = seedEntry.grow_time;
+    update.max_grow_time = seedEntry.max_grow_time;
     update.mature = false;
     update.mutated = Boolean(seedEntry.mutated);
   } else if (update.action === "remove") {
@@ -13326,6 +15669,37 @@ function findEntranceGatesInState(state) {
     }
   }
   return gates;
+}
+
+function getEntranceGateSpawnForWorld(worldName) {
+  const state = ensureWorldState(worldName);
+  const gate = repairEntranceGateState(state) || findEntranceGateInState(state);
+  if (!gate || !isGridInWorld(gate.x, gate.y)) return null;
+
+  return {
+    x: gate.x * TILE_SIZE,
+    y: gate.y * TILE_SIZE,
+    grid_x: gate.x,
+    grid_y: gate.y,
+  };
+}
+
+function getDefaultEntranceGateSpawnForWorld(worldName) {
+  const gridX = clampInteger(Math.floor(WORLD_WIDTH * 0.5), 0, WORLD_WIDTH - 1);
+  const terrain = buildServerTerrainSurface(worldName);
+  const surfaceY = serverSurfaceYAt(terrain.surface, gridX);
+  const gridY = clampInteger(surfaceY - 1, 0, WORLD_HEIGHT - 1);
+
+  return {
+    x: gridX * TILE_SIZE,
+    y: gridY * TILE_SIZE,
+    grid_x: gridX,
+    grid_y: gridY,
+  };
+}
+
+function getJoinWorldSpawnForWorld(worldName) {
+  return getEntranceGateSpawnForWorld(worldName) || getDefaultEntranceGateSpawnForWorld(worldName);
 }
 
 function ensureEntranceGateSupportInState(state, gate) {
@@ -13656,6 +16030,25 @@ function sanitizeInteractionUpdate(data, worldName) {
       action,
       x: gridX,
       y: gridY,
+    };
+  }
+
+  if (action === "entrance_pass") {
+    const x = Number(data.x);
+    const y = Number(data.y);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    const gridX = Math.trunc(x);
+    const gridY = Math.trunc(y);
+    if (!isGridInWorld(gridX, gridY)) return null;
+    const rawDirection = Number(data.walk_direction);
+
+    return {
+      type: "world_interaction_update",
+      world: cleanWorld(worldName),
+      action,
+      x: gridX,
+      y: gridY,
+      walk_direction: Number.isFinite(rawDirection) && rawDirection < 0 ? -1 : 1,
     };
   }
 
@@ -14340,6 +16733,10 @@ function isPlayerNearDrop(player, drop) {
   return Math.hypot(player.x - drop.x, player.y - drop.y) <= MAX_PICKUP_DISTANCE_PIXELS;
 }
 
+function getForegroundNetworkPriority(entry) {
+  return clampString(entry?.block_type || "") === ENTRANCE_GATE_TYPE ? 0 : 1;
+}
+
 function getForegroundBlocksForState(state, worldName = "") {
   const blocks = [];
 
@@ -14373,6 +16770,7 @@ function getForegroundBlocksForState(state, worldName = "") {
     blocks.push(entry);
   }
 
+  blocks.sort((a, b) => getForegroundNetworkPriority(a) - getForegroundNetworkPriority(b));
   return blocks;
 }
 
@@ -14593,6 +16991,27 @@ async function commitWorldStateWithBlockChanges(worldName, changes = []) {
   return { ok: true, postgres_committed: false, serialized };
 }
 
+async function commitWorldEventStateOnly(worldName) {
+  const clean = cleanWorld(worldName);
+  const serialized = serializeWorldState(clean);
+
+  if (isPostgresAuthoritativeReady()) {
+    const saved = await postgresStore.saveWorldState(clean, serialized);
+    if (!saved) {
+      return { ok: false, reason: "database_error", message: "PostgreSQL rejected the world event update." };
+    }
+    writeWorldStateJsonBackup(clean, serialized);
+    return { ok: true, postgres_committed: true, serialized };
+  }
+
+  if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE) {
+    return { ok: false, reason: "postgres_unavailable", message: "PostgreSQL is not ready." };
+  }
+
+  saveWorldState(clean);
+  return { ok: true, postgres_committed: false, serialized };
+}
+
 function clearWorldEventState(state) {
   if (!state) return;
   state.active_event_type = "";
@@ -14606,6 +17025,21 @@ function hasActiveSnowStormEvent(state) {
   if (!state || state.active_event_type !== SNOW_STORM_EVENT_TYPE) return false;
   const endsAt = Date.parse(state.event_ends_at || "");
   return Number.isFinite(endsAt) && endsAt > Date.now();
+}
+
+function consumeSnowStormCommandCooldown(worldName) {
+  if (SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS <= 0) return { ok: true, retry_ms: 0 };
+
+  const key = `${cleanWorld(worldName)}:${SNOW_STORM_EVENT_TYPE}`;
+  const now = Date.now();
+  const lastActionAt = Number(worldEventCommandCooldowns.get(key) || 0);
+  const retryMs = SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS - (now - lastActionAt);
+  if (retryMs > 0) {
+    return { ok: false, retry_ms: retryMs };
+  }
+
+  worldEventCommandCooldowns.set(key, now);
+  return { ok: true, retry_ms: 0 };
 }
 
 function buildWorldEventStartedMessage(worldName, state) {
@@ -14623,10 +17057,60 @@ function buildWorldEventStartedMessage(worldName, state) {
   };
 }
 
+function buildActiveWorldEventTileUpdates(worldName, state) {
+  const clean = cleanWorld(worldName);
+  if (!hasActiveSnowStormEvent(state)) return [];
+  const eventId = state.event_id || "";
+  const tiles = Array.isArray(state.event_changed_tiles) ? state.event_changed_tiles : [];
+  const updates = [];
+
+  for (const rawTile of tiles) {
+    const tile = normalizeWorldEventTileEntry(rawTile, eventId);
+    if (tile.event_block_id === "") continue;
+    updates.push({
+      type: "world_block_update",
+      action: "place",
+      layer: "foreground",
+      x: tile.x,
+      y: tile.y,
+      block_type: tile.event_block_id,
+      world: clean,
+    });
+  }
+
+  return updates;
+}
+
+function sendEventTileUpdatesToSocket(socket, worldName, eventId, phase, updates = []) {
+  const clean = cleanWorld(worldName);
+  const safeUpdates = Array.isArray(updates) ? updates : [];
+  const batchCount = Math.ceil(safeUpdates.length / SNOW_STORM_EVENT_TILE_BATCH_SIZE);
+
+  for (let index = 0; index < safeUpdates.length; index += SNOW_STORM_EVENT_TILE_BATCH_SIZE) {
+    sendJson(socket, {
+      type: "event_tile_updates",
+      world: clean,
+      event_type: SNOW_STORM_EVENT_TYPE,
+      event_id: eventId || "",
+      phase,
+      batch_index: Math.floor(index / SNOW_STORM_EVENT_TILE_BATCH_SIZE),
+      batch_count: batchCount,
+      updates: safeUpdates.slice(index, index + SNOW_STORM_EVENT_TILE_BATCH_SIZE),
+    });
+  }
+}
+
 function sendActiveWorldEventState(socket, worldName) {
   const state = ensureWorldState(worldName);
   if (!hasActiveSnowStormEvent(state)) return;
   sendJson(socket, buildWorldEventStartedMessage(worldName, state));
+  sendEventTileUpdatesToSocket(
+    socket,
+    worldName,
+    state.event_id || "",
+    "sync",
+    buildActiveWorldEventTileUpdates(worldName, state)
+  );
 }
 
 function buildWorldEventEndedMessage(worldName, eventId = "", endedAt = new Date().toISOString()) {
@@ -14651,7 +17135,56 @@ function broadcastEventSystemMessage(worldName, eventId, message) {
   broadcastSystemToWorld(worldName, message);
 }
 
-function broadcastEventTileUpdates(worldName, eventId, phase, updates = []) {
+function buildSnowStormCountdownMessage(label) {
+  return `Snow Storm has ${label} left.`;
+}
+
+function clearWorldEventCountdownTimers(worldName) {
+  const clean = cleanWorld(worldName);
+  const timers = worldEventCountdownTimers.get(clean);
+  if (Array.isArray(timers)) {
+    for (const timer of timers) {
+      clearTimeout(timer);
+    }
+  }
+  worldEventCountdownTimers.delete(clean);
+}
+
+function scheduleWorldEventCountdowns(worldName) {
+  const clean = cleanWorld(worldName);
+  clearWorldEventCountdownTimers(clean);
+
+  const state = ensureWorldState(clean);
+  if (state.active_event_type !== SNOW_STORM_EVENT_TYPE) return;
+
+  const endsAt = Date.parse(state.event_ends_at || "");
+  if (!Number.isFinite(endsAt)) return;
+
+  const eventId = state.event_id || "";
+  const timers = [];
+  for (const countdown of SNOW_STORM_COUNTDOWN_MESSAGES) {
+    const fireInMs = endsAt - countdown.remainingMs - Date.now();
+    if (fireInMs <= 0) continue;
+    const timer = setTimeout(() => {
+      const liveState = ensureWorldState(clean);
+      if (liveState.active_event_type !== SNOW_STORM_EVENT_TYPE) return;
+      if ((liveState.event_id || "") !== eventId) return;
+      broadcastEventSystemMessage(clean, liveState.event_id || "", buildSnowStormCountdownMessage(countdown.label));
+    }, fireInMs);
+    if (typeof timer.unref === "function") timer.unref();
+    timers.push(timer);
+  }
+
+  if (timers.length > 0) {
+    worldEventCountdownTimers.set(clean, timers);
+  }
+}
+
+function sleepMs(ms) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function broadcastEventTileUpdates(worldName, eventId, phase, updates = []) {
   const clean = cleanWorld(worldName);
   const safeUpdates = Array.isArray(updates) ? updates : [];
   const batchCount = Math.ceil(safeUpdates.length / SNOW_STORM_EVENT_TILE_BATCH_SIZE);
@@ -14667,6 +17200,12 @@ function broadcastEventTileUpdates(worldName, eventId, phase, updates = []) {
       batch_count: batchCount,
       updates: batch,
     });
+    if (
+      SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS > 0 &&
+      index + SNOW_STORM_EVENT_TILE_BATCH_SIZE < safeUpdates.length
+    ) {
+      await sleepMs(SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS);
+    }
   }
 }
 
@@ -14675,6 +17214,7 @@ function scheduleWorldEventEnd(worldName) {
   const existing = worldEventTimers.get(clean);
   if (existing) clearTimeout(existing);
   worldEventTimers.delete(clean);
+  scheduleWorldEventCountdowns(clean);
 
   const state = ensureWorldState(clean);
   if (state.active_event_type !== SNOW_STORM_EVENT_TYPE) return;
@@ -14750,6 +17290,17 @@ function deterministicInt(rng, min, max) {
   const safeMax = Math.trunc(Number(max) || safeMin);
   if (safeMax <= safeMin) return safeMin;
   return safeMin + Math.floor(rng() * (safeMax - safeMin + 1));
+}
+
+function deterministicTileVariantIndex(x, y, count, salt = 0) {
+  const safeCount = Math.trunc(Number(count) || 0);
+  if (safeCount <= 1) return 0;
+  const value = (
+    Math.trunc(Number(x) || 0) * 73856093 +
+    Math.trunc(Number(y) || 0) * 19349663 +
+    Math.trunc(Number(salt) || 0) * 83492791
+  );
+  return ((value % safeCount) + safeCount) % safeCount;
 }
 
 function serverWorldGenerationSeed(worldName) {
@@ -15148,6 +17699,19 @@ function serverCreateTree(map, surface, generationSeed, rng, x) {
   return true;
 }
 
+function isRefreshTokenValid(account, token) {
+  if (!account || !account.refresh_token_hash) return false;
+  if (account.refresh_token_hash !== makeTokenHash(token)) return false;
+
+  const expiresAt = Date.parse(String(account.refresh_token_expires_at || ""));
+  if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) {
+    clearSessionToken(account);
+    return false;
+  }
+
+  return true;
+}
+
 function serverGenerateTrees(map, surface, generationSeed, rng) {
   let lastTreeX = -999;
   for (let x = 4; x < WORLD_WIDTH - 4; x += 1) {
@@ -15205,30 +17769,63 @@ function buildPersistedForegroundEventMap(state) {
   return map;
 }
 
-function getSnowStormEventBlockForOriginal(originalBlockId, rng) {
+function getSnowStormIceEventBlock(x, y) {
+  const roll = deterministicTileVariantIndex(x, y, 100, SNOW_STORM_ICE_VARIANT_SALT);
+  if (roll < 2) return "ice_fossil";
+  if (roll < 7) return "ice_block_2";
+  return "ice_block";
+}
+
+function getSnowStormEventBlockForOriginal(originalBlockId, effectiveMap, x, y) {
   switch (originalBlockId) {
     case "dirt":
-      return "snow_dirt";
+      return getSnowStormDirtEventBlock(effectiveMap, x, y);
+    case "water":
+      return getSnowStormIceEventBlock(x, y);
+    case "sand":
+      return "snow_bank";
+    case "stone":
+      return "snow_stone";
     case "grass":
       return "frozen_grass";
-    case "water": {
-      const roll = rng();
-      if (roll < 0.03) return "ice_fossil";
-      if (roll < 0.15) return "ice_block_2";
-      return "ice_block";
-    }
+    case "leaf":
+      return isSnowStormTopLeaf(effectiveMap, x, y) ? "snow_leaf" : "";
     default:
       return "";
   }
 }
 
-function isSnowStormDirtExposed(effectiveMap, state, x, y) {
+function getSnowStormBlockTypeAt(effectiveMap, x, y) {
+  if (!effectiveMap || !isGridInWorld(x, y)) return "";
+  const entry = effectiveMap.get(gridKey(x, y));
+  return clampString(entry?.block_type || "");
+}
+
+function getSnowStormDirtEventBlock(effectiveMap, x, y) {
+  const aboveY = Number(y) - 1;
+  const aboveBlockId = getSnowStormBlockTypeAt(effectiveMap, x, aboveY);
+  if (aboveBlockId !== "dirt") return "snow_block";
+
+  const aboveAboveBlockId = getSnowStormBlockTypeAt(effectiveMap, x, aboveY - 1);
+  if (aboveAboveBlockId !== "dirt") return "snow_dirt";
+
+  return "";
+}
+
+function isSnowStormTopLeaf(effectiveMap, x, y) {
   const aboveY = Number(y) - 1;
   if (!isGridInWorld(x, aboveY)) return true;
   const aboveKey = gridKey(x, aboveY);
-  if (state?.seeds?.has?.(aboveKey)) return false;
   const above = effectiveMap.get(aboveKey);
-  return !above || clampString(above.block_type || "") === "";
+  return clampString(above?.block_type || "") !== "leaf";
+}
+
+function canSpawnSnowStormPileAt(state, occupancyMap, x, y) {
+  if (!state || !occupancyMap || !isGridInWorld(x, y)) return false;
+  const key = gridKey(x, y);
+  if (state.foreground.has(key)) return false;
+  if (state.seeds.has(key)) return false;
+  return !occupancyMap.has(key);
 }
 
 function makeSnowStormWorldChange(worldName, tile, action, sourceId, reason) {
@@ -15260,25 +17857,166 @@ async function startSnowStormEvent(worldName, options = {}) {
   const lockKey = `${clean}:${SNOW_STORM_EVENT_TYPE}`;
   if (worldEventActionLocks.has(lockKey)) return { ok: false, reason: "locked" };
   worldEventActionLocks.add(lockKey);
+  let previousWorldState = null;
 
   try {
     const state = ensureWorldState(clean);
     if (hasActiveSnowStormEvent(state)) return { ok: false, reason: "already_active" };
 
-    const previousWorldState = serializeWorldState(clean);
+    previousWorldState = serializeWorldState(clean);
     const eventId = makeAuditId("snow_storm");
     const startedAt = new Date();
     const endsAt = new Date(startedAt.getTime() + SNOW_STORM_EVENT_DURATION_MS);
     const changedTiles = [];
     const updates = [];
+    const convertedSnowDirtTiles = [];
     const stats = {
       dirt_converted: 0,
       water_converted: 0,
+      sand_converted: 0,
+      stone_converted: 0,
       grass_converted: 0,
       leaf_converted: 0,
-      ice_block_2_created: 0,
-      ice_fossil_created: 0,
+      piles_spawned: 0,
+      capped: false,
     };
+    const effectiveMap = buildPersistedForegroundEventMap(state);
+    const originalOccupancyMap = buildEffectiveForegroundMap(clean, state);
+    const occupancyMap = new Map();
+    for (const [key, entry] of originalOccupancyMap.entries()) {
+      occupancyMap.set(key, { ...entry });
+    }
+
+    for (const entry of effectiveMap.values()) {
+      if (changedTiles.length >= SNOW_STORM_MAX_CHANGED_TILES) {
+        stats.capped = true;
+        break;
+      }
+
+      const originalBlockId = clampString(entry?.block_type || "");
+      if (originalBlockId === "") continue;
+      const eventBlockId = getSnowStormEventBlockForOriginal(originalBlockId, originalOccupancyMap, entry.x, entry.y);
+      if (eventBlockId === "" || eventBlockId === originalBlockId) continue;
+
+      const key = gridKey(entry.x, entry.y);
+      const source = clampString(entry.source || "") === "explicit" ? "explicit" : "generated";
+      state.foreground.set(key, { x: entry.x, y: entry.y, block_type: eventBlockId });
+      state.removed_foreground.delete(key);
+      state.interactions.delete(key);
+      occupancyMap.set(key, { x: entry.x, y: entry.y, block_type: eventBlockId, source });
+      const changedTile = {
+        x: entry.x,
+        y: entry.y,
+        original_block_id: originalBlockId,
+        event_block_id: eventBlockId,
+        event_id: eventId,
+        changed_at: startedAt.toISOString(),
+        source,
+        reason: "snow_storm_start",
+      };
+      changedTiles.push(changedTile);
+      updates.push({
+        type: "world_block_update",
+        action: "place",
+        layer: "foreground",
+        x: entry.x,
+        y: entry.y,
+        block_type: eventBlockId,
+        world: clean,
+      });
+
+      if (originalBlockId === "dirt") {
+        stats.dirt_converted += 1;
+        if (eventBlockId === "snow_dirt") {
+          convertedSnowDirtTiles.push(changedTile);
+        }
+      }
+      else if (originalBlockId === "water") stats.water_converted += 1;
+      else if (originalBlockId === "sand") stats.sand_converted += 1;
+      else if (originalBlockId === "stone") stats.stone_converted += 1;
+      else if (originalBlockId === "grass") stats.grass_converted += 1;
+      else if (originalBlockId === "leaf") stats.leaf_converted += 1;
+    }
+
+    for (const entry of occupancyMap.values()) {
+      if (changedTiles.length >= SNOW_STORM_MAX_CHANGED_TILES) {
+        stats.capped = true;
+        break;
+      }
+      if (clampString(entry?.source || "") !== "generated") continue;
+      if (clampString(entry?.block_type || "") !== "water") continue;
+
+      const key = gridKey(entry.x, entry.y);
+      if (state.foreground.has(key)) continue;
+
+      const eventBlockId = getSnowStormIceEventBlock(entry.x, entry.y);
+      state.foreground.set(key, { x: entry.x, y: entry.y, block_type: eventBlockId });
+      state.removed_foreground.delete(key);
+      state.interactions.delete(key);
+      occupancyMap.set(key, { x: entry.x, y: entry.y, block_type: eventBlockId, source: "generated" });
+
+      const changedTile = {
+        x: entry.x,
+        y: entry.y,
+        original_block_id: "water",
+        event_block_id: eventBlockId,
+        event_id: eventId,
+        changed_at: startedAt.toISOString(),
+        source: "generated",
+        reason: "snow_storm_generated_water_freeze",
+      };
+      changedTiles.push(changedTile);
+      updates.push({
+        type: "world_block_update",
+        action: "place",
+        layer: "foreground",
+        x: entry.x,
+        y: entry.y,
+        block_type: eventBlockId,
+        world: clean,
+      });
+      stats.water_converted += 1;
+    }
+
+    const pileRng = makeDeterministicRng(`${eventId}:${clean}:pile_of_snow`);
+    for (const snowDirtTile of convertedSnowDirtTiles) {
+      if (changedTiles.length >= SNOW_STORM_MAX_CHANGED_TILES) {
+        stats.capped = true;
+        break;
+      }
+      if (pileRng() >= SNOW_STORM_PILE_OF_SNOW_CHANCE) continue;
+
+      const pileX = snowDirtTile.x;
+      const pileY = snowDirtTile.y - 1;
+      if (!canSpawnSnowStormPileAt(state, occupancyMap, pileX, pileY)) continue;
+
+      const pileKey = gridKey(pileX, pileY);
+      state.foreground.set(pileKey, { x: pileX, y: pileY, block_type: "pile_of_snow" });
+      state.removed_foreground.delete(pileKey);
+      occupancyMap.set(pileKey, { x: pileX, y: pileY, block_type: "pile_of_snow", source: "event_spawn" });
+
+      const pileTile = {
+        x: pileX,
+        y: pileY,
+        original_block_id: "",
+        event_block_id: "pile_of_snow",
+        event_id: eventId,
+        changed_at: startedAt.toISOString(),
+        source: "event_spawn",
+        reason: "snow_storm_pile_spawn",
+      };
+      changedTiles.push(pileTile);
+      updates.push({
+        type: "world_block_update",
+        action: "place",
+        layer: "foreground",
+        x: pileX,
+        y: pileY,
+        block_type: "pile_of_snow",
+        world: clean,
+      });
+      stats.piles_spawned += 1;
+    }
 
     state.active_event_type = SNOW_STORM_EVENT_TYPE;
     state.event_id = eventId;
@@ -15286,8 +18024,7 @@ async function startSnowStormEvent(worldName, options = {}) {
     state.event_ends_at = endsAt.toISOString();
     state.event_changed_tiles = changedTiles;
 
-    const worldChanges = changedTiles.map((tile) => makeSnowStormWorldChange(clean, tile, "place", eventId, "snow_storm_start"));
-    const commit = await commitWorldStateWithBlockChanges(clean, worldChanges);
+    const commit = await commitWorldEventStateOnly(clean);
     if (!commit.ok) {
       worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
       return { ok: false, reason: commit.reason || "commit_failed", message: commit.message || "" };
@@ -15297,7 +18034,7 @@ async function startSnowStormEvent(worldName, options = {}) {
     if (options.broadcast !== false) {
       broadcastToWorld(clean, buildWorldEventStartedMessage(clean, state));
       broadcastEventSystemMessage(clean, eventId, SNOW_STORM_SYSTEM_MESSAGE);
-      broadcastEventTileUpdates(clean, eventId, "start", updates);
+      await broadcastEventTileUpdates(clean, eventId, "start", updates);
     }
 
     console.log("[world_event] snow_storm started", {
@@ -15310,6 +18047,12 @@ async function startSnowStormEvent(worldName, options = {}) {
     });
 
     return { ok: true, event_id: eventId, stats, changed_tiles: changedTiles.length };
+  } catch (error) {
+    if (previousWorldState != null) {
+      worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
+    }
+    console.warn("[world_event] snow_storm start exception:", error && error.stack ? error.stack : error);
+    return { ok: false, reason: "exception", message: String(error?.message || error || "unknown") };
   } finally {
     worldEventActionLocks.delete(lockKey);
   }
@@ -15320,16 +18063,16 @@ async function endSnowStormEvent(worldName, options = {}) {
   const lockKey = `${clean}:${SNOW_STORM_EVENT_TYPE}`;
   if (worldEventActionLocks.has(lockKey)) return { ok: false, reason: "locked" };
   worldEventActionLocks.add(lockKey);
+  let previousWorldState = null;
 
   try {
     const state = ensureWorldState(clean);
     if (state.active_event_type !== SNOW_STORM_EVENT_TYPE) return { ok: false, reason: "not_active" };
     const eventId = state.event_id || "";
-    const previousWorldState = serializeWorldState(clean);
+    previousWorldState = serializeWorldState(clean);
     const changedTiles = Array.isArray(state.event_changed_tiles) ? state.event_changed_tiles.slice() : [];
     const endedAt = new Date().toISOString();
     const updates = [];
-    const worldChanges = [];
     const stats = {
       reverted: 0,
       removed_piles: 0,
@@ -15341,6 +18084,7 @@ async function endSnowStormEvent(worldName, options = {}) {
     const existingTimer = worldEventTimers.get(clean);
     if (existingTimer) clearTimeout(existingTimer);
     worldEventTimers.delete(clean);
+    clearWorldEventCountdownTimers(clean);
 
     for (const rawTile of changedTiles) {
       const tile = normalizeWorldEventTileEntry(rawTile, eventId);
@@ -15353,39 +18097,27 @@ async function endSnowStormEvent(worldName, options = {}) {
       }
 
       const wasGeneratedOverride = clampString(tile.source || "") === "generated";
-      if (tile.original_block_id !== "" && !wasGeneratedOverride) {
-        state.foreground.set(key, { x: tile.x, y: tile.y, block_type: tile.original_block_id });
-        state.removed_foreground.delete(key);
-        updates.push({
-          type: "world_block_update",
-          action: "place",
-          layer: "foreground",
-          x: tile.x,
-          y: tile.y,
-          block_type: tile.original_block_id,
-          world: clean,
-        });
-        worldChanges.push({
-          source_type: "world_event",
-          source_id: eventId,
-          world: clean,
-          action: "place",
-          reason: "snow_storm_revert",
-          layer: "foreground",
-          x: tile.x,
-          y: tile.y,
-          block_type: tile.original_block_id,
-          block_type_before: tile.event_block_id,
-          block_type_after: tile.original_block_id,
-          details: {
-            event_type: SNOW_STORM_EVENT_TYPE,
-            event_id: eventId,
-            original_block_id: tile.original_block_id,
-            event_block_id: tile.event_block_id,
-            tile_source: tile.source || "",
-          },
-        });
-        stats.reverted += 1;
+      if (tile.original_block_id !== "") {
+        if (wasGeneratedOverride) {
+          state.foreground.delete(key);
+          state.removed_foreground.delete(key);
+          stats.removed_generated_overrides += 1;
+          needsWorldStateRefresh = true;
+        } else {
+          state.foreground.set(key, { x: tile.x, y: tile.y, block_type: tile.original_block_id });
+          state.removed_foreground.delete(key);
+          stats.reverted += 1;
+
+          updates.push({
+            type: "world_block_update",
+            action: "place",
+            layer: "foreground",
+            x: tile.x,
+            y: tile.y,
+            block_type: tile.original_block_id,
+            world: clean,
+          });
+        }
       } else {
         state.foreground.delete(key);
         state.removed_foreground.delete(key);
@@ -15398,26 +18130,6 @@ async function endSnowStormEvent(worldName, options = {}) {
           block_type: tile.event_block_id,
           world: clean,
         });
-        worldChanges.push({
-          source_type: "world_event",
-          source_id: eventId,
-          world: clean,
-          action: "break",
-          reason: "snow_storm_remove_spawn",
-          layer: "foreground",
-          x: tile.x,
-          y: tile.y,
-          block_type: tile.event_block_id,
-          block_type_before: tile.event_block_id,
-          block_type_after: "",
-          details: {
-            event_type: SNOW_STORM_EVENT_TYPE,
-            event_id: eventId,
-            event_block_id: tile.event_block_id,
-            original_block_id: tile.original_block_id || "",
-            tile_source: tile.source || "",
-          },
-        });
         if (wasGeneratedOverride) {
           stats.removed_generated_overrides += 1;
           needsWorldStateRefresh = true;
@@ -15428,7 +18140,7 @@ async function endSnowStormEvent(worldName, options = {}) {
     }
 
     clearWorldEventState(state);
-    const commit = await commitWorldStateWithBlockChanges(clean, worldChanges);
+    const commit = await commitWorldEventStateOnly(clean);
     if (!commit.ok) {
       worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
       scheduleWorldEventEnd(clean);
@@ -15440,9 +18152,11 @@ async function endSnowStormEvent(worldName, options = {}) {
       if (needsWorldStateRefresh) {
         broadcastToWorld(clean, buildWorldStateMessage(clean, {
           world_state_reason: "snow_storm_end",
+          respawn_player: false,
+          force_respawn: false,
         }));
       } else {
-        broadcastEventTileUpdates(clean, eventId, "end", updates);
+        await broadcastEventTileUpdates(clean, eventId, "end", updates);
       }
     }
 
@@ -15455,6 +18169,13 @@ async function endSnowStormEvent(worldName, options = {}) {
     });
 
     return { ok: true, event_id: eventId, stats, updates: updates.length };
+  } catch (error) {
+    if (previousWorldState != null) {
+      worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
+      scheduleWorldEventEnd(clean);
+    }
+    console.warn("[world_event] snow_storm end exception:", error && error.stack ? error.stack : error);
+    return { ok: false, reason: "exception", message: String(error?.message || error || "unknown") };
   } finally {
     worldEventActionLocks.delete(lockKey);
   }
@@ -15489,6 +18210,15 @@ async function handleFrozenTreasureOpen(socket, player, worldName, update, reque
       block_type: "frozen_treasure_2",
       world: clean,
     };
+    const cleanupUpdate = {
+      type: "world_block_update",
+      action: "break",
+      layer: "foreground",
+      x: update.x,
+      y: update.y,
+      block_type: "frozen_treasure_2",
+      world: clean,
+    };
 
     state.foreground.set(key, { x: update.x, y: update.y, block_type: "frozen_treasure_2" });
     state.removed_foreground.delete(key);
@@ -15501,6 +18231,14 @@ async function handleFrozenTreasureOpen(socket, player, worldName, update, reque
       sendActionRejected(socket, "world_block_update", "Could not create the treasure reward.");
       return false;
     }
+
+    state.foreground.delete(key);
+    state.interactions.delete(key);
+    state.removed_foreground.set(key, {
+      x: update.x,
+      y: update.y,
+      block_type: "frozen_treasure_2",
+    });
 
     const openChange = {
       ...getAuditActor(socket, player),
@@ -15519,6 +18257,27 @@ async function handleFrozenTreasureOpen(socket, player, worldName, update, reque
       details: {
         event_type: SNOW_STORM_EVENT_TYPE,
         opened_block: "frozen_treasure",
+        reward_item: "snow_block",
+      },
+    };
+    const cleanupChange = {
+      ...getAuditActor(socket, player),
+      source_type: "server_event",
+      source_id: transactionId,
+      request_id: requestId || "",
+      world: clean,
+      action: "break",
+      reason: "frozen_treasure_open_cleanup",
+      layer: "foreground",
+      x: update.x,
+      y: update.y,
+      block_type: "frozen_treasure_2",
+      block_type_before: "frozen_treasure_2",
+      block_type_after: "",
+      details: {
+        event_type: SNOW_STORM_EVENT_TYPE,
+        opened_block: "frozen_treasure",
+        cleanup_block: "frozen_treasure_2",
         reward_item: "snow_block",
       },
     };
@@ -15543,7 +18302,7 @@ async function handleFrozenTreasureOpen(socket, player, worldName, update, reque
       },
     };
 
-    const commit = await commitWorldStateWithBlockChanges(clean, [openChange, rewardChange]);
+    const commit = await commitWorldStateWithBlockChanges(clean, [openChange, cleanupChange, rewardChange]);
     if (!commit.ok) {
       worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
       sendActionRejected(socket, "world_block_update", commit.message || "PostgreSQL rejected the treasure reward.");
@@ -15551,8 +18310,10 @@ async function handleFrozenTreasureOpen(socket, player, worldName, update, reque
     }
 
     sendWorldUpdateToRequesterAndWorld(socket, player, clean, openedUpdate);
+    sendWorldUpdateToRequesterAndWorld(socket, player, clean, cleanupUpdate);
     sendWorldUpdateToRequesterAndWorld(socket, player, clean, rewardDrop);
     logWorldChange(socket, player, openChange, { skipPostgres: commit.postgres_committed });
+    logWorldChange(socket, player, cleanupChange, { skipPostgres: commit.postgres_committed });
     logWorldChange(socket, player, rewardChange, { skipPostgres: commit.postgres_committed });
 
     console.log("[world_event] frozen_treasure opened", {
@@ -15562,6 +18323,7 @@ async function handleFrozenTreasureOpen(socket, player, worldName, update, reque
       actor: player?.account_username || player?.name || "",
       reward_drop_id: rewardDrop.drop_id,
       reward_item: rewardDrop.item_type,
+      cleanup_block: "frozen_treasure_2",
     });
     return true;
   } finally {
@@ -15598,8 +18360,11 @@ function sanitizeAccountState(rawAccount) {
     email: cleanEmail(rawAccount.email || ""),
     password_salt: String(rawAccount.password_salt || ""),
     password_hash: passwordHash,
+    password_algorithm: String(rawAccount.password_algorithm || (passwordHash ? "legacy_scrypt" : "")),
     session_token_hash: String(rawAccount.session_token_hash || ""),
     session_token_expires_at: String(rawAccount.session_token_expires_at || ""),
+    refresh_token_hash: String(rawAccount.refresh_token_hash || ""),
+    refresh_token_expires_at: String(rawAccount.refresh_token_expires_at || ""),
     email_verified: hasEmailVerifiedField ? Boolean(rawAccount.email_verified) : passwordHash !== "",
     email_verified_at: String(rawAccount.email_verified_at || ""),
     email_verification_token_hash: String(rawAccount.email_verification_token_hash || ""),
@@ -15628,8 +18393,11 @@ function upsertAccount(rawAccount) {
     email: incoming.email || existing.email || "",
     password_salt: existing.password_salt || incoming.password_salt || "",
     password_hash: existing.password_hash || incoming.password_hash || "",
+    password_algorithm: existing.password_algorithm || incoming.password_algorithm || (existing.password_hash || incoming.password_hash ? "legacy_scrypt" : ""),
     session_token_hash: existing.session_token_hash || incoming.session_token_hash || "",
     session_token_expires_at: existing.session_token_expires_at || incoming.session_token_expires_at || "",
+    refresh_token_hash: existing.refresh_token_hash || incoming.refresh_token_hash || "",
+    refresh_token_expires_at: existing.refresh_token_expires_at || incoming.refresh_token_expires_at || "",
     email_verified: Object.prototype.hasOwnProperty.call(existing, "email_verified") ? Boolean(existing.email_verified) : Boolean(incoming.email_verified),
     email_verified_at: existing.email_verified_at || incoming.email_verified_at || "",
     email_verification_token_hash: existing.email_verification_token_hash || incoming.email_verification_token_hash || "",
@@ -15769,6 +18537,7 @@ function sanitizePlayerState(rawState, username) {
     state.equipped_shoes_item = equippedShoes;
   }
 
+  normalizePlayerHotbarState(state);
   return state;
 }
 
@@ -15823,6 +18592,7 @@ function savePlayerState(username) {
 
   const state = playerStates.get(accountKey(clean));
   if (!state) return;
+  normalizePlayerHotbarState(state);
   applyProgressionFieldsToState(state, state);
 
   writePlayerStateJsonBackup(clean, state);
@@ -15904,9 +18674,15 @@ function getPlayersInWorld(worldName, excludePlayerId = "") {
 
   for (const player of players.values()) {
     if (player.id === excludePlayerId) continue;
+    if (!player.joined_world) continue;
     if (player.world !== worldName) continue;
 
+    refreshPlayerFishingPresence(player, worldName);
     const equipmentSlots = player.equipment_slots || {};
+    const fishingTargetX = Number.isInteger(player.fishing_target_x) ? player.fishing_target_x : -1;
+    const fishingTargetY = Number.isInteger(player.fishing_target_y) ? player.fishing_target_y : -1;
+    const fishingActive = player.fishing_active === true && isGridInWorld(fishingTargetX, fishingTargetY);
+    const damageFlash = getPublicPlayerDamageFlash(player);
     result.push({
       player_id: player.id,
       ...getPublicPlayerIdentity(player),
@@ -15918,6 +18694,14 @@ function getPlayersInWorld(worldName, excludePlayerId = "") {
       velocity_x: sanitizePlayerVelocity(player.velocity_x || 0),
       velocity_y: sanitizePlayerVelocity(player.velocity_y || 0),
       on_floor: player.on_floor !== false,
+      in_water: player.in_water === true,
+      in_lava_fire: player.in_lava_fire === true,
+      ...damageFlash,
+      fishing_active: fishingActive,
+      fishing_target_x: fishingActive ? fishingTargetX : -1,
+      fishing_target_y: fishingActive ? fishingTargetY : -1,
+      fishing_lure_id: fishingActive ? clampString(player.fishing_lure_id || "") : "",
+      fishing_rod_id: fishingActive ? clampString(player.fishing_rod_id || "") : "",
       equipment_slots: equipmentSlots,
       equipped_tool: clampString(equipmentSlots.hand || ""),
       equipped_back_item: clampString(equipmentSlots.back || ""),
@@ -15942,8 +18726,58 @@ function broadcastSystemToWorld(worldName, message, excludePlayerId = "") {
   }, excludePlayerId);
 }
 
+function queuePlayerPositionBroadcast(worldName, message, excludePlayerId = "") {
+  const clean = cleanWorld(worldName || message?.world || "START");
+  const playerId = String(message?.player_id || excludePlayerId || "").trim();
+  if (!clean || !playerId) return;
+
+  let worldQueue = pendingPlayerPositionBroadcasts.get(clean);
+  if (!worldQueue) {
+    worldQueue = new Map();
+    pendingPlayerPositionBroadcasts.set(clean, worldQueue);
+  }
+
+  worldQueue.set(playerId, {
+    playerId,
+    excludePlayerId: String(excludePlayerId || ""),
+    message,
+  });
+
+  if (pendingPlayerPositionBroadcastTimers.has(clean)) return;
+
+  const timer = setTimeout(() => {
+    pendingPlayerPositionBroadcastTimers.delete(clean);
+    flushQueuedPlayerPositionBroadcasts(clean);
+  }, PLAYER_POSITION_BROADCAST_INTERVAL_MS);
+  if (typeof timer.unref === "function") timer.unref();
+  pendingPlayerPositionBroadcastTimers.set(clean, timer);
+}
+
+function flushQueuedPlayerPositionBroadcasts(worldName) {
+  const clean = cleanWorld(worldName || "START");
+  const worldQueue = pendingPlayerPositionBroadcasts.get(clean);
+  if (!worldQueue) return;
+
+  pendingPlayerPositionBroadcasts.delete(clean);
+
+  for (const entry of worldQueue.values()) {
+    const player = players.get(entry.playerId);
+    if (!player || !player.joined_world || player.world !== clean) continue;
+    broadcastToWorld(clean, entry.message, entry.excludePlayerId);
+  }
+}
+
 function broadcastToWorld(worldName, message, excludePlayerId = "") {
-  const raw = JSON.stringify(message);
+  let raw;
+  try {
+    raw = JSON.stringify(message);
+  } catch (error) {
+    console.warn("[broadcast_serialize_error]", {
+      world: worldName,
+      message: error && error.message ? error.message : String(error),
+    });
+    return;
+  }
 
   for (const client of wss.clients) {
     if (client.readyState !== WebSocket.OPEN) continue;
@@ -15953,12 +18787,25 @@ function broadcastToWorld(worldName, message, excludePlayerId = "") {
     if (!player) continue;
     if (player.world !== worldName) continue;
 
-    client.send(raw);
+    sendRawJsonToSocket(client, raw, "world_broadcast", {
+      player_id: String(client.playerId || ""),
+      world: worldName,
+      message_type: String(message?.type || ""),
+    });
   }
 }
 
 function broadcastToAuthenticatedPlayers(message, excludePlayerId = "") {
-  const raw = JSON.stringify(message);
+  let raw;
+  try {
+    raw = JSON.stringify(message);
+  } catch (error) {
+    console.warn("[broadcast_serialize_error]", {
+      authenticated: true,
+      message: error && error.message ? error.message : String(error),
+    });
+    return;
+  }
 
   for (const client of wss.clients) {
     if (client.readyState !== WebSocket.OPEN) continue;
@@ -15967,16 +18814,22 @@ function broadcastToAuthenticatedPlayers(message, excludePlayerId = "") {
     const player = players.get(client.playerId);
     if (!player || !player.authenticated) continue;
 
-    client.send(raw);
+    sendRawJsonToSocket(client, raw, "authenticated_broadcast", {
+      player_id: String(client.playerId || ""),
+      authenticated: true,
+      message_type: String(message?.type || ""),
+    });
   }
 }
 
-function flushPendingSaves() {
+function flushPendingSaves(options = {}) {
+  const syncLocalJson = options.syncLocalJson === true;
   for (const [worldName, timer] of worldSaveTimers.entries()) {
     clearTimeout(timer);
     saveWorldState(worldName);
   }
   worldSaveTimers.clear();
+  flushWorldStateJsonBackups({ sync: syncLocalJson });
 
   for (const [usernameKey, timer] of playerSaveTimers.entries()) {
     clearTimeout(timer);
@@ -16016,6 +18869,14 @@ async function shutdown(signal = "") {
     clearTimeout(timer);
   }
   worldEventTimers.clear();
+  for (const timers of worldEventCountdownTimers.values()) {
+    if (Array.isArray(timers)) {
+      for (const timer of timers) {
+        clearTimeout(timer);
+      }
+    }
+  }
+  worldEventCountdownTimers.clear();
   flushPendingSaves();
   await waitForPersistenceWrites();
   await postgresStore.close();
@@ -16023,20 +18884,37 @@ async function shutdown(signal = "") {
   process.exit(0);
 }
 
-process.on("SIGINT", () => {
-  shutdown("SIGINT").catch((error) => {
+function handleShutdownSignal(signal) {
+  writeCrashReport("process_signal", {
+    signal,
+    runtime: getCrashRuntimeState(),
+  });
+  shutdown(signal).catch((error) => {
+    fatalCrashReportWritten = true;
+    writeCrashReport("shutdown_failure", {
+      signal,
+      error: errorToCrashDetails(error),
+      runtime: getCrashRuntimeState(),
+    });
     console.error("Shutdown failed:", error);
     process.exit(1);
   });
+}
+
+process.on("SIGINT", () => {
+  handleShutdownSignal("SIGINT");
 });
 
 process.on("SIGTERM", () => {
-  shutdown("SIGTERM").catch((error) => {
-    console.error("Shutdown failed:", error);
-    process.exit(1);
-  });
+  handleShutdownSignal("SIGTERM");
 });
 
-process.on("exit", () => {
-  flushPendingSaves();
+process.on("exit", (code) => {
+  if (Number(code) !== 0 && !fatalCrashReportWritten) {
+    writeCrashReport("process_exit", {
+      exit_code: Number(code),
+      runtime: getCrashRuntimeState(),
+    });
+  }
+  flushPendingSaves({ syncLocalJson: true });
 });

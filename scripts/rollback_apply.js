@@ -744,6 +744,11 @@ async function applyInventoryDelta(client, store, playerCache, entry) {
     gemLedgerId = gemResult.rows[0]?.gem_ledger_id || null;
   }
 
+  const inventoryAfterHash = await store.getInventorySnapshotHash(client, player.player_id);
+  if (typeof store.updatePlayerInventoryHash === "function") {
+    await store.updatePlayerInventoryHash(client, player.player_id, inventoryAfterHash);
+  }
+
   return {
     player,
     item_transaction_id: itemTransactionId,
@@ -754,7 +759,7 @@ async function applyInventoryDelta(client, store, playerCache, entry) {
     before_amount: beforeAmount,
     after_amount: afterAmount,
     inventory_before_hash: inventoryBeforeHash,
-    inventory_after_hash: await store.getInventorySnapshotHash(client, player.player_id),
+    inventory_after_hash: inventoryAfterHash,
     gems_before: isGem ? beforeAmount : null,
     gems_after: isGem ? afterAmount : null,
   };
@@ -870,6 +875,12 @@ async function moveItemInstance(client, store, entry) {
 async function markTransactionLedgerRowsReversed(client, store, ids, metadata) {
   const ledgerIds = Array.from(new Set((ids || []).map((id) => toInt(id, 0)).filter((id) => id > 0)));
   if (ledgerIds.length === 0) return 0;
+  const metadataPatch = {
+    ...safeJson(metadata),
+    rollback_applied: true,
+    admin_corrected: true,
+    reversed_at: new Date().toISOString(),
+  };
   const result = await client.query(
     `
     UPDATE ${store.table("transaction_ledger")}
@@ -877,17 +888,62 @@ async function markTransactionLedgerRowsReversed(client, store, ids, metadata) {
            metadata = metadata || $2::jsonb
      WHERE transaction_ledger_id = ANY($1::bigint[])
        AND status <> 'reversed'
+     RETURNING transaction_ledger_id,
+               transaction_id,
+               transaction_type,
+               status,
+               player_id,
+               other_player_id,
+               world_id,
+               item_transaction_id,
+               gem_ledger_id,
+               trade_id,
+               vending_transaction_id,
+               shop_purchase_id,
+               admin_action_id,
+               item_instance_id,
+               public_item_instance_id,
+               item_type,
+               item_category,
+               quantity,
+               gems_before,
+               gems_after,
+               inventory_before_hash,
+               inventory_after_hash,
+               ip_address::text AS ip_address,
+               session_token_hash,
+               user_agent,
+               device_info,
+               request_id,
+               correlation_id,
+               source,
+               action,
+               metadata,
+               server_time
     `,
     [
       ledgerIds,
-      JSON.stringify({
-        ...safeJson(metadata),
-        rollback_applied: true,
-        admin_corrected: true,
-        reversed_at: new Date().toISOString(),
-      }),
+      JSON.stringify(metadataPatch),
     ]
   );
+  if (typeof PostgresStore.buildTransactionLedgerHash === "function") {
+    for (const row of result.rows || []) {
+      const transactionHash = PostgresStore.buildTransactionLedgerHash(row);
+      await client.query(
+        `
+        UPDATE ${store.table("transaction_ledger")}
+           SET transaction_hash = $2,
+               transaction_hash_algorithm = $3
+         WHERE transaction_ledger_id = $1
+        `,
+        [
+          row.transaction_ledger_id,
+          transactionHash,
+          PostgresStore.INTEGRITY_HASH_ALGORITHM || "sha256:v1",
+        ]
+      );
+    }
+  }
   return result.rowCount || 0;
 }
 

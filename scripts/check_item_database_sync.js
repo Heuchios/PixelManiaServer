@@ -96,7 +96,7 @@ function extractDictionaryBody(source, constName) {
 }
 
 function extractTopLevelDictionaryKeys(dictionaryBody) {
-  const keys = [];
+ const keys = [];
   let depth = 0;
 
   for (let i = 0; i < dictionaryBody.length; i += 1) {
@@ -131,6 +131,22 @@ function extractTopLevelDictionaryKeys(dictionaryBody) {
   return keys;
 }
 
+function extractGeneratedSeedIds(dictionaryBody) {
+  const seedIds = new Set();
+  const seedFieldPattern = /["']seed["']\s*:\s*["']([^"']+)["']/g;
+  let match = seedFieldPattern.exec(dictionaryBody);
+
+  while (match) {
+    const seedId = String(match[1] || "").trim().toLowerCase();
+    if (seedId !== "") {
+      seedIds.add(seedId);
+    }
+    match = seedFieldPattern.exec(dictionaryBody);
+  }
+
+  return seedIds;
+}
+
 function sortIds(ids) {
   return [...ids].sort((a, b) => a.localeCompare(b));
 }
@@ -147,6 +163,10 @@ function main() {
   const source = fs.readFileSync(clientItemDatabasePath, "utf8");
   const clientBody = extractDictionaryBody(source, "ITEMS");
   const clientItemIds = new Set(extractTopLevelDictionaryKeys(clientBody));
+  const generatedClientSeedIds = extractGeneratedSeedIds(clientBody);
+  for (const seedId of generatedClientSeedIds) {
+    clientItemIds.add(seedId);
+  }
   const serverItemIds = new Set(Object.keys(ITEMS));
 
   const missingOnServer = sortIds([...clientItemIds].filter((itemId) => !serverItemIds.has(itemId)));
@@ -154,6 +174,7 @@ function main() {
 
   console.log(`Client item database: ${clientItemDatabasePath}`);
   console.log(`Client items: ${clientItemIds.size}`);
+  console.log(`Client virtual block seeds: ${generatedClientSeedIds.size}`);
   console.log(`Server items: ${serverItemIds.size}`);
 
   if (missingOnServer.length > 0) {

@@ -44,6 +44,7 @@ const ITEM_INSTANCE_EVENT_TYPES = new Set(["created", "reconciled", "owner_chang
 const ITEM_INSTANCE_RECONCILE_MAX_PER_ITEM = 250;
 const ITEM_INSTANCE_VAGUE_CREATION_SOURCES = new Set(["", "system", "unknown", "item_ledger", "inventory_delta", "update"]);
 const TRANSACTION_LEDGER_STATUSES = new Set(["success", "failed", "reversed"]);
+const INTEGRITY_HASH_ALGORITHM = "sha256:v1";
 const PUNISHMENT_TYPES = new Set(["ban", "mute", "trade_ban", "world_ban", "lockout"]);
 const PUNISHMENT_SCOPES = new Set(["global", "world"]);
 const WORLD_OBJECT_CHANGE_DIFF_LIMIT = 500;
@@ -130,6 +131,83 @@ function normalizeOptionalTimestamp(value) {
 
 function jsonChecksum(value) {
   return crypto.createHash("sha256").update(JSON.stringify(value || {})).digest("hex");
+}
+
+function stableNormalizeForHash(value) {
+  if (value === undefined) return null;
+  if (value === null) return null;
+  if (value instanceof Date) return normalizeOptionalTimestamp(value) || value.toISOString();
+  if (Array.isArray(value)) return value.map((item) => stableNormalizeForHash(item));
+  if (typeof value === "object") {
+    const normalized = {};
+    for (const key of Object.keys(value).sort()) {
+      normalized[key] = stableNormalizeForHash(value[key]);
+    }
+    return normalized;
+  }
+  if (typeof value === "bigint") return value.toString();
+  return value;
+}
+
+function stableJsonStringify(value) {
+  return JSON.stringify(stableNormalizeForHash(value));
+}
+
+function integrityHash(value) {
+  return crypto.createHash("sha256").update(stableJsonStringify(value)).digest("hex");
+}
+
+function ledgerNullableId(value) {
+  const clean = cleanName(value);
+  return clean === "" ? null : clean;
+}
+
+function ledgerNullableInteger(value) {
+  if (value === null || value === undefined || value === "") return null;
+  const number = Number(value);
+  return Number.isFinite(number) ? String(Math.trunc(number)) : cleanName(value);
+}
+
+function buildTransactionLedgerHashPayload(entry = {}) {
+  const e = toObject(entry);
+  return {
+    algorithm: INTEGRITY_HASH_ALGORITHM,
+    transaction_id: ledgerNullableId(e.transaction_id),
+    transaction_type: cleanName(e.transaction_type || ""),
+    status: normalizeTransactionLedgerStatus(e.status || "success"),
+    player_id: ledgerNullableId(e.player_id),
+    other_player_id: ledgerNullableId(e.other_player_id),
+    world_id: ledgerNullableId(e.world_id),
+    item_transaction_id: ledgerNullableInteger(e.item_transaction_id),
+    gem_ledger_id: ledgerNullableInteger(e.gem_ledger_id),
+    trade_id: ledgerNullableId(e.trade_id),
+    vending_transaction_id: ledgerNullableInteger(e.vending_transaction_id),
+    shop_purchase_id: ledgerNullableInteger(e.shop_purchase_id),
+    admin_action_id: ledgerNullableInteger(e.admin_action_id),
+    item_instance_id: ledgerNullableId(e.item_instance_id),
+    public_item_instance_id: ledgerNullableId(e.public_item_instance_id),
+    item_type: ledgerNullableId(e.item_type),
+    item_category: ledgerNullableId(e.item_category),
+    quantity: ledgerNullableInteger(e.quantity),
+    gems_before: ledgerNullableInteger(e.gems_before),
+    gems_after: ledgerNullableInteger(e.gems_after),
+    inventory_before_hash: ledgerNullableId(e.inventory_before_hash),
+    inventory_after_hash: ledgerNullableId(e.inventory_after_hash),
+    ip_address: ledgerNullableId(e.ip_address),
+    session_token_hash: ledgerNullableId(e.session_token_hash),
+    user_agent: ledgerNullableId(e.user_agent),
+    device_info: stableNormalizeForHash(toObject(e.device_info)),
+    request_id: ledgerNullableId(e.request_id),
+    correlation_id: ledgerNullableId(e.correlation_id),
+    source: ledgerNullableId(e.source),
+    action: ledgerNullableId(e.action),
+    metadata: stableNormalizeForHash(toObject(e.metadata)),
+    server_time: normalizeOptionalTimestamp(e.server_time) || ledgerNullableId(e.server_time),
+  };
+}
+
+function buildTransactionLedgerHash(entry = {}) {
+  return integrityHash(buildTransactionLedgerHashPayload(entry));
 }
 
 function clampStackLimit(value, fallback = DEFAULT_INVENTORY_STACK_LIMIT) {
@@ -691,20 +769,66 @@ class PostgresStore {
     await this.pool.query(`
       ALTER TABLE ${this.table("accounts")}
         ADD COLUMN IF NOT EXISTS password_salt text NOT NULL DEFAULT '',
+        ADD COLUMN IF NOT EXISTS password_algorithm text NOT NULL DEFAULT 'legacy_scrypt',
         ADD COLUMN IF NOT EXISTS email_verified boolean NOT NULL DEFAULT false,
         ADD COLUMN IF NOT EXISTS email_verified_at timestamptz,
         ADD COLUMN IF NOT EXISTS email_verification_token_hash text NOT NULL DEFAULT '',
         ADD COLUMN IF NOT EXISTS email_verification_expires_at timestamptz,
         ADD COLUMN IF NOT EXISTS account_state jsonb NOT NULL DEFAULT '{}'::jsonb;
 
+      ALTER TABLE ${this.table("sessions")}
+        ADD COLUMN IF NOT EXISTS refresh_token_hash text,
+        ADD COLUMN IF NOT EXISTS refresh_expires_at timestamptz,
+        ADD COLUMN IF NOT EXISTS token_family uuid NOT NULL DEFAULT gen_random_uuid(),
+        ADD COLUMN IF NOT EXISTS device_info jsonb NOT NULL DEFAULT '{}'::jsonb,
+        ADD COLUMN IF NOT EXISTS session_mode text NOT NULL DEFAULT 'one_active',
+        ADD COLUMN IF NOT EXISTS revoked_reason text,
+        ADD COLUMN IF NOT EXISTS rotated_from_session_id uuid;
+
+      CREATE UNIQUE INDEX IF NOT EXISTS idx_sessions_refresh_token_hash
+      ON ${this.table("sessions")}(refresh_token_hash)
+      WHERE refresh_token_hash IS NOT NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_sessions_refresh_expires_at
+      ON ${this.table("sessions")}(refresh_expires_at);
+
+      CREATE INDEX IF NOT EXISTS idx_sessions_token_family
+      ON ${this.table("sessions")}(token_family);
+
+      CREATE TABLE IF NOT EXISTS ${this.table("account_login_attempts")} (
+        login_attempt_id bigserial PRIMARY KEY,
+        account_id uuid REFERENCES ${this.table("accounts")}(account_id) ON DELETE SET NULL,
+        username text NOT NULL DEFAULT '',
+        action text NOT NULL DEFAULT 'login',
+        success boolean NOT NULL DEFAULT false,
+        reason text NOT NULL DEFAULT '',
+        ip_address inet,
+        user_agent text,
+        device_info jsonb NOT NULL DEFAULT '{}'::jsonb,
+        request_id text,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_account_login_attempts_username_time
+      ON ${this.table("account_login_attempts")}(lower(username), created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_account_login_attempts_ip_time
+      ON ${this.table("account_login_attempts")}(ip_address, created_at DESC)
+      WHERE ip_address IS NOT NULL;
+
       ALTER TABLE ${this.table("players")}
-        ADD COLUMN IF NOT EXISTS player_state jsonb NOT NULL DEFAULT '{}'::jsonb;
+        ADD COLUMN IF NOT EXISTS player_state jsonb NOT NULL DEFAULT '{}'::jsonb,
+        ADD COLUMN IF NOT EXISTS inventory_hash text NOT NULL DEFAULT '',
+        ADD COLUMN IF NOT EXISTS inventory_hash_algorithm text NOT NULL DEFAULT '${INTEGRITY_HASH_ALGORITHM}',
+        ADD COLUMN IF NOT EXISTS inventory_hash_updated_at timestamptz;
 
       ALTER TABLE ${this.table("worlds")}
         ADD COLUMN IF NOT EXISTS world_state jsonb NOT NULL DEFAULT '{}'::jsonb;
 
       ALTER TABLE ${this.table("world_snapshots")}
-        ADD COLUMN IF NOT EXISTS reason text NOT NULL DEFAULT 'snapshot';
+        ADD COLUMN IF NOT EXISTS reason text NOT NULL DEFAULT 'snapshot',
+        ADD COLUMN IF NOT EXISTS snapshot_hash text,
+        ADD COLUMN IF NOT EXISTS snapshot_hash_algorithm text NOT NULL DEFAULT '${INTEGRITY_HASH_ALGORITHM}';
 
       ALTER TABLE ${this.table("item_instances")}
         ADD COLUMN IF NOT EXISTS public_item_instance_id text,
@@ -821,6 +945,8 @@ class PostgresStore {
         gems_after bigint,
         inventory_before_hash text,
         inventory_after_hash text,
+        transaction_hash text,
+        transaction_hash_algorithm text NOT NULL DEFAULT '${INTEGRITY_HASH_ALGORITHM}',
         ip_address inet,
         session_token_hash text,
         user_agent text,
@@ -833,6 +959,10 @@ class PostgresStore {
         server_time timestamptz NOT NULL DEFAULT now(),
         created_at timestamptz NOT NULL DEFAULT now()
       );
+
+      ALTER TABLE ${this.table("transaction_ledger")}
+        ADD COLUMN IF NOT EXISTS transaction_hash text,
+        ADD COLUMN IF NOT EXISTS transaction_hash_algorithm text NOT NULL DEFAULT '${INTEGRITY_HASH_ALGORITHM}';
 
       ALTER TABLE ${this.table("transaction_ledger")}
         DROP CONSTRAINT IF EXISTS transaction_ledger_status_check;
@@ -861,6 +991,26 @@ class PostgresStore {
       CREATE INDEX IF NOT EXISTS idx_transaction_ledger_correlation_id
       ON ${this.table("transaction_ledger")}(correlation_id)
       WHERE correlation_id IS NOT NULL;
+
+      CREATE INDEX IF NOT EXISTS idx_transaction_ledger_hash
+      ON ${this.table("transaction_ledger")}(transaction_hash)
+      WHERE transaction_hash IS NOT NULL;
+
+      CREATE TABLE IF NOT EXISTS ${this.table("integrity_audit_runs")} (
+        integrity_audit_run_id bigserial PRIMARY KEY,
+        run_type text NOT NULL DEFAULT 'integrity_hash_audit',
+        status text NOT NULL DEFAULT 'success',
+        summary jsonb NOT NULL DEFAULT '{}'::jsonb,
+        issues jsonb NOT NULL DEFAULT '[]'::jsonb,
+        metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+        created_at timestamptz NOT NULL DEFAULT now()
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_integrity_audit_runs_type_time
+      ON ${this.table("integrity_audit_runs")}(run_type, created_at DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_integrity_audit_runs_status_time
+      ON ${this.table("integrity_audit_runs")}(status, created_at DESC);
 
       CREATE TABLE IF NOT EXISTS ${this.table("rollback_jobs")} (
         rollback_job_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -1231,6 +1381,7 @@ class PostgresStore {
         email,
         password_salt,
         password_hash,
+        password_algorithm,
         role,
         is_active,
         last_login_at,
@@ -1244,19 +1395,20 @@ class PostgresStore {
       )
       VALUES (
         $1,
-        COALESCE(NULLIF($2, ''), $13),
+        COALESCE(NULLIF($2, ''), $14),
         $3,
         $4,
         $5,
+        $6,
         true,
-        $6::timestamptz,
-        COALESCE($7::timestamptz, now()),
+        $7::timestamptz,
+        COALESCE($8::timestamptz, now()),
         now(),
-        $8,
-        $9::timestamptz,
-        $10,
-        $11::timestamptz,
-        $12::jsonb
+        $9,
+        $10::timestamptz,
+        $11,
+        $12::timestamptz,
+        $13::jsonb
       )
       ON CONFLICT (username) DO UPDATE
         SET email = COALESCE(NULLIF(EXCLUDED.email::text, ''), ${this.table("accounts")}.email),
@@ -1267,6 +1419,10 @@ class PostgresStore {
             password_hash = CASE
               WHEN EXCLUDED.password_hash <> '' THEN EXCLUDED.password_hash
               ELSE ${this.table("accounts")}.password_hash
+            END,
+            password_algorithm = CASE
+              WHEN EXCLUDED.password_algorithm <> '' THEN EXCLUDED.password_algorithm
+              ELSE ${this.table("accounts")}.password_algorithm
             END,
             role = EXCLUDED.role,
             is_active = true,
@@ -1284,6 +1440,7 @@ class PostgresStore {
         email,
         cleanName(accountData.password_salt || ""),
         String(accountData.password_hash || ""),
+        cleanName(accountData.password_algorithm || (accountData.password_hash ? "legacy_scrypt" : "")),
         role,
         lastLoginAt,
         normalizeOptionalTimestamp(accountData.created_at || ""),
@@ -1354,6 +1511,7 @@ class PostgresStore {
           a.email::text AS email,
           a.password_salt,
           a.password_hash,
+          a.password_algorithm,
           a.role,
           a.email_verified,
           a.email_verified_at,
@@ -1363,14 +1521,19 @@ class PostgresStore {
           a.created_at,
           a.last_login_at,
           s.session_token_hash,
-          s.expires_at AS session_token_expires_at
+          s.expires_at AS session_token_expires_at,
+          s.refresh_token_hash,
+          s.refresh_expires_at
         FROM ${this.table("accounts")} a
         LEFT JOIN LATERAL (
-          SELECT session_token_hash, expires_at
+          SELECT session_token_hash, expires_at, refresh_token_hash, refresh_expires_at
             FROM ${this.table("sessions")}
            WHERE account_id = a.account_id
              AND revoked_at IS NULL
-             AND expires_at > now()
+             AND (
+               expires_at > now()
+               OR refresh_expires_at > now()
+             )
            ORDER BY last_seen_at DESC
            LIMIT 1
         ) s ON true
@@ -1386,8 +1549,11 @@ class PostgresStore {
           email: cleanName(accountState.email || row.email),
           password_salt: cleanName(accountState.password_salt || row.password_salt || ""),
           password_hash: String(accountState.password_hash || row.password_hash || ""),
+          password_algorithm: cleanName(accountState.password_algorithm || row.password_algorithm || (accountState.password_hash || row.password_hash ? "legacy_scrypt" : "")),
           session_token_hash: cleanName(row.session_token_hash || accountState.session_token_hash || ""),
           session_token_expires_at: cleanName(normalizeOptionalTimestamp(row.session_token_expires_at) || accountState.session_token_expires_at || ""),
+          refresh_token_hash: cleanName(row.refresh_token_hash || accountState.refresh_token_hash || ""),
+          refresh_token_expires_at: cleanName(normalizeOptionalTimestamp(row.refresh_expires_at) || accountState.refresh_token_expires_at || ""),
           email_verified: Boolean(row.email_verified),
           email_verified_at: cleanName(normalizeOptionalTimestamp(row.email_verified_at) || accountState.email_verified_at || ""),
           email_verification_token_hash: cleanName(row.email_verification_token_hash || accountState.email_verification_token_hash || ""),
@@ -1435,6 +1601,8 @@ class PostgresStore {
         );
       }
     }
+
+    await this.updatePlayerInventoryHash(client, playerId);
   }
 
   async reconcileItemInstancesForInventory(client, playerId, playerState, details = {}) {
@@ -1650,6 +1818,23 @@ class PostgresStore {
     return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
   }
 
+  async updatePlayerInventoryHash(client, playerId, inventoryHash = null) {
+    if (!isUuid(playerId)) return null;
+    const nextHash = cleanName(inventoryHash || "") || await this.getInventorySnapshotHash(client, playerId);
+    await client.query(
+      `
+      UPDATE ${this.table("players")}
+         SET inventory_hash = $2,
+             inventory_hash_algorithm = $3,
+             inventory_hash_updated_at = now(),
+             updated_at = now()
+       WHERE player_id = $1
+      `,
+      [playerId, nextHash, INTEGRITY_HASH_ALGORITHM]
+    );
+    return nextHash;
+  }
+
   async recordTransactionLedger(client, entry = {}) {
     const e = toObject(entry);
     const playerId = isUuid(e.player_id) ? cleanName(e.player_id) : null;
@@ -1665,7 +1850,7 @@ class PostgresStore {
       || normalizeTransactionLedgerType(e);
     const status = normalizeTransactionLedgerStatus(e.status || "success");
     const baseMetadata = safeJson(e.metadata);
-    const transactionId = isUuid(e.transaction_id) ? cleanName(e.transaction_id) : null;
+    const transactionId = isUuid(e.transaction_id) ? cleanName(e.transaction_id) : crypto.randomUUID();
     const otherPlayerId = isUuid(e.other_player_id) ? cleanName(e.other_player_id) : null;
     const worldId = isUuid(e.world_id) ? cleanName(e.world_id) : null;
     const itemTransactionId = toInt(e.item_transaction_id, 0) > 0 ? toInt(e.item_transaction_id, 0) : null;
@@ -1675,7 +1860,7 @@ class PostgresStore {
     const adminActionId = toInt(e.admin_action_id, 0) > 0 ? toInt(e.admin_action_id, 0) : null;
     const tradeId = isUuid(e.trade_id) ? cleanName(e.trade_id) : null;
     const correlationId = isUuid(e.correlation_id) ? cleanName(e.correlation_id) : null;
-    const at = cleanName(e.server_time || e.at || "");
+    const serverTime = normalizeOptionalTimestamp(e.server_time || e.at || "") || new Date().toISOString();
     const hasLedgerContext = playerId
       || otherPlayerId
       || worldId
@@ -1699,6 +1884,49 @@ class PostgresStore {
       const metadata = itemInstance
         ? { ...baseMetadata, item_instance: summarizeItemInstanceEventMetadata(itemInstance), public_item_instance_id: publicItemInstanceId }
         : baseMetadata;
+      const gemsBefore = Number.isFinite(Number(e.gems_before)) ? Math.trunc(Number(e.gems_before)) : null;
+      const gemsAfter = Number.isFinite(Number(e.gems_after)) ? Math.trunc(Number(e.gems_after)) : null;
+      const inventoryBeforeHash = cleanName(e.inventory_before_hash || "");
+      const inventoryAfterHash = cleanName(e.inventory_after_hash || "");
+      const sessionTokenHash = cleanName(e.session_token_hash || "");
+      const userAgent = cleanName(e.user_agent || "");
+      const deviceInfo = safeJson(e.device_info);
+      const requestId = cleanName(e.request_id || "");
+      const source = normalizeLedgerSource(e.source || e.source_type || "system");
+      const action = cleanName(e.action || "");
+      const transactionHash = buildTransactionLedgerHash({
+        transaction_id: transactionId,
+        transaction_type: transactionType,
+        status,
+        player_id: playerId,
+        other_player_id: otherPlayerId,
+        world_id: worldId,
+        item_transaction_id: itemTransactionId,
+        gem_ledger_id: gemLedgerId,
+        trade_id: tradeId,
+        vending_transaction_id: vendingTransactionId,
+        shop_purchase_id: shopPurchaseId,
+        admin_action_id: adminActionId,
+        item_instance_id: itemInstanceId,
+        public_item_instance_id: publicItemInstanceId,
+        item_type: itemType,
+        item_category: itemCategory,
+        quantity,
+        gems_before: gemsBefore,
+        gems_after: gemsAfter,
+        inventory_before_hash: inventoryBeforeHash,
+        inventory_after_hash: inventoryAfterHash,
+        ip_address: ipAddress,
+        session_token_hash: sessionTokenHash,
+        user_agent: userAgent,
+        device_info: deviceInfo,
+        request_id: requestId,
+        correlation_id: correlationId,
+        source,
+        action,
+        metadata,
+        server_time: serverTime,
+      });
 
       const result = await client.query(
         `
@@ -1732,6 +1960,8 @@ class PostgresStore {
           correlation_id,
           source,
           action,
+          transaction_hash,
+          transaction_hash_algorithm,
           metadata,
           server_time,
           created_at
@@ -1766,8 +1996,10 @@ class PostgresStore {
           $27::uuid,
           NULLIF($28, ''),
           NULLIF($29, ''),
-          $30::jsonb,
-          COALESCE(NULLIF($31, '')::timestamptz, now()),
+          NULLIF($30, ''),
+          $31,
+          $32::jsonb,
+          $33::timestamptz,
           now()
         )
         RETURNING transaction_ledger_id
@@ -1790,20 +2022,22 @@ class PostgresStore {
           itemType,
           itemCategory,
           quantity,
-          Number.isFinite(Number(e.gems_before)) ? Math.trunc(Number(e.gems_before)) : null,
-          Number.isFinite(Number(e.gems_after)) ? Math.trunc(Number(e.gems_after)) : null,
-          cleanName(e.inventory_before_hash || ""),
-          cleanName(e.inventory_after_hash || ""),
+          gemsBefore,
+          gemsAfter,
+          inventoryBeforeHash,
+          inventoryAfterHash,
           ipAddress,
-          cleanName(e.session_token_hash || ""),
-          cleanName(e.user_agent || ""),
-          JSON.stringify(safeJson(e.device_info)),
-          cleanName(e.request_id || ""),
+          sessionTokenHash,
+          userAgent,
+          JSON.stringify(deviceInfo),
+          requestId,
           correlationId,
-          normalizeLedgerSource(e.source || e.source_type || "system"),
-          cleanName(e.action || ""),
+          source,
+          action,
+          transactionHash,
+          INTEGRITY_HASH_ALGORITHM,
           JSON.stringify(metadata),
-          at,
+          serverTime,
         ]
       );
       insertedIds.push(result.rows[0]?.transaction_ledger_id || null);
@@ -1910,6 +2144,8 @@ class PostgresStore {
                tl.gems_after,
                tl.inventory_before_hash,
                tl.inventory_after_hash,
+               tl.transaction_hash,
+               tl.transaction_hash_algorithm,
                tl.ip_address::text AS ip_address,
                tl.session_token_hash,
                tl.user_agent,
@@ -1961,6 +2197,8 @@ class PostgresStore {
           gems_after: row.gems_after == null ? null : toInt(row.gems_after, 0),
           inventory_before_hash: cleanName(row.inventory_before_hash || ""),
           inventory_after_hash: cleanName(row.inventory_after_hash || ""),
+          transaction_hash: cleanName(row.transaction_hash || ""),
+          transaction_hash_algorithm: cleanName(row.transaction_hash_algorithm || ""),
           ip_address: cleanName(row.ip_address || ""),
           session_token_hash: cleanName(row.session_token_hash || ""),
           user_agent: cleanName(row.user_agent || ""),
@@ -3044,6 +3282,606 @@ class PostgresStore {
     }
   }
 
+  async auditIntegrityHashes(options = {}) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const limit = Math.min(500, Math.max(1, toInt(options.limit, 100)));
+    const playerLimit = Math.min(1000, Math.max(1, toInt(options.player_limit, limit)));
+    const transactionLimit = Math.min(2000, Math.max(1, toInt(options.transaction_limit, limit)));
+    const snapshotLimit = Math.min(1000, Math.max(1, toInt(options.snapshot_limit, limit)));
+    const scannedAt = new Date().toISOString();
+    const issues = [];
+    const pushIssue = (issue) => {
+      if (issues.length >= limit) return;
+      issues.push({
+        severity: cleanName(issue.severity || "warning"),
+        ...safeJson(issue),
+      });
+    };
+
+    try {
+      const playerResult = await this.pool.query(
+        `
+        SELECT p.player_id,
+               a.username::text AS username,
+               p.inventory_hash,
+               p.inventory_hash_algorithm,
+               p.inventory_hash_updated_at
+          FROM ${this.table("players")} p
+          JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
+         ORDER BY p.updated_at DESC, p.created_at DESC
+         LIMIT $1
+        `,
+        [playerLimit]
+      );
+
+      let inventoryHashMismatches = 0;
+      let missingInventoryHashes = 0;
+      for (const row of playerResult.rows) {
+        const playerId = cleanName(row.player_id || "");
+        const expectedHash = await this.getInventorySnapshotHash(this.pool, playerId);
+        const storedHash = cleanName(row.inventory_hash || "");
+        if (storedHash === "") {
+          missingInventoryHashes += 1;
+          pushIssue({
+            type: "missing_inventory_hash",
+            username: cleanName(row.username || ""),
+            player_id: playerId,
+            expected_inventory_hash: expectedHash,
+            severity: "notice",
+          });
+          continue;
+        }
+        if (storedHash !== expectedHash) {
+          inventoryHashMismatches += 1;
+          pushIssue({
+            type: "inventory_hash_mismatch",
+            username: cleanName(row.username || ""),
+            player_id: playerId,
+            stored_inventory_hash: storedHash,
+            expected_inventory_hash: expectedHash,
+            inventory_hash_updated_at: normalizeOptionalTimestamp(row.inventory_hash_updated_at),
+            severity: "high",
+          });
+        }
+      }
+
+      const ledgerResult = await this.pool.query(
+        `
+        SELECT transaction_ledger_id,
+               transaction_id,
+               transaction_type,
+               status,
+               player_id,
+               other_player_id,
+               world_id,
+               item_transaction_id,
+               gem_ledger_id,
+               trade_id,
+               vending_transaction_id,
+               shop_purchase_id,
+               admin_action_id,
+               item_instance_id,
+               public_item_instance_id,
+               item_type,
+               item_category,
+               quantity,
+               gems_before,
+               gems_after,
+               inventory_before_hash,
+               inventory_after_hash,
+               transaction_hash,
+               transaction_hash_algorithm,
+               ip_address::text AS ip_address,
+               session_token_hash,
+               user_agent,
+               device_info,
+               request_id,
+               correlation_id,
+               source,
+               action,
+               metadata,
+               server_time
+          FROM ${this.table("transaction_ledger")}
+         ORDER BY server_time DESC, transaction_ledger_id DESC
+         LIMIT $1
+        `,
+        [transactionLimit]
+      );
+
+      let transactionHashMismatches = 0;
+      let missingTransactionHashes = 0;
+      for (const row of ledgerResult.rows) {
+        const expectedHash = buildTransactionLedgerHash(row);
+        const storedHash = cleanName(row.transaction_hash || "");
+        if (storedHash === "") {
+          missingTransactionHashes += 1;
+          pushIssue({
+            type: "missing_transaction_hash",
+            transaction_ledger_id: toInt(row.transaction_ledger_id, 0),
+            transaction_id: cleanName(row.transaction_id || ""),
+            transaction_type: cleanName(row.transaction_type || ""),
+            server_time: normalizeOptionalTimestamp(row.server_time),
+            severity: "notice",
+          });
+          continue;
+        }
+        if (storedHash !== expectedHash) {
+          transactionHashMismatches += 1;
+          pushIssue({
+            type: "transaction_hash_mismatch",
+            transaction_ledger_id: toInt(row.transaction_ledger_id, 0),
+            transaction_id: cleanName(row.transaction_id || ""),
+            transaction_type: cleanName(row.transaction_type || ""),
+            status: cleanName(row.status || ""),
+            stored_transaction_hash: storedHash,
+            expected_transaction_hash: expectedHash,
+            severity: "critical",
+          });
+        }
+      }
+
+      const snapshotResult = await this.pool.query(
+        `
+        SELECT ws.world_snapshot_id,
+               ws.snapshot_version,
+               ws.checksum,
+               ws.snapshot_hash,
+               ws.snapshot_hash_algorithm,
+               ws.storage_uri,
+               ws.snapshot_data,
+               ws.created_at,
+               w.world_name::text AS world_name
+          FROM ${this.table("world_snapshots")} ws
+          JOIN ${this.table("worlds")} w ON w.world_id = ws.world_id
+         ORDER BY ws.created_at DESC, ws.world_snapshot_id DESC
+         LIMIT $1
+        `,
+        [snapshotLimit]
+      );
+
+      let snapshotHashMismatches = 0;
+      let missingSnapshotHashes = 0;
+      for (const row of snapshotResult.rows) {
+        const snapshotHash = cleanName(row.snapshot_hash || "");
+        const checksum = cleanName(row.checksum || "");
+        if (snapshotHash === "") {
+          missingSnapshotHashes += 1;
+          pushIssue({
+            type: "missing_world_snapshot_hash",
+            world_name: cleanName(row.world_name || ""),
+            world_snapshot_id: toInt(row.world_snapshot_id, 0),
+            snapshot_version: toInt(row.snapshot_version, 0),
+            checksum,
+            severity: "notice",
+          });
+          continue;
+        }
+        if (row.snapshot_data) {
+          const expectedSnapshotHash = integrityHash(safeJson(row.snapshot_data));
+          if (snapshotHash !== expectedSnapshotHash) {
+            snapshotHashMismatches += 1;
+            pushIssue({
+              type: "world_snapshot_hash_mismatch",
+              world_name: cleanName(row.world_name || ""),
+              world_snapshot_id: toInt(row.world_snapshot_id, 0),
+              snapshot_version: toInt(row.snapshot_version, 0),
+              stored_snapshot_hash: snapshotHash,
+              expected_snapshot_hash: expectedSnapshotHash,
+              severity: "critical",
+            });
+          }
+        }
+      }
+
+      const inventoryLedgerResult = await this.pool.query(
+        `
+        SELECT inv.player_id,
+               a.username::text AS username,
+               inv.item_type,
+               inv.item_category,
+               inv.amount,
+               COALESCE(SUM(tx.delta), 0)::text AS ledger_delta,
+               COUNT(tx.item_transaction_id)::int AS transaction_count
+          FROM ${this.table("inventory")} inv
+          JOIN ${this.table("players")} p ON p.player_id = inv.player_id
+          JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
+          LEFT JOIN ${this.table("item_transactions")} tx
+            ON tx.player_id = inv.player_id
+           AND tx.item_type = inv.item_type
+           AND tx.item_category = inv.item_category
+         GROUP BY inv.player_id, a.username, inv.item_type, inv.item_category, inv.amount
+        HAVING COUNT(tx.item_transaction_id) > 0
+           AND inv.amount <> COALESCE(SUM(tx.delta), 0)
+         ORDER BY a.username ASC, inv.item_category ASC, inv.item_type ASC
+         LIMIT $1
+        `,
+        [limit]
+      );
+
+      for (const row of inventoryLedgerResult.rows) {
+        pushIssue({
+          type: "inventory_item_ledger_mismatch",
+          username: cleanName(row.username || ""),
+          player_id: cleanName(row.player_id || ""),
+          item_type: cleanName(row.item_type || ""),
+          item_category: cleanName(row.item_category || ""),
+          inventory_amount: ledgerNullableInteger(row.amount),
+          ledger_delta_total: ledgerNullableInteger(row.ledger_delta),
+          transaction_count: toInt(row.transaction_count, 0),
+          legacy_baseline_possible: true,
+          severity: "warning",
+        });
+      }
+
+      const gemLedgerResult = await this.pool.query(
+        `
+        SELECT p.player_id,
+               a.username::text AS username,
+               COALESCE(inv.amount, 0)::text AS gem_balance,
+               COALESCE(SUM(gl.delta), 0)::text AS ledger_delta,
+               COUNT(gl.gem_ledger_id)::int AS ledger_count
+          FROM ${this.table("players")} p
+          JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
+          LEFT JOIN ${this.table("inventory")} inv
+            ON inv.player_id = p.player_id
+           AND inv.item_type = 'gem'
+           AND inv.item_category = 'currency'
+          LEFT JOIN ${this.table("gem_ledger")} gl
+            ON gl.player_id = p.player_id
+         GROUP BY p.player_id, a.username, inv.amount
+        HAVING COUNT(gl.gem_ledger_id) > 0
+           AND COALESCE(inv.amount, 0) <> COALESCE(SUM(gl.delta), 0)
+         ORDER BY a.username ASC
+         LIMIT $1
+        `,
+        [limit]
+      );
+
+      for (const row of gemLedgerResult.rows) {
+        pushIssue({
+          type: "gem_ledger_balance_mismatch",
+          username: cleanName(row.username || ""),
+          player_id: cleanName(row.player_id || ""),
+          gem_balance: ledgerNullableInteger(row.gem_balance),
+          ledger_delta_total: ledgerNullableInteger(row.ledger_delta),
+          ledger_count: toInt(row.ledger_count, 0),
+          legacy_baseline_possible: true,
+          severity: "warning",
+        });
+      }
+
+      const vendingCollisionResult = await this.pool.query(
+        `
+        SELECT vend.public_item_instance_id,
+               vend.item_instance_id AS vending_item_instance_id,
+               inv.item_instance_id AS inventory_item_instance_id,
+               vend.item_type,
+               vend.item_category
+          FROM ${this.table("item_instances")} vend
+          JOIN ${this.table("item_instances")} inv
+            ON lower(inv.public_item_instance_id) = lower(vend.public_item_instance_id)
+           AND inv.item_instance_id <> vend.item_instance_id
+         WHERE vend.current_location = 'vending'
+           AND inv.current_location = 'inventory'
+         LIMIT $1
+        `,
+        [limit]
+      );
+
+      for (const row of vendingCollisionResult.rows) {
+        pushIssue({
+          type: "vending_instance_also_in_inventory",
+          public_item_instance_id: cleanName(row.public_item_instance_id || ""),
+          vending_item_instance_id: cleanName(row.vending_item_instance_id || ""),
+          inventory_item_instance_id: cleanName(row.inventory_item_instance_id || ""),
+          item_type: cleanName(row.item_type || ""),
+          item_category: cleanName(row.item_category || ""),
+          severity: "critical",
+        });
+      }
+
+      const itemAudit = await this.auditItemInstances({ limit });
+      if (itemAudit?.ok) {
+        for (const issue of itemAudit.issues || []) {
+          pushIssue({
+            ...safeJson(issue),
+            source: "item_instance_audit",
+          });
+        }
+      } else {
+        pushIssue({
+          type: "item_instance_audit_failed",
+          reason: cleanName(itemAudit?.reason || "unknown"),
+          severity: "warning",
+        });
+      }
+
+      const summary = {
+        scanned_at: scannedAt,
+        players_scanned: playerResult.rowCount,
+        transaction_rows_scanned: ledgerResult.rowCount,
+        world_snapshots_scanned: snapshotResult.rowCount,
+        inventory_hash_mismatches: inventoryHashMismatches,
+        missing_inventory_hashes: missingInventoryHashes,
+        transaction_hash_mismatches: transactionHashMismatches,
+        missing_transaction_hashes: missingTransactionHashes,
+        world_snapshot_hash_mismatches: snapshotHashMismatches,
+        missing_world_snapshot_hashes: missingSnapshotHashes,
+        inventory_item_ledger_mismatches: inventoryLedgerResult.rowCount,
+        gem_ledger_balance_mismatches: gemLedgerResult.rowCount,
+        vending_instance_collisions: vendingCollisionResult.rowCount,
+        item_instance_issues: itemAudit?.ok ? toInt(itemAudit.summary?.total_issues, 0) : null,
+        total_issues: issues.length,
+        critical_issues: issues.filter((issue) => cleanName(issue.severity) === "critical").length,
+        high_issues: issues.filter((issue) => cleanName(issue.severity) === "high").length,
+        warnings: issues.filter((issue) => cleanName(issue.severity) === "warning").length,
+        notices: issues.filter((issue) => cleanName(issue.severity) === "notice").length,
+        truncated: issues.length >= limit,
+      };
+      const status = summary.critical_issues > 0 || summary.high_issues > 0
+        ? "issues_found"
+        : "success";
+
+      await this.pool.query(
+        `
+        INSERT INTO ${this.table("integrity_audit_runs")} (
+          run_type,
+          status,
+          summary,
+          issues,
+          metadata,
+          created_at
+        )
+        VALUES ('integrity_hash_audit', $1, $2::jsonb, $3::jsonb, $4::jsonb, now())
+        `,
+        [
+          status,
+          JSON.stringify(summary),
+          JSON.stringify(issues),
+          JSON.stringify(safeJson({
+            limit,
+            player_limit: playerLimit,
+            transaction_limit: transactionLimit,
+            snapshot_limit: snapshotLimit,
+          })),
+        ]
+      );
+
+      return {
+        ok: true,
+        scanned_at: scannedAt,
+        status,
+        summary,
+        issues,
+      };
+    } catch (error) {
+      this.logger("[postgres] integrity hash audit failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
+    }
+  }
+
+  async getAdminMonitoringDashboard(options = {}) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const limit = Math.min(100, Math.max(1, toInt(options.limit, 25)));
+    const dupeLimit = Math.min(50, Math.max(1, toInt(options.dupe_limit, Math.min(limit, 20))));
+    const windowHours = Math.min(24 * 14, Math.max(1, toInt(options.window_hours, 24)));
+    const generatedAt = new Date().toISOString();
+
+    try {
+      const [
+        worldCountResult,
+        playerCountResult,
+        topGemGainersResult,
+        topItemGainersResult,
+        suspiciousAccountsResult,
+        latestIntegrityAuditResult,
+        recentSecuritySummaryResult,
+      ] = await Promise.all([
+        this.pool.query(
+          `
+          SELECT count(*)::int AS world_count
+            FROM ${this.table("worlds")}
+          `
+        ),
+        this.pool.query(
+          `
+          SELECT count(*)::int AS player_count
+            FROM ${this.table("players")}
+          `
+        ),
+        this.pool.query(
+          `
+          SELECT p.player_id,
+                 a.username::text AS username,
+                 SUM(gl.delta)::text AS total_gems_gained,
+                 COUNT(gl.gem_ledger_id)::int AS event_count,
+                 MAX(gl.created_at) AS last_gain_at,
+                 array_agg(DISTINCT gl.reason ORDER BY gl.reason) FILTER (WHERE gl.reason IS NOT NULL AND gl.reason <> '') AS reasons
+            FROM ${this.table("gem_ledger")} gl
+            JOIN ${this.table("players")} p ON p.player_id = gl.player_id
+            JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
+           WHERE gl.delta > 0
+             AND gl.created_at >= now() - ($1::int * interval '1 hour')
+           GROUP BY p.player_id, a.username
+           ORDER BY SUM(gl.delta) DESC, COUNT(gl.gem_ledger_id) DESC, MAX(gl.created_at) DESC
+           LIMIT $2
+          `,
+          [windowHours, limit]
+        ),
+        this.pool.query(
+          `
+          SELECT p.player_id,
+                 a.username::text AS username,
+                 tx.item_type,
+                 tx.item_category,
+                 SUM(tx.delta)::text AS total_items_gained,
+                 COUNT(tx.item_transaction_id)::int AS event_count,
+                 MAX(tx.created_at) AS last_gain_at,
+                 array_agg(DISTINCT tx.source ORDER BY tx.source) FILTER (WHERE tx.source IS NOT NULL AND tx.source <> '') AS sources
+            FROM ${this.table("item_transactions")} tx
+            JOIN ${this.table("players")} p ON p.player_id = tx.player_id
+            JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
+           WHERE tx.delta > 0
+             AND tx.created_at >= now() - ($1::int * interval '1 hour')
+           GROUP BY p.player_id, a.username, tx.item_type, tx.item_category
+           ORDER BY SUM(tx.delta) DESC, COUNT(tx.item_transaction_id) DESC, MAX(tx.created_at) DESC
+           LIMIT $2
+          `,
+          [windowHours, limit]
+        ),
+        this.pool.query(
+          `
+          SELECT COALESCE(a.username, player_account.username, '')::text AS username,
+                 COALESCE(se.player_id::text, p.player_id::text, '') AS player_id,
+                 COUNT(se.security_event_id)::int AS event_count,
+                 SUM(CASE WHEN se.severity = 'critical' THEN 1 ELSE 0 END)::int AS critical_count,
+                 SUM(CASE WHEN se.severity = 'high' THEN 1 ELSE 0 END)::int AS high_count,
+                 SUM(CASE WHEN se.severity = 'medium' THEN 1 ELSE 0 END)::int AS medium_count,
+                 MAX(se.created_at) AS last_event_at,
+                 array_agg(DISTINCT se.event_type ORDER BY se.event_type) FILTER (WHERE se.event_type IS NOT NULL AND se.event_type <> '') AS event_types
+            FROM ${this.table("security_events")} se
+            LEFT JOIN ${this.table("accounts")} a ON a.account_id = se.account_id
+            LEFT JOIN ${this.table("players")} p ON p.player_id = se.player_id
+            LEFT JOIN ${this.table("accounts")} player_account ON player_account.account_id = p.account_id
+           WHERE se.created_at >= now() - ($1::int * interval '1 hour')
+             AND (
+               se.severity IN ('critical', 'high', 'medium')
+               OR se.event_type ILIKE '%dupe%'
+               OR se.event_type ILIKE '%rate%'
+               OR se.event_type ILIKE '%failed%'
+               OR se.event_type ILIKE '%denied%'
+               OR se.event_type ILIKE '%punishment%'
+             )
+           GROUP BY COALESCE(a.username, player_account.username, ''), COALESCE(se.player_id::text, p.player_id::text, '')
+           ORDER BY critical_count DESC, high_count DESC, medium_count DESC, event_count DESC, MAX(se.created_at) DESC
+           LIMIT $2
+          `,
+          [windowHours, limit]
+        ),
+        this.pool.query(
+          `
+          SELECT run_type,
+                 status,
+                 summary,
+                 issues,
+                 created_at
+            FROM ${this.table("integrity_audit_runs")}
+           ORDER BY created_at DESC
+           LIMIT 1
+          `
+        ),
+        this.pool.query(
+          `
+          SELECT severity,
+                 COUNT(*)::int AS event_count
+            FROM ${this.table("security_events")}
+           WHERE created_at >= now() - ($1::int * interval '1 hour')
+           GROUP BY severity
+           ORDER BY severity ASC
+          `,
+          [windowHours]
+        ),
+      ]);
+
+      const itemAudit = await this.auditItemInstances({ limit: dupeLimit });
+      const latestAuditRow = latestIntegrityAuditResult.rows[0] || null;
+      const latestAuditIssues = latestAuditRow && Array.isArray(latestAuditRow.issues)
+        ? latestAuditRow.issues
+        : [];
+      const latestAuditSummary = latestAuditRow ? safeJson(latestAuditRow.summary) : {};
+      const criticalIntegrityIssues = latestAuditIssues.filter((issue) => cleanName(issue?.severity) === "critical").length;
+      const highIntegrityIssues = latestAuditIssues.filter((issue) => cleanName(issue?.severity) === "high").length;
+      const itemAuditIssues = itemAudit?.ok && Array.isArray(itemAudit.issues) ? itemAudit.issues : [];
+      const dupeWarnings = itemAuditIssues.map((issue) => ({
+        type: cleanName(issue.type || "unknown"),
+        severity: cleanName(issue.severity || "warning"),
+        username: cleanName(issue.username || ""),
+        player_id: cleanName(issue.player_id || ""),
+        item_type: cleanName(issue.item_type || ""),
+        item_category: cleanName(issue.item_category || ""),
+        public_item_instance_id: cleanName(issue.public_item_instance_id || ""),
+        item_instance_id: cleanName(issue.item_instance_id || ""),
+        state: cleanName(issue.state || ""),
+        current_location: cleanName(issue.current_location || ""),
+        inventory_amount: ledgerNullableInteger(issue.inventory_amount),
+        active_instance_count: ledgerNullableInteger(issue.active_instance_count),
+        difference: ledgerNullableInteger(issue.difference),
+        row_count: toInt(issue.row_count, 0),
+      }));
+
+      return {
+        ok: true,
+        generated_at: generatedAt,
+        window_hours: windowHours,
+        limit,
+        world_count: toInt(worldCountResult.rows[0]?.world_count, 0),
+        player_count: toInt(playerCountResult.rows[0]?.player_count, 0),
+        top_gem_gainers: topGemGainersResult.rows.map((row) => ({
+          username: cleanName(row.username || ""),
+          player_id: cleanName(row.player_id || ""),
+          total_gems_gained: ledgerNullableInteger(row.total_gems_gained) || "0",
+          event_count: toInt(row.event_count, 0),
+          last_gain_at: normalizeOptionalTimestamp(row.last_gain_at),
+          reasons: Array.isArray(row.reasons) ? row.reasons.map(cleanName).filter(Boolean).slice(0, 5) : [],
+        })),
+        top_item_gainers: topItemGainersResult.rows.map((row) => ({
+          username: cleanName(row.username || ""),
+          player_id: cleanName(row.player_id || ""),
+          item_type: cleanName(row.item_type || ""),
+          item_category: cleanName(row.item_category || ""),
+          total_items_gained: ledgerNullableInteger(row.total_items_gained) || "0",
+          event_count: toInt(row.event_count, 0),
+          last_gain_at: normalizeOptionalTimestamp(row.last_gain_at),
+          sources: Array.isArray(row.sources) ? row.sources.map(cleanName).filter(Boolean).slice(0, 5) : [],
+        })),
+        suspicious_accounts: suspiciousAccountsResult.rows.map((row) => ({
+          username: cleanName(row.username || ""),
+          player_id: cleanName(row.player_id || ""),
+          event_count: toInt(row.event_count, 0),
+          critical_count: toInt(row.critical_count, 0),
+          high_count: toInt(row.high_count, 0),
+          medium_count: toInt(row.medium_count, 0),
+          last_event_at: normalizeOptionalTimestamp(row.last_event_at),
+          event_types: Array.isArray(row.event_types) ? row.event_types.map(cleanName).filter(Boolean).slice(0, 8) : [],
+        })),
+        recent_security_summary: recentSecuritySummaryResult.rows.map((row) => ({
+          severity: cleanName(row.severity || ""),
+          event_count: toInt(row.event_count, 0),
+        })),
+        dupe_warnings: dupeWarnings,
+        dupe_warning_count: toInt(itemAudit?.summary?.total_issues, itemAuditIssues.length),
+        dupe_summary: itemAudit?.ok ? safeJson(itemAudit.summary || {}) : {
+          ok: false,
+          reason: cleanName(itemAudit?.reason || "audit_unavailable"),
+        },
+        latest_integrity_audit: latestAuditRow ? {
+          run_type: cleanName(latestAuditRow.run_type || ""),
+          status: cleanName(latestAuditRow.status || ""),
+          created_at: normalizeOptionalTimestamp(latestAuditRow.created_at),
+          critical_issues: toInt(latestAuditSummary.critical_issues, criticalIntegrityIssues),
+          high_issues: toInt(latestAuditSummary.high_issues, highIntegrityIssues),
+          warnings: toInt(latestAuditSummary.warnings, 0),
+          notices: toInt(latestAuditSummary.notices, 0),
+          total_issues: toInt(latestAuditSummary.total_issues, latestAuditIssues.length),
+          summary: latestAuditSummary,
+        } : {
+          run_type: "",
+          status: "not_run",
+          created_at: null,
+          critical_issues: 0,
+          high_issues: 0,
+          warnings: 0,
+          notices: 0,
+          total_issues: 0,
+          summary: {},
+        },
+      };
+    } catch (error) {
+      this.logger("[postgres] admin monitoring dashboard failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
+    }
+  }
+
   async reconcileItemInstancesForUsername(username, playerState = null, details = {}) {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanUsername = cleanName(username);
@@ -3772,6 +4610,7 @@ class PostgresStore {
     const cleanWorldName = cleanName(worldName || snapshot?.world_name || "START") || "START";
     const snapshotData = safeJson(snapshot);
     const checksum = jsonChecksum(snapshotData);
+    const snapshotHash = integrityHash(snapshotData);
     const storeSnapshotData = options.storeSnapshotData !== false;
     const snapshotJson = storeSnapshotData ? JSON.stringify(snapshotData) : null;
 
@@ -3786,6 +4625,8 @@ class PostgresStore {
             world_id,
             snapshot_version,
             checksum,
+            snapshot_hash,
+            snapshot_hash_algorithm,
             storage_uri,
             snapshot_data,
             reason,
@@ -3796,10 +4637,12 @@ class PostgresStore {
             $1,
             COALESCE(MAX(snapshot_version), 0) + 1,
             $2,
-            NULLIF($3, ''),
-            $4::jsonb,
-            COALESCE(NULLIF($5, ''), 'snapshot'),
-            COALESCE(NULLIF($6, ''), 'system'),
+            $3,
+            $4,
+            NULLIF($5, ''),
+            $6::jsonb,
+            COALESCE(NULLIF($7, ''), 'snapshot'),
+            COALESCE(NULLIF($8, ''), 'system'),
             now()
           FROM ${this.table("world_snapshots")}
           WHERE world_id = $1
@@ -3807,6 +4650,8 @@ class PostgresStore {
           [
             worldId,
             checksum,
+            snapshotHash,
+            INTEGRITY_HASH_ALGORITHM,
             cleanName(options.storageUri || ""),
             snapshotJson,
             cleanName(options.reason || "snapshot"),
@@ -3899,7 +4744,9 @@ class PostgresStore {
     const email = cleanName(accountData.email || "");
     const fallbackEmail = defaultEmailForUsername(username);
     const role = normalizeDbRole(accountData.role || "player");
+    const passwordSalt = cleanName(accountData.password_salt || "");
     const passwordHash = String(accountData.password_hash || "");
+    const passwordAlgorithm = cleanName(accountData.password_algorithm || (passwordHash ? "legacy_scrypt" : ""));
     const emailVerified = Boolean(accountData.email_verified);
     const createdAt = cleanName(accountData.created_at || "");
     const lastSeenAt = cleanName(accountData.last_seen_at || "");
@@ -3913,7 +4760,9 @@ class PostgresStore {
           INSERT INTO ${this.table("accounts")} (
             username,
             email,
+            password_salt,
             password_hash,
+            password_algorithm,
             role,
             is_active,
             last_login_at,
@@ -3922,19 +4771,29 @@ class PostgresStore {
           )
           VALUES (
             $1,
-            COALESCE(NULLIF($2, ''), $6),
+            COALESCE(NULLIF($2, ''), $8),
             $3,
             $4,
+            $5,
+            $6,
             true,
             ${touchLogin ? "now()" : "NULL"},
-            COALESCE(NULLIF($5, '')::timestamptz, now()),
+            COALESCE(NULLIF($7, '')::timestamptz, now()),
             now()
           )
           ON CONFLICT (username) DO UPDATE
             SET email = COALESCE(NULLIF($2, ''), ${this.table("accounts")}.email),
+                password_salt = CASE
+                  WHEN EXCLUDED.password_salt <> '' THEN EXCLUDED.password_salt
+                  ELSE ${this.table("accounts")}.password_salt
+                END,
                 password_hash = CASE
                   WHEN EXCLUDED.password_hash <> '' THEN EXCLUDED.password_hash
                   ELSE ${this.table("accounts")}.password_hash
+                END,
+                password_algorithm = CASE
+                  WHEN EXCLUDED.password_algorithm <> '' THEN EXCLUDED.password_algorithm
+                  ELSE ${this.table("accounts")}.password_algorithm
                 END,
                 role = EXCLUDED.role,
                 is_active = true,
@@ -3944,7 +4803,7 @@ class PostgresStore {
                 END
           RETURNING account_id
           `,
-          [username, email, passwordHash, role, createdAt, fallbackEmail]
+          [username, email, passwordSalt, passwordHash, passwordAlgorithm, role, createdAt, fallbackEmail]
         );
 
         const accountId = accountResult.rows[0]?.account_id;
@@ -4003,8 +4862,13 @@ class PostgresStore {
     const role = normalizeDbRole(accountData.role || "player");
     const sessionHash = cleanName(accountData.session_token_hash || "");
     const expiresAt = cleanName(accountData.session_token_expires_at || "");
+    const refreshHash = cleanName(accountData.refresh_token_hash || "");
+    const refreshExpiresAt = cleanName(accountData.refresh_token_expires_at || "");
     const ipAddress = normalizeIp(details.ip || "");
     const userAgent = cleanName(details.userAgent || "");
+    const deviceInfo = safeJson(details.deviceInfo || details.device_info || {});
+    const sessionMode = cleanName(details.sessionMode || details.session_mode || "one_active") || "one_active";
+    const rotatedFromTokenHash = cleanName(details.rotatedFromTokenHash || details.rotated_from_token_hash || "");
     if (sessionHash === "") return { ok: false, reason: "missing_session_hash" };
 
     try {
@@ -4019,34 +4883,82 @@ class PostgresStore {
         const accountId = accountResult.rows[0]?.account_id;
         if (!accountId) return;
 
+        let rotatedFromSessionId = null;
+        let tokenFamily = null;
+        if (rotatedFromTokenHash !== "") {
+          const rotatedResult = await client.query(
+            `
+            SELECT session_id, token_family
+              FROM ${this.table("sessions")}
+             WHERE session_token_hash = $1
+                OR refresh_token_hash = $1
+             LIMIT 1
+            `,
+            [rotatedFromTokenHash]
+          );
+          rotatedFromSessionId = rotatedResult.rows[0]?.session_id || null;
+          tokenFamily = rotatedResult.rows[0]?.token_family || null;
+        }
+
         await client.query(
           `
           INSERT INTO ${this.table("sessions")} (
             account_id,
             session_token_hash,
+            refresh_token_hash,
             ip_address,
             user_agent,
+            device_info,
+            session_mode,
+            token_family,
+            rotated_from_session_id,
             issued_at,
             expires_at,
+            refresh_expires_at,
             last_seen_at
           )
           VALUES (
             $1,
             $2,
-            NULLIF($3, '')::inet,
-            NULLIF($4, ''),
+            NULLIF($3, ''),
+            NULLIF($4, '')::inet,
+            NULLIF($5, ''),
+            $6::jsonb,
+            NULLIF($7, ''),
+            COALESCE($8::uuid, gen_random_uuid()),
+            $9::uuid,
             now(),
-            COALESCE(NULLIF($5, '')::timestamptz, now() + interval '1 day'),
+            COALESCE(NULLIF($10, '')::timestamptz, now() + interval '1 day'),
+            COALESCE(NULLIF($11, '')::timestamptz, COALESCE(NULLIF($10, '')::timestamptz, now() + interval '1 day')),
             now()
           )
           ON CONFLICT (session_token_hash) DO UPDATE
             SET expires_at = EXCLUDED.expires_at,
+                refresh_token_hash = COALESCE(EXCLUDED.refresh_token_hash, ${this.table("sessions")}.refresh_token_hash),
+                refresh_expires_at = COALESCE(EXCLUDED.refresh_expires_at, ${this.table("sessions")}.refresh_expires_at),
                 last_seen_at = now(),
                 revoked_at = NULL,
+                revoked_reason = NULL,
                 ip_address = COALESCE(EXCLUDED.ip_address, ${this.table("sessions")}.ip_address),
-                user_agent = COALESCE(EXCLUDED.user_agent, ${this.table("sessions")}.user_agent)
+                user_agent = COALESCE(EXCLUDED.user_agent, ${this.table("sessions")}.user_agent),
+                device_info = EXCLUDED.device_info,
+                session_mode = COALESCE(EXCLUDED.session_mode, ${this.table("sessions")}.session_mode),
+                token_family = COALESCE(EXCLUDED.token_family, ${this.table("sessions")}.token_family),
+                rotated_from_session_id = COALESCE(EXCLUDED.rotated_from_session_id, ${this.table("sessions")}.rotated_from_session_id)
           `,
-          [accountId, sessionHash, ipAddress, userAgent, expiresAt]
+          [
+            accountId,
+            sessionHash,
+            refreshHash,
+            ipAddress,
+            userAgent,
+            JSON.stringify(deviceInfo),
+            sessionMode,
+            tokenFamily,
+            rotatedFromSessionId,
+            expiresAt,
+            refreshExpiresAt,
+          ]
         );
       });
 
@@ -4054,7 +4966,9 @@ class PostgresStore {
         ok: true,
         username,
         session_token_hash: sessionHash,
+        refresh_token_hash: refreshHash,
         expires_at: normalizeOptionalTimestamp(expiresAt),
+        refresh_expires_at: normalizeOptionalTimestamp(refreshExpiresAt),
       };
     } catch (error) {
       this.logger("[postgres] session save failed:", error.message);
@@ -4076,6 +4990,8 @@ class PostgresStore {
 
     const ipAddress = normalizeIp(details.ip || "");
     const userAgent = cleanName(details.userAgent || "");
+    const deviceInfo = safeJson(details.deviceInfo || details.device_info || {});
+    const requestedTokenKind = cleanName(details.tokenKind || details.token_kind || "session_or_refresh");
 
     try {
       return await this.withTransaction(async (client) => {
@@ -4086,6 +5002,7 @@ class PostgresStore {
             a.email::text AS email,
             a.password_salt,
             a.password_hash,
+            a.password_algorithm,
             a.role,
             a.email_verified,
             a.email_verified_at,
@@ -4094,14 +5011,29 @@ class PostgresStore {
             a.account_state,
             a.created_at,
             a.last_login_at,
+            s.session_id,
             s.session_token_hash,
-            s.expires_at AS session_token_expires_at
+            s.expires_at AS session_token_expires_at,
+            s.refresh_token_hash,
+            s.refresh_expires_at,
+            s.token_family,
+            CASE
+              WHEN s.session_token_hash = $2 THEN 'session'
+              WHEN s.refresh_token_hash = $2 THEN 'refresh'
+              ELSE 'unknown'
+            END AS matched_token_kind
           FROM ${this.table("sessions")} s
           JOIN ${this.table("accounts")} a ON a.account_id = s.account_id
           WHERE lower(a.username::text) = lower($1)
-            AND s.session_token_hash = $2
+            AND (
+              s.session_token_hash = $2
+              OR s.refresh_token_hash = $2
+            )
             AND s.revoked_at IS NULL
-            AND s.expires_at > now()
+            AND (
+              (s.session_token_hash = $2 AND s.expires_at > now())
+              OR (s.refresh_token_hash = $2 AND s.refresh_expires_at > now())
+            )
             AND a.is_active = true
           LIMIT 1
           `,
@@ -4110,28 +5042,37 @@ class PostgresStore {
 
         const row = result.rows[0];
         if (!row) return { ok: false, reason: "invalid_or_expired" };
+        if (requestedTokenKind === "refresh" && cleanName(row.matched_token_kind || "") !== "refresh") {
+          return { ok: false, reason: "invalid_refresh_token" };
+        }
 
         await client.query(
           `
           UPDATE ${this.table("sessions")}
              SET last_seen_at = now(),
                  ip_address = COALESCE(NULLIF($2, '')::inet, ip_address),
-                 user_agent = COALESCE(NULLIF($3, ''), user_agent)
+                 user_agent = COALESCE(NULLIF($3, ''), user_agent),
+                 device_info = $4::jsonb
            WHERE session_token_hash = $1
+              OR refresh_token_hash = $1
           `,
-          [cleanSessionHash, ipAddress, userAgent]
+          [cleanSessionHash, ipAddress, userAgent, JSON.stringify(deviceInfo)]
         );
 
         const accountState = toObject(row.account_state);
         const expiresAt = normalizeOptionalTimestamp(row.session_token_expires_at) || "";
+        const refreshExpiresAt = normalizeOptionalTimestamp(row.refresh_expires_at) || "";
         const account = {
           ...accountState,
           username: cleanName(accountState.username || row.username),
           email: cleanName(accountState.email || row.email),
           password_salt: cleanName(accountState.password_salt || row.password_salt || ""),
           password_hash: String(accountState.password_hash || row.password_hash || ""),
-          session_token_hash: cleanSessionHash,
+          password_algorithm: cleanName(accountState.password_algorithm || row.password_algorithm || (accountState.password_hash || row.password_hash ? "legacy_scrypt" : "")),
+          session_token_hash: cleanName(row.session_token_hash || accountState.session_token_hash || ""),
           session_token_expires_at: expiresAt,
+          refresh_token_hash: cleanName(row.refresh_token_hash || accountState.refresh_token_hash || ""),
+          refresh_token_expires_at: refreshExpiresAt,
           email_verified: Boolean(row.email_verified),
           email_verified_at: cleanName(normalizeOptionalTimestamp(row.email_verified_at) || accountState.email_verified_at || ""),
           email_verification_token_hash: cleanName(row.email_verification_token_hash || accountState.email_verification_token_hash || ""),
@@ -4144,8 +5085,13 @@ class PostgresStore {
         return {
           ok: true,
           username: account.username,
-          session_token_hash: cleanSessionHash,
+          session_id: cleanName(row.session_id || ""),
+          session_token_hash: cleanName(row.session_token_hash || ""),
+          refresh_token_hash: cleanName(row.refresh_token_hash || ""),
+          matched_token_kind: cleanName(row.matched_token_kind || requestedTokenKind || ""),
+          token_family: cleanName(row.token_family || ""),
           expires_at: expiresAt,
+          refresh_expires_at: refreshExpiresAt,
           account,
         };
       });
@@ -4155,7 +5101,7 @@ class PostgresStore {
     }
   }
 
-  async revokeSessionsForUsername(username) {
+  async revokeSessionsForUsername(username, reason = "revoked") {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanUsername = cleanName(username);
     if (cleanUsername === "") return { ok: false, reason: "invalid_username" };
@@ -4171,11 +5117,12 @@ class PostgresStore {
         await client.query(
           `
           UPDATE ${this.table("sessions")}
-             SET revoked_at = now()
+             SET revoked_at = now(),
+                 revoked_reason = COALESCE(NULLIF($2, ''), 'revoked')
            WHERE account_id = $1
              AND revoked_at IS NULL
           `,
-          [accountId]
+          [accountId, cleanName(reason || "revoked")]
         );
       });
       return { ok: true };
@@ -4190,7 +5137,40 @@ class PostgresStore {
     return this.revokeSessionsForUsername(username);
   }
 
-  async revokeSessionByTokenHash(sessionTokenHash) {
+  async revokeOtherSessionsForUsername(username, keepSessionTokenHash, reason = "one_active_session") {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const cleanUsername = cleanName(username);
+    const keepHash = cleanName(keepSessionTokenHash);
+    if (cleanUsername === "" || keepHash === "") return { ok: false, reason: "invalid_session" };
+
+    try {
+      await this.withTransaction(async (client) => {
+        const accountResult = await client.query(
+          `SELECT account_id FROM ${this.table("accounts")} WHERE lower(username::text) = lower($1) LIMIT 1`,
+          [cleanUsername]
+        );
+        const accountId = accountResult.rows[0]?.account_id;
+        if (!accountId) return;
+        await client.query(
+          `
+          UPDATE ${this.table("sessions")}
+             SET revoked_at = now(),
+                 revoked_reason = COALESCE(NULLIF($3, ''), 'one_active_session')
+           WHERE account_id = $1
+             AND session_token_hash <> $2
+             AND revoked_at IS NULL
+          `,
+          [accountId, keepHash, cleanName(reason || "one_active_session")]
+        );
+      });
+      return { ok: true };
+    } catch (error) {
+      this.logger("[postgres] other session revoke failed:", error.message);
+      return { ok: false, reason: "database_error", message: error.message };
+    }
+  }
+
+  async revokeSessionByTokenHash(sessionTokenHash, reason = "revoked") {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanSessionHash = cleanName(sessionTokenHash);
     if (cleanSessionHash === "") return { ok: false, reason: "invalid_session" };
@@ -4199,11 +5179,15 @@ class PostgresStore {
       await this.pool.query(
         `
         UPDATE ${this.table("sessions")}
-           SET revoked_at = now()
-         WHERE session_token_hash = $1
+           SET revoked_at = now(),
+               revoked_reason = COALESCE(NULLIF($2, ''), 'revoked')
+         WHERE (
+             session_token_hash = $1
+             OR refresh_token_hash = $1
+           )
            AND revoked_at IS NULL
         `,
-        [cleanSessionHash]
+        [cleanSessionHash, cleanName(reason || "revoked")]
       );
       return { ok: true };
     } catch (error) {
@@ -5604,6 +6588,7 @@ class PostgresStore {
 
         if (transactionLedgerEntries.length > 0) {
           const inventoryAfterHash = await this.getInventorySnapshotHash(client, playerId);
+          await this.updatePlayerInventoryHash(client, playerId, inventoryAfterHash);
           for (const transactionLedgerEntry of transactionLedgerEntries) {
             await this.recordTransactionLedger(client, {
               ...transactionLedgerEntry,
@@ -6311,6 +7296,7 @@ class PostgresStore {
         }
 
         const inventoryAfterHash = await this.getInventorySnapshotHash(client, playerId);
+        await this.updatePlayerInventoryHash(client, playerId, inventoryAfterHash);
         await this.recordTransactionLedger(client, {
           transaction_type: "ITEM_PICKUP",
           player_id: playerId,
@@ -7079,6 +8065,8 @@ class PostgresStore {
 
         const requesterInventoryAfterHash = await this.getInventorySnapshotHash(client, requesterId);
         const targetInventoryAfterHash = await this.getInventorySnapshotHash(client, targetId);
+        await this.updatePlayerInventoryHash(client, requesterId, requesterInventoryAfterHash);
+        await this.updatePlayerInventoryHash(client, targetId, targetInventoryAfterHash);
         const tradeLedgerTransactionId = isUuid(tradeId) ? tradeId : null;
         const instancesForTradeEntry = (playerId, entry) => {
           if (!shouldTrackItemInstance(entry.item_type, entry.item_category)) return [];
@@ -7675,6 +8663,8 @@ class PostgresStore {
 
         const buyerInventoryAfterHash = await this.getInventorySnapshotHash(client, buyerId);
         const ownerInventoryAfterHash = await this.getInventorySnapshotHash(client, ownerId);
+        await this.updatePlayerInventoryHash(client, buyerId, buyerInventoryAfterHash);
+        await this.updatePlayerInventoryHash(client, ownerId, ownerInventoryAfterHash);
         await this.recordTransactionLedger(client, {
           transaction_id: correlationId,
           transaction_type: "VENDING_BUY",
@@ -7874,6 +8864,65 @@ class PostgresStore {
         return;
       }
       await this.issuePunishment(e);
+    });
+  }
+
+  recordLoginAttempt(entry = {}) {
+    if (!this.isReady()) return;
+    const e = toObject(entry);
+    this.runDetached("record login attempt", async () => {
+      await this.withTransaction(async (client) => {
+        const username = cleanName(e.username || e.account_username || "");
+        let accountId = null;
+        if (username !== "") {
+          const accountResult = await client.query(
+            `SELECT account_id FROM ${this.table("accounts")} WHERE lower(username::text) = lower($1) LIMIT 1`,
+            [username]
+          );
+          accountId = accountResult.rows[0]?.account_id || null;
+        }
+
+        await client.query(
+          `
+          INSERT INTO ${this.table("account_login_attempts")} (
+            account_id,
+            username,
+            action,
+            success,
+            reason,
+            ip_address,
+            user_agent,
+            device_info,
+            request_id,
+            created_at
+          )
+          VALUES (
+            $1,
+            COALESCE(NULLIF($2, ''), ''),
+            COALESCE(NULLIF($3, ''), 'login'),
+            $4,
+            COALESCE(NULLIF($5, ''), ''),
+            NULLIF($6, '')::inet,
+            NULLIF($7, ''),
+            $8::jsonb,
+            NULLIF($9, ''),
+            COALESCE($10::timestamptz, now())
+          )
+          `,
+          [
+            accountId,
+            username,
+            cleanName(e.action || "login"),
+            Boolean(e.success || e.ok),
+            cleanName(e.reason || ""),
+            normalizeIp(e.ip || e.ip_address || ""),
+            cleanName(e.user_agent || e.userAgent || ""),
+            JSON.stringify(safeJson(e.device_info || e.deviceInfo || {})),
+            cleanName(e.request_id || ""),
+            normalizeOptionalTimestamp(e.at || ""),
+          ]
+        );
+      });
     });
   }
 
@@ -8100,5 +9149,9 @@ class PostgresStore {
     });
   }
 }
+
+PostgresStore.INTEGRITY_HASH_ALGORITHM = INTEGRITY_HASH_ALGORITHM;
+PostgresStore.buildTransactionLedgerHash = buildTransactionLedgerHash;
+PostgresStore.integrityHash = integrityHash;
 
 module.exports = PostgresStore;
