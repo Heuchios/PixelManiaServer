@@ -19,6 +19,7 @@ const INVENTORY_FIELD_CATEGORY = Object.freeze([
   ["tool_inventory", "tool"],
   ["back_inventory", "back"],
   ["hair_inventory", "hair"],
+  ["eyewear_inventory", "eyewear"],
   ["shirt_inventory", "shirt"],
   ["pants_inventory", "pants"],
   ["shoes_inventory", "shoes"],
@@ -35,7 +36,7 @@ const POSTGRES_TRANSACTION_MAX_ATTEMPTS = 5;
 const POSTGRES_TRANSACTION_RETRY_BASE_DELAY_MS = 75;
 const DEFAULT_INVENTORY_STACK_LIMIT = ItemDatabase.DEFAULT_STACK_LIMIT || 200;
 const MAX_INVENTORY_STACK_LIMIT = ItemDatabase.GEM_CURRENCY_STACK_LIMIT || 100000000000;
-const ITEM_INSTANCE_TRACKED_CATEGORIES = new Set(["tool", "back", "hair", "shirt", "pants", "shoes"]);
+const ITEM_INSTANCE_TRACKED_CATEGORIES = new Set(["tool", "back", "hair", "eyewear", "shirt", "pants", "shoes"]);
 const ITEM_INSTANCE_ACTIVE_STATE = "active";
 const ITEM_INSTANCE_RETIRED_STATE = "consumed";
 const ITEM_INSTANCE_STATES = new Set(["active", "consumed", "traded", "destroyed", "dropped", "locked"]);

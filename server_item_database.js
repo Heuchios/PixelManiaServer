@@ -7,6 +7,7 @@ const CATEGORY_TO_FIELD = Object.freeze({
   tool: "tool_inventory",
   back: "back_inventory",
   hair: "hair_inventory",
+  eyewear: "eyewear_inventory",
   shirt: "shirt_inventory",
   pants: "pants_inventory",
   shoes: "shoes_inventory",
@@ -1068,6 +1069,15 @@ const ITEM_DEFINITIONS = {
     rarity: "common",
     equipment_slot: "hair",
     equipable: true,
+  }),
+
+  void_visor: item("eyewear", {
+    display_name: "Void Visor",
+    rarity: "common",
+    equipment_slot: "eyewear",
+    equipable: true,
+    tradeable: true,
+    dropable: true,
   }),
 
   basic_blue_shirt: item("shirt", {

@@ -21,6 +21,7 @@ const CATEGORY_FIELD = new Map([
   ["tool", "tool_inventory"],
   ["back", "back_inventory"],
   ["hair", "hair_inventory"],
+  ["eyewear", "eyewear_inventory"],
   ["shirt", "shirt_inventory"],
   ["pants", "pants_inventory"],
   ["shoes", "shoes_inventory"],
@@ -30,7 +31,7 @@ const CATEGORY_FIELD = new Map([
   ["fish", "fish_inventory"],
 ]);
 
-const TRACKED_CATEGORIES = new Set(["tool", "back", "hair", "shirt", "pants", "shoes"]);
+const TRACKED_CATEGORIES = new Set(["tool", "back", "hair", "eyewear", "shirt", "pants", "shoes"]);
 const DEFAULT_STACK_LIMIT = ItemDatabase.DEFAULT_STACK_LIMIT || 200;
 const MAX_STACK_LIMIT = ItemDatabase.GEM_CURRENCY_STACK_LIMIT || 100000000000;
 const args = process.argv.slice(2);

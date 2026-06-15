@@ -107,6 +107,7 @@ const ADMIN_INVENTORY_LOOKUP_FIELDS = Object.freeze([
   { field: "tool_inventory", category: "tool" },
   { field: "back_inventory", category: "back" },
   { field: "hair_inventory", category: "hair" },
+  { field: "eyewear_inventory", category: "eyewear" },
   { field: "shirt_inventory", category: "shirt" },
   { field: "pants_inventory", category: "pants" },
   { field: "shoes_inventory", category: "shoes" },
@@ -831,6 +832,8 @@ wss.on("connection", (socket, request = null) => {
       upsertAccount(account);
       return;
     }
+
+    applyActionPositionFromPayload(socket, player, data, data.world || getPlayerCurrentWorldName(player));
 
     if (data.type === "inventory_transaction_request") {
       await handleInventoryTransactionRequest(socket, player, data);
@@ -1830,6 +1833,7 @@ wss.on("connection", (socket, request = null) => {
             hand: data.equipped_tool || "",
             back: data.equipped_back || "",
             hair: data.equipped_hair_item || "",
+            eyewear: data.equipped_eyewear_item || "",
             shirt: data.equipped_shirt_item || "",
             pants: data.equipped_pants_item || "",
             shoes: data.equipped_shoes_item || "",
@@ -2306,6 +2310,7 @@ function getJsonContentScore(data) {
     "tool_inventory",
     "back_inventory",
     "hair_inventory",
+    "eyewear_inventory",
     "shirt_inventory",
     "pants_inventory",
     "shoes_inventory",
@@ -3110,6 +3115,7 @@ function buildPublicPlayerPresencePayload(type, player, worldName = "") {
     equipped_back_item: clampString(equipmentSlots.back || ""),
     equipped_back: clampString(equipmentSlots.back || ""),
     equipped_hair_item: clampString(equipmentSlots.hair || ""),
+    equipped_eyewear_item: clampString(equipmentSlots.eyewear || ""),
     equipped_shirt_item: clampString(equipmentSlots.shirt || ""),
     equipped_pants_item: clampString(equipmentSlots.pants || ""),
     equipped_shoes_item: clampString(equipmentSlots.shoes || ""),
@@ -10553,6 +10559,49 @@ function sanitizePlayerPosition(data, player) {
   };
 }
 
+function sanitizeActionPositionPayload(data, player, fallbackWorld = "") {
+  if (!data || typeof data !== "object" || Array.isArray(data)) return null;
+
+  const hasActorPosition = Object.prototype.hasOwnProperty.call(data, "actor_x") && Object.prototype.hasOwnProperty.call(data, "actor_y");
+  const hasPlayerPosition = Object.prototype.hasOwnProperty.call(data, "player_x") && Object.prototype.hasOwnProperty.call(data, "player_y");
+  if (!hasActorPosition && !hasPlayerPosition) return null;
+
+  const rawX = hasActorPosition ? data.actor_x : data.player_x;
+  const rawY = hasActorPosition ? data.actor_y : data.player_y;
+  const rawFacing = Object.prototype.hasOwnProperty.call(data, "actor_facing")
+    ? data.actor_facing
+    : (Object.prototype.hasOwnProperty.call(data, "player_facing") ? data.player_facing : data.facing);
+  const rawWorld = data.actor_world || data.player_world || data.world || fallbackWorld || getPlayerCurrentWorldName(player);
+
+  const position = sanitizePlayerPosition({
+    x: rawX,
+    y: rawY,
+    facing: rawFacing,
+    world: rawWorld,
+    in_water: data.actor_in_water === true || data.player_in_water === true,
+    in_lava_fire: data.actor_in_lava_fire === true || data.player_in_lava_fire === true,
+  }, player);
+  if (!position) return null;
+
+  if (cleanWorld(position.world) !== getPlayerCurrentWorldName(player)) return null;
+  return position;
+}
+
+function applyActionPositionFromPayload(socket, player, data, fallbackWorld = "") {
+  if (!player || !player.authenticated) return false;
+
+  const position = sanitizeActionPositionPayload(data, player, fallbackWorld);
+  if (!position) return false;
+  if (!acceptPlayerMovement(socket, player, position, { silent: true })) return false;
+
+  player.x = position.x;
+  player.y = position.y;
+  player.facing = position.facing;
+  player.in_water = position.in_water === true;
+  player.in_lava_fire = position.in_lava_fire === true;
+  return true;
+}
+
 function sanitizePlayerDamageFlash(data) {
   const remainingMs = clampInteger(data?.damage_flash_remaining_ms || 0, 0, MAX_DAMAGE_FLASH_MS);
   const token = clampInteger(data?.damage_flash_token || 0, 0, 2147483647);
@@ -12916,6 +12965,7 @@ function createDefaultPlayerState(username) {
     tool_inventory: {},
     back_inventory: {},
     hair_inventory: {},
+    eyewear_inventory: {},
     shirt_inventory: {},
     pants_inventory: {},
     shoes_inventory: {},
@@ -12954,6 +13004,9 @@ function mergeClientPlayerStateIntoServerState(username, incomingState, options 
   merged.equipped_hair_item = doesStateOwnEquippedItem(merged, incomingState.equipped_hair_item || "", "hair")
     ? clampString(incomingState.equipped_hair_item || "")
     : "";
+  merged.equipped_eyewear_item = doesStateOwnEquippedItem(merged, incomingState.equipped_eyewear_item || "", "eyewear")
+    ? clampString(incomingState.equipped_eyewear_item || "")
+    : "";
   merged.equipped_shirt_item = doesStateOwnEquippedItem(merged, incomingState.equipped_shirt_item || "", "shirt")
     ? clampString(incomingState.equipped_shirt_item || "")
     : "";
@@ -12991,6 +13044,9 @@ function mergeClientPlayerStateIntoServerState(username, incomingState, options 
     merged.equipped_hair_item = doesStateOwnEquippedItem(merged, incomingState.equipped_hair_item || "", "hair")
       ? clampString(incomingState.equipped_hair_item || "")
       : merged.equipped_hair_item;
+    merged.equipped_eyewear_item = doesStateOwnEquippedItem(merged, incomingState.equipped_eyewear_item || "", "eyewear")
+      ? clampString(incomingState.equipped_eyewear_item || "")
+      : merged.equipped_eyewear_item;
     merged.equipped_shirt_item = doesStateOwnEquippedItem(merged, incomingState.equipped_shirt_item || "", "shirt")
       ? clampString(incomingState.equipped_shirt_item || "")
       : merged.equipped_shirt_item;
@@ -13310,6 +13366,7 @@ function buildAdminInventoryLookupPlayerData(username, state) {
     equipped_tool: clampString(source.equipped_tool || ""),
     equipped_back_item: clampString(source.equipped_back_item || ""),
     equipped_hair_item: clampString(source.equipped_hair_item || ""),
+    equipped_eyewear_item: clampString(source.equipped_eyewear_item || ""),
     equipped_shirt_item: clampString(source.equipped_shirt_item || ""),
     equipped_pants_item: clampString(source.equipped_pants_item || ""),
     equipped_shoes_item: clampString(source.equipped_shoes_item || ""),
@@ -18489,6 +18546,7 @@ function sanitizePlayerState(rawState, username) {
     tool_inventory: sanitizeCountDictionary(rawState.tool_inventory, MAX_PLAYER_INVENTORY_KEYS, "tool"),
     back_inventory: sanitizeCountDictionary(rawState.back_inventory, MAX_PLAYER_INVENTORY_KEYS, "back"),
     hair_inventory: sanitizeCountDictionary(rawState.hair_inventory, MAX_PLAYER_INVENTORY_KEYS, "hair"),
+    eyewear_inventory: sanitizeCountDictionary(rawState.eyewear_inventory, MAX_PLAYER_INVENTORY_KEYS, "eyewear"),
     shirt_inventory: sanitizeCountDictionary(rawState.shirt_inventory, MAX_PLAYER_INVENTORY_KEYS, "shirt"),
     pants_inventory: sanitizeCountDictionary(rawState.pants_inventory, MAX_PLAYER_INVENTORY_KEYS, "pants"),
     shoes_inventory: sanitizeCountDictionary(rawState.shoes_inventory, MAX_PLAYER_INVENTORY_KEYS, "shoes"),
@@ -18499,6 +18557,7 @@ function sanitizePlayerState(rawState, username) {
     equipped_tool: "",
     equipped_back_item: "",
     equipped_hair_item: "",
+    equipped_eyewear_item: "",
     equipped_shirt_item: "",
     equipped_pants_item: "",
     equipped_shoes_item: "",
@@ -18520,6 +18579,11 @@ function sanitizePlayerState(rawState, username) {
   const equippedHair = clampString(rawState.equipped_hair_item || "");
   if (doesStateOwnEquippedItem(state, equippedHair, "hair")) {
     state.equipped_hair_item = equippedHair;
+  }
+
+  const equippedEyewear = clampString(rawState.equipped_eyewear_item || "");
+  if (doesStateOwnEquippedItem(state, equippedEyewear, "eyewear")) {
+    state.equipped_eyewear_item = equippedEyewear;
   }
 
   const equippedShirt = clampString(rawState.equipped_shirt_item || "");
@@ -18609,6 +18673,7 @@ function getEquipmentSlotsFromPlayerState(state) {
     hand: clampString(source.equipped_tool || ""),
     back: clampString(source.equipped_back_item || ""),
     hair: clampString(source.equipped_hair_item || ""),
+    eyewear: clampString(source.equipped_eyewear_item || ""),
     shirt: clampString(source.equipped_shirt_item || ""),
     pants: clampString(source.equipped_pants_item || ""),
     shoes: clampString(source.equipped_shoes_item || ""),
@@ -18616,7 +18681,7 @@ function getEquipmentSlotsFromPlayerState(state) {
 }
 
 function isCoreVisibleEquipmentSlot(slot) {
-  return slot === "hand" || slot === "back" || slot === "hair" || slot === "shirt" || slot === "pants" || slot === "shoes";
+  return slot === "hand" || slot === "back" || slot === "hair" || slot === "eyewear" || slot === "shirt" || slot === "pants" || slot === "shoes";
 }
 
 function sanitizeEquipmentSlots(rawSlots, username = "", stateOverride = null) {
@@ -18625,7 +18690,7 @@ function sanitizeEquipmentSlots(rawSlots, username = "", stateOverride = null) {
   const sourceSlots = rawSlots && typeof rawSlots === "object" && !Array.isArray(rawSlots) ? rawSlots : {};
   const fallbackSlots = getEquipmentSlotsFromPlayerState(state);
   const allowedSlots = [
-    "hand", "back", "hair", "head", "hat", "eyes", "face",
+    "hand", "back", "hair", "eyewear", "head", "hat", "eyes", "face",
     "shirt", "pants", "legs", "feet", "shoes",
     "neck", "aura"
   ];
@@ -18707,6 +18772,7 @@ function getPlayersInWorld(worldName, excludePlayerId = "") {
       equipped_back_item: clampString(equipmentSlots.back || ""),
       equipped_back: clampString(equipmentSlots.back || ""),
       equipped_hair_item: clampString(equipmentSlots.hair || ""),
+      equipped_eyewear_item: clampString(equipmentSlots.eyewear || ""),
       equipped_shirt_item: clampString(equipmentSlots.shirt || ""),
       equipped_pants_item: clampString(equipmentSlots.pants || ""),
       equipped_shoes_item: clampString(equipmentSlots.shoes || ""),
