@@ -129,6 +129,16 @@ const MAX_PICKUP_DISTANCE_PIXELS = TILE_SIZE * 6;
 const MAX_GRID_ACTION_DISTANCE_PIXELS = TILE_SIZE * 6;
 const MAX_DROP_CREATE_DISTANCE_PIXELS = TILE_SIZE * 6;
 const MAX_FISHING_CAST_DISTANCE_PIXELS = TILE_SIZE * 4;
+const MOVEMENT_MODE_WEBSOCKET = "WEBSOCKET";
+const MOVEMENT_MODE_NETFOX_REAL = "NETFOX_REAL";
+const MAX_BREAK_REACH_TILES = Math.max(1, Math.trunc(Number(process.env.MAX_BREAK_REACH_TILES) || 6));
+const MAX_PLACE_REACH_TILES = Math.max(1, Math.trunc(Number(process.env.MAX_PLACE_REACH_TILES) || 6));
+const MAX_PUNCH_REACH_TILES = Math.max(1, Math.trunc(Number(process.env.MAX_PUNCH_REACH_TILES) || 3));
+const MAX_BREAK_REACH_PIXELS = TILE_SIZE * MAX_BREAK_REACH_TILES;
+const MAX_PLACE_REACH_PIXELS = TILE_SIZE * MAX_PLACE_REACH_TILES;
+const MAX_PUNCH_REACH_PIXELS = TILE_SIZE * MAX_PUNCH_REACH_TILES;
+const ACTION_RATE_LIMIT_MS = Math.max(0, Math.trunc(Number(process.env.ACTION_RATE_LIMIT_MS) || 50));
+const MAX_TRUSTED_POSITION_AGE_MS = Math.max(100, Math.trunc(Number(process.env.MAX_TRUSTED_POSITION_AGE_MS) || 1000));
 const SERVER_DROP_PICKUP_DELAY = 0.25;
 const TRADE_SLOT_COUNT = 6;
 const HOTBAR_SLOT_COUNT = 6;
@@ -140,6 +150,21 @@ const PLAYER_PUNCH_BACKSIDE_TOLERANCE_PIXELS = TILE_SIZE * 0.45;
 const PLAYER_PUNCH_KNOCKBACK_X = 340;
 const PLAYER_PUNCH_KNOCKBACK_Y = 0;
 const PLAYER_PUNCH_COOLDOWN_MS = 180;
+const NETFOX_ACTION_DEBUG = ["1", "true", "yes", "on", "debug"].includes(String(process.env.NETFOX_ACTION_DEBUG || "false").trim().toLowerCase());
+const NETFOX_TRUSTED_POSITION_DEBUG = ["1", "true", "yes", "on", "debug"].includes(String(process.env.NETFOX_TRUSTED_POSITION_DEBUG || "false").trim().toLowerCase());
+const PHASE7_ACTION_LOGS = !["0", "false", "no", "off"].includes(String(process.env.PHASE7_ACTION_LOGS || "true").trim().toLowerCase());
+const NETFOX_SERVER_WORLD_STATE_TOKEN = String(process.env.NETFOX_SERVER_WORLD_STATE_TOKEN || "").trim();
+const NETFOX_SERVER_WORLD_STATE_TOKEN_HASH = String(process.env.NETFOX_SERVER_WORLD_STATE_TOKEN_HASH || "").trim().toLowerCase();
+const DEV_BACKEND_LOGIN_ENABLED = ["1", "true", "yes", "on", "debug"].includes(String(process.env.PIXELMANIA_ENABLE_DEV_BACKEND_LOGIN || "false").trim().toLowerCase());
+const DEV_BACKEND_LOGIN_ENVIRONMENT = String(process.env.ENVIRONMENT || process.env.NODE_ENV || "").trim().toLowerCase();
+const DEV_BACKEND_LOGIN_ENV_OVERRIDE = ["1", "true", "yes", "on", "debug"].includes(String(process.env.PIXELMANIA_ALLOW_DEV_LOGIN || "false").trim().toLowerCase());
+const DEV_BACKEND_LOGIN_ALLOWED = DEV_BACKEND_LOGIN_ENABLED && (
+  DEV_BACKEND_LOGIN_ENVIRONMENT === "development" ||
+  DEV_BACKEND_LOGIN_ENV_OVERRIDE
+);
+const PHASE7_DEV_JSON_FALLBACK_ALLOWED = DEV_BACKEND_LOGIN_ENABLED &&
+  DEV_BACKEND_LOGIN_ENVIRONMENT === "development" &&
+  DEV_BACKEND_LOGIN_ENV_OVERRIDE;
 const VEND_BLOCK_EMPTY = "vend_empty";
 const VEND_BLOCK_PENDING = "vend_pending";
 const VEND_BLOCK_SOLD = "vend_sold";
@@ -342,6 +367,7 @@ const MESSAGE_RATE_LIMITS = {
   world_seed_update: { limit: 25, windowMs: 1000 },
   world_interaction_update: { limit: 20, windowMs: 1000 },
   door_enter: { limit: 8, windowMs: 1000 },
+  netfox_trusted_player_state: { limit: 40, windowMs: 1000 },
   world_item_drop_create: { limit: 20, windowMs: 1000 },
   world_drop_create: { limit: 20, windowMs: 1000 },
   world_item_drop_update: { limit: 30, windowMs: 1000 },
@@ -455,6 +481,11 @@ const localLoginAttemptBuckets = new Map();
 const punishmentCache = new Map();
 const activeFishingSessions = new Map();
 const blockDamage = new Map();
+const netfoxPlayerStateRegistry = new Map();
+const netfoxPlayerStateRegistryByProfile = new Map();
+const netfoxPlayerStateRegistryByPeer = new Map();
+const phase7TrustedPositionLoggedKeys = new Set();
+const phase7TrustedPositionLastLogMs = new Map();
 const pendingPlayerPositionBroadcasts = new Map();
 const pendingPlayerPositionBroadcastTimers = new Map();
 const worldSaveTimers = new Map();
@@ -712,6 +743,8 @@ wss.on("connection", (socket, request = null) => {
     name: "Guest",
     account_username: "",
     account_email: "",
+    account_id: "",
+    profile_id: "",
     authenticated: false,
     role: "player",
     world: "START",
@@ -727,6 +760,9 @@ wss.on("connection", (socket, request = null) => {
     on_floor: true,
     in_water: false,
     in_lava_fire: false,
+    movement_mode: MOVEMENT_MODE_WEBSOCKET,
+    netfox_peer_id: 0,
+    last_action_at_by_type: new Map(),
     damage_flash_expires_at: 0,
     damage_flash_token: 0,
     equipment_slots: {},
@@ -790,6 +826,7 @@ wss.on("connection", (socket, request = null) => {
         return;
       }
       player.client_version = clientVersion || player.client_version;
+      updatePlayerMovementModeFromPayload(player, data);
 
       if (!(await enforceMessageIdempotency(socket, player, data))) {
         return;
@@ -823,6 +860,11 @@ wss.on("connection", (socket, request = null) => {
       return;
     }
 
+    if (data.type === "dev_backend_login") {
+      await handleDevBackendLogin(socket, player, data);
+      return;
+    }
+
     if (data.type === "account_state_save") {
       const account = sanitizeAccountState(data);
       if (!account) return;
@@ -830,6 +872,11 @@ wss.on("connection", (socket, request = null) => {
       if (accountKey(account.username) !== accountKey(player.account_username)) return;
 
       upsertAccount(account);
+      return;
+    }
+
+    if (data.type === "netfox_trusted_player_state") {
+      handleNetfoxTrustedPlayerState(socket, player, data);
       return;
     }
 
@@ -1018,6 +1065,7 @@ wss.on("connection", (socket, request = null) => {
       player.current_world_id = newWorld;
       player.joined_world = true;
       player.last_position_at = 0;
+      clearNetfoxTrustedPlayerState(player);
       const joinSpawn = getJoinWorldSpawnForWorld(player.world);
       player.x = joinSpawn.x;
       player.y = joinSpawn.y;
@@ -1087,6 +1135,7 @@ wss.on("connection", (socket, request = null) => {
       player.world = "";
       player.current_world = "";
       player.current_world_id = "";
+      clearNetfoxTrustedPlayerState(player);
       touchLivePresence(socket, player, { force: true });
       return;
     }
@@ -1159,20 +1208,54 @@ wss.on("connection", (socket, request = null) => {
 
       const worldName = getPlayerCurrentWorldName(player);
       if (await rejectIfWorldBanned(socket, player, worldName, "world_block_update")) return;
-      if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE && !isPostgresAuthoritativeReady()) {
-        sendActionRejected(socket, "world_block_update", "PostgreSQL is not ready.");
+      const allowDevJsonFallback = shouldAllowPhase7DevJsonFallback(player, data, {
+        world: worldName,
+        allow_dev_json_fallback: true,
+      });
+      if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE && !isPostgresAuthoritativeReady() && !allowDevJsonFallback) {
+        sendActionRejected(socket, "world_block_update", "PostgreSQL is not ready.", {
+          reason: "postgres_unavailable",
+        });
         return;
       }
 
       const update = sanitizeBlockUpdate(data, worldName);
       if (!update) return;
+      const requestedWorldName = cleanWorld(data.world || data.current_world || data.world_id || worldName);
+      if (requestedWorldName !== worldName) {
+        const rejectedPosition = getPlayerValidationPosition(player, { action: `world_block_${update.action}`, world: worldName });
+        beginPhase7BlockActionContext(socket, player, worldName, update, rejectedPosition);
+        sendActionRejected(socket, "world_block_update", "Join that world before editing it.", {
+          reason: "wrong_world",
+          requested_world: requestedWorldName,
+          current_world: worldName,
+          block_type: update.block_type,
+        });
+        return;
+      }
       update.source_tool = clampString(player?.equipment_slots?.hand || update.source_tool || data.source_tool || "");
       update.player_id = String(player?.id || socket?.playerId || "");
       update.username = cleanAccountName(player?.account_username || player?.name || "");
       update.account_username = update.username;
-      update.actor_x = Number(player?.x || 0);
-      update.actor_y = Number(player?.y || 0);
-      update.actor_facing = Number(player?.facing || 1) < 0 ? -1 : 1;
+      const actorPosition = getPlayerValidationPosition(player, { action: `world_block_${update.action}`, world: worldName });
+      update.actor_x = actorPosition.ok ? actorPosition.x : Number(player?.x || 0);
+      update.actor_y = actorPosition.ok ? actorPosition.y : Number(player?.y || 0);
+      update.actor_facing = actorPosition.ok ? actorPosition.facing : (Number(player?.facing || 1) < 0 ? -1 : 1);
+      beginPhase7BlockActionContext(socket, player, worldName, update, actorPosition);
+      if (!validateNetfoxActionCooldown(socket, player, "world_block_update", data)) return;
+      debugNetfoxAction("world block action identity", {
+        action: update.action,
+        websocket_session_player_id: String(socket?.playerId || ""),
+        account_username: cleanAccountName(player?.account_username || player?.name || ""),
+        inventory_owner_id: String(player?.id || ""),
+        resolved_peer_id: actorPosition.ok ? Number(actorPosition.peer_id || 0) : 0,
+        resolved_source: actorPosition.source || "",
+        trusted_position: actorPosition.ok ? { x: Math.round(actorPosition.x), y: Math.round(actorPosition.y) } : null,
+        target_tile: { x: update.x, y: update.y },
+        world: worldName,
+        allow_reject_reason: actorPosition.ok ? "trusted_position_ready" : `trusted_position_${actorPosition.reason || "missing"}`,
+        age_ms: actorPosition.age_ms,
+      });
       if (update.action === "break" || update.action === "hit") {
         debugActionPositionFlow("world_block_update break request start", player, {
           action: update.action,
@@ -1187,21 +1270,36 @@ wss.on("connection", (socket, request = null) => {
         !canPlayerBreakOwnVendingMachine(player, worldName, update) &&
         !isFishMongerBreakAttempt(worldName, update)
       ) {
-        sendActionRejected(socket, "world_block_update", "This world is locked.");
+        sendActionRejected(socket, "world_block_update", "This world is locked.", {
+          reason: "world_locked",
+          block_type: update.block_type,
+        });
         return;
       }
       if ((update.action === "break" || update.action === "hit") && isWorldLockBlockType(update.block_type) && isWorldLocked(worldName) && !canPlayerControlWorldLock(player, worldName)) {
-        sendActionRejected(socket, "world_block_update", "Only the world lock owner can break the lock.");
+        sendActionRejected(socket, "world_block_update", "Only the world lock owner can break the lock.", {
+          reason: "world_lock_owner_required",
+          block_type: update.block_type,
+        });
         return;
       }
       if (update.action === "place" && isWorldLockBlockType(update.block_type) && (ensureWorldState(worldName).world_lock?.is_locked || hasWorldLockBlock(worldName))) {
-        sendActionRejected(socket, "world_block_update", "This world already has a lock.");
+        sendActionRejected(socket, "world_block_update", "This world already has a lock.", {
+          reason: "world_lock_exists",
+          block_type: update.block_type,
+        });
         return;
       }
 
-      const validation = await validateBlockUpdateAgainstServerState(socket, player, worldName, update, makeRequestId(data));
+      const validation = await validateBlockUpdateAgainstServerState(socket, player, worldName, update, makeRequestId(data), {
+        allow_dev_json_fallback: allowDevJsonFallback,
+      });
       if (!validation.ok) return;
       if (validation.pendingHit) {
+        logPhase7ActionResult(socket, "ALLOW", "pending_hit", {
+          action: update.action,
+          item: update.block_type,
+        });
         sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
         return;
       }
@@ -1292,6 +1390,7 @@ wss.on("connection", (socket, request = null) => {
           deferred.afterState,
           {
             ...(deferred.options || {}),
+            allow_dev_json_fallback: allowDevJsonFallback,
             world: worldName,
             world_state: serializedWorld,
             world_changes: worldChanges,
@@ -1303,7 +1402,10 @@ wss.on("connection", (socket, request = null) => {
           const rejectMessage = inventoryCommit.reason === "database_error"
             ? "PostgreSQL rejected the world update."
             : (inventoryCommit.message || "PostgreSQL rejected the world update.");
-          sendActionRejected(socket, "world_block_update", rejectMessage);
+          sendActionRejected(socket, "world_block_update", rejectMessage, {
+            reason: inventoryCommit.reason || "inventory_commit_failed",
+            block_type: update.block_type,
+          });
           return;
         }
 
@@ -1313,10 +1415,16 @@ wss.on("connection", (socket, request = null) => {
         persistWorldStateAfterInventoryCommit(worldName, inventoryCommit.postgres_committed, serializedWorld);
         worldCommit = { ok: true, postgres_committed: inventoryCommit.postgres_committed, serialized: serializedWorld };
       } else {
-        worldCommit = await commitWorldStateWithBlockChanges(worldName, worldChanges);
+        worldCommit = await commitWorldStateWithBlockChanges(worldName, worldChanges, {
+          player,
+          allow_dev_json_fallback: allowDevJsonFallback,
+        });
         if (!worldCommit.ok) {
           worldStates.set(cleanWorld(worldName), deserializeWorldState(worldName, previousWorldState));
-          sendActionRejected(socket, "world_block_update", worldCommit.message || "PostgreSQL rejected the world update.");
+          sendActionRejected(socket, "world_block_update", worldCommit.message || "PostgreSQL rejected the world update.", {
+            reason: worldCommit.reason || "world_commit_failed",
+            block_type: update.block_type,
+          });
           return;
         }
       }
@@ -1360,6 +1468,11 @@ wss.on("connection", (socket, request = null) => {
           player_data: requesterPlayerState,
         });
       }
+      logPhase7ActionResult(socket, "ALLOW", "committed", {
+        action: update.action,
+        item: update.block_type,
+        count: getPhase7InventoryCount(requesterPlayerState || validation.playerState || ensurePlayerState(player.account_username), update.block_type, "block"),
+      });
       } catch (error) {
         const requestId = makeRequestId(data);
         const rawX = Number(data?.x);
@@ -1388,6 +1501,8 @@ wss.on("connection", (socket, request = null) => {
           y: details.y,
           block_type: details.block_type,
         });
+      } finally {
+        clearPhase7BlockActionContext(socket);
       }
       return;
     }
@@ -1637,7 +1752,7 @@ wss.on("connection", (socket, request = null) => {
         drop_id: update.drop_id,
       });
 
-      if (update.action_position && acceptPlayerMovement(socket, player, update.action_position, { silent: true })) {
+      if (!isNetfoxRealMode(player, data) && update.action_position && acceptPlayerMovement(socket, player, update.action_position, { silent: true })) {
         player.x = update.action_position.x;
         player.y = update.action_position.y;
         player.facing = update.action_position.facing;
@@ -1808,6 +1923,15 @@ wss.on("connection", (socket, request = null) => {
         const position = sanitizePlayerPosition(data, player);
         if (!position) return;
         if (!requireSameWorld(socket, player, position.world, "move in that world")) return;
+        if (isNetfoxRealMode(player, data)) {
+          debugNetfoxAction("ignored legacy player_position in NETFOX_REAL", {
+            player_id: String(player?.id || ""),
+            username: cleanAccountName(player?.account_username || player?.name || ""),
+            world: position.world,
+          });
+          touchLivePresence(socket, player);
+          return;
+        }
         if (!acceptPlayerMovement(socket, player, position)) return;
 
         const previousEquipmentKey = JSON.stringify(player.equipment_slots || {});
@@ -1886,6 +2010,7 @@ wss.on("connection", (socket, request = null) => {
       clearPlayerFishingPresence(player);
       markAccountSeen(player.account_username);
       releaseActiveAccountSession(player);
+      clearNetfoxTrustedPlayerState(player);
 
       if (player.joined_world) {
         broadcastToWorld(player.world, buildPublicPlayerPresencePayload("player_left", player, player.world), playerId);
@@ -1924,6 +2049,508 @@ function cleanWorld(value) {
 function getPlayerCurrentWorldName(player) {
   if (!player) return "START";
   return cleanWorld(player.current_world_id || player.current_world || player.world || "START");
+}
+
+function sanitizeMovementMode(value, fallback = MOVEMENT_MODE_WEBSOCKET) {
+  const clean = String(value || "").trim().toUpperCase();
+  if (clean === MOVEMENT_MODE_NETFOX_REAL) return MOVEMENT_MODE_NETFOX_REAL;
+  if (clean === MOVEMENT_MODE_WEBSOCKET) return MOVEMENT_MODE_WEBSOCKET;
+  return fallback === MOVEMENT_MODE_NETFOX_REAL ? MOVEMENT_MODE_NETFOX_REAL : MOVEMENT_MODE_WEBSOCKET;
+}
+
+function updatePlayerMovementModeFromPayload(player, data = {}) {
+  if (!player || !data || typeof data !== "object" || Array.isArray(data)) return;
+
+  const rawMode = data.movement_mode || data.movementMode || data.mode || "";
+  if (String(rawMode || "").trim() === "") return;
+
+  const mode = sanitizeMovementMode(rawMode, player.movement_mode || MOVEMENT_MODE_WEBSOCKET);
+  player.movement_mode = mode;
+}
+
+function isNetfoxRealMode(player, data = null) {
+  if (data && typeof data === "object" && !Array.isArray(data)) {
+    const rawMode = data.movement_mode || data.movementMode || data.mode || "";
+    if (String(rawMode || "").trim() !== "") {
+      return sanitizeMovementMode(rawMode, player?.movement_mode || MOVEMENT_MODE_WEBSOCKET) === MOVEMENT_MODE_NETFOX_REAL;
+    }
+  }
+
+  return sanitizeMovementMode(player?.movement_mode || MOVEMENT_MODE_WEBSOCKET) === MOVEMENT_MODE_NETFOX_REAL;
+}
+
+function shouldAllowPhase7DevJsonFallback(player = null, data = null, options = {}) {
+  if (!PHASE7_DEV_JSON_FALLBACK_ALLOWED) return false;
+  if (isPostgresAuthoritativeReady()) return false;
+  if (!isNetfoxRealMode(player, data)) return false;
+  if (!player || player.authenticated !== true) return false;
+
+  const rawWorld = options.world || data?.world || player.current_world_id || player.current_world || player.world || "";
+  if (cleanWorld(rawWorld) !== "NETFOX_TEST") return false;
+
+  return options.allow_dev_json_fallback === true || data?.type === "world_block_update";
+}
+
+function getNetfoxStateKey(player) {
+  return normalizeNetfoxProfileKey(player?.id || "");
+}
+
+function normalizeNetfoxProfileKey(value) {
+  return String(value || "").trim();
+}
+
+function normalizeNetfoxPeerKey(value) {
+  const peerId = Math.max(0, Math.trunc(Number(value) || 0));
+  return peerId > 0 ? String(peerId) : "";
+}
+
+function normalizeOptionalNetfoxWorld(value) {
+  const raw = String(value || "").trim();
+  return raw === "" ? "" : cleanWorld(raw);
+}
+
+function clearNetfoxTrustedPlayerStateByKey(key) {
+  const cleanKey = normalizeNetfoxProfileKey(key);
+  if (cleanKey === "") return;
+
+  const existingState = netfoxPlayerStateRegistry.get(cleanKey);
+  netfoxPlayerStateRegistry.delete(cleanKey);
+
+  if (!existingState) return;
+
+  const profileKey = normalizeNetfoxProfileKey(existingState.game_player_id || existingState.player_id || cleanKey);
+  if (profileKey !== "") {
+    const indexedByProfile = netfoxPlayerStateRegistryByProfile.get(profileKey);
+    if (!indexedByProfile || indexedByProfile.state_key === cleanKey) {
+      netfoxPlayerStateRegistryByProfile.delete(profileKey);
+    }
+  }
+
+  const peerKey = normalizeNetfoxPeerKey(existingState.peer_id);
+  if (peerKey !== "") {
+    const indexedByPeer = netfoxPlayerStateRegistryByPeer.get(peerKey);
+    if (!indexedByPeer || indexedByPeer.state_key === cleanKey) {
+      netfoxPlayerStateRegistryByPeer.delete(peerKey);
+    }
+  }
+}
+
+function clearNetfoxTrustedPlayerState(player) {
+  clearNetfoxTrustedPlayerStateByKey(getNetfoxStateKey(player));
+}
+
+function indexNetfoxTrustedPlayerState(player, state) {
+  const stateKey = getNetfoxStateKey(player);
+  if (stateKey === "") return;
+
+  clearNetfoxTrustedPlayerStateByKey(stateKey);
+
+  const profileKey = normalizeNetfoxProfileKey(state.game_player_id || state.player_id || stateKey);
+  const peerKey = normalizeNetfoxPeerKey(state.peer_id);
+  const indexedState = {
+    ...state,
+    state_key: stateKey,
+    game_player_id: profileKey || stateKey,
+    peer_id: peerKey === "" ? 0 : Number(peerKey),
+  };
+
+  netfoxPlayerStateRegistry.set(stateKey, indexedState);
+  if (profileKey !== "") netfoxPlayerStateRegistryByProfile.set(profileKey, indexedState);
+  if (peerKey !== "") netfoxPlayerStateRegistryByPeer.set(peerKey, indexedState);
+
+  logPhase7TrustedPosition(indexedState, "update");
+}
+
+function logPhase7TrustedPosition(state, reason = "update") {
+  if (!state) return;
+
+  const profileKey = normalizeNetfoxProfileKey(state.game_player_id || state.player_id || state.state_key || "");
+  const peerKey = normalizeNetfoxPeerKey(state.peer_id);
+  const worldName = cleanWorld(state.world || "");
+  const logKey = `${profileKey}|${peerKey}|${worldName}`;
+  if (profileKey === "" || peerKey === "") return;
+  if (!NETFOX_TRUSTED_POSITION_DEBUG && phase7TrustedPositionLoggedKeys.has(logKey)) return;
+  if (NETFOX_TRUSTED_POSITION_DEBUG) {
+    const now = Date.now();
+    const lastLogMs = Number(phase7TrustedPositionLastLogMs.get(logKey) || 0);
+    if (lastLogMs > 0 && now - lastLogMs < 1000) return;
+    phase7TrustedPositionLastLogMs.set(logKey, now);
+  }
+
+  phase7TrustedPositionLoggedKeys.add(logKey);
+  const ageMs = Math.max(0, Math.trunc(Date.now() - Number(state.updated_at || 0)));
+  console.log(`[Phase7TrustedPosition] profile=${profileKey} peer=${Number(peerKey)} pos=(${Math.round(Number(state.x) || 0)},${Math.round(Number(state.y) || 0)}) age_ms=${ageMs} world=${worldName} username=${cleanAccountName(state.account_username || "")} reason=${reason}`);
+}
+
+function validateNetfoxTrustedPositionState(state, options = {}) {
+  const action = String(options.action || "action");
+  const expectedWorld = normalizeOptionalNetfoxWorld(options.world || "");
+
+  if (!state || state.connected !== true || state.movement_mode !== MOVEMENT_MODE_NETFOX_REAL) {
+    return { ok: false, reason: "missing", action, expected_world: expectedWorld };
+  }
+
+  const ageMs = Date.now() - Number(state.updated_at || 0);
+  if (!Number.isFinite(ageMs) || ageMs > MAX_TRUSTED_POSITION_AGE_MS) {
+    return {
+      ok: false,
+      reason: "stale",
+      action,
+      expected_world: expectedWorld,
+      age_ms: Number.isFinite(ageMs) ? Math.max(0, Math.trunc(ageMs)) : -1,
+    };
+  }
+
+  const stateWorld = cleanWorld(state.world || "");
+  if (expectedWorld !== "" && stateWorld !== expectedWorld) {
+    return {
+      ok: false,
+      reason: "wrong_world",
+      action,
+      expected_world: expectedWorld,
+      state_world: stateWorld,
+    };
+  }
+
+  const x = Number(state.x);
+  const y = Number(state.y);
+  if (!isPositionInWorldBounds(x, y)) {
+    return { ok: false, reason: "invalid_position", action, expected_world: expectedWorld };
+  }
+
+  return {
+    ok: true,
+    source: "netfox",
+    action,
+    player_id: normalizeNetfoxProfileKey(state.player_id || state.state_key || ""),
+    game_player_id: normalizeNetfoxProfileKey(state.game_player_id || state.player_id || state.state_key || ""),
+    profile_id: normalizeNetfoxProfileKey(state.profile_id || ""),
+    account_id: normalizeNetfoxProfileKey(state.account_id || ""),
+    username: cleanAccountName(state.account_username || ""),
+    peer_id: Number(state.peer_id || 0),
+    world: stateWorld,
+    x,
+    y,
+    velocity_x: sanitizePlayerVelocity(state.velocity_x || 0),
+    velocity_y: sanitizePlayerVelocity(state.velocity_y || 0),
+    facing: Number(state.facing) < 0 ? -1 : 1,
+    tick: Number(state.tick || 0),
+    age_ms: Math.max(0, Math.trunc(ageMs)),
+  };
+}
+
+function get_trusted_position_for_profile(game_player_id, options = {}) {
+  const profileKey = normalizeNetfoxProfileKey(game_player_id);
+  const expectedWorld = normalizeOptionalNetfoxWorld(options.world || "");
+  if (profileKey === "") {
+    return { ok: false, reason: "missing_profile", action: String(options.action || "action"), expected_world: expectedWorld };
+  }
+
+  return validateNetfoxTrustedPositionState(netfoxPlayerStateRegistryByProfile.get(profileKey), options);
+}
+
+function get_trusted_position_for_peer(peer_id, options = {}) {
+  const peerKey = normalizeNetfoxPeerKey(peer_id);
+  const expectedWorld = normalizeOptionalNetfoxWorld(options.world || "");
+  if (peerKey === "") {
+    return { ok: false, reason: "missing_peer", action: String(options.action || "action"), expected_world: expectedWorld };
+  }
+
+  return validateNetfoxTrustedPositionState(netfoxPlayerStateRegistryByPeer.get(peerKey), options);
+}
+
+function get_netfox_peer_for_profile(game_player_id, options = {}) {
+  const trusted = get_trusted_position_for_profile(game_player_id, {
+    ...options,
+    action: options.action || "peer_lookup",
+  });
+  if (!trusted.ok) return trusted;
+
+  return {
+    ok: true,
+    profile: trusted.game_player_id || trusted.player_id,
+    peer_id: trusted.peer_id,
+    world: trusted.world,
+    age_ms: trusted.age_ms,
+  };
+}
+
+function debugNetfoxAction(message, details = {}) {
+  if (!NETFOX_ACTION_DEBUG) return;
+  console.log("[NETFOX_ACTION]", message, details);
+}
+
+function getNetfoxTrustedPlayerState(player, options = {}) {
+  const key = getNetfoxStateKey(player);
+  const expectedWorld = cleanWorld(options.world || getPlayerCurrentWorldName(player));
+  if (key === "") {
+    return { ok: false, reason: "missing_player", action: String(options.action || "action"), expected_world: expectedWorld };
+  }
+
+  return get_trusted_position_for_profile(key, {
+    ...options,
+    world: expectedWorld,
+  });
+}
+
+function getPlayerValidationPosition(player, options = {}) {
+  const worldName = cleanWorld(options.world || getPlayerCurrentWorldName(player));
+  if (isNetfoxRealMode(player)) {
+    const trusted = getNetfoxTrustedPlayerState(player, {
+      action: options.action || "validation",
+      world: worldName,
+    });
+    if (!trusted.ok) return trusted;
+    return trusted;
+  }
+
+  const x = Number(player?.x);
+  const y = Number(player?.y);
+  if (!isPositionInWorldBounds(x, y)) {
+    return {
+      ok: false,
+      reason: "invalid_position",
+      source: "websocket",
+      action: String(options.action || "validation"),
+      world: worldName,
+    };
+  }
+
+  return {
+    ok: true,
+    source: "websocket",
+    action: String(options.action || "validation"),
+    player_id: String(player?.id || ""),
+    peer_id: 0,
+    world: worldName,
+    x,
+    y,
+    velocity_x: sanitizePlayerVelocity(player?.velocity_x || 0),
+    velocity_y: sanitizePlayerVelocity(player?.velocity_y || 0),
+    facing: Number(player?.facing || 1) < 0 ? -1 : 1,
+    age_ms: 0,
+  };
+}
+
+function rejectMissingTrustedPosition(socket, action, player, result, extra = {}) {
+  const reason = String(result?.reason || "missing");
+  const message = reason === "stale"
+    ? "Your Netfox position is stale. Try again."
+    : "Your Netfox position is not ready yet.";
+  sendActionRejected(socket, action, message, {
+    reason: `netfox_position_${reason}`,
+    movement_mode: MOVEMENT_MODE_NETFOX_REAL,
+    player_id: String(player?.id || ""),
+    world: cleanWorld(extra.world || result?.expected_world || getPlayerCurrentWorldName(player)),
+    age_ms: result?.age_ms,
+    ...extra,
+  });
+}
+
+function getBlockActionReachPixels(update) {
+  return update?.action === "place" ? MAX_PLACE_REACH_PIXELS : MAX_BREAK_REACH_PIXELS;
+}
+
+function getPhase7InventoryCount(state, itemId, itemCategory = "") {
+  const cleanItemId = clampString(itemId || "");
+  if (cleanItemId === "" || !state || typeof state !== "object" || Array.isArray(state)) return 0;
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory || "");
+  const field = ItemDatabase.CATEGORY_TO_FIELD?.[resolvedCategory] || "";
+  if (field === "") return 0;
+  const inventory = state[field];
+  if (!inventory || typeof inventory !== "object" || Array.isArray(inventory)) return 0;
+  const count = Number(inventory[cleanItemId] || 0);
+  return Number.isFinite(count) ? Math.trunc(count) : 0;
+}
+
+function getPhase7BlockActionDistance(position, update) {
+  const playerX = Number(position?.x);
+  const playerY = Number(position?.y);
+  const targetX = (Number(update?.x) || 0) * TILE_SIZE;
+  const targetY = (Number(update?.y) || 0) * TILE_SIZE;
+  const distancePixels = [playerX, playerY, targetX, targetY].every(Number.isFinite)
+    ? Math.hypot(playerX - targetX, playerY - targetY)
+    : NaN;
+  return {
+    player_tile_x: Number.isFinite(playerX) ? Math.round(playerX / TILE_SIZE) : null,
+    player_tile_y: Number.isFinite(playerY) ? Math.round(playerY / TILE_SIZE) : null,
+    distance_pixels: Number.isFinite(distancePixels) ? distancePixels : null,
+    distance_tiles: Number.isFinite(distancePixels) ? distancePixels / TILE_SIZE : null,
+    max_pixels: getBlockActionReachPixels(update),
+    max_tiles: update?.action === "place" ? MAX_PLACE_REACH_TILES : MAX_BREAK_REACH_TILES,
+  };
+}
+
+function formatPhase7Number(value) {
+  const number = Number(value);
+  if (!Number.isFinite(number)) return "n/a";
+  return Math.round(number * 100) / 100;
+}
+
+function normalizePhase7Reason(value, fallback = "unknown") {
+  const clean = String(value || fallback)
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "_")
+    .replace(/^_+|_+$/g, "");
+  return clean || fallback;
+}
+
+function beginPhase7BlockActionContext(socket, player, worldName, update, position) {
+  if (!socket || !isNetfoxRealMode(player)) return null;
+
+  const state = ensurePlayerState(player.account_username);
+  const itemId = clampString(update?.block_type || "");
+  const itemCategory = resolveInventoryCategory(itemId, "block");
+  const distance = getPhase7BlockActionDistance(position, update);
+  const context = {
+    active: true,
+    logged: false,
+    profile: cleanAccountName(player?.account_username || player?.name || ""),
+    game_player_id: String(player?.id || ""),
+    inventory_owner: cleanAccountName(player?.account_username || player?.name || ""),
+    peer_id: position?.ok ? Number(position.peer_id || 0) : 0,
+    world: cleanWorld(worldName),
+    action: String(update?.action || ""),
+    target_x: Math.trunc(Number(update?.x) || 0),
+    target_y: Math.trunc(Number(update?.y) || 0),
+    item: itemId,
+    item_category: itemCategory,
+    count: getPhase7InventoryCount(state, itemId, itemCategory),
+    player_tile_x: distance.player_tile_x,
+    player_tile_y: distance.player_tile_y,
+    distance_tiles: distance.distance_tiles,
+    distance_pixels: distance.distance_pixels,
+    max_tiles: distance.max_tiles,
+    max_pixels: distance.max_pixels,
+    trusted_ok: position?.ok === true,
+    trusted_age_ms: position?.age_ms,
+    trusted_reason: position?.ok ? "trusted_position_ready" : `trusted_position_${position?.reason || "missing"}`,
+  };
+  socket._phase7BlockActionContext = context;
+  return context;
+}
+
+function clearPhase7BlockActionContext(socket) {
+  if (socket) socket._phase7BlockActionContext = null;
+}
+
+function logPhase7ActionResult(socket, result, reason, overrides = {}) {
+  if (!PHASE7_ACTION_LOGS) return;
+  const context = socket?._phase7BlockActionContext;
+  if (!context || context.active !== true || context.logged === true) return;
+  context.logged = true;
+
+  const merged = { ...context, ...overrides };
+  const profile = cleanAccountName(merged.profile || merged.inventory_owner || "");
+  const action = String(merged.action || "");
+  const playerTileX = merged.player_tile_x == null ? "n/a" : merged.player_tile_x;
+  const playerTileY = merged.player_tile_y == null ? "n/a" : merged.player_tile_y;
+  const targetX = merged.target_x == null ? "n/a" : merged.target_x;
+  const targetY = merged.target_y == null ? "n/a" : merged.target_y;
+  const finalReason = normalizePhase7Reason(reason || merged.reason || merged.trusted_reason || "unknown");
+  console.log(
+    `[Phase7Action] profile=${profile} action=${action} player_tile=(${playerTileX},${playerTileY}) target=(${targetX},${targetY}) ` +
+    `distance=${formatPhase7Number(merged.distance_tiles)} max=${formatPhase7Number(merged.max_tiles)} result=${String(result || "").toUpperCase()} ` +
+    `reason=${finalReason} item=${clampString(merged.item || "")} count=${Math.trunc(Number(merged.count) || 0)} ` +
+    `inventory_owner=${cleanAccountName(merged.inventory_owner || profile)} peer=${Math.trunc(Number(merged.peer_id) || 0)} ` +
+    `game_player_id=${String(merged.game_player_id || "")} world=${cleanWorld(merged.world || "START")}`
+  );
+}
+
+function validateNetfoxActionCooldown(socket, player, action, data = null) {
+  if (!isNetfoxRealMode(player, data)) return true;
+  if (ACTION_RATE_LIMIT_MS <= 0 || isAdmin(player)) return true;
+
+  if (!(player.last_action_at_by_type instanceof Map)) {
+    player.last_action_at_by_type = new Map();
+  }
+
+  const key = String(action || "action");
+  const now = Date.now();
+  const lastAt = Number(player.last_action_at_by_type.get(key) || 0);
+  if (lastAt > 0 && now - lastAt < ACTION_RATE_LIMIT_MS) {
+    sendActionRejected(socket, key, "Slow down a little.", {
+      reason: "rate_limited",
+      movement_mode: MOVEMENT_MODE_NETFOX_REAL,
+      cooldown_ms: ACTION_RATE_LIMIT_MS,
+    });
+    return false;
+  }
+
+  player.last_action_at_by_type.set(key, now);
+  return true;
+}
+
+function handleNetfoxTrustedPlayerState(socket, player, data) {
+  if (!requireAuthenticated(socket, player, "sync Netfox movement")) return;
+
+  updatePlayerMovementModeFromPayload(player, { movement_mode: MOVEMENT_MODE_NETFOX_REAL });
+
+  const position = sanitizePlayerPosition({
+    x: data.x,
+    y: data.y,
+    facing: data.facing_dir ?? data.facing,
+    world: data.world || player.world || "START",
+    in_water: data.in_water === true,
+    in_lava_fire: data.in_lava_fire === true,
+  }, player);
+  if (!position) {
+    debugNetfoxAction("rejected trusted state: invalid position", {
+      player_id: String(player?.id || ""),
+      world: cleanWorld(data?.world || player?.world || "START"),
+    });
+    return;
+  }
+
+  if (!requireSameWorld(socket, player, position.world, "sync Netfox movement")) return;
+
+  const peerId = Math.max(0, Math.trunc(Number(data.peer_id) || 0));
+  const tick = Math.max(0, Math.trunc(Number(data.tick) || 0));
+  const now = Date.now();
+  const backendProfileId = getNetfoxStateKey(player);
+  const state = {
+    player_id: backendProfileId,
+    game_player_id: backendProfileId,
+    account_id: cleanAccountName(player.account_id || ""),
+    profile_id: cleanAccountName(player.profile_id || ""),
+    account_username: cleanAccountName(player.account_username || player.name || ""),
+    peer_id: peerId,
+    world: cleanWorld(position.world),
+    x: position.x,
+    y: position.y,
+    velocity_x: sanitizePlayerVelocity(data.velocity_x),
+    velocity_y: sanitizePlayerVelocity(data.velocity_y),
+    facing: position.facing,
+    tick,
+    updated_at: now,
+    connected: true,
+    movement_mode: MOVEMENT_MODE_NETFOX_REAL,
+  };
+
+  indexNetfoxTrustedPlayerState(player, state);
+  player.netfox_peer_id = peerId;
+  player.x = state.x;
+  player.y = state.y;
+  player.facing = state.facing;
+  player.velocity_x = state.velocity_x;
+  player.velocity_y = state.velocity_y;
+  player.in_water = position.in_water === true;
+  player.in_lava_fire = position.in_lava_fire === true;
+  player.last_position_at = now;
+
+  debugNetfoxAction("trusted state updated", {
+    player_id: state.player_id,
+    peer_id: state.peer_id,
+    username: state.account_username,
+    world: state.world,
+    x: Math.round(state.x),
+    y: Math.round(state.y),
+    facing: state.facing,
+    tick: state.tick,
+  });
+
+  touchLivePresence(socket, player);
 }
 
 function safeFileName(value, fallback = "data") {
@@ -2011,6 +2638,64 @@ async function handleHttpRequest(request, response) {
         server_tick: getServerTickSnapshot(),
       },
     }));
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/netfox/server/world-state") {
+    if (!isNetfoxServerWorldStateEndpointConfigured()) {
+      response.writeHead(503, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      response.end(JSON.stringify({
+        ok: false,
+        error: "Netfox server world-state endpoint is not configured.",
+      }));
+      return;
+    }
+
+    if (!verifyNetfoxServerWorldStateRequest(request)) {
+      response.writeHead(401, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      response.end(JSON.stringify({
+        ok: false,
+        error: "Unauthorized Netfox server world-state request.",
+      }));
+      return;
+    }
+
+    const worldName = cleanWorld(url.searchParams.get("world") || "START");
+    const payload = buildNetfoxWorldStateHttpPayload(worldName, "netfox_server_world_load");
+    console.log("[netfox_server_world_state] served", {
+      world: payload.world,
+      blocks: payload.block_count,
+      background_blocks: payload.background_block_count,
+      collision_blocks: payload.collision_block_count,
+    });
+
+    response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+    response.end(JSON.stringify(payload));
+    return;
+  }
+
+  if (request.method === "GET" && url.pathname === "/dev/netfox/world-state") {
+    if (!DEV_BACKEND_LOGIN_ALLOWED) {
+      response.writeHead(403, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      response.end(JSON.stringify({
+        ok: false,
+        error: "[SECURITY] Dev Netfox world-state endpoint is disabled outside development.",
+      }));
+      return;
+    }
+
+    const worldName = cleanWorld(url.searchParams.get("world") || "NETFOX_TEST");
+    const payload = buildNetfoxWorldStateHttpPayload(worldName, "phase7_server_world_load");
+
+    console.log("[dev_netfox_world_state] served", {
+      world: payload.world,
+      blocks: payload.block_count,
+      background_blocks: payload.background_block_count,
+      collision_blocks: payload.collision_block_count,
+    });
+
+    response.writeHead(200, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+    response.end(JSON.stringify(payload));
     return;
   }
 
@@ -2637,7 +3322,7 @@ function makeMessageIdempotencyScope(data) {
   ) {
     return type;
   }
-  if (type === "account_register" || type === "account_login" || type === "account_token_login") {
+  if (type === "account_register" || type === "account_login" || type === "account_token_login" || type === "dev_backend_login") {
     return type;
   }
   if (type === "pull_player_request") {
@@ -3318,6 +4003,8 @@ function activatePlayerAccount(socket, player, account, options = {}) {
 
   player.account_username = account.username;
   player.account_email = cleanEmail(account.email || "");
+  player.account_id = cleanAccountName(account.account_id || "");
+  player.profile_id = cleanAccountName(account.profile_id || account.player_id || "");
   player.authenticated = true;
   player.name = account.username;
   player.role = getAccountRole(account.username);
@@ -3347,13 +4034,19 @@ function sendAuthError(socket, requestId, action, message, extra = {}) {
 function sendAuthOk(socket, requestId, action, account, tokens) {
   const role = getAccountRole(account.username);
   const tokenPayload = typeof tokens === "string" ? { sessionToken: tokens, refreshToken: "" } : (tokens || {});
+  const livePlayerId = String(socket?.playerId || "");
   sendJson(socket, {
     type: "account_auth_ok",
     ok: true,
     request_id: requestId,
     action,
     username: account.username,
+    account_username: account.username,
     email: cleanEmail(account.email || ""),
+    websocket_player_id: livePlayerId,
+    game_player_id: livePlayerId,
+    account_id: cleanAccountName(account.account_id || ""),
+    profile_id: cleanAccountName(account.profile_id || account.player_id || ""),
     session_token: tokenPayload.sessionToken || "",
     session_token_expires_at: String(account.session_token_expires_at || ""),
     refresh_token: tokenPayload.refreshToken || "",
@@ -3466,6 +4159,169 @@ function handleAccountRegister(socket, player, data) {
   queueVerificationEmail(account, verificationToken);
   sendVerificationRequired(socket, requestId, "register", account, "Account created. Check your email to verify before signing on.");
 }
+
+
+function ensureDevBackendAccount(username) {
+  const usernameValidation = validateUsername(username);
+  if (!usernameValidation.ok) return null;
+
+  const cleanUsername = usernameValidation.username;
+  const key = accountKey(cleanUsername);
+  const now = new Date().toISOString();
+  let account = accounts.get(key);
+
+  if (!account) {
+    account = {
+      username: cleanUsername,
+      email: `${cleanUsername.toLowerCase()}@dev.local.invalid`,
+      password_salt: "",
+      password_hash: "",
+      password_algorithm: "",
+      session_token_hash: "",
+      session_token_expires_at: "",
+      refresh_token_hash: "",
+      refresh_token_expires_at: "",
+      email_verified: true,
+      email_verified_at: now,
+      email_verification_token_hash: "",
+      email_verification_expires_at: "",
+      role: getAccountRole(cleanUsername),
+      created_at: now,
+      last_seen_at: now,
+      friends: [],
+      friend_requests_in: [],
+      friend_requests_out: [],
+    };
+    accounts.set(key, account);
+    queueAccountsSave();
+    postgresStore.mirrorAccount(account, { touchLogin: false });
+  } else {
+    account.last_seen_at = now;
+    if (cleanEmail(account.email || "") === "") {
+      account.email = `${cleanUsername.toLowerCase()}@dev.local.invalid`;
+    }
+  }
+
+  return account;
+}
+
+
+function ensureDevBackendPlayerState(username) {
+  const cleanUsername = cleanAccountName(username);
+  if (cleanUsername === "") return null;
+
+  const key = accountKey(cleanUsername);
+  let state = ensurePlayerState(cleanUsername);
+  if (!state) {
+    state = createDefaultPlayerState(cleanUsername);
+  }
+
+  if (!state || typeof state !== "object" || Array.isArray(state)) return null;
+
+  state.account_username = cleanUsername;
+  if (!state.inventory || typeof state.inventory !== "object" || Array.isArray(state.inventory)) {
+    state.inventory = {};
+  }
+  if (!state.tool_inventory || typeof state.tool_inventory !== "object" || Array.isArray(state.tool_inventory)) {
+    state.tool_inventory = {};
+  }
+
+  for (const blockId of ["dirt", "grass", "stone", "wood", "leaf"]) {
+    if (!Number.isFinite(Number(state.inventory[blockId])) || Number(state.inventory[blockId]) < 50) {
+      state.inventory[blockId] = 200;
+    }
+  }
+  state.tool_inventory.punch = Math.max(1, Math.trunc(Number(state.tool_inventory.punch) || 1));
+  state.selected_item_type = clampString(state.selected_item_type || "punch");
+  state.selected_item_category = clampString(state.selected_item_category || "tool");
+  state.primary_hotbar_tool = clampString(state.primary_hotbar_tool || "punch");
+  state.hotbar_items = ["punch", "dirt", "grass", "stone", "wood", "leaf"];
+  state.hotbar_item_categories = ["tool", "block", "block", "block", "block", "block"];
+  state.saved_at = new Date().toISOString();
+
+  normalizePlayerHotbarState(state);
+  playerStates.set(key, state);
+  savePlayerState(cleanUsername);
+  return state;
+}
+
+
+async function handleDevBackendLogin(socket, player, data) {
+  const requestId = makeRequestId(data);
+  const usernameValidation = validateUsername(data.username || data.dev_profile || data.profile || "");
+  const action = "dev_backend_login";
+  const fail = (message, reason, extra = {}) => {
+    sendAuthError(socket, requestId, action, message, { reason, ...extra });
+  };
+
+  if (!DEV_BACKEND_LOGIN_ALLOWED) {
+    console.warn("[SECURITY] Backend dev login is disabled outside development.");
+    fail("[SECURITY] Backend dev login is disabled outside development.", "dev_backend_login_disabled");
+    return;
+  }
+
+  if (!usernameValidation.ok) {
+    fail(usernameValidation.message || "Invalid dev profile.", "invalid_username");
+    return;
+  }
+
+  const account = ensureDevBackendAccount(usernameValidation.username);
+  if (!account) {
+    fail("Could not create dev backend account.", "account_create_failed");
+    return;
+  }
+
+  account.last_seen_at = new Date().toISOString();
+  const tokens = issueSessionTokens(account);
+
+  if (isPostgresAuthoritativeReady()) {
+    const sessionResult = await postgresStore.saveSession(account, {
+      ip: getSocketAddress(socket),
+      userAgent: getSocketUserAgent(socket, data),
+      deviceInfo: getSocketDeviceInfo(socket, data),
+      sessionMode: "dev_backend_login",
+    });
+    if (!sessionResult.ok) {
+      fail("Could not create dev backend session.", "session_create_failed");
+      return;
+    }
+  } else {
+    postgresStore.mirrorSession(account, {
+      ip: getSocketAddress(socket),
+      userAgent: getSocketUserAgent(socket, data),
+      deviceInfo: getSocketDeviceInfo(socket, data),
+      sessionMode: "dev_backend_login",
+    });
+  }
+
+  const state = ensureDevBackendPlayerState(account.username);
+  if (!state) {
+    fail("Could not create dev backend inventory.", "inventory_create_failed");
+    return;
+  }
+
+  const activation = activatePlayerAccount(socket, player, account, { replaceExisting: true });
+  if (!activation.ok) {
+    fail(activation.message, "activation_failed");
+    return;
+  }
+
+  const worldName = cleanWorld(data.world || "NETFOX_TEST");
+  player.current_world = worldName;
+  player.current_world_id = worldName;
+  postgresStore.mirrorAccount(account, { touchLogin: true });
+  console.log("[DEV] Backend dev login authenticated", {
+    username: account.username,
+    player_id: player.id,
+    world: worldName,
+    movement_mode: sanitizeMovementMode(data.movement_mode || player.movement_mode),
+  });
+
+  sendAuthOk(socket, requestId, action, account, tokens);
+  sendFriendState(socket, account.username, requestId);
+  notifyOnlineFriendsOfFriendState(account.username);
+}
+
 
 async function handleAccountLogin(socket, player, data) {
   const requestId = makeRequestId(data);
@@ -6789,13 +7645,19 @@ async function prepareSafeBreakInventoryReturn(socket, player, worldName, update
   }
 
   if (!canPlayerManageSafe(player, safe, worldName)) {
-    sendActionRejected(socket, "world_block_update", "Only the world owner can break this safe.");
+    sendActionRejected(socket, "world_block_update", "Only the world owner can break this safe.", {
+      reason: "safe_owner_required",
+      block_type: update.block_type,
+    });
     return { ok: false };
   }
 
   const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
-    sendActionRejected(socket, "world_block_update", "Could not load your server inventory.");
+    sendActionRejected(socket, "world_block_update", "Could not load your server inventory.", {
+      reason: "inventory_unavailable",
+      block_type: update.block_type,
+    });
     return { ok: false };
   }
 
@@ -6804,7 +7666,10 @@ async function prepareSafeBreakInventoryReturn(socket, player, worldName, update
   const originalSafe = cloneJson(safe);
   for (const slot of slots) {
     if (!canAddItemToState(stagedState, slot.item_id, slot.item_category, slot.amount)) {
-      sendActionRejected(socket, "world_block_update", "Your inventory cannot hold the safe contents.");
+      sendActionRejected(socket, "world_block_update", "Your inventory cannot hold the safe contents.", {
+        reason: "insufficient_capacity",
+        block_type: update.block_type,
+      });
       return { ok: false };
     }
     addItemToState(stagedState, slot.item_id, slot.item_category, slot.amount);
@@ -6826,7 +7691,10 @@ async function prepareSafeBreakInventoryReturn(socket, player, worldName, update
   });
   if (!commit.ok) {
     setSafeStateAt(worldName, originalSafe);
-    sendActionRejected(socket, "world_block_update", commit.message);
+    sendActionRejected(socket, "world_block_update", commit.message, {
+      reason: commit.reason || "inventory_commit_failed",
+      block_type: update.block_type,
+    });
     return { ok: false };
   }
   const committedState = commit.state;
@@ -8599,6 +9467,12 @@ function queueFailedTransactionLedger(socket, action, message, extra = null) {
 function sendActionRejected(socket, action, message, extra = null) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
   queueFailedTransactionLedger(socket, action, message, extra);
+  if (String(action || "") === "world_block_update") {
+    logPhase7ActionResult(socket, "REJECT", extra?.reason || message || "rejected", {
+      reason: extra?.reason || message || "rejected",
+      item: extra?.block_type || extra?.item_id || socket?._phase7BlockActionContext?.item || "",
+    });
+  }
 
   const payload = {
     type: "action_rejected",
@@ -8623,7 +9497,11 @@ function requireSameWorld(socket, player, worldName, action) {
   const targetWorld = cleanWorld(worldName || "START");
   if (currentWorld === targetWorld) return true;
 
-  sendActionRejected(socket, action, "Join that world before sending actions for it.");
+  sendActionRejected(socket, action, "Join that world before sending actions for it.", {
+    reason: "wrong_world",
+    current_world: currentWorld,
+    requested_world: targetWorld,
+  });
   return false;
 }
 
@@ -8768,19 +9646,28 @@ function validateFullCollisionAreaPlacement(socket, state, update) {
 
   for (const position of occupiedPositions) {
     if (!isGridInWorld(position.x, position.y)) {
-      sendActionRejected(socket, "world_block_update", "Need enough empty space.");
+      sendActionRejected(socket, "world_block_update", "Need enough empty space.", {
+        reason: "outside_world_bounds",
+        block_type: update.block_type,
+      });
       return false;
     }
 
     const key = gridKey(position.x, position.y);
     if (state.foreground.has(key) || state.seeds.has(key)) {
-      sendActionRejected(socket, "world_block_update", "Need enough empty space.");
+      sendActionRejected(socket, "world_block_update", "Need enough empty space.", {
+        reason: "occupied",
+        block_type: update.block_type,
+      });
       return false;
     }
   }
 
   if (doesPlacementOverlapReservedObject(state, update.x, update.y, update.block_type)) {
-    sendActionRejected(socket, "world_block_update", "Need enough empty space.");
+    sendActionRejected(socket, "world_block_update", "Need enough empty space.", {
+      reason: "reserved_space",
+      block_type: update.block_type,
+    });
     return false;
   }
 
@@ -8931,24 +9818,63 @@ function getGridCenterPixels(x, y) {
   };
 }
 
-function isPlayerNearPoint(player, x, y, maxDistance = MAX_GRID_ACTION_DISTANCE_PIXELS) {
+function isPlayerNearPoint(player, x, y, maxDistance = MAX_GRID_ACTION_DISTANCE_PIXELS, options = {}) {
   if (!player) return false;
-  const px = Number(player.x);
-  const py = Number(player.y);
+  const position = getPlayerValidationPosition(player, {
+    action: options.action || "point_reach",
+    world: options.world || getPlayerCurrentWorldName(player),
+  });
+  if (!position.ok) {
+    debugNetfoxAction("reach rejected before point check", {
+      player_id: String(player?.id || ""),
+      reason: position.reason,
+      action: position.action,
+      expected_world: position.expected_world,
+      state_world: position.state_world,
+      age_ms: position.age_ms,
+    });
+    return false;
+  }
+
+  const px = Number(position.x);
+  const py = Number(position.y);
   const tx = Number(x);
   const ty = Number(y);
   if (![px, py, tx, ty].every(Number.isFinite)) return false;
-  return Math.hypot(px - tx, py - ty) <= maxDistance;
+  const distance = Math.hypot(px - tx, py - ty);
+  const ok = distance <= maxDistance;
+  debugNetfoxAction("reach point check", {
+    player_id: String(player?.id || ""),
+    action: options.action || "point_reach",
+    source: position.source,
+    world: position.world,
+    player_x: Math.round(px),
+    player_y: Math.round(py),
+    target_x: Math.round(tx),
+    target_y: Math.round(ty),
+    distance: Math.round(distance),
+    max_distance: Math.round(maxDistance),
+    allowed: ok,
+  });
+  return ok;
 }
 
-function isPlayerNearGrid(player, x, y, maxDistance = MAX_GRID_ACTION_DISTANCE_PIXELS) {
+function isPlayerNearGrid(player, x, y, maxDistance = MAX_GRID_ACTION_DISTANCE_PIXELS, options = {}) {
   const center = getGridCenterPixels(x, y);
-  return isPlayerNearPoint(player, center.x, center.y, maxDistance);
+  return isPlayerNearPoint(player, center.x, center.y, maxDistance, {
+    action: options.action || "grid_reach",
+    world: options.world || getPlayerCurrentWorldName(player),
+  });
 }
 
 function getPlayerGridPosition(player) {
-  const px = Number(player?.x);
-  const py = Number(player?.y);
+  const position = getPlayerValidationPosition(player, {
+    action: "grid_position",
+    world: getPlayerCurrentWorldName(player),
+  });
+  if (!position.ok) return null;
+  const px = Number(position.x);
+  const py = Number(position.y);
   if (!Number.isFinite(px) || !Number.isFinite(py)) return null;
   return {
     x: Math.round(px / TILE_SIZE),
@@ -9176,7 +10102,7 @@ async function commitPlayerInventoryState(socket, player, username, beforeState,
     return { ok: true, state: afterState, postgres_committed: true, deltas };
   }
 
-  if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE) {
+  if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE && !shouldAllowPhase7DevJsonFallback(player, null, options)) {
     return { ok: false, reason: "postgres_unavailable", message: "PostgreSQL is not ready." };
   }
 
@@ -9203,21 +10129,21 @@ async function spendServerInventoryCost(username, cost, options = {}) {
 
   const state = ensureWritablePlayerState(username);
   if (!state) {
-    return { ok: false, message: "Could not load your server inventory." };
+    return { ok: false, reason: "inventory_unavailable", message: "Could not load your server inventory." };
   }
 
   if (!ItemDatabase.hasItem(cost.item_id) || !ItemDatabase.canStoreItemInCategory(cost.item_id, cost.item_category)) {
-    return { ok: false, message: "That item is not valid on the server." };
+    return { ok: false, reason: "invalid_item", message: "That item is not valid on the server." };
   }
 
   if (getInventoryCount(state, cost.item_id, cost.item_category) < cost.amount) {
-    return { ok: false, message: `Not enough ${cost.item_id}.` };
+    return { ok: false, reason: "insufficient_inventory", message: `Not enough ${cost.item_id}.` };
   }
 
   const beforeState = cloneJson(state);
   const stagedState = cloneJson(state);
   if (!spendItemFromState(stagedState, cost.item_id, cost.item_category, cost.amount)) {
-    return { ok: false, message: "Server inventory changed. Try again." };
+    return { ok: false, reason: "inventory_changed", message: "Server inventory changed. Try again." };
   }
 
   if (options.defer_commit === true) {
@@ -9236,6 +10162,7 @@ async function spendServerInventoryCost(username, cost, options = {}) {
           request_id: options.request_id || "",
           correlation_id: options.correlation_id || "",
           world: options.world || options.player?.world || "",
+          allow_dev_json_fallback: options.allow_dev_json_fallback === true,
           metadata: {
             ...(options.metadata || {}),
             item_id: cost.item_id,
@@ -9255,6 +10182,7 @@ async function spendServerInventoryCost(username, cost, options = {}) {
     request_id: options.request_id || "",
     correlation_id: options.correlation_id || "",
     world: options.world || options.player?.world || "",
+    allow_dev_json_fallback: options.allow_dev_json_fallback === true,
     metadata: {
       ...(options.metadata || {}),
       item_id: cost.item_id,
@@ -9296,7 +10224,9 @@ function validateBlockBreakPace(socket, player) {
   const now = Date.now();
   const lastBreakAt = Number(player.last_block_break_at || 0);
   if (lastBreakAt > 0 && now - lastBreakAt < MIN_BLOCK_BREAK_INTERVAL_MS) {
-    sendActionRejected(socket, "world_block_update", "Slow down a little.");
+    sendActionRejected(socket, "world_block_update", "Slow down a little.", {
+      reason: "break_rate_limited",
+    });
     return false;
   }
 
@@ -9628,13 +10558,19 @@ async function prepareVendBreakInventoryReturn(socket, player, worldName, update
   }
 
   if (!canPlayerManageVend(player, vend, worldName)) {
-    sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can break this vending machine." : "Only the vending machine owner can break it while it has items.");
+    sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can break this vending machine." : "Only the vending machine owner can break it while it has items.", {
+      reason: isWorldLocked(worldName) ? "vending_owner_required" : "vending_owner_required",
+      block_type: update.block_type,
+    });
     return { ok: false };
   }
 
   const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
-    sendActionRejected(socket, "world_block_update", "Could not load your server inventory.");
+    sendActionRejected(socket, "world_block_update", "Could not load your server inventory.", {
+      reason: "inventory_unavailable",
+      block_type: update.block_type,
+    });
     return { ok: false };
   }
 
@@ -9648,7 +10584,11 @@ async function prepareVendBreakInventoryReturn(socket, player, worldName, update
     const itemCategory = resolveInventoryCategory(itemId, listing.item_category || "");
     const stock = clampInteger(listing.stock || 0, 1, ItemDatabase.getStackLimit(itemId));
     if (!canAddItemToState(stagedState, itemId, itemCategory, stock)) {
-      sendActionRejected(socket, "world_block_update", "Your inventory cannot hold the vending item.");
+      sendActionRejected(socket, "world_block_update", "Your inventory cannot hold the vending item.", {
+        reason: "insufficient_capacity",
+        block_type: update.block_type,
+        item_id: itemId,
+      });
       return { ok: false };
     }
 
@@ -9666,7 +10606,11 @@ async function prepareVendBreakInventoryReturn(socket, player, worldName, update
 
   if (pendingWls > 0) {
     if (!canAddItemToState(stagedState, "world_lock", "block", pendingWls)) {
-      sendActionRejected(socket, "world_block_update", "Your inventory cannot hold those World Locks.");
+      sendActionRejected(socket, "world_block_update", "Your inventory cannot hold those World Locks.", {
+        reason: "insufficient_capacity",
+        block_type: update.block_type,
+        item_id: "world_lock",
+      });
       return { ok: false };
     }
 
@@ -9696,7 +10640,10 @@ async function prepareVendBreakInventoryReturn(socket, player, worldName, update
   });
   if (!commit.ok) {
     setVendStateAt(worldName, originalVend);
-    sendActionRejected(socket, "world_block_update", commit.message);
+    sendActionRejected(socket, "world_block_update", commit.message, {
+      reason: commit.reason || "inventory_commit_failed",
+      block_type: update.block_type,
+    });
     return { ok: false };
   }
   const committedState = commit.state;
@@ -9738,12 +10685,28 @@ async function prepareVendBreakInventoryReturn(socket, player, worldName, update
   };
 }
 
-async function validateBlockUpdateAgainstServerState(socket, player, worldName, update, requestId = "") {
+async function validateBlockUpdateAgainstServerState(socket, player, worldName, update, requestId = "", options = {}) {
   const state = ensureWorldState(worldName);
   let key = gridKey(update.x, update.y);
 
-  if (!isPlayerNearGrid(player, update.x, update.y)) {
-    sendActionRejected(socket, "world_block_update", "Too far away.");
+  const reachPixels = getBlockActionReachPixels(update);
+  if (!isPlayerNearGrid(player, update.x, update.y, reachPixels, { action: `world_block_${update.action}`, world: worldName })) {
+    const position = getPlayerValidationPosition(player, { action: `world_block_${update.action}`, world: worldName });
+    if (isNetfoxRealMode(player) && !position.ok) {
+      rejectMissingTrustedPosition(socket, "world_block_update", player, position, {
+        target_x: update.x,
+        target_y: update.y,
+        max_reach_tiles: update.action === "place" ? MAX_PLACE_REACH_TILES : MAX_BREAK_REACH_TILES,
+      });
+      return { ok: false };
+    }
+    sendActionRejected(socket, "world_block_update", "Too far away.", {
+      reason: "too_far",
+      target_x: update.x,
+      target_y: update.y,
+      max_reach_tiles: update.action === "place" ? MAX_PLACE_REACH_TILES : MAX_BREAK_REACH_TILES,
+      block_type: update.block_type,
+    });
     return { ok: false };
   }
 
@@ -9763,40 +10726,63 @@ async function validateBlockUpdateAgainstServerState(socket, player, worldName, 
     const blockType = serverBlock ? serverBlock.block_type : update.block_type;
 
     if (removedLayer.has(key) && !serverBlock) {
-      sendActionRejected(socket, "world_block_update", "That block is already broken.");
+      sendActionRejected(socket, "world_block_update", "That block is already broken.", {
+        reason: "already_broken",
+        block_type: update.block_type,
+      });
       return { ok: false };
     }
 
     if (blockType === "") {
-      sendActionRejected(socket, "world_block_update", "Server needs a block type to break.");
+      sendActionRejected(socket, "world_block_update", "Server needs a block type to break.", {
+        reason: "missing_block_type",
+      });
       return { ok: false };
     }
 
     if (serverBlock && update.block_type !== "" && serverBlock.block_type !== update.block_type) {
-      sendActionRejected(socket, "world_block_update", "That block changed on the server.");
+      sendActionRejected(socket, "world_block_update", "That block changed on the server.", {
+        reason: "block_changed",
+        block_type: update.block_type,
+        server_block_type: serverBlock.block_type,
+      });
       return { ok: false };
     }
 
     const expectedLayer = ItemDatabase.getPlaceLayer(blockType);
     if (expectedLayer !== "" && expectedLayer !== update.layer) {
-      sendActionRejected(socket, "world_block_update", "That block is on a different layer.");
+      sendActionRejected(socket, "world_block_update", "That block is on a different layer.", {
+        reason: "wrong_layer",
+        block_type: blockType,
+        expected_layer: expectedLayer,
+        requested_layer: update.layer,
+      });
       return { ok: false };
     }
 
     update.block_type = blockType;
 
     if (update.block_type !== "" && !ItemDatabase.canBreakBlock(update.block_type)) {
-      sendActionRejected(socket, "world_block_update", "That block cannot be broken.");
+      sendActionRejected(socket, "world_block_update", "That block cannot be broken.", {
+        reason: "unbreakable",
+        block_type: update.block_type,
+      });
       return { ok: false };
     }
 
     if (update.layer !== "background" && isDoorBlockType(update.block_type) && isPlayerStandingOnGrid(player, update.x, update.y)) {
-      sendActionRejected(socket, "world_block_update", "Step off the door to break it.");
+      sendActionRejected(socket, "world_block_update", "Step off the door to break it.", {
+        reason: "standing_on_door",
+        block_type: update.block_type,
+      });
       return { ok: false };
     }
 
     if (isWorldLockBlockType(update.block_type) && hasWorldLockProtectedStorageBlocks(worldName)) {
-      sendActionRejected(socket, "world_block_update", "Remove all Safes, vending machines, and Fish Mongers before breaking the World Lock.");
+      sendActionRejected(socket, "world_block_update", "Remove all Safes, vending machines, and Fish Mongers before breaking the World Lock.", {
+        reason: "protected_storage_blocks",
+        block_type: update.block_type,
+      });
       return { ok: false };
     }
 
@@ -9805,7 +10791,10 @@ async function validateBlockUpdateAgainstServerState(socket, player, worldName, 
     const isFishMongerBreak = isFishMongerBlockType(update.block_type);
 
     if (isFishMongerBreak && !canPlayerBreakFishMonger(player, worldName, update)) {
-      sendActionRejected(socket, "world_block_update", "Only the world owner or players with access can break the Fish Monger.");
+      sendActionRejected(socket, "world_block_update", "Only the world owner or players with access can break the Fish Monger.", {
+        reason: "fish_monger_permission_denied",
+        block_type: update.block_type,
+      });
       return { ok: false };
     }
 
@@ -9815,14 +10804,20 @@ async function validateBlockUpdateAgainstServerState(socket, player, worldName, 
 
     if (isVendBreak) {
       if (!canPlayerBreakVendingMachine(player, worldName, update)) {
-        sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can break vending machines." : "Lock the world before breaking vending machines.");
+        sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can break vending machines." : "Lock the world before breaking vending machines.", {
+          reason: isWorldLocked(worldName) ? "vending_owner_required" : "world_lock_required",
+          block_type: update.block_type,
+        });
         return { ok: false };
       }
     }
 
     if (isSafeBreak) {
       if (!canPlayerBreakSafe(player, worldName, update)) {
-        sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can break safes." : "Lock the world before breaking safes.");
+        sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can break safes." : "Lock the world before breaking safes.", {
+          reason: isWorldLocked(worldName) ? "safe_owner_required" : "world_lock_required",
+          block_type: update.block_type,
+        });
         return { ok: false };
       }
     }
@@ -9865,17 +10860,26 @@ async function validateBlockUpdateAgainstServerState(socket, player, worldName, 
   }
 
   if (update.block_type === "crafting_station_left" || update.block_type === "crafting_station_right") {
-    sendActionRejected(socket, "world_block_update", "Crafting Station is one block now. Please update your game.");
+    sendActionRejected(socket, "world_block_update", "Crafting Station is one block now. Please update your game.", {
+      reason: "deprecated_block",
+      block_type: update.block_type,
+    });
     return { ok: false };
   }
 
   if (!ItemDatabase.isPlaceableBlock(update.block_type)) {
-    sendActionRejected(socket, "world_block_update", "That item cannot be placed.");
+    sendActionRejected(socket, "world_block_update", "That item cannot be placed.", {
+      reason: "not_placeable",
+      block_type: update.block_type,
+    });
     return { ok: false };
   }
 
   if (isWorldLockBlockType(update.block_type) && (state.world_lock?.is_locked || hasWorldLockBlock(worldName))) {
-    sendActionRejected(socket, "world_block_update", "This world already has a World Lock.");
+    sendActionRejected(socket, "world_block_update", "This world already has a World Lock.", {
+      reason: "world_lock_exists",
+      block_type: update.block_type,
+    });
     return { ok: false };
   }
 
@@ -9883,34 +10887,54 @@ async function validateBlockUpdateAgainstServerState(socket, player, worldName, 
     const message = isWorldLocked(worldName) || hasWorldLockBlock(worldName)
       ? "This world is locked."
       : "You need a World Lock in this world before placing a Fish Monger.";
-    sendActionRejected(socket, "world_block_update", message);
+    sendActionRejected(socket, "world_block_update", message, {
+      reason: isWorldLocked(worldName) || hasWorldLockBlock(worldName) ? "fish_monger_permission_denied" : "world_lock_required",
+      block_type: update.block_type,
+    });
     return { ok: false };
   }
 
   if (isVendBlockType(update.block_type) && !canPlayerPlaceVendingMachine(player, worldName)) {
-    sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can place vending machines." : "Lock this world before placing vending machines.");
+    sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can place vending machines." : "Lock this world before placing vending machines.", {
+      reason: isWorldLocked(worldName) ? "vending_owner_required" : "world_lock_required",
+      block_type: update.block_type,
+    });
     return { ok: false };
   }
 
   if (isSafeBlockType(update.block_type) && !canPlayerPlaceSafe(player, worldName)) {
-    sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can place safes." : "Lock this world before placing safes.");
+    sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can place safes." : "Lock this world before placing safes.", {
+      reason: isWorldLocked(worldName) ? "safe_owner_required" : "world_lock_required",
+      block_type: update.block_type,
+    });
     return { ok: false };
   }
 
   const requiredLayer = ItemDatabase.getPlaceLayer(update.block_type);
   if (requiredLayer !== update.layer) {
-    sendActionRejected(socket, "world_block_update", `Place ${update.block_type} on the ${requiredLayer} layer.`);
+    sendActionRejected(socket, "world_block_update", `Place ${update.block_type} on the ${requiredLayer} layer.`, {
+      reason: "wrong_layer",
+      block_type: update.block_type,
+      expected_layer: requiredLayer,
+      requested_layer: update.layer,
+    });
     return { ok: false };
   }
 
   const targetLayer = update.layer === "background" ? state.background : state.foreground;
   if (targetLayer.has(key)) {
-    sendActionRejected(socket, "world_block_update", "That spot is already occupied.");
+    sendActionRejected(socket, "world_block_update", "That spot is already occupied.", {
+      reason: "occupied",
+      block_type: update.block_type,
+    });
     return { ok: false };
   }
 
   if (update.layer === "foreground" && state.seeds.has(key)) {
-    sendActionRejected(socket, "world_block_update", "A seed is already planted there.");
+    sendActionRejected(socket, "world_block_update", "A seed is already planted there.", {
+      reason: "seed_occupied",
+      block_type: update.block_type,
+    });
     return { ok: false };
   }
 
@@ -9918,7 +10942,10 @@ async function validateBlockUpdateAgainstServerState(socket, player, worldName, 
     if (blockRequiresFullAreaClear(update.block_type)) {
       if (!validateFullCollisionAreaPlacement(socket, state, update)) return { ok: false };
     } else if (doesPlacementOverlapReservedObject(state, update.x, update.y, update.block_type)) {
-      sendActionRejected(socket, "world_block_update", "Need enough empty space.");
+      sendActionRejected(socket, "world_block_update", "Need enough empty space.", {
+        reason: "reserved_space",
+        block_type: update.block_type,
+      });
       return { ok: false };
     }
   }
@@ -9933,10 +10960,15 @@ async function validateBlockUpdateAgainstServerState(socket, player, worldName, 
     request_id: requestId,
     world: worldName,
     metadata: { x: update.x, y: update.y, placed_block: update.block_type, layer: update.layer },
+    allow_dev_json_fallback: options.allow_dev_json_fallback === true,
     defer_commit: isPostgresAuthoritativeReady(),
   });
   if (!spendResult.ok) {
-    sendActionRejected(socket, "world_block_update", spendResult.message);
+    sendActionRejected(socket, "world_block_update", spendResult.message, {
+      reason: spendResult.reason || "inventory_denied",
+      item_id: cost.item_id,
+      block_type: update.block_type,
+    });
     return { ok: false };
   }
 
@@ -10589,6 +11621,7 @@ function sanitizeActionPositionPayload(data, player, fallbackWorld = "") {
 
 function applyActionPositionFromPayload(socket, player, data, fallbackWorld = "") {
   if (!player || !player.authenticated) return false;
+  if (isNetfoxRealMode(player, data)) return false;
 
   const position = sanitizeActionPositionPayload(data, player, fallbackWorld);
   if (!position) return false;
@@ -10714,6 +11747,8 @@ function sanitizePlayerPunchFacing(data, player) {
   const requestedFacing = Number(data?.facing);
   if (requestedFacing < 0) return -1;
   if (requestedFacing > 0) return 1;
+  const position = getPlayerValidationPosition(player, { action: "player_punch", world: getPlayerCurrentWorldName(player) });
+  if (position.ok) return Number(position.facing) < 0 ? -1 : 1;
   return Number(player?.facing) < 0 ? -1 : 1;
 }
 
@@ -10738,19 +11773,34 @@ function isPlayerPunchTargetReachable(player, target, facing) {
   if (player.id === target.id) return false;
   if (cleanWorld(player.world || "START") !== cleanWorld(target.world || "START")) return false;
 
-  const ax = Number(player.x);
-  const ay = Number(player.y);
-  const tx = Number(target.x);
-  const ty = Number(target.y);
+  const actionWorld = getPlayerCurrentWorldName(player);
+  const attackerPosition = getPlayerValidationPosition(player, { action: "player_punch", world: actionWorld });
+  const targetPosition = getPlayerValidationPosition(target, { action: "player_punch_target", world: actionWorld });
+  if (!attackerPosition.ok || !targetPosition.ok) {
+    debugNetfoxAction("punch rejected before distance check", {
+      attacker_id: String(player?.id || ""),
+      target_id: String(target?.id || ""),
+      attacker_reason: attackerPosition.reason || "",
+      target_reason: targetPosition.reason || "",
+      attacker_world: attackerPosition.world || attackerPosition.expected_world || "",
+      target_world: targetPosition.world || targetPosition.expected_world || "",
+    });
+    return false;
+  }
+
+  const ax = Number(attackerPosition.x);
+  const ay = Number(attackerPosition.y);
+  const tx = Number(targetPosition.x);
+  const ty = Number(targetPosition.y);
   if (![ax, ay, tx, ty].every(Number.isFinite)) return false;
 
   const dx = tx - ax;
   const dy = ty - ay;
   const forwardDistance = dx * facing;
   if (forwardDistance < -PLAYER_PUNCH_BACKSIDE_TOLERANCE_PIXELS) return false;
-  if (Math.abs(dx) > PLAYER_PUNCH_RANGE_PIXELS) return false;
+  if (Math.abs(dx) > Math.min(PLAYER_PUNCH_RANGE_PIXELS, MAX_PUNCH_REACH_PIXELS)) return false;
   if (Math.abs(dy) > PLAYER_PUNCH_VERTICAL_TOLERANCE_PIXELS) return false;
-  return Math.hypot(dx, dy) <= PLAYER_PUNCH_DIRECT_DISTANCE_PIXELS;
+  return Math.hypot(dx, dy) <= Math.min(PLAYER_PUNCH_DIRECT_DISTANCE_PIXELS, MAX_PUNCH_REACH_PIXELS);
 }
 
 function handlePlayerPunch(socket, player, data) {
@@ -10758,6 +11808,7 @@ function handlePlayerPunch(socket, player, data) {
 
   const worldName = cleanWorld(data?.world || player.world || "START");
   if (!requireSameWorld(socket, player, worldName, "player_punch")) return;
+  if (!validateNetfoxActionCooldown(socket, player, "player_punch", data)) return;
 
   const now = Date.now();
   const lastPunchAt = Number(player.last_player_punch_at || 0);
@@ -10778,12 +11829,33 @@ function handlePlayerPunch(socket, player, data) {
   }
 
   const facing = sanitizePlayerPunchFacing(data, player);
+  const attackerPosition = getPlayerValidationPosition(player, { action: "player_punch", world: worldName });
+  const targetPosition = getPlayerValidationPosition(target, { action: "player_punch_target", world: worldName });
+  if (isNetfoxRealMode(player) && !attackerPosition.ok) {
+    rejectMissingTrustedPosition(socket, "player_punch", player, attackerPosition, {
+      target_player_id: String(target.id || ""),
+      max_reach_tiles: MAX_PUNCH_REACH_TILES,
+    });
+    return;
+  }
+  if (isNetfoxRealMode(target) && !targetPosition.ok) {
+    sendActionRejected(socket, "player_punch", "That player's Netfox position is not ready yet.", {
+      reason: `netfox_target_position_${targetPosition.reason || "missing"}`,
+      target_player_id: String(target.id || ""),
+      max_reach_tiles: MAX_PUNCH_REACH_TILES,
+    });
+    return;
+  }
   if (!isPlayerPunchTargetReachable(player, target, facing)) {
     sendActionRejected(socket, "player_punch", "Too far away.");
     return;
   }
 
-  const dx = Number(target.x) - Number(player.x);
+  const sourceX = attackerPosition.ok ? attackerPosition.x : Number(player.x);
+  const sourceY = attackerPosition.ok ? attackerPosition.y : Number(player.y);
+  const targetX = targetPosition.ok ? targetPosition.x : Number(target.x);
+  const targetY = targetPosition.ok ? targetPosition.y : Number(target.y);
+  const dx = targetX - sourceX;
   const knockbackDirection = Math.abs(dx) > 4 ? (dx < 0 ? -1 : 1) : facing;
   const knockbackX = knockbackDirection * PLAYER_PUNCH_KNOCKBACK_X;
   const knockbackY = PLAYER_PUNCH_KNOCKBACK_Y;
@@ -10806,10 +11878,10 @@ function handlePlayerPunch(socket, player, data) {
     facing,
     knockback_x: knockbackX,
     knockback_y: knockbackY,
-    source_x: Number(player.x || 0),
-    source_y: Number(player.y || 0),
-    target_x: Number(target.x || 0),
-    target_y: Number(target.y || 0),
+    source_x: Number(sourceX || 0),
+    source_y: Number(sourceY || 0),
+    target_x: Number(targetX || 0),
+    target_y: Number(targetY || 0),
     server_time: now,
   });
 
@@ -16794,10 +17866,10 @@ function getForegroundNetworkPriority(entry) {
   return clampString(entry?.block_type || "") === ENTRANCE_GATE_TYPE ? 0 : 1;
 }
 
-function getForegroundBlocksForState(state, worldName = "") {
+function getForegroundBlocksForMap(blockMap, state, worldName = "") {
   const blocks = [];
 
-  for (const block of state.foreground.values()) {
+  for (const block of blockMap.values()) {
     const entry = { ...block };
     const interaction = state.interactions.get(gridKey(block.x, block.y));
     const blockType = clampString(entry.block_type || "");
@@ -16829,6 +17901,65 @@ function getForegroundBlocksForState(state, worldName = "") {
 
   blocks.sort((a, b) => getForegroundNetworkPriority(a) - getForegroundNetworkPriority(b));
   return blocks;
+}
+
+function getForegroundBlocksForState(state, worldName = "") {
+  return getForegroundBlocksForMap(state.foreground, state, worldName);
+}
+
+function getBearerTokenFromRequest(request) {
+  const rawHeader = String(request?.headers?.authorization || request?.headers?.Authorization || "").trim();
+  if (!rawHeader.toLowerCase().startsWith("bearer ")) return "";
+  return rawHeader.slice(7).trim();
+}
+
+function isNetfoxServerWorldStateEndpointConfigured() {
+  return NETFOX_SERVER_WORLD_STATE_TOKEN !== "" || /^[a-f0-9]{64}$/i.test(NETFOX_SERVER_WORLD_STATE_TOKEN_HASH);
+}
+
+function verifyNetfoxServerWorldStateRequest(request) {
+  const token = getBearerTokenFromRequest(request);
+  if (token === "") return false;
+
+  if (NETFOX_SERVER_WORLD_STATE_TOKEN !== "" && safeTimingEqualString(token, NETFOX_SERVER_WORLD_STATE_TOKEN)) {
+    return true;
+  }
+
+  if (/^[a-f0-9]{64}$/i.test(NETFOX_SERVER_WORLD_STATE_TOKEN_HASH)) {
+    return safeTimingEqualString(makeTokenHash(token), NETFOX_SERVER_WORLD_STATE_TOKEN_HASH);
+  }
+
+  return false;
+}
+
+function getEffectiveWorldCollisionBlockCount(worldName, state) {
+  const effectiveForeground = getForegroundBlocksForMap(buildEffectiveForegroundMap(worldName, state), state, worldName);
+  return effectiveForeground.filter((entry) => {
+    const blockType = clampString(entry?.block_type || "");
+    const definition = ItemDatabase.getItemDefinition(blockType) || {};
+    return !definition.no_collision;
+  }).length;
+}
+
+function buildNetfoxWorldStateHttpPayload(worldName, reason = "netfox_server_world_load") {
+  const clean = cleanWorld(worldName);
+  const state = ensureWorldState(clean);
+  const effectiveForeground = getForegroundBlocksForMap(buildEffectiveForegroundMap(clean, state), state, clean);
+  const worldState = buildWorldStateMessage(clean, {
+    respawn_player: false,
+    force_player_position: false,
+    world_state_reason: reason,
+  });
+  const background = Array.isArray(worldState.background) ? worldState.background : [];
+
+  return {
+    ok: true,
+    world: clean,
+    block_count: effectiveForeground.length,
+    background_block_count: background.length,
+    collision_block_count: getEffectiveWorldCollisionBlockCount(clean, state),
+    world_state: worldState,
+  };
 }
 
 function serializeWorldState(worldName) {
@@ -17021,7 +18152,7 @@ function saveWorldState(worldName) {
   }
 }
 
-async function commitWorldStateWithBlockChanges(worldName, changes = []) {
+async function commitWorldStateWithBlockChanges(worldName, changes = [], options = {}) {
   const clean = cleanWorld(worldName);
   const serialized = serializeWorldState(clean);
 
@@ -17040,7 +18171,10 @@ async function commitWorldStateWithBlockChanges(worldName, changes = []) {
     return { ok: true, postgres_committed: true, serialized };
   }
 
-  if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE) {
+  if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE && !shouldAllowPhase7DevJsonFallback(options.player || null, null, {
+    ...options,
+    world: clean,
+  })) {
     return { ok: false, reason: "postgres_unavailable", message: "PostgreSQL is not ready." };
   }
 
