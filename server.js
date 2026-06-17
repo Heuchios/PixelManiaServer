@@ -155,16 +155,15 @@ const NETFOX_TRUSTED_POSITION_DEBUG = ["1", "true", "yes", "on", "debug"].includ
 const PHASE7_ACTION_LOGS = !["0", "false", "no", "off"].includes(String(process.env.PHASE7_ACTION_LOGS || "true").trim().toLowerCase());
 const NETFOX_SERVER_WORLD_STATE_TOKEN = String(process.env.NETFOX_SERVER_WORLD_STATE_TOKEN || "").trim();
 const NETFOX_SERVER_WORLD_STATE_TOKEN_HASH = String(process.env.NETFOX_SERVER_WORLD_STATE_TOKEN_HASH || "").trim().toLowerCase();
+const DEV_TOOLS_ENVIRONMENT = String(process.env.ENVIRONMENT || process.env.NODE_ENV || "").trim().toLowerCase();
+const DEV_TOOLS_ALLOWED = DEV_TOOLS_ENVIRONMENT === "development" &&
+  ["1", "true", "yes", "on", "debug"].includes(String(process.env.PIXELMANIA_ALLOW_DEV_TOOLS || "false").trim().toLowerCase());
+const NETFOX_ARCHIVE_TOOLS_ALLOWED = DEV_TOOLS_ALLOWED &&
+  ["1", "true", "yes", "on", "debug"].includes(String(process.env.PIXELMANIA_ENABLE_NETFOX_ARCHIVE || "false").trim().toLowerCase());
 const DEV_BACKEND_LOGIN_ENABLED = ["1", "true", "yes", "on", "debug"].includes(String(process.env.PIXELMANIA_ENABLE_DEV_BACKEND_LOGIN || "false").trim().toLowerCase());
-const DEV_BACKEND_LOGIN_ENVIRONMENT = String(process.env.ENVIRONMENT || process.env.NODE_ENV || "").trim().toLowerCase();
-const DEV_BACKEND_LOGIN_ENV_OVERRIDE = ["1", "true", "yes", "on", "debug"].includes(String(process.env.PIXELMANIA_ALLOW_DEV_LOGIN || "false").trim().toLowerCase());
-const DEV_BACKEND_LOGIN_ALLOWED = DEV_BACKEND_LOGIN_ENABLED && (
-  DEV_BACKEND_LOGIN_ENVIRONMENT === "development" ||
-  DEV_BACKEND_LOGIN_ENV_OVERRIDE
-);
+const DEV_BACKEND_LOGIN_ALLOWED = DEV_BACKEND_LOGIN_ENABLED && DEV_TOOLS_ALLOWED;
 const PHASE7_DEV_JSON_FALLBACK_ALLOWED = DEV_BACKEND_LOGIN_ENABLED &&
-  DEV_BACKEND_LOGIN_ENVIRONMENT === "development" &&
-  DEV_BACKEND_LOGIN_ENV_OVERRIDE;
+  DEV_TOOLS_ALLOWED;
 const VEND_BLOCK_EMPTY = "vend_empty";
 const VEND_BLOCK_PENDING = "vend_pending";
 const VEND_BLOCK_SOLD = "vend_sold";
@@ -2642,6 +2641,15 @@ async function handleHttpRequest(request, response) {
   }
 
   if (request.method === "GET" && url.pathname === "/netfox/server/world-state") {
+    if (!NETFOX_ARCHIVE_TOOLS_ALLOWED) {
+      response.writeHead(410, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
+      response.end(JSON.stringify({
+        ok: false,
+        error: "Netfox archived world-state endpoint is disabled.",
+      }));
+      return;
+    }
+
     if (!isNetfoxServerWorldStateEndpointConfigured()) {
       response.writeHead(503, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
       response.end(JSON.stringify({
@@ -2675,17 +2683,17 @@ async function handleHttpRequest(request, response) {
   }
 
   if (request.method === "GET" && url.pathname === "/dev/netfox/world-state") {
-    if (!DEV_BACKEND_LOGIN_ALLOWED) {
+    if (!NETFOX_ARCHIVE_TOOLS_ALLOWED) {
       response.writeHead(403, { "Content-Type": "application/json; charset=utf-8", "Cache-Control": "no-store" });
       response.end(JSON.stringify({
         ok: false,
-        error: "[SECURITY] Dev Netfox world-state endpoint is disabled outside development.",
+        error: "[SECURITY] Dev Netfox world-state endpoint is disabled outside archived development tools.",
       }));
       return;
     }
 
     const worldName = cleanWorld(url.searchParams.get("world") || "NETFOX_TEST");
-    const payload = buildNetfoxWorldStateHttpPayload(worldName, "phase7_server_world_load");
+    const payload = buildNetfoxWorldStateHttpPayload(worldName, "netfox_archive_world_load");
 
     console.log("[dev_netfox_world_state] served", {
       world: payload.world,
