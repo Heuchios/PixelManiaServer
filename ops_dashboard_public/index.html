@@ -1,0 +1,422 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>PixelMania Ops</title>
+    <link rel="stylesheet" href="/styles.css?v=20260715-debug-tabs">
+  </head>
+  <body>
+    <main class="shell">
+      <header class="topbar">
+        <button class="icon-button" id="refreshButton" type="button" aria-label="Refresh dashboard">Refresh</button>
+        <div class="brand">
+          <h1>PixelMania</h1>
+          <p>Server status, players, and live console</p>
+        </div>
+        <div class="status-pill" id="statusPill">
+          <span class="status-dot"></span>
+          <span id="statusLabel">checking</span>
+        </div>
+        <div class="uptime">
+          <span>up</span>
+          <strong id="uptimeValue">0m</strong>
+        </div>
+        <div class="top-actions">
+          <button class="outline-button" data-action="restart" type="button">Restart</button>
+          <button class="outline-button" data-action="start" type="button">Start</button>
+          <button class="outline-button danger" data-action="stop" type="button">Stop</button>
+          <button class="outline-button" data-action="deploy" type="button">Deploy</button>
+          <button class="outline-button danger" data-action="rollback" type="button">Rollback</button>
+          <button class="outline-button subtle" id="logoutButton" type="button">Logout</button>
+        </div>
+      </header>
+
+      <section class="notice hidden" id="notice"></section>
+
+      <nav class="view-tabs" aria-label="Dashboard views">
+        <button class="view-tab active" data-view-tab="overview" type="button" aria-pressed="true">Overview</button>
+        <button class="view-tab" data-view-tab="worlds" type="button" aria-pressed="false">Worlds</button>
+        <button class="view-tab" data-view-tab="logs" type="button" aria-pressed="false">Logs</button>
+        <button class="view-tab" data-view-tab="deploy" type="button" aria-pressed="false">Deploy</button>
+        <button class="view-tab" data-view-tab="resources" type="button" aria-pressed="false">Resources</button>
+        <button class="view-tab" data-view-tab="account" type="button" aria-pressed="false">Account</button>
+        <button class="view-tab" data-view-tab="audit" type="button" aria-pressed="false">Audit</button>
+      </nav>
+
+      <section class="metrics-grid" data-view-panel="overview" aria-label="Server metrics">
+        <article class="metric-card">
+          <span>Players online</span>
+          <strong id="playersValue">--</strong>
+        </article>
+        <article class="metric-card">
+          <span>Worlds loaded</span>
+          <strong id="worldsValue">--</strong>
+        </article>
+        <article class="metric-card">
+          <span>Memory</span>
+          <strong id="memoryValue">--</strong>
+        </article>
+        <article class="metric-card">
+          <span>Database</span>
+          <strong id="databaseValue">--</strong>
+        </article>
+        <article class="metric-card">
+          <span>Redis</span>
+          <strong id="redisValue">--</strong>
+        </article>
+        <article class="metric-card">
+          <span>Tick</span>
+          <strong id="tickValue">--</strong>
+        </article>
+      </section>
+
+      <section class="panel" data-view-panel="resources">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span class="handle">:</span>
+            <h2>Server resources</h2>
+          </div>
+          <p id="resourcesState">checking</p>
+        </div>
+        <div class="resource-grid">
+          <article class="resource-card">
+            <span>CPU load</span>
+            <strong id="resourceCpu">--</strong>
+            <p id="resourceCpuDetail">--</p>
+          </article>
+          <article class="resource-card">
+            <span>RAM</span>
+            <strong id="resourceRam">--</strong>
+            <p id="resourceRamDetail">--</p>
+          </article>
+          <article class="resource-card">
+            <span>Disk</span>
+            <strong id="resourceDisk">--</strong>
+            <p id="resourceDiskDetail">--</p>
+          </article>
+          <article class="resource-card">
+            <span>Host uptime</span>
+            <strong id="resourceUptime">--</strong>
+            <p id="resourceHost">--</p>
+          </article>
+        </div>
+        <div class="process-grid" id="processGrid">
+          <article class="process-card muted">Loading process resources...</article>
+        </div>
+      </section>
+
+      <section class="panel" data-view-panel="account">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span class="handle">:</span>
+            <h2>Admin account</h2>
+          </div>
+          <p id="accountState">checking</p>
+        </div>
+        <div class="account-grid">
+          <article class="account-card">
+            <span>Email</span>
+            <strong id="accountEmail">--</strong>
+            <p id="accountPendingEmail">--</p>
+          </article>
+          <article class="account-card">
+            <span>Verification</span>
+            <strong id="accountVerified">--</strong>
+            <p id="accountVerificationDetail">--</p>
+          </article>
+          <article class="account-card">
+            <span>Sessions</span>
+            <strong id="accountSessions">--</strong>
+            <p id="accountSessionDetail">--</p>
+          </article>
+          <article class="account-card">
+            <span>Email sender</span>
+            <strong id="accountMail">--</strong>
+            <p id="accountMailDetail">--</p>
+          </article>
+          <article class="account-card">
+            <span>Login code</span>
+            <strong id="accountLoginCode">--</strong>
+            <p id="accountLoginCodeDetail">--</p>
+          </article>
+        </div>
+        <div class="account-actions">
+          <button class="outline-button" id="sendVerificationButton" type="button">Send verification</button>
+          <button class="outline-button danger" id="logoutAllButton" type="button">Logout all sessions</button>
+        </div>
+        <p class="copy-state" id="accountMessage" aria-live="polite"></p>
+        <div class="account-forms">
+          <form class="account-form" id="changeEmailForm">
+            <h3>Change email</h3>
+            <label for="newEmailInput">New email</label>
+            <input id="newEmailInput" name="email" type="email" autocomplete="email" required>
+            <label for="emailPasswordInput">Current password</label>
+            <input id="emailPasswordInput" name="password" type="password" autocomplete="current-password" required>
+            <button class="outline-button" type="submit">Send confirmation</button>
+          </form>
+          <form class="account-form" id="changePasswordForm">
+            <h3>Change password</h3>
+            <label for="currentPasswordInput">Current password</label>
+            <input id="currentPasswordInput" name="current_password" type="password" autocomplete="current-password" required>
+            <label for="newPasswordInput">New password</label>
+            <input id="newPasswordInput" name="new_password" type="password" autocomplete="new-password" required>
+            <label for="confirmPasswordInput">Confirm new password</label>
+            <input id="confirmPasswordInput" name="confirm_password" type="password" autocomplete="new-password" required>
+            <button class="outline-button" type="submit">Change password</button>
+          </form>
+        </div>
+      </section>
+
+      <section class="panel" data-view-panel="deploy">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span class="handle">:</span>
+            <h2>Deploy safety</h2>
+          </div>
+          <p id="deployVersionState">checking</p>
+        </div>
+        <div class="deploy-grid">
+          <article class="deploy-card">
+            <span>Running commit</span>
+            <strong id="deployCurrentCommit">--</strong>
+            <p id="deployCurrentSubject">--</p>
+          </article>
+          <article class="deploy-card">
+            <span>GitHub main</span>
+            <strong id="deployRemoteCommit">--</strong>
+            <p id="deployRemoteSubject">--</p>
+          </article>
+          <article class="deploy-card">
+            <span>Rollback target</span>
+            <strong id="rollbackTargetCommit">--</strong>
+            <p id="rollbackTargetSubject">--</p>
+          </article>
+          <article class="deploy-card">
+            <span>Player guard</span>
+            <strong id="deployGuardState">--</strong>
+            <p id="deployGuardDetail">--</p>
+          </article>
+          <article class="deploy-card">
+            <span>Last deploy</span>
+            <strong id="deployLastState">--</strong>
+            <p id="deployLastDetail">--</p>
+          </article>
+          <article class="deploy-card">
+            <span>Last rollback</span>
+            <strong id="rollbackLastState">--</strong>
+            <p id="rollbackLastDetail">--</p>
+          </article>
+        </div>
+        <div class="deploy-health" id="deployHealthList">
+          <div class="health-row muted"><span>loading</span><span></span></div>
+        </div>
+        <div class="dirty-list hidden" id="deployDirtyList"></div>
+      </section>
+
+      <section class="panel" data-view-panel="overview">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span class="handle">:</span>
+            <h2>Route servers</h2>
+          </div>
+          <p>ws-a · ws-b</p>
+        </div>
+        <div class="routes-grid" id="routesGrid">
+          <article class="route-card muted">Loading route status...</article>
+        </div>
+      </section>
+
+      <section class="panel" data-view-panel="worlds">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span class="handle">:</span>
+            <h2>Online worlds</h2>
+          </div>
+          <p id="networkValue">net in -- · out --</p>
+        </div>
+        <div class="table" id="worldsTable">
+          <div class="table-row table-head">
+            <span>World</span>
+            <span>Players</span>
+          </div>
+          <div class="table-row muted">
+            <span>loading</span>
+            <span></span>
+          </div>
+        </div>
+      </section>
+
+      <section class="panel" data-view-panel="worlds">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span class="handle">:</span>
+            <h2>Route checks</h2>
+          </div>
+          <p id="routeTestState">not run</p>
+        </div>
+        <div class="account-actions">
+          <button class="outline-button" id="routeTestButton" type="button">Test ws-a / ws-b</button>
+        </div>
+        <div class="route-test-grid" id="routeTestGrid">
+          <article class="route-test-card muted">No route test yet.</article>
+        </div>
+      </section>
+
+      <section class="panel" data-view-panel="logs">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span class="handle">:</span>
+            <h2>Incident snapshot</h2>
+          </div>
+          <p id="incidentSnapshotState">ready</p>
+        </div>
+        <div class="account-actions">
+          <button class="outline-button" id="copyIncidentButton" type="button">Copy snapshot</button>
+          <button class="outline-button" id="downloadIncidentButton" type="button">Download JSON</button>
+        </div>
+        <p class="copy-state" id="incidentSnapshotMessage" aria-live="polite"></p>
+        <pre class="console small" id="incidentSnapshotPreview">No snapshot yet.</pre>
+      </section>
+
+      <section class="panel" data-view-panel="logs">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span class="handle">:</span>
+            <h2>Error summary</h2>
+          </div>
+          <p id="errorSummaryState">checking</p>
+        </div>
+        <div class="account-actions">
+          <button class="outline-button" id="refreshErrorsButton" type="button">Refresh errors</button>
+        </div>
+        <pre class="console small" id="errorSummaryOutput">Loading errors...</pre>
+      </section>
+
+      <section class="panel" data-view-panel="overview">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span class="handle">:</span>
+            <h2>Database health</h2>
+          </div>
+          <p id="databaseHealthState">checking</p>
+        </div>
+        <div class="database-health-grid" id="databaseHealthGrid">
+          <article class="database-health-card muted">Loading database health...</article>
+        </div>
+      </section>
+
+      <section class="panel" data-view-panel="logs">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span class="handle">:</span>
+            <h2>Console</h2>
+          </div>
+          <p id="consoleState">live</p>
+        </div>
+        <div class="console-toolbar">
+          <div class="console-tabs" aria-label="Console log targets">
+            <button class="tab-button active" data-log-target="main" type="button" aria-pressed="true">main</button>
+            <button class="tab-button" data-log-target="ws-a" type="button" aria-pressed="false">ws-a</button>
+            <button class="tab-button" data-log-target="ws-b" type="button" aria-pressed="false">ws-b</button>
+            <button class="tab-button" data-log-target="errors" type="button" aria-pressed="false">errors</button>
+          </div>
+          <button class="copy-button" id="debugReportButton" type="button">Copy quick report</button>
+        </div>
+        <p class="copy-state" id="debugReportState" aria-live="polite"></p>
+        <pre class="console" id="consoleOutput">Loading logs...</pre>
+      </section>
+
+      <section class="panel" data-view-panel="deploy">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span class="handle">:</span>
+            <h2>Last action</h2>
+          </div>
+          <p id="actionState">idle</p>
+        </div>
+        <pre class="console small" id="actionOutput">No actions yet.</pre>
+      </section>
+
+      <section class="panel" data-view-panel="audit">
+        <div class="panel-header">
+          <div class="panel-title">
+            <span class="handle">:</span>
+            <h2>Audit log</h2>
+          </div>
+          <p id="auditState">loading</p>
+        </div>
+        <div class="audit-table" id="auditTable">
+          <div class="audit-row audit-head">
+            <span>Action</span>
+            <span>Status</span>
+            <span>Started</span>
+            <span>Remote</span>
+          </div>
+          <div class="audit-row muted">
+            <span>loading</span>
+            <span></span>
+            <span></span>
+            <span></span>
+          </div>
+        </div>
+      </section>
+    </main>
+
+    <form class="login-card" id="loginCard">
+      <h2>PixelMania Ops</h2>
+      <p>Sign in with your admin account.</p>
+      <label for="usernameInput">Email or username</label>
+      <input id="usernameInput" name="username" type="text" autocomplete="username" required>
+      <label for="passwordInput">Password</label>
+      <input id="passwordInput" name="password" type="password" autocomplete="current-password" required>
+      <button type="submit">Sign in</button>
+      <div class="login-code-box hidden" id="loginCodeBox">
+        <label for="loginCodeInput">One-time code</label>
+        <div class="inline-form">
+          <input id="loginCodeInput" name="login_code" type="text" inputmode="numeric" autocomplete="one-time-code" maxlength="12">
+          <button id="loginCodeButton" type="button">Verify</button>
+        </div>
+        <p class="copy-state" id="loginCodeState" aria-live="polite"></p>
+      </div>
+      <div class="reset-request">
+        <label for="resetEmailInput">Reset by verified email</label>
+        <div class="inline-form">
+          <input id="resetEmailInput" name="reset_email" type="email" autocomplete="email">
+          <button id="resetRequestButton" type="button">Send reset</button>
+        </div>
+        <p class="copy-state" id="resetRequestState" aria-live="polite"></p>
+      </div>
+      <p class="login-error" id="loginError"></p>
+    </form>
+
+    <form class="login-card hidden" id="resetCard">
+      <h2>Reset Password</h2>
+      <p>Choose a new admin password.</p>
+      <label for="resetNewPasswordInput">New password</label>
+      <input id="resetNewPasswordInput" name="new_password" type="password" autocomplete="new-password" required>
+      <label for="resetConfirmPasswordInput">Confirm password</label>
+      <input id="resetConfirmPasswordInput" name="confirm_password" type="password" autocomplete="new-password" required>
+      <button type="submit">Reset password</button>
+      <p class="login-error" id="resetPasswordState"></p>
+    </form>
+
+    <div class="confirm-overlay hidden" id="confirmDialog" role="dialog" aria-modal="true" aria-labelledby="confirmTitle">
+      <form class="confirm-card" id="confirmForm">
+        <h2 id="confirmTitle">Run action?</h2>
+        <p id="confirmText"></p>
+        <label class="confirm-input-wrap hidden" id="confirmInputWrap" for="confirmInput">
+          <span id="confirmInputLabel"></span>
+          <input id="confirmInput" name="confirmation" type="text" autocomplete="off">
+        </label>
+        <p class="confirm-error" id="confirmError"></p>
+        <div class="confirm-actions">
+          <button class="outline-button" id="confirmCancel" type="button">Cancel</button>
+          <button class="outline-button danger" id="confirmSubmit" type="submit">Run</button>
+        </div>
+      </form>
+    </div>
+
+    <script src="/app.js?v=20260715-debug-tabs"></script>
+  </body>
+</html>

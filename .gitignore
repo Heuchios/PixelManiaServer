@@ -9,3 +9,26 @@ admin_actions.log
 integrity_logs/
 world_snapshots/
 .env
+.tsbuild/
+
+# Local environment and credential material.
+.env.*
+!.env.example
+!.env.ops.example
+.npmrc
+*.pem
+*.key
+id_rsa*
+id_ed25519*
+
+# Runtime state, generated logs, and local test credentials.
+*.log
+*.pid
+*.tmp
+load_tokens*.json
+ops_dashboard_admin*.json
+
+# Local scratch scripts and compiler metadata.
+tmp_*.js
+*.tsbuildinfo
+coverage/

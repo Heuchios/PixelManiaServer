@@ -24,15 +24,22 @@ function fromBackend(filename) {
 }
 
 function fromRepoRoot(filename) {
-  return [
-    path.resolve(process.cwd(), filename),
-    path.resolve(process.cwd(), "..", filename),
-    path.resolve(__dirname, "..", "..", filename),
+  const roots = [
+    process.cwd(),
+    path.resolve(process.cwd(), ".."),
+    path.resolve(__dirname, "..", ".."),
   ];
+  const expandedRoots = [];
+  for (const root of roots) {
+    expandedRoots.push(root);
+    expandedRoots.push(path.join(root, "pixel-mania"));
+  }
+  return [...new Set(expandedRoots)].map((root) => path.join(root, filename));
 }
 
 const files = {
   postgres: readFirst(fromBackend("postgres_store.js")),
+  postgresContracts: readFirst(fromBackend("postgres_store_contracts.js"), false),
   rollbackApply: readFirst(fromBackend("scripts/rollback_apply.js")),
   rollbackPlan: readFirst(fromBackend("scripts/rollback_plan.js"), false),
   worldSnapshotTool: readFirst(fromBackend("scripts/world_snapshot_tool.js"), false),
@@ -63,7 +70,8 @@ const checks = [
     ok: files.postgres.includes('CREATE TABLE IF NOT EXISTS ${this.table("rollback_jobs")}')
       && files.postgres.includes("idx_rollback_jobs_type_time")
       && files.postgres.includes("'rollback'")
-      && files.postgres.includes("if (source === \"rollback\")"),
+      && (files.postgres.includes("if (source === \"rollback\")")
+        || files.postgresContracts.includes("if (source === \"rollback\")")),
   },
   {
     name: "rollback apply tool exposes player, world, item, and transaction modes",

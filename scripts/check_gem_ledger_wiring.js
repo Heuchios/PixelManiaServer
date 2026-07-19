@@ -34,10 +34,12 @@ function fromRepoRoot(filename) {
 const files = {
   postgres: readFirst(fromBackend("postgres_store.js")),
   server: readFirst(fromBackend("server.js")),
+  inventoryEconomyRoutes: readFirst(fromBackend("server_inventory_economy_routes.js"), false),
   schema: readFirst(fromBackend("docs/postgres_security_foundation.sql")),
   rules: readFirst(fromRepoRoot("docs/backend_persistence_rules.md"), false),
   handoff: readFirst(fromRepoRoot("docs/codex_handoff_status.md"), false),
 };
+const serverTransactionSources = [files.server, files.inventoryEconomyRoutes].filter(Boolean).join("\n");
 
 if (files.rules === "") {
   console.warn("[gem-ledger-wiring] warn: backend_persistence_rules.md was not found; code checks will still run.");
@@ -50,6 +52,15 @@ const checks = [
       && files.schema.includes("before_balance bigint")
       && files.schema.includes("after_balance bigint")
       && files.schema.includes("idx_gem_ledger_player_time"),
+  },
+  {
+    name: "startup migration repairs existing gem ledger tables",
+    ok: files.postgres.includes('CREATE TABLE IF NOT EXISTS ${this.table("gem_ledger")}')
+      && files.postgres.includes('ALTER TABLE ${this.table("gem_ledger")}')
+      && files.postgres.includes("ADD COLUMN IF NOT EXISTS before_balance")
+      && files.postgres.includes("ADD COLUMN IF NOT EXISTS after_balance")
+      && files.postgres.includes("gem_ledger_after_balance_check")
+      && files.postgres.includes("idx_gem_ledger_player_time"),
   },
   {
     name: "transaction_ledger can link gem ledger rows",
@@ -84,13 +95,13 @@ const checks = [
   },
   {
     name: "server gem sources use authoritative commit or custom Postgres transactions",
-    ok: files.server.includes('source: "shop"')
-      && files.server.includes('source: "fish_monger"')
-      && files.server.includes('source: stationId === "furnace" ? "furnace" : "craft"')
-      && files.server.includes('source: "fishing"')
-      && files.server.includes('source: "admin"')
-      && files.server.includes("applyDropPickupTransaction({")
-      && files.server.includes("applyTradeFinalizationTransaction({"),
+    ok: serverTransactionSources.includes('source: "shop"')
+      && serverTransactionSources.includes('source: "fish_monger"')
+      && serverTransactionSources.includes('source: stationId === "furnace" ? "furnace" : "craft"')
+      && serverTransactionSources.includes('source: "fishing"')
+      && serverTransactionSources.includes('source: "admin"')
+      && serverTransactionSources.includes("applyDropPickupTransaction({")
+      && serverTransactionSources.includes("applyTradeFinalizationTransaction({"),
   },
   {
     name: "legacy JSON gem ledger mirror still mirrors to Postgres when needed",

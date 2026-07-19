@@ -39,6 +39,15 @@ function fromRepoRoot(filename) {
 
 const files = {
   server: readFirst(fromBackend("server.js")),
+  messageRouter: readFirst(fromBackend("src/server_message_router_helpers.ts")),
+  botRateLimitHelpers: readFirst([
+    ...fromBackend("src/server_bot_rate_limit_helpers.ts"),
+    ...fromBackend("server_bot_rate_limit_helpers.js"),
+  ]),
+  accountSessionHelpers: readFirst([
+    ...fromBackend("src/server_account_session_helpers.ts"),
+    ...fromBackend("server_account_session_helpers.js"),
+  ]),
   packageJson: readFirst(fromBackend("package.json")),
   deploy: readFirst(fromBackend("deploy_to_droplet.ps1"), false),
   envExample: readFirst(fromBackend(".env.example"), false),
@@ -49,46 +58,52 @@ const files = {
 const checks = [
   {
     name: "server has named bot/rate-limit configuration for checklist item 12",
-    ok: files.server.includes("const BOT_RATE_LIMITS = Object.freeze")
-      && files.server.includes('makeBotRateLimitConfig("BOT_BLOCK_PLACE"')
-      && files.server.includes('makeBotRateLimitConfig("BOT_BLOCK_BREAK"')
-      && files.server.includes('makeBotRateLimitConfig("BOT_PICKUP_ATTEMPT"')
-      && files.server.includes('makeBotRateLimitConfig("BOT_CHAT_MESSAGE"')
-      && files.server.includes('makeBotRateLimitConfig("BOT_TRADE_REQUEST"')
-      && files.server.includes('makeBotRateLimitConfig("BOT_WORLD_JOIN"')
-      && files.server.includes('makeBotRateLimitConfig("BOT_VENDING_PURCHASE"'),
+    ok: files.server.includes("ServerBotRateLimitHelpersModule.createServerBotRateLimitTables")
+      && files.server.includes("const BOT_RATE_LIMITS = ServerBotRateLimitTables.botRateLimits")
+      && files.botRateLimitHelpers.includes("createServerBotRateLimitTables")
+      && files.botRateLimitHelpers.includes('makeBotRateLimitConfig("BOT_BLOCK_PLACE"')
+      && files.botRateLimitHelpers.includes('makeBotRateLimitConfig("BOT_BLOCK_BREAK"')
+      && files.botRateLimitHelpers.includes('makeBotRateLimitConfig("BOT_PICKUP_ATTEMPT"')
+      && files.botRateLimitHelpers.includes('makeBotRateLimitConfig("BOT_CHAT_MESSAGE"')
+      && files.botRateLimitHelpers.includes('makeBotRateLimitConfig("BOT_PLAYER_PUNCH"')
+      && files.botRateLimitHelpers.includes('makeBotRateLimitConfig("BOT_TRADE_REQUEST"')
+      && files.botRateLimitHelpers.includes('makeBotRateLimitConfig("BOT_WORLD_JOIN"')
+      && files.botRateLimitHelpers.includes('makeBotRateLimitConfig("BOT_VENDING_PURCHASE"'),
   },
   {
     name: "message path applies both broad message limits and action-specific bot limits",
     ok: files.server.includes("checkMessageRateLimit(socket, player, String(data.type || \"unknown\"), data)")
       && files.server.includes("checkBotActionRateLimit(socket, player, String(data.type || \"unknown\"), data)")
-      && files.server.includes("consumeScopedRateLimit(socket, player, \"bot\""),
+      && files.server.includes("getServerBotRateLimitHelpers().checkMessageRateLimit")
+      && files.server.includes("getServerBotRateLimitHelpers().checkBotActionRateLimit")
+      && files.botRateLimitHelpers.includes("consumeScopedRateLimit(socket, player, \"bot\"")
+      && files.botRateLimitHelpers.includes("messageRouterHelpers.getMessageRateLimitDecision")
+      && files.botRateLimitHelpers.includes("messageRouterHelpers.getBotRateLimitDecision"),
   },
   {
     name: "block place and block break/hit are limited separately",
-    ok: files.server.includes('if (type === "world_block_update")')
-      && files.server.includes('if (action === "place") return "block_place"')
-      && files.server.includes('if (action === "break" || action === "hit") return "block_break"'),
+    ok: files.messageRouter.includes('if (action === "place") return "block_place"')
+      && files.messageRouter.includes('if (action === "break" || action === "hit") return "block_break"'),
   },
   {
     name: "pickup, chat, trade, world join, and vending purchase limits are wired",
-    ok: files.server.includes('return "pickup_attempt"')
-      && files.server.includes('return "chat_message"')
-      && files.server.includes('return "trade_request"')
-      && files.server.includes('return "world_join"')
-      && files.server.includes('action === "vend_buy") return "vending_purchase"'),
+    ok: files.messageRouter.includes('return "pickup_attempt"')
+      && files.messageRouter.includes('return "chat_message"')
+      && files.messageRouter.includes('return "trade_request"')
+      && files.messageRouter.includes('return "world_join"')
+      && files.messageRouter.includes('action === "vend_buy") return "vending_purchase"'),
   },
   {
     name: "limits use Redis when available and local socket buckets as fallback",
-    ok: files.server.includes("redisStore.checkRateLimit")
-      && files.server.includes("socket.rateLimits")
-      && files.server.includes("localBucketKey = `${cleanScope}:${cleanBucketKey}`"),
+    ok: files.botRateLimitHelpers.includes("redisStore.checkRateLimit")
+      && files.botRateLimitHelpers.includes('ensureSocketMap(socket, "rateLimits")')
+      && files.botRateLimitHelpers.includes("localBucketKey = `${cleanScope}:${cleanBucketKey}`"),
   },
   {
     name: "rate-limit blocks are visible to clients and mirrored into security events",
-    ok: files.server.includes("type: \"rate_limited\"")
-      && files.server.includes("logRateLimitSecurityEvent")
-      && files.server.includes("rate_limit_exceeded")
+    ok: files.messageRouter.includes("type: \"rate_limited\"")
+      && files.botRateLimitHelpers.includes("logRateLimitSecurityEvent")
+      && files.botRateLimitHelpers.includes("rate_limit_exceeded")
       && files.server.includes("BOT_RATE_LIMIT_SECURITY_LOG_WINDOW_MS"),
   },
   {
@@ -96,7 +111,7 @@ const checks = [
     ok: files.server.includes("LOGIN_ATTEMPT_LIMIT_IP")
       && files.server.includes("LOGIN_ATTEMPT_LIMIT_ACCOUNT")
       && files.server.includes("checkLoginAttemptAllowed")
-      && files.server.includes("auth:login:ip"),
+      && files.accountSessionHelpers.includes("auth:login:ip"),
   },
   {
     name: "env example exposes bot/rate-limit knobs",
@@ -104,6 +119,7 @@ const checks = [
       && files.envExample.includes("BOT_BLOCK_BREAK_LIMIT")
       && files.envExample.includes("BOT_PICKUP_ATTEMPT_LIMIT")
       && files.envExample.includes("BOT_CHAT_MESSAGE_LIMIT")
+      && files.envExample.includes("BOT_PLAYER_PUNCH_LIMIT")
       && files.envExample.includes("BOT_TRADE_REQUEST_LIMIT")
       && files.envExample.includes("BOT_WORLD_JOIN_LIMIT")
       && files.envExample.includes("BOT_VENDING_PURCHASE_LIMIT"),
@@ -111,11 +127,15 @@ const checks = [
   {
     name: "package security check includes bot/rate-limit wiring check",
     ok: files.packageJson.includes('"check:bot-rate-limits": "node scripts/check_bot_rate_limit_wiring.js"')
+      && files.packageJson.includes("npm run check:server-bot-rate-limit-helpers")
       && files.packageJson.includes("npm run check:bot-rate-limits"),
   },
   {
     name: "deploy helper ships and runs bot/rate-limit wiring check",
     ok: files.deploy.includes("$localBotRateLimitWiringCheck")
+      && files.deploy.includes("$localServerBotRateLimitHelpers")
+      && files.deploy.includes("node --check scripts/check_server_bot_rate_limit_helpers_build.js")
+      && files.deploy.includes("npm run build:server-bot-rate-limit-helpers")
       && files.deploy.includes("node --check scripts/check_bot_rate_limit_wiring.js")
       && files.deploy.includes("npm run check:bot-rate-limits"),
   },

@@ -39,13 +39,17 @@ function fromRepoRoot(filename) {
 
 const files = {
   server: readFirst(fromBackend("server.js")),
+  adminLookupRoutes: readFirst(fromBackend("server_admin_lookup_routes.js")),
   postgres: readFirst(fromBackend("postgres_store.js")),
   packageJson: readFirst(fromBackend("package.json")),
   deploy: readFirst(fromBackend("deploy_to_droplet.ps1"), false),
   schema: readFirst(fromBackend("docs/postgres_security_foundation.sql")),
+  envExample: readFirst(fromBackend(".env.example"), false),
+  ecosystem: readFirst(fromBackend("ecosystem.config.js"), false),
   rules: readFirst(fromRepoRoot("docs/backend_persistence_rules.md"), false),
   handoff: readFirst(fromRepoRoot("docs/codex_handoff_status.md"), false),
 };
+const adminLookupSources = `${files.server}\n${files.adminLookupRoutes}`;
 
 const checks = [
   {
@@ -80,11 +84,28 @@ const checks = [
       && files.postgres.includes("JSON.stringify(safeJson(e))"),
   },
   {
-    name: "admin/developer commands require server-side role and PIN checks",
-    ok: files.server.includes("if (!isAdmin(player))")
-      && files.server.includes("Developer commands are only available to admins.")
+    name: "admin/developer and designer commands use the dedicated server-side command capability",
+    ok: files.server.includes("function canUseAdminCommands(player)")
+      && files.server.includes("return isAdmin(player) || isDesigner(player);")
+      && files.server.includes("if (!canUseAdminCommands(player))")
+      && files.server.includes("Admin commands are only available to admins, developers, and designers.")
+      && files.server.includes("if (isAdmin(player))")
       && files.server.includes("if (!isDeveloperPinUnlocked(player))")
       && files.server.includes("Developer PIN required."),
+  },
+  {
+    name: "designer role persists without inheriting global admin or developer-panel authority",
+    ok: /if\s*\(role === "admin" \|\| role === "developer" \|\| role === "designer"\)\s*return role;/.test(files.server)
+      && /const DESIGNER_USERNAMES = new Set\(\[\s*"uce",\s*"rayan",/.test(files.server)
+      && files.server.includes('return String(role || "").trim().toLowerCase() === "designer";')
+      && files.server.includes("function isAdmin(player)")
+      && files.server.includes("isDeveloperRole(getAccountRole(player.account_username))")
+      && /if\s*\(role === "designer"\)\s*return 75;/.test(files.server)
+      && files.postgres.includes('role === "designer"')
+      && files.postgres.includes("'player', 'moderator', 'designer', 'admin', 'owner'")
+      && files.schema.includes("role IN ('player', 'moderator', 'designer', 'admin', 'owner')")
+      && files.envExample.includes("DESIGNER_USERNAMES=")
+      && files.ecosystem.includes('DESIGNER_USERNAMES: env("DESIGNER_USERNAMES")'),
   },
   {
     name: "admin give/remove logs inventory before-after hashes and counts",
@@ -116,11 +137,11 @@ const checks = [
   },
   {
     name: "admin lookup actions log denied/successful attempts",
-    ok: files.server.includes("admin_inventory_lookup_denied")
-      && files.server.includes("admin_item_instance_lookup_denied")
-      && files.server.includes("admin_transaction_ledger_lookup_denied")
-      && files.server.includes("logAdminAction(socket, player, \"admin_inventory_lookup\"")
-      && files.server.includes("logAdminAction(socket, player, \"admin_transaction_ledger_lookup\""),
+    ok: adminLookupSources.includes("admin_inventory_lookup_denied")
+      && adminLookupSources.includes("admin_item_instance_lookup_denied")
+      && adminLookupSources.includes("admin_transaction_ledger_lookup_denied")
+      && adminLookupSources.includes("logAdminAction(socket, player, \"admin_inventory_lookup\"")
+      && adminLookupSources.includes("logAdminAction(socket, player, \"admin_transaction_ledger_lookup\""),
   },
   {
     name: "package security check includes admin action wiring check",

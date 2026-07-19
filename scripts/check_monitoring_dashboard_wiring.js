@@ -39,6 +39,7 @@ function fromRepoRoot(filename) {
 
 const files = {
   server: readFirst(fromBackend("server.js")),
+  adminLookupRoutes: readFirst(fromBackend("server_admin_lookup_routes.js")),
   postgres: readFirst(fromBackend("postgres_store.js")),
   packageJson: readFirst(fromBackend("package.json")),
   deploy: readFirst(fromBackend("deploy_to_droplet.ps1"), false),
@@ -48,19 +49,20 @@ const files = {
   rules: readFirst(fromRepoRoot("docs/backend_persistence_rules.md"), false),
   handoff: readFirst(fromRepoRoot("docs/codex_handoff_status.md"), false),
 };
+const adminLookupSources = `${files.server}\n${files.adminLookupRoutes}`;
 
 const checks = [
   {
     name: "server exposes admin monitoring dashboard request purpose",
-    ok: files.server.includes("ADMIN_MONITORING_DASHBOARD_PURPOSE")
-      && files.server.includes("handleAdminMonitoringDashboardRequest")
-      && files.server.includes("buildAdminMonitoringRuntimeSnapshot"),
+    ok: adminLookupSources.includes("ADMIN_MONITORING_DASHBOARD_PURPOSE")
+      && adminLookupSources.includes("handleAdminMonitoringDashboardRequest")
+      && adminLookupSources.includes("buildAdminMonitoringRuntimeSnapshot"),
   },
   {
     name: "server dashboard is admin/PIN gated and audited",
-    ok: files.server.includes("admin_monitoring_dashboard_denied")
-      && files.server.includes("getDeveloperSecurityRequirement(player)")
-      && files.server.includes("logAdminAction(socket, player, \"admin_monitoring_dashboard\""),
+    ok: adminLookupSources.includes("admin_monitoring_dashboard_denied")
+      && adminLookupSources.includes("getDeveloperSecurityRequirement(player)")
+      && adminLookupSources.includes("logAdminAction(socket, player, \"admin_monitoring_dashboard\""),
   },
   {
     name: "server has loop health metrics for TPS/tick dashboard cards",

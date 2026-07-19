@@ -24,7 +24,7 @@ CREATE TABLE IF NOT EXISTS accounts (
 	password_salt text NOT NULL DEFAULT '',
 	password_hash text NOT NULL,
 	password_algorithm text NOT NULL DEFAULT 'legacy_scrypt',
-	role text NOT NULL DEFAULT 'player' CHECK (role IN ('player', 'moderator', 'admin', 'owner')),
+	role text NOT NULL DEFAULT 'player' CHECK (role IN ('player', 'moderator', 'designer', 'admin', 'owner')),
 	is_active boolean NOT NULL DEFAULT true,
 	last_login_at timestamptz,
 	email_verified boolean NOT NULL DEFAULT false,
@@ -101,6 +101,49 @@ CREATE INDEX IF NOT EXISTS idx_account_login_attempts_ip_time
 ON account_login_attempts(ip_address, created_at DESC)
 WHERE ip_address IS NOT NULL;
 
+CREATE TABLE IF NOT EXISTS account_password_reset_requests (
+	reset_request_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+	account_id uuid NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+	username text NOT NULL DEFAULT '',
+	email citext NOT NULL,
+	token_hash text NOT NULL UNIQUE,
+	expires_at timestamptz NOT NULL,
+	used_at timestamptz,
+	ip_address inet,
+	user_agent text,
+	device_info jsonb NOT NULL DEFAULT '{}'::jsonb,
+	request_id text,
+	created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_password_reset_requests_account_time
+ON account_password_reset_requests(account_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_account_password_reset_requests_token_active
+ON account_password_reset_requests(token_hash)
+WHERE used_at IS NULL;
+
+CREATE TABLE IF NOT EXISTS account_email_change_requests (
+	email_change_request_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+	account_id uuid NOT NULL REFERENCES accounts(account_id) ON DELETE CASCADE,
+	username text NOT NULL DEFAULT '',
+	old_email citext NOT NULL,
+	new_email citext NOT NULL,
+	token_hash text NOT NULL UNIQUE,
+	expires_at timestamptz NOT NULL,
+	used_at timestamptz,
+	ip_address inet,
+	user_agent text,
+	device_info jsonb NOT NULL DEFAULT '{}'::jsonb,
+	request_id text,
+	created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE INDEX IF NOT EXISTS idx_account_email_change_requests_account_time
+ON account_email_change_requests(account_id, created_at DESC);
+CREATE INDEX IF NOT EXISTS idx_account_email_change_requests_token_active
+ON account_email_change_requests(token_hash)
+WHERE used_at IS NULL;
+
 CREATE TABLE IF NOT EXISTS worlds (
 	world_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
 	world_name citext NOT NULL UNIQUE,
@@ -125,6 +168,10 @@ ADD COLUMN IF NOT EXISTS email_verified_at timestamptz,
 ADD COLUMN IF NOT EXISTS email_verification_token_hash text NOT NULL DEFAULT '',
 ADD COLUMN IF NOT EXISTS email_verification_expires_at timestamptz,
 ADD COLUMN IF NOT EXISTS account_state jsonb NOT NULL DEFAULT '{}'::jsonb;
+
+ALTER TABLE accounts
+DROP CONSTRAINT IF EXISTS accounts_role_check,
+ADD CONSTRAINT accounts_role_check CHECK (role IN ('player', 'moderator', 'designer', 'admin', 'owner'));
 
 ALTER TABLE players
 ADD COLUMN IF NOT EXISTS current_world_id uuid REFERENCES worlds(world_id) ON DELETE SET NULL;
@@ -213,12 +260,43 @@ CREATE TABLE IF NOT EXISTS world_locks (
 	updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS world_drops (
+	world_drop_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+	world_id uuid NOT NULL REFERENCES worlds(world_id) ON DELETE CASCADE,
+	drop_id text NOT NULL,
+	item_type text NOT NULL,
+	item_category text NOT NULL DEFAULT 'block',
+	amount bigint NOT NULL CHECK (amount >= 0),
+	x double precision NOT NULL DEFAULT 0,
+	y double precision NOT NULL DEFAULT 0,
+	stack_grid_x integer,
+	stack_grid_y integer,
+	pickup_delay double precision NOT NULL DEFAULT 0 CHECK (pickup_delay >= 0),
+	status text NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'picked_up', 'removed', 'expired')),
+	picked_by_player_id uuid REFERENCES players(player_id) ON DELETE SET NULL,
+	picked_at timestamptz,
+	removed_at timestamptz,
+	metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
+	created_at timestamptz NOT NULL DEFAULT now(),
+	updated_at timestamptz NOT NULL DEFAULT now(),
+	UNIQUE (world_id, drop_id)
+);
+
+CREATE UNIQUE INDEX IF NOT EXISTS idx_world_drops_world_drop_id
+ON world_drops(world_id, drop_id);
+
+CREATE INDEX IF NOT EXISTS idx_world_drops_world_active
+ON world_drops(world_id, status, updated_at DESC);
+
+CREATE INDEX IF NOT EXISTS idx_world_drops_item_active
+ON world_drops(item_category, item_type, status);
+
 CREATE TABLE IF NOT EXISTS inventory (
 	player_id uuid NOT NULL REFERENCES players(player_id) ON DELETE CASCADE,
 	item_type text NOT NULL,
 	item_category text NOT NULL,
 	amount bigint NOT NULL DEFAULT 0 CHECK (amount >= 0),
-	stack_limit bigint NOT NULL DEFAULT 200 CHECK (stack_limit > 0),
+	stack_limit bigint NOT NULL DEFAULT 400 CHECK (stack_limit > 0),
 	row_version bigint NOT NULL DEFAULT 0,
 	updated_at timestamptz NOT NULL DEFAULT now(),
 	PRIMARY KEY (player_id, item_type, item_category)
@@ -258,6 +336,7 @@ CREATE TABLE IF NOT EXISTS item_transactions (
 			'trade',
 			'vending',
 			'safe',
+			'display',
 			'shop',
 			'craft',
 			'crafting',
@@ -324,7 +403,7 @@ CREATE TABLE IF NOT EXISTS item_instances (
 	world_id uuid REFERENCES worlds(world_id) ON DELETE SET NULL,
 	state text NOT NULL DEFAULT 'active' CHECK (state IN ('active', 'consumed', 'traded', 'destroyed', 'dropped', 'locked')),
 	created_by_source text NOT NULL DEFAULT 'unknown',
-	current_location text NOT NULL DEFAULT 'inventory' CHECK (current_location IN ('inventory', 'vending', 'trade', 'world_drop', 'safe', 'shop', 'admin', 'system', 'unknown')),
+	current_location text NOT NULL DEFAULT 'inventory' CHECK (current_location IN ('inventory', 'vending', 'trade', 'world_drop', 'safe', 'display', 'shop', 'admin', 'system', 'unknown')),
 	origin_transaction_id bigint REFERENCES item_transactions(item_transaction_id) ON DELETE SET NULL,
 	metadata jsonb NOT NULL DEFAULT '{}'::jsonb,
 	created_at timestamptz NOT NULL DEFAULT now(),

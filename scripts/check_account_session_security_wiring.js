@@ -40,6 +40,14 @@ function fromRepoRoot(filename) {
 const files = {
   server: readFirst(fromBackend("server.js")),
   postgres: readFirst(fromBackend("postgres_store.js")),
+  accountAuthRoutes: readFirst([
+    ...fromBackend("src/server_account_auth_routes.ts"),
+    ...fromBackend("server_account_auth_routes.js"),
+  ]),
+  accountSessionHelpers: readFirst([
+    ...fromBackend("src/server_account_session_helpers.ts"),
+    ...fromBackend("server_account_session_helpers.js"),
+  ]),
   packageJson: readFirst(fromBackend("package.json")),
   deploy: readFirst(fromBackend("deploy_to_droplet.ps1"), false),
   schema: readFirst(fromBackend("docs/postgres_security_foundation.sql")),
@@ -48,14 +56,16 @@ const files = {
   handoff: readFirst(fromRepoRoot("docs/codex_handoff_status.md"), false),
 };
 
+const accountAuthSource = `${files.server}\n${files.accountAuthRoutes}\n${files.accountSessionHelpers}`;
+
 const checks = [
   {
     name: "accounts store explicit password algorithm metadata",
     ok: files.schema.includes("password_algorithm text NOT NULL DEFAULT 'legacy_scrypt'")
       && files.postgres.includes("ADD COLUMN IF NOT EXISTS password_algorithm")
       && files.server.includes("PASSWORD_HASH_ALGORITHM")
-      && files.server.includes("parsePasswordHashAlgorithm")
-      && files.server.includes("crypto.scryptSync"),
+      && files.accountSessionHelpers.includes("parsePasswordHashAlgorithm")
+      && files.accountSessionHelpers.includes("crypto.scryptSync"),
   },
   {
     name: "sessions support refresh token rotation, device tracking, and revoke reasons",
@@ -65,23 +75,46 @@ const checks = [
       && files.schema.includes("revoked_reason")
       && files.postgres.includes("rotatedFromTokenHash")
       && files.postgres.includes("revokeOtherSessionsForUsername")
-      && files.server.includes("issueSessionTokens")
-      && files.server.includes("refresh_token"),
+      && files.accountSessionHelpers.includes("issueSessionTokens")
+      && accountAuthSource.includes("refresh_token"),
   },
   {
     name: "token login accepts refresh tokens and rotates old tokens",
-    ok: files.server.includes("data.refresh_token || data.session_token")
-      && files.server.includes("usingRefreshToken")
-      && files.server.includes("revokeSessionByTokenHash(tokenHash, \"rotated\")")
-      && files.server.includes("recordLoginAttempt(socket, player, account.username, usingRefreshToken ? \"refresh_token_login\" : \"token_login\", true"),
+    ok: accountAuthSource.includes("data.refresh_token || data.session_token")
+      && accountAuthSource.includes("usingRefreshToken")
+      && accountAuthSource.includes("revokeSessionByTokenHash(tokenHash, \"rotated\")")
+      && accountAuthSource.includes("recordLoginAttempt(socket, player, account.username, usingRefreshToken ? \"refresh_token_login\" : \"token_login\", true"),
   },
   {
     name: "login attempts are rate-limited and stored durably",
     ok: files.schema.includes("CREATE TABLE IF NOT EXISTS account_login_attempts")
       && files.postgres.includes("recordLoginAttempt(entry = {})")
-      && files.server.includes("checkLoginAttemptAllowed")
+      && files.accountSessionHelpers.includes("checkLoginAttemptAllowed")
       && files.server.includes("LOGIN_ATTEMPT_LIMIT_ACCOUNT")
-      && files.server.includes("recordLoginAttempt(socket, player, username, \"login\", false"),
+      && accountAuthSource.includes("recordLoginAttempt(socket, player, username, \"login\", false"),
+  },
+  {
+    name: "account/auth route bodies are TypeScript-owned",
+    ok: files.accountAuthRoutes.includes("createServerAccountAuthRoutes")
+      && files.accountAuthRoutes.includes("async function handleAccountRegister")
+      && files.accountAuthRoutes.includes("async function handleAccountTokenLogin")
+      && files.server.includes("getServerAccountAuthRoutes().handleAccountRegister")
+      && files.server.includes("getServerAccountAuthRoutes().handleAccountTokenLogin")
+      && !/function ensureDevBackendAccount\(username\) \{\s+const usernameValidation = validateUsername/.test(files.server),
+  },
+  {
+    name: "account/session helper bodies are TypeScript-owned",
+    ok: files.accountSessionHelpers.includes("createServerAccountSessionHelpers")
+      && files.accountSessionHelpers.includes("function makePasswordHash")
+      && files.accountSessionHelpers.includes("function issueSessionTokens")
+      && files.accountSessionHelpers.includes("async function applyPasswordResetToken")
+      && files.accountSessionHelpers.includes("async function checkLoginAttemptAllowed")
+      && files.server.includes("getServerAccountSessionHelpers().makePasswordHash")
+      && files.server.includes("getServerAccountSessionHelpers().issueSessionTokens")
+      && files.server.includes("getServerAccountSessionHelpers().applyPasswordResetToken")
+      && files.server.includes("getServerAccountSessionHelpers().checkLoginAttemptAllowed")
+      && !/function issueSessionTokens\(account\) \{\s+const sessionToken/.test(files.server)
+      && !/async function applyPasswordResetToken\(token, password\) \{\s+const passwordValidation/.test(files.server),
   },
   {
     name: "admin 2FA is wired through TOTP verification",
@@ -111,12 +144,22 @@ const checks = [
   {
     name: "package security check includes account/session security check",
     ok: files.packageJson.includes('"check:account-security": "node scripts/check_account_session_security_wiring.js"')
+      && files.packageJson.includes('"check:server-account-auth-routes": "npm run build:server-account-auth-routes && node scripts/check_server_account_auth_routes_build.js"')
+      && files.packageJson.includes('"check:server-account-session-helpers": "npm run build:server-account-session-helpers && node scripts/check_server_account_session_helpers_build.js"')
+      && files.packageJson.includes("npm run check:server-account-auth-routes")
+      && files.packageJson.includes("npm run check:server-account-session-helpers")
       && files.packageJson.includes("npm run check:account-security"),
   },
   {
     name: "deploy helper ships and runs account/session security check",
     ok: files.deploy.includes("$localAccountSessionSecurityWiringCheck")
+      && files.deploy.includes("$localServerAccountAuthRoutes")
+      && files.deploy.includes("$localServerAccountSessionHelpers")
       && files.deploy.includes("node --check scripts/check_account_session_security_wiring.js")
+      && files.deploy.includes("node --check scripts/check_server_account_auth_routes_build.js")
+      && files.deploy.includes("node --check scripts/check_server_account_session_helpers_build.js")
+      && files.deploy.includes("npm run build:server-account-auth-routes")
+      && files.deploy.includes("npm run build:server-account-session-helpers")
       && files.deploy.includes("npm run check:account-security"),
   },
   {

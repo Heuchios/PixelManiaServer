@@ -1,9 +1,13 @@
 #!/usr/bin/env node
+// @ts-check
 
 const fs = require("node:fs");
 const path = require("node:path");
-const { ITEMS } = require("../server_item_database");
+/** @type {{ ITEMS: Record<string, unknown> }} */
+const itemDatabase = require("../server_item_database");
+const { ITEMS } = itemDatabase;
 
+/** @returns {string} */
 function resolveClientItemDatabasePath() {
   const explicitPath = process.argv[2] || process.env.PIXELMANIA_CLIENT_ITEM_DB;
   if (explicitPath) {
@@ -17,6 +21,11 @@ function resolveClientItemDatabasePath() {
   return path.join(clientDir, "Scripts", "item_database.gd");
 }
 
+/**
+ * @param {string} source
+ * @param {number} startIndex
+ * @returns {{ value: string, nextIndex: number }}
+ */
 function readQuotedString(source, startIndex) {
   const quote = source[startIndex];
   let value = "";
@@ -40,6 +49,11 @@ function readQuotedString(source, startIndex) {
   throw new Error(`Unterminated string near character ${startIndex}`);
 }
 
+/**
+ * @param {string} source
+ * @param {number} startIndex
+ * @returns {number}
+ */
 function skipWhitespace(source, startIndex) {
   let index = startIndex;
   while (index < source.length && /\s/.test(source[index])) {
@@ -48,6 +62,11 @@ function skipWhitespace(source, startIndex) {
   return index;
 }
 
+/**
+ * @param {string} source
+ * @param {number} startIndex
+ * @returns {number}
+ */
 function skipLineComment(source, startIndex) {
   let index = startIndex;
   while (index < source.length && source[index] !== "\n") {
@@ -56,6 +75,11 @@ function skipLineComment(source, startIndex) {
   return index;
 }
 
+/**
+ * @param {string} source
+ * @param {string} constName
+ * @returns {string}
+ */
 function extractDictionaryBody(source, constName) {
   const constIndex = source.indexOf(`const ${constName}`);
   if (constIndex < 0) {
@@ -95,8 +119,13 @@ function extractDictionaryBody(source, constName) {
   throw new Error(`Could not find closing dictionary brace for ${constName}`);
 }
 
+/**
+ * @param {string} dictionaryBody
+ * @returns {string[]}
+ */
 function extractTopLevelDictionaryKeys(dictionaryBody) {
- const keys = [];
+  /** @type {string[]} */
+  const keys = [];
   let depth = 0;
 
   for (let i = 0; i < dictionaryBody.length; i += 1) {
@@ -131,7 +160,12 @@ function extractTopLevelDictionaryKeys(dictionaryBody) {
   return keys;
 }
 
+/**
+ * @param {string} dictionaryBody
+ * @returns {Set<string>}
+ */
 function extractGeneratedSeedIds(dictionaryBody) {
+  /** @type {Set<string>} */
   const seedIds = new Set();
   const seedFieldPattern = /["']seed["']\s*:\s*["']([^"']+)["']/g;
   let match = seedFieldPattern.exec(dictionaryBody);
@@ -147,10 +181,15 @@ function extractGeneratedSeedIds(dictionaryBody) {
   return seedIds;
 }
 
+/**
+ * @param {Iterable<string>} ids
+ * @returns {string[]}
+ */
 function sortIds(ids) {
   return [...ids].sort((a, b) => a.localeCompare(b));
 }
 
+/** @returns {void} */
 function main() {
   const clientItemDatabasePath = resolveClientItemDatabasePath();
 

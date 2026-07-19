@@ -51,9 +51,10 @@ const LOG_FILES = [
 ];
 
 const INVENTORY_FIELDS = Object.values(ItemDb.CATEGORY_TO_FIELD || {});
-const VALID_ROLES = new Set(["player", "moderator", "mod", "admin", "developer", "owner"]);
+const VALID_ROLES = new Set(["player", "moderator", "mod", "designer", "admin", "developer", "owner"]);
 const VEND_BLOCKS = new Set(["vend_empty", "vend_pending", "vend_sold"]);
 const STORAGE_BLOCKS = new Set(["safe", ...VEND_BLOCKS]);
+const SYSTEM_BLOCKS = new Set(["bedrock"]);
 
 const args = process.argv.slice(2);
 
@@ -120,6 +121,10 @@ function blockType(entry) {
 function isWorldLockBlockType(value) {
   const clean = cleanName(value);
   return clean === "world_lock" || clean === "super_world_lock";
+}
+
+function isSystemBlockType(value) {
+  return SYSTEM_BLOCKS.has(cleanName(value));
 }
 
 function usage() {
@@ -348,6 +353,8 @@ function scanPlayerFile(report, filePath) {
     "selected_item",
     "equipped_tool",
     "equipped_back",
+    "equipped_hat",
+    "equipped_hat_item",
     "equipped_hair",
     "equipped_hair_item",
     "equipped_eyewear",
@@ -356,13 +363,16 @@ function scanPlayerFile(report, filePath) {
     "equipped_pants",
     "equipped_shoes",
     "equipped_shoes_item",
+    "equipped_ride_item",
     "tool",
     "back",
+    "hat",
     "hair",
     "eyewear",
     "shirt",
     "pants",
     "shoes",
+    "ride",
   ];
   for (const field of equipmentFields) {
     const itemId = cleanText(playerData[field]);
@@ -422,6 +432,8 @@ function scanBlockArray(report, filePath, worldName, blocks, layer, seenCells) {
 
     if (!type) {
       addIssue(report, "error", "world_block_missing_type", filePath, "World block is missing block_type.", { world: worldName, layer, cell: key });
+    } else if (isSystemBlockType(type)) {
+      continue;
     } else if (!ItemDb.hasItem(type)) {
       addIssue(report, "error", "world_unknown_block", filePath, "World contains a block ID missing from server_item_database.", {
         world: worldName,

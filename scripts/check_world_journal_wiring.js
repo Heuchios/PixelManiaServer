@@ -34,10 +34,17 @@ function fromRepoRoot(filename) {
 const files = {
   postgres: readFirst(fromBackend("postgres_store.js")),
   server: readFirst(fromBackend("server.js")),
+  serverPhase8WorldActionRoutes: readFirst(fromBackend("server_phase8_world_action_routes.js"), false),
+  serverPhase8FinalRoutes: readFirst(fromBackend("server_phase8_final_routes.js"), false),
   schema: readFirst(fromBackend("docs/postgres_security_foundation.sql")),
   rules: readFirst(fromRepoRoot("docs/backend_persistence_rules.md"), false),
   handoff: readFirst(fromRepoRoot("docs/codex_handoff_status.md"), false),
 };
+files.serverRouteSources = [
+  files.server,
+  files.serverPhase8WorldActionRoutes,
+  files.serverPhase8FinalRoutes,
+].join("\n");
 
 const worldBlockSchema = (
   files.schema.match(/CREATE TABLE IF NOT EXISTS world_block_changes \([\s\S]*?\);/) || [""]
@@ -79,16 +86,16 @@ const checks = [
   },
   {
     name: "server block updates send old/new block IDs",
-    ok: files.server.includes("getWorldBlockTypeAt")
-      && files.server.includes("block_type_before: blockTypeBefore")
-      && files.server.includes("block_type_after: update.action === \"break\" ? \"\" : update.block_type"),
+    ok: files.serverRouteSources.includes("getWorldBlockTypeAt")
+      && files.serverRouteSources.includes("block_type_before: blockTypeBefore")
+      && files.serverRouteSources.includes("block_type_after: update.action === \"break\" ? \"\" : update.block_type"),
   },
   {
     name: "server interaction updates commit object journal rows",
-    ok: files.server.includes("buildWorldObjectChangeEntry")
-      && files.server.includes("const objectBefore = getWorldObjectJournalData(worldName, update)")
-      && files.server.includes("const objectAfter = getWorldObjectJournalData(worldName, update)")
-      && files.server.includes("await commitWorldStateWithBlockChanges(worldName, [worldObjectChangeEntry])"),
+    ok: files.serverRouteSources.includes("buildWorldObjectChangeEntry")
+      && files.serverRouteSources.includes("const objectBefore = getWorldObjectJournalData(worldName, update)")
+      && files.serverRouteSources.includes("const objectAfter = getWorldObjectJournalData(worldName, update)")
+      && files.serverRouteSources.includes("await commitWorldStateWithBlockChanges(worldName, [worldObjectChangeEntry])"),
   },
   {
     name: "linked doors and vending buys write object journals",

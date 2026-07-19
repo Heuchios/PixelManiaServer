@@ -1,0 +1,22 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "noEmitOnError": true,
+    "outDir": ".tsbuild/server-entry",
+    "rootDir": "src",
+    "declaration": false,
+    "sourceMap": false,
+    "moduleDetection": "force",
+    "strict": true,
+    "noImplicitAny": false,
+    "strictNullChecks": false,
+    "strictFunctionTypes": false,
+    "strictPropertyInitialization": false,
+    "useUnknownInCatchVariables": false
+  },
+  "include": [
+    "src/server.ts"
+  ],
+  "exclude": []
+}

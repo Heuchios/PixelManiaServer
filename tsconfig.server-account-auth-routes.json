@@ -1,0 +1,16 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": ".tsbuild",
+    "rootDir": "src",
+    "declaration": false,
+    "sourceMap": false,
+    "strict": true,
+    "noImplicitAny": true,
+    "useUnknownInCatchVariables": false
+  },
+  "include": [
+    "src/server_account_auth_routes.ts"
+  ]
+}

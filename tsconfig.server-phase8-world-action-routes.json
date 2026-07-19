@@ -1,0 +1,23 @@
+{
+  "compilerOptions": {
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "CommonJS",
+    "noEmit": false,
+    "outDir": ".tsbuild",
+    "rootDir": "src",
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022",
+    "types": [
+      "node"
+    ],
+    "useUnknownInCatchVariables": false
+  },
+  "include": [
+    "src/server_phase8_world_action_routes.ts"
+  ],
+  "exclude": [
+    "node_modules"
+  ]
+}

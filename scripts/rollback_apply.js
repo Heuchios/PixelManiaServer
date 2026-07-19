@@ -20,23 +20,25 @@ const CATEGORY_FIELD = new Map([
   ["seed", "seed_inventory"],
   ["tool", "tool_inventory"],
   ["back", "back_inventory"],
+  ["hat", "hat_inventory"],
   ["hair", "hair_inventory"],
   ["eyewear", "eyewear_inventory"],
   ["shirt", "shirt_inventory"],
   ["pants", "pants_inventory"],
   ["shoes", "shoes_inventory"],
+  ["ride", "ride_inventory"],
   ["currency", "currency_inventory"],
   ["material", "material_inventory"],
   ["lure", "lure_inventory"],
   ["fish", "fish_inventory"],
 ]);
 
-const TRACKED_CATEGORIES = new Set(["tool", "back", "hair", "eyewear", "shirt", "pants", "shoes"]);
-const DEFAULT_STACK_LIMIT = ItemDatabase.DEFAULT_STACK_LIMIT || 200;
+const TRACKED_CATEGORIES = new Set(["tool", "back", "hat", "hair", "eyewear", "shirt", "pants", "shoes", "ride"]);
+const DEFAULT_STACK_LIMIT = ItemDatabase.DEFAULT_STACK_LIMIT || 400;
 const MAX_STACK_LIMIT = ItemDatabase.GEM_CURRENCY_STACK_LIMIT || 100000000000;
 const args = process.argv.slice(2);
 const mode = cleanText(args[0] || "help").toLowerCase();
-const WORLD_JOURNAL_SAFE_SOURCE_TYPES = ["world_interaction_update", "world_block_update", "world_block_break", "world_seed_update", "world_item_drop_create", "world_item_drop_update", "world_item_drop_pickup", "drop_inventory_item", "safe_transaction", "safe_break_return", "seed_place", "vending", "door_enter", "door_reciprocal_link", "server_event", "world_event", "world_lock", "entrance_gate_move", "world_interaction", "world_object_change"];
+const WORLD_JOURNAL_SAFE_SOURCE_TYPES = ["world_interaction_update", "world_block_update", "world_block_break", "world_seed_update", "world_item_drop_create", "world_item_drop_update", "world_item_drop_pickup", "drop_inventory_item", "safe_transaction", "safe_break_return", "seed_place", "vending", "door_enter", "door_reciprocal_link", "server_event", "world_event", "world_lock", "entrance_gate_move", "world_interaction", "world_object_change", "duck_feed", "duck_harvest", "duck_drop", "duck_decay"];
 
 function usage(exitCode = 0) {
   console.log([
@@ -329,6 +331,8 @@ function removeReplayInteractionExtras(state, x, y) {
   delete block.sign_text;
   delete block.toggle_on;
   delete block.door_id;
+  delete block.door_name;
+  delete block.name;
   delete block.door_destination;
   delete block.door_target_world;
   delete block.door_target_id;
@@ -351,6 +355,7 @@ function syncReplayInteractionToBlock(state, x, y, data = {}) {
   }
   if (action === "door_state") {
     if (data.door_id) entry.door_id = cleanKey(data.door_id);
+    if (Object.prototype.hasOwnProperty.call(data, "door_name") || Object.prototype.hasOwnProperty.call(data, "name")) entry.door_name = cleanText(data.door_name || data.name).slice(0, 64);
     if (data.destination || data.door_destination) entry.door_destination = cleanText(data.destination || data.door_destination).slice(0, 200);
     if (data.target_world || data.door_target_world) entry.door_target_world = cleanKey(data.target_world || data.door_target_world).toUpperCase();
     if (data.target_door_id || data.door_target_id) entry.door_target_id = cleanKey(data.target_door_id || data.door_target_id);

@@ -1,0 +1,20 @@
+{
+  "compilerOptions": {
+    "esModuleInterop": true,
+    "forceConsistentCasingInFileNames": true,
+    "module": "CommonJS",
+    "noEmit": false,
+    "outDir": ".tsbuild",
+    "rootDir": "src",
+    "skipLibCheck": true,
+    "strict": true,
+    "target": "ES2022",
+    "types": ["node"]
+  },
+  "include": [
+    "src/atlas_item_definition.ts",
+    "src/item_atlas_db.ts",
+    "src/server_item_database.ts"
+  ],
+  "exclude": ["node_modules"]
+}
