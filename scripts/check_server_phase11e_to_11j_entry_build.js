@@ -26,6 +26,8 @@ const syncSource = readRequired("scripts/sync_server_entry_build.js");
 const deploySource = readRequired("deploy_to_droplet.ps1");
 const config = JSON.parse(readRequired("tsconfig.server-entry.json"));
 const packageJson = JSON.parse(readRequired("package.json"));
+const explicitAnyCount = (source.match(/:\s*any\b/g) || []).length;
+const maxExplicitAnyCount = 3673;
 
 const phaseOwnership = {
   "11E presence, interest, and delivery": [
@@ -94,6 +96,21 @@ assert.equal(generated, `${generatedHeader}${compiled}`, "server.js must exactly
 assert.ok(!source.includes("@ts-nocheck"), "src/server.ts must not disable TypeScript checking");
 assert.ok(config.compilerOptions?.noEmitOnError === true, "server entry build must refuse emit on compiler errors");
 assert.ok(config.compilerOptions?.noCheck !== true, "server entry build must not use noCheck");
+for (const strictOption of [
+  "strict",
+  "noImplicitAny",
+  "strictNullChecks",
+  "strictFunctionTypes",
+  "strictPropertyInitialization",
+  "useUnknownInCatchVariables",
+]) {
+  assert.equal(config.compilerOptions?.[strictOption], true, `server entry build must enable ${strictOption}`);
+}
+assert.ok(
+  explicitAnyCount <= maxExplicitAnyCount,
+  `src/server.ts explicit any count increased: ${explicitAnyCount} > ${maxExplicitAnyCount}`,
+);
+console.log(`[server-entry] explicit any budget: ${explicitAnyCount}/${maxExplicitAnyCount}`);
 assert.deepEqual(config.include, ["src/server.ts"]);
 assert.ok(syncSource.includes(".tsbuild\", \"server-entry\", \"server.js"));
 assert.ok(syncSource.includes("Generated from src/server.ts"));

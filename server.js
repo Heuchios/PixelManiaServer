@@ -52,6 +52,12 @@ const ServerRuntimeStats = require("./server_runtime_stats");
 function isBrokenStdIoError(error) {
     return ServerPhase11aRuntimeModule.isBrokenStdIoError(error);
 }
+function getErrorMessage(error) {
+    return error instanceof Error ? error.message : String(error);
+}
+function getErrorStack(error) {
+    return error instanceof Error && error.stack ? error.stack : getErrorMessage(error);
+}
 function installConsoleWriteGuard() {
     return ServerPhase11aRuntimeModule.installConsoleWriteGuard(process, console);
 }
@@ -2393,7 +2399,7 @@ wss.on("connection", (socket, request = null) => {
                 }
                 let data;
                 try {
-                    data = JSON.parse(raw);
+                    data = JSON.parse(String(raw));
                 }
                 catch {
                     return;
@@ -2429,7 +2435,7 @@ wss.on("connection", (socket, request = null) => {
                 return;
             }
             catch (error) {
-                console.warn("[socket_message_error]", error.message);
+                console.warn("[socket_message_error]", getErrorMessage(error));
             }
         };
         socket.inboundMessageQueue = Promise.resolve(socket.inboundMessageQueue).then(processMessage, processMessage);
@@ -2437,7 +2443,7 @@ wss.on("connection", (socket, request = null) => {
     socket.on("close", () => {
         void (async () => {
             await Promise.resolve(socket.inboundMessageQueue).catch((error) => {
-                console.warn("[socket_message_queue] disconnect drain failed:", error.message);
+                console.warn("[socket_message_queue] disconnect drain failed:", getErrorMessage(error));
             });
             const player = players.get(playerId);
             const closedUsername = player ? player.account_username : "";
@@ -2452,7 +2458,7 @@ wss.on("connection", (socket, request = null) => {
                         await removeWorldLockKeysFromPlayerInventory(socket, player, player.world, "disconnect", { silent: true });
                     }
                     catch (error) {
-                        console.warn("[world-lock-key] disconnect cleanup failed:", error.message);
+                        console.warn("[world-lock-key] disconnect cleanup failed:", getErrorMessage(error));
                     }
                 }
                 const persistenceFlush = await flushPendingSessionPersistence(player.account_username, closedWorld, "disconnect");
@@ -3353,7 +3359,7 @@ function replaceActiveAccountSession(username, replacementPlayerId) {
     const existingSocket = getSocketByPlayerId(activePlayerId);
     activeAccountSessions.delete(key);
     redisStore.clearActiveSession(username, activePlayerId).catch((error) => {
-        console.warn("[redis] active session replacement cleanup failed:", error.message);
+        console.warn("[redis] active session replacement cleanup failed:", getErrorMessage(error));
     });
     if (existingPlayer) {
         cancelActiveTradeForPlayer(activePlayerId, "Trade canceled because the account signed on somewhere else.");
@@ -3372,10 +3378,10 @@ function replaceActiveAccountSession(username, replacementPlayerId) {
         const existingWorld = cleanWorld(existingPlayer.world || "START");
         clearPlayerWorldIndex(existingPlayer);
         releasePlayerWorldAdmission(existingPlayer, existingWorld).catch((error) => {
-            console.warn("[redis] world admission replacement cleanup failed:", error.message);
+            console.warn("[redis] world admission replacement cleanup failed:", getErrorMessage(error));
         });
         releaseOwnedWorldRouteIfEmpty(existingWorld).catch((error) => {
-            console.warn("[redis] world route replacement cleanup failed:", error.message);
+            console.warn("[redis] world route replacement cleanup failed:", getErrorMessage(error));
         });
         broadcastToWorld(existingPlayer.world, buildPublicPlayerPresencePayload("player_left", existingPlayer, existingPlayer.world), activePlayerId);
         broadcastSystemToWorld(existingPlayer.world, `${existingPlayer.name} left ${existingPlayer.world}`, activePlayerId);
@@ -3391,10 +3397,10 @@ function releaseActiveAccountSession(player) {
     if (activeAccountSessions.get(key) === player.id) {
         activeAccountSessions.delete(key);
         redisStore.clearActiveSession(player.account_username, player.id).catch((error) => {
-            console.warn("[redis] active session cleanup failed:", error.message);
+            console.warn("[redis] active session cleanup failed:", getErrorMessage(error));
         });
         redisStore.clearPresence(player.account_username).catch((error) => {
-            console.warn("[redis] presence cleanup failed:", error.message);
+            console.warn("[redis] presence cleanup failed:", getErrorMessage(error));
         });
     }
 }
@@ -3416,10 +3422,10 @@ function touchLivePresence(socket, player, options = {}) {
         updated_at: new Date(now).toISOString(),
     };
     redisStore.setPresence(player.account_username, presence, REDIS_PRESENCE_TTL_MS).catch((error) => {
-        console.warn("[redis] presence update failed:", error.message);
+        console.warn("[redis] presence update failed:", getErrorMessage(error));
     });
     redisStore.setActiveSession(player.account_username, player.id, REDIS_ACTIVE_SESSION_TTL_MS).catch((error) => {
-        console.warn("[redis] active session update failed:", error.message);
+        console.warn("[redis] active session update failed:", getErrorMessage(error));
     });
     refreshPlayerWorldAdmission(player).catch((error) => {
         console.warn("[redis] world admission refresh failed:", error.message);
@@ -3487,7 +3493,7 @@ function releaseLiveActionLock(lockHandle) {
     clearLiveActionLockCleanup(lockHandle);
     lockHandle.released = true;
     redisStore.releaseLock(lockHandle.lock).catch((error) => {
-        console.warn("[redis] action lock release failed:", error.message);
+        console.warn("[redis] action lock release failed:", getErrorMessage(error));
     });
 }
 function getInventoryLockResource(username) {
@@ -11895,7 +11901,10 @@ function parseDoorDestination(value, sourceWorld = "START") {
             target_door_id: "",
         };
     }
-    const parts = destination.split(":").map((part) => String(part || "").trim()).filter((part) => part !== "");
+    const parts = destination
+        .split(":")
+        .map((part) => String(part || "").trim())
+        .filter((part) => part !== "");
     let targetWorld = fallbackWorld;
     let targetDoorId = "";
     if (parts.length >= 3 && parts[1].toLowerCase() === "door") {
@@ -12179,8 +12188,12 @@ function buildPunchToggleInstantDeathTargets(worldName, update, validation) {
         update.instant_death = true;
         update.kill_reason = "death_gate_crush";
         update.kill_block_type = update.block_type;
-        update.kill_player_ids = killed.map((entry) => entry.playerId).filter((id) => id !== "");
-        update.kill_usernames = killed.map((entry) => entry.username).filter((username) => username !== "");
+        update.kill_player_ids = killed
+            .map((entry) => entry.playerId)
+            .filter((id) => id !== "");
+        update.kill_usernames = killed
+            .map((entry) => entry.username)
+            .filter((username) => username !== "");
     }
     return killed;
 }
@@ -15463,7 +15476,7 @@ function appendJsonLine(filePath, entry, label = "audit") {
         });
     }
     catch (error) {
-        console.warn(`Could not queue ${label} log:`, error.message);
+        console.warn(`Could not queue ${label} log:`, getErrorMessage(error));
     }
 }
 function getAuditActor(socket, player, usernameOverride = "") {
@@ -15718,7 +15731,7 @@ async function uploadWorldSnapshotToObjectStorage(snapshotPath, cleanWorld, snap
         return storageUri;
     }
     catch (error) {
-        console.warn(`[snapshots] Spaces upload failed for ${cleanWorld}:`, error.message);
+        console.warn(`[snapshots] Spaces upload failed for ${cleanWorld}:`, getErrorMessage(error));
         return null;
     }
 }
@@ -15741,7 +15754,7 @@ function createWorldSnapshot(worldName, reason, socket = null, player = null, de
         const snapshotFileWrite = writeJsonFileAtomicAsync(snapshotPath, snapshotPayload)
             .then(() => true)
             .catch((error) => {
-            console.warn(`[snapshots] local snapshot write failed for ${clean}:`, error.message);
+            console.warn(`[snapshots] local snapshot write failed for ${clean}:`, getErrorMessage(error));
             return false;
         });
         const objectStorageWrite = snapshotFileWrite.then((fileSaved) => (fileSaved ? uploadWorldSnapshotToObjectStorage(snapshotPath, clean, snapshotFileName) : null));
@@ -15771,7 +15784,7 @@ function createWorldSnapshot(worldName, reason, socket = null, player = null, de
         return { snapshotId, snapshotPath };
     }
     catch (error) {
-        console.warn("Could not create world snapshot:", error.message);
+        console.warn("Could not create world snapshot:", getErrorMessage(error));
         return null;
     }
 }
@@ -16928,7 +16941,9 @@ async function handleDeveloperPunishmentCommand(socket, player, data, command, p
             scope,
             world: worldName,
             revoked_count: result.revoked_count,
-            before_active_punishment_ids: activeBefore.map((row) => row.punishment_id).filter((id) => Number(id) > 0),
+            before_active_punishment_ids: activeBefore
+                .map((row) => row.punishment_id)
+                .filter((id) => Number(id) > 0),
             after_active: false,
             reason: parsed.reason,
         }, {
@@ -17989,17 +18004,17 @@ async function handleDeveloperCommandRequest(socket, player, data) {
             runtime: getCrashRuntimeState(),
         };
         writeCrashReport("developer_command_exception", details);
-        console.warn("[developer_command_exception]", error && error.stack ? error.stack : error);
+        console.warn("[developer_command_exception]", getErrorStack(error));
         try {
             logSecurityEvent(socket, player, "developer_command_exception", {
                 request_id: requestId,
                 command,
                 command_name: commandName,
-                message: String(error?.message || error || "unknown"),
+                message: getErrorMessage(error),
             }, "error");
         }
         catch (logError) {
-            console.warn("[developer_command_exception_log_failed]", logError && logError.message ? logError.message : logError);
+            console.warn("[developer_command_exception_log_failed]", getErrorMessage(logError));
         }
         sendDeveloperDenied(socket, requestId, command, "Developer command failed safely. Check crash_reports.log for details.", {
             reason: "exception",
@@ -18037,7 +18052,7 @@ async function handleDeveloperCommandRequestUnsafe(socket, player, data) {
     if (isAdmin(player)) {
         const securityRequirement = getDeveloperSecurityRequirement(player);
         if (!securityRequirement.ok) {
-            deny(securityRequirement.message, { reason: securityRequirement.reason }, securityRequirement.extra);
+            deny(securityRequirement.message || "Developer security requirements were not met.", { reason: securityRequirement.reason }, securityRequirement.extra);
             return;
         }
     }
@@ -18583,7 +18598,7 @@ async function handleDeveloperCommandRequestUnsafe(socket, player, data) {
             deny("Snow Storm command failed safely. Check crash_reports.log for details.", {
                 event_type: SNOW_STORM_EVENT_TYPE,
                 reason: "exception",
-                message: String(error?.message || error || "unknown"),
+                message: getErrorMessage(error),
             });
             return;
         }
@@ -18889,11 +18904,11 @@ function makeGeneratorLinkSummary(generatorEntry) {
     const linkedPoleCount = linkedPoleKeys.length;
     const linkedPads = linkedPadKeys
         .map((key) => parseGridKey(key))
-        .filter((grid) => grid && isGridInWorld(grid.x, grid.y))
+        .filter((grid) => Boolean(grid && isGridInWorld(grid.x, grid.y)))
         .map((grid) => ({ x: grid.x, y: grid.y }));
     const linkedPoles = linkedPoleKeys
         .map((key) => parseGridKey(key))
-        .filter((grid) => grid && isGridInWorld(grid.x, grid.y))
+        .filter((grid) => Boolean(grid && isGridInWorld(grid.x, grid.y)))
         .map((grid) => ({ x: grid.x, y: grid.y }));
     return {
         linked_pad_count: linkedPadCount,
@@ -25847,8 +25862,8 @@ async function startSnowStormEvent(worldName, options = {}) {
         if (previousWorldState != null) {
             worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
         }
-        console.warn("[world_event] snow_storm start exception:", error && error.stack ? error.stack : error);
-        return { ok: false, reason: "exception", message: String(error?.message || error || "unknown") };
+        console.warn("[world_event] snow_storm start exception:", getErrorStack(error));
+        return { ok: false, reason: "exception", message: getErrorMessage(error) };
     }
     finally {
         worldEventActionLocks.delete(lockKey);
@@ -25967,8 +25982,8 @@ async function endSnowStormEvent(worldName, options = {}) {
             worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
             scheduleWorldEventEnd(clean);
         }
-        console.warn("[world_event] snow_storm end exception:", error && error.stack ? error.stack : error);
-        return { ok: false, reason: "exception", message: String(error?.message || error || "unknown") };
+        console.warn("[world_event] snow_storm end exception:", getErrorStack(error));
+        return { ok: false, reason: "exception", message: getErrorMessage(error) };
     }
     finally {
         worldEventActionLocks.delete(lockKey);
@@ -27346,7 +27361,7 @@ function broadcastPlayerPresenceToInterestedPlayers(subject, payload, excludePla
     catch (error) {
         console.warn("[broadcast_serialize_error]", {
             world: clean,
-            message: error && error.message ? error.message : String(error),
+            message: getErrorMessage(error),
         });
         return;
     }
@@ -27818,7 +27833,7 @@ function broadcastToWorld(worldName, message, excludePlayerId = "") {
     catch (error) {
         console.warn("[broadcast_serialize_error]", {
             world: clean,
-            message: error && error.message ? error.message : String(error),
+            message: getErrorMessage(error),
         });
         return;
     }
@@ -27838,7 +27853,7 @@ function broadcastToAuthenticatedPlayers(message, excludePlayerId = "") {
     catch (error) {
         console.warn("[broadcast_serialize_error]", {
             authenticated: true,
-            message: error && error.message ? error.message : String(error),
+            message: getErrorMessage(error),
         });
         return;
     }

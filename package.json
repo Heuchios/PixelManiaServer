@@ -98,7 +98,8 @@
 	"check:postgres-contracts": "npm run build:postgres-contracts && node scripts/check_postgres_contracts.js",
 	"check:types": "tsc --noEmit --project tsconfig.json",
 	"check:typescript": "npm run check:types && npm run check:item-data && npm run check:redis-store && npm run check:postgres-store && npm run check:server-runtime-stats && npm run check:server-crash-details && npm run check:server-env-config && npm run check:server-helpers && npm run check:server-persistence-helpers && npm run check:server-player-state-helpers && npm run check:server-world-state-helpers && npm run check:server-message-router-helpers && npm run check:server-bot-rate-limit-helpers && npm run check:server-inventory-transaction-helpers && npm run check:server-world-interaction-payload-helpers && npm run check:server-socket-delivery-helpers && npm run check:server-punishment-helpers && npm run check:server-phase6-helpers && npm run check:server-phase7-dispatcher && npm run check:server-phase8-player-session-routes && npm run check:server-phase8-world-action-routes && npm run check:server-phase8-final-routes && npm run check:server-phase9-remaining-routes && npm run check:server-account-auth-routes && npm run check:server-account-session-helpers && npm run check:server-admin-lookup-routes && npm run check:server-friend-routes && npm run check:server-trade-routes && npm run check:server-inventory-economy-routes && npm run check:server-phase10-ownership && npm run check:server-phase11a-runtime && npm run check:server-phase11b-lifecycle && npm run check:server-phase11c-trusted-movement && npm run check:server-phase11d-standard-movement && npm run check:server-entry && npm run check:packet-contracts && npm run check:drop-contracts && npm run check:inventory-contracts && npm run check:postgres-contracts",
-	"check:security": "npm run check:item-db && npm run check:item-instances && npm run check:transaction-ledger && npm run check:gem-ledger && npm run check:world-journal && npm run check:rollback && npm run check:server-validation && npm run check:anti-dupe && npm run check:admin-actions && npm run check:account-security && npm run check:bot-rate-limits && npm run check:integrity-hashes && npm run check:monitoring-dashboard && npm run check:scale-readiness && npm run check:entrance-gate && npm run check:join-spawn && npm run check:machine-break-return && npm run check:typescript",
+	"check:dependencies": "npm audit --omit=dev --audit-level=high",
+	"check:security": "npm run check:dependencies && npm run check:item-db && npm run check:item-instances && npm run check:transaction-ledger && npm run check:gem-ledger && npm run check:world-journal && npm run check:rollback && npm run check:server-validation && npm run check:anti-dupe && npm run check:admin-actions && npm run check:account-security && npm run check:bot-rate-limits && npm run check:integrity-hashes && npm run check:monitoring-dashboard && npm run check:scale-readiness && npm run check:entrance-gate && npm run check:join-spawn && npm run check:machine-break-return && npm run check:typescript",
 	"integrity:admin": "node scripts/admin_integrity_report.js",
 	"integrity:admin-report": "node scripts/admin_integrity_report.js",
 	"integrity:scan": "node scripts/integrity_scan.js",
@@ -153,13 +154,14 @@
   "type": "commonjs",
   "dependencies": {
 	"dotenv": "^17.4.2",
-	"nodemailer": "^8.0.7",
+	"nodemailer": "^9.0.3",
 	"pg": "^8.16.3",
 	"redis": "^6.0.0",
-	"ws": "^8.20.1"
+	"ws": "^8.21.1"
   },
   "devDependencies": {
 	"@types/node": "^26.1.1",
+	"@types/pg": "^8.20.0",
 	"@types/ws": "^8.18.1",
 	"typescript": "^7.0.2"
   }

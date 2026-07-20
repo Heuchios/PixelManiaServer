@@ -804,6 +804,13 @@ const ITEM_DEFINITIONS = {
     entrance_gate: block({
         rarity: "legendary",
         block_health: 9999,
+        texture: "res://Assets/blocks/entrance_gate/entrance_gate.png",
+        animation_frames: [
+            "res://Assets/blocks/entrance_gate/entrance_gate.png",
+            "res://Assets/blocks/entrance_gate/entrance_gate_2.png",
+            "res://Assets/blocks/entrance_gate/entrance_gate_3.png",
+        ],
+        animation_frame_seconds: 0.24,
         placeable: false,
         tradeable: false,
         dropable: false,
@@ -2069,6 +2076,12 @@ const ITEM_DEFINITIONS = {
     steel_platform: block({
         rarity: "uncommon",
         block_health: 3,
+        texture: Object.freeze({ atlas: "res://image.png", cell: Object.freeze([6, 12]), cell_size: Object.freeze([32, 32]) }),
+        inventory_icon: Object.freeze({ atlas: "res://image.png", cell: Object.freeze([6, 12]), cell_size: Object.freeze([32, 32]) }),
+        atlas_item_id: 33,
+        atlas_source_id: 0,
+        atlas_coords: [6, 12],
+        alternative_tile: 0,
         seed: "",
         platform_collision: true,
         drop_rules: { seed_chance: 0, gem_range: [0, 0] },

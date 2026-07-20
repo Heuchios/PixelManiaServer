@@ -1,6 +1,7 @@
 /// <reference path="../types/pixelmania-contracts.d.ts" />
-// @ts-nocheck
 "use strict";
+
+import type { Pool, PoolClient, PoolConfig, QueryResult } from "pg";
 
 const fs = require("fs");
 const crypto = require("crypto");
@@ -11,9 +12,55 @@ const InventoryContracts = require("./server_inventory_contracts");
 const PostgresContracts = require("./postgres_store_contracts");
 const ItemDatabase = require("./server_item_database");
 
-let PoolClass = null;
+type PostgresPoolConstructor = new (config?: PoolConfig) => Pool;
+type PostgresError = Error & {
+  code?: string;
+  column?: string;
+  constraint?: string;
+  detail?: string;
+  schema?: string;
+  table?: string;
+};
+type RuntimeRecord = Record<string, any>;
+type TransactionWork<T> = (client: PoolClient) => Promise<T>;
+type DetachedWork = () => Promise<unknown>;
+type ItemInstanceMovement = RuntimeRecord;
+type InventoryLedgerEntry = {
+  item_type: string;
+  item_category: string;
+  delta: number;
+  before_amount: number;
+  after_amount: number;
+  repaired_inventory_before_amount: number | null;
+  stack_limit?: number;
+};
+type ReleasePlan = {
+  location: string;
+  metadata_action: string;
+  metadata_transaction_id: string;
+  amount: number;
+};
+type TradeOfferEntry = {
+  item_id: string;
+  item_category: string;
+  amount: number;
+};
+type InventoryDeltaResult =
+  | {
+      ok: true;
+      ledgerEntries: InventoryLedgerEntry[];
+    }
+  | {
+      ok: false;
+      reason: string;
+      item_type?: string;
+      item_category?: string;
+      player_id?: string;
+    };
+
+let PoolClass: PostgresPoolConstructor | null = null;
 try {
-  ({ Pool: PoolClass } = require("pg"));
+  PoolClass = (require("pg") as { Pool: PostgresPoolConstructor }).Pool;
 } catch {
   PoolClass = null;
 }
@@ -46,6 +93,8 @@ const POSTGRES_TRANSACTION_MAX_ATTEMPTS = 5;
 const POSTGRES_TRANSACTION_RETRY_BASE_DELAY_MS = 75;
 const POSTGRES_INIT_MAX_ATTEMPTS = 5;
 const POSTGRES_INIT_RETRY_BASE_DELAY_MS = 250;
+const POSTGRES_READ_MAX_ATTEMPTS = 5;
+const POSTGRES_READ_RETRY_BASE_DELAY_MS = 250;
 const DEFAULT_INVENTORY_STACK_LIMIT = ItemDatabase.DEFAULT_STACK_LIMIT || 400;
 const MAX_INVENTORY_STACK_LIMIT = ItemDatabase.GEM_CURRENCY_STACK_LIMIT || 100000000000;
 const ITEM_INSTANCE_TRACKED_CATEGORIES = new Set(["tool", "back", "hat", "hair", "eyewear", "shirt", "pants", "shoes", "ride"]);
@@ -103,14 +152,35 @@ const WORLD_OBJECT_CHANGE_ACTIONS = new Set([
   "cctv_state",
 ]);
 
-function delay(ms) {
+function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-function isRetryablePostgresError(error) {
-  const code = String(error?.code || "");
+function postgresError(error: unknown): PostgresError {
+  if (error instanceof Error) return error as PostgresError;
+  const normalized = new Error(String(error || "Unknown PostgreSQL error")) as PostgresError;
+  if (error && typeof error === "object") {
+    const details = error as RuntimeRecord;
+    for (const field of ["code", "column", "constraint", "detail", "schema", "table"] as const) {
+      const value = cleanName(details[field]);
+      if (value !== "") normalized[field] = value;
+    }
+  }
+  return normalized;
+}
+
+function getErrorMessage(error: unknown): string {
+  return postgresError(error).message;
+}
+
+function getErrorCode(error: unknown): string {
+  return cleanName(postgresError(error).code);
+}
+
+function isRetryablePostgresError(error: unknown): boolean {
+  const code = getErrorCode(error);
   if (code === "40P01" || code === "40001" || code === "55P03") return true;
-  const message = String(error?.message || "").toLowerCase();
+  const message = getErrorMessage(error).toLowerCase();
   return message.includes("tuple concurrently updated")
     || message.includes("could not serialize access due to concurrent update");
 }
@@ -128,32 +198,36 @@ function makeTrackedItemMovementError(result: any = {}) {
   return error;
 }
 
-function resultForTrackedItemMovementError(error: any, fallbackReason = "tracked_item_instance_movement_failed") {
-  if (error && error.isTrackedItemMovementError) {
+function resultForTrackedItemMovementError(
+  error: unknown,
+  fallbackReason = "tracked_item_instance_movement_failed"
+): RuntimeRecord | null {
+  const trackedError = error as RuntimeRecord | null;
+  if (trackedError && trackedError.isTrackedItemMovementError) {
     return {
       ok: false,
       reason: fallbackReason,
-      ...toObject(error.result),
+      ...toObject(trackedError.result),
     };
   }
   return null;
 }
 
-function toObject(value: any): any {
+function toObject(value: unknown): RuntimeRecord {
   return value && typeof value === "object" && !Array.isArray(value) ? value : {};
 }
 
-function toInt(value, fallback = 0) {
+function toInt(value: unknown, fallback = 0): number {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) return fallback;
   return Math.trunc(parsed);
 }
 
-function cleanName(value) {
+function cleanName(value: unknown): string {
   return String(value || "").trim();
 }
 
-function normalizeDbRole(value) {
+function normalizeDbRole(value: unknown): string {
   const role = cleanName(value).toLowerCase();
   if (role === "developer") return "admin";
   if (role === "mod") return "moderator";
@@ -161,31 +235,31 @@ function normalizeDbRole(value) {
   return "player";
 }
 
-function normalizeOptionalTimestamp(value) {
+function normalizeOptionalTimestamp(value: unknown): string | null {
   return PostgresContracts.normalizeOptionalTimestamp(value);
 }
 
-function jsonChecksum(value) {
+function jsonChecksum(value: unknown): string {
   return PostgresContracts.jsonChecksum(value);
 }
 
-function stableNormalizeForHash(value) {
+function stableNormalizeForHash(value: unknown): unknown {
   return PostgresContracts.stableNormalizeForHash(value);
 }
 
-function stableJsonStringify(value) {
+function stableJsonStringify(value: unknown): string {
   return PostgresContracts.stableJsonStringify(value);
 }
 
-function integrityHash(value) {
+function integrityHash(value: unknown): string {
   return PostgresContracts.integrityHash(value);
 }
 
-function ledgerNullableId(value) {
+function ledgerNullableId(value: unknown): string | null {
   return PostgresContracts.ledgerNullableId(value);
 }
 
-function ledgerNullableInteger(value) {
+function ledgerNullableInteger(value: unknown): string | null {
   return PostgresContracts.ledgerNullableInteger(value);
 }
 
@@ -197,19 +271,22 @@ function buildTransactionLedgerHash(entry: any = {}) {
   return PostgresContracts.buildTransactionLedgerHash(entry);
 }
 
-function clampStackLimit(value, fallback = DEFAULT_INVENTORY_STACK_LIMIT) {
+function clampStackLimit(value: unknown, fallback = DEFAULT_INVENTORY_STACK_LIMIT): number {
   return PostgresContracts.clampStackLimit(value, fallback);
 }
 
-function getInventoryStackLimitForItem(itemType, fallback = DEFAULT_INVENTORY_STACK_LIMIT) {
+function getInventoryStackLimitForItem(itemType: unknown, fallback = DEFAULT_INVENTORY_STACK_LIMIT): number {
   return PostgresContracts.getInventoryStackLimitForItem(itemType, fallback);
 }
 
-function resolveItemCategory(itemType, itemCategory = "") {
+function resolveItemCategory(itemType: unknown, itemCategory: unknown = ""): string {
   return PostgresContracts.resolveItemCategory(itemType, itemCategory);
 }
 
-function applyCanonicalInventoryRowsToPlayerState(rawState, inventoryRows = []) {
+function applyCanonicalInventoryRowsToPlayerState(
+  rawState: unknown,
+  inventoryRows: RuntimeRecord[] = []
+): RuntimeRecord {
   const state = { ...toObject(rawState) };
   for (const [field] of INVENTORY_FIELD_CATEGORY) {
     state[field] = {};
@@ -251,27 +328,27 @@ function worldLockRowToPayload(row: any = {}) {
   return PostgresContracts.worldLockRowToPayload(row);
 }
 
-function shouldTrackItemInstance(itemType, itemCategory = "") {
+function shouldTrackItemInstance(itemType: unknown, itemCategory: unknown = ""): boolean {
   return PostgresContracts.shouldTrackItemInstance(itemType, itemCategory);
 }
 
-function normalizeItemInstanceState(value, fallback = ITEM_INSTANCE_ACTIVE_STATE) {
+function normalizeItemInstanceState(value: unknown, fallback = ITEM_INSTANCE_ACTIVE_STATE): string {
   return PostgresContracts.normalizeItemInstanceState(value, fallback);
 }
 
-function normalizeItemInstanceLocation(value, fallback = "inventory") {
+function normalizeItemInstanceLocation(value: unknown, fallback = "inventory"): string {
   return PostgresContracts.normalizeItemInstanceLocation(value, fallback);
 }
 
-function normalizeItemInstanceSource(value, fallback = "system") {
+function normalizeItemInstanceSource(value: unknown, fallback = "system"): string {
   return PostgresContracts.normalizeItemInstanceSource(value, fallback);
 }
 
-function isVagueItemInstanceCreationSource(value) {
+function isVagueItemInstanceCreationSource(value: unknown): boolean {
   return PostgresContracts.isVagueItemInstanceCreationSource(value);
 }
 
-function normalizeTransactionLedgerStatus(value, fallback = "success") {
+function normalizeTransactionLedgerStatus(value: unknown, fallback = "success"): string {
   return PostgresContracts.normalizeTransactionLedgerStatus(value, fallback);
 }
 
@@ -279,7 +356,7 @@ function normalizeTransactionLedgerType(entry: any = {}) {
   return PostgresContracts.normalizeTransactionLedgerType(entry);
 }
 
-function normalizeItemInstanceEventType(value, fallback = "updated") {
+function normalizeItemInstanceEventType(value: unknown, fallback = "updated"): string {
   return PostgresContracts.normalizeItemInstanceEventType(value, fallback);
 }
 
@@ -287,63 +364,63 @@ function generatePublicItemInstanceId() {
   return PostgresContracts.generatePublicItemInstanceId();
 }
 
-function extractItemInstanceSource(details, fallback = "system") {
+function extractItemInstanceSource(details: unknown, fallback = "system"): string {
   return PostgresContracts.extractItemInstanceSource(details, fallback);
 }
 
-function summarizeItemInstanceEventMetadata(value) {
+function summarizeItemInstanceEventMetadata(value: unknown): RuntimeRecord {
   return PostgresContracts.summarizeItemInstanceEventMetadata(value);
 }
 
-function normalizePunishmentType(value) {
+function normalizePunishmentType(value: unknown): string {
   return PostgresContracts.normalizePunishmentType(value);
 }
 
-function normalizePunishmentScope(value) {
+function normalizePunishmentScope(value: unknown): string {
   return PostgresContracts.normalizePunishmentScope(value);
 }
 
-function normalizePunishmentEndsAt(entry) {
+function normalizePunishmentEndsAt(entry: unknown): string | null {
   return PostgresContracts.normalizePunishmentEndsAt(entry);
 }
 
-function defaultEmailForUsername(username) {
+function defaultEmailForUsername(username: unknown): string {
   return PostgresContracts.defaultEmailForUsername(username);
 }
 
-function getXpNeededForLevel(level) {
+function getXpNeededForLevel(level: unknown): number {
   return PostgresContracts.getXpNeededForLevel(level);
 }
 
-function getCumulativeXpAtLevel(level) {
+function getCumulativeXpAtLevel(level: unknown): number {
   return PostgresContracts.getCumulativeXpAtLevel(level);
 }
 
-function getPlayerTitleForLevel(level) {
+function getPlayerTitleForLevel(level: unknown): string {
   return PostgresContracts.getPlayerTitleForLevel(level);
 }
 
-function normalizeProgressionState(state) {
+function normalizeProgressionState(state: unknown): RuntimeRecord {
   return PostgresContracts.normalizeProgressionState(state);
 }
 
-function safeJson(value) {
+function safeJson(value: unknown): RuntimeRecord {
   return PostgresContracts.safeJson(value);
 }
 
-function clonePlainJson(value) {
-  return PostgresContracts.clonePlainJson(value);
+function clonePlainJson<T>(value: T): T {
+  return PostgresContracts.clonePlainJson(value) as T;
 }
 
-function stableJsonForCompare(value) {
+function stableJsonForCompare(value: unknown): unknown {
   return PostgresContracts.stableJsonForCompare(value);
 }
 
-function stableJsonString(value) {
+function stableJsonString(value: unknown): string {
   return PostgresContracts.stableJsonString(value);
 }
 
-function normalizeWorldObjectAction(value) {
+function normalizeWorldObjectAction(value: unknown): string {
   return PostgresContracts.normalizeWorldObjectAction(value);
 }
 
@@ -363,24 +440,36 @@ function extractWorldObjectJournalMap(worldState: any = {}, fallbackWorldName = 
   return PostgresContracts.extractWorldObjectJournalMap(worldState, fallbackWorldName);
 }
 
-function isUuid(value) {
+function isUuid(value: unknown): boolean {
   return PostgresContracts.isUuid(value);
 }
 
-function normalizeLedgerSource(value) {
+function normalizeLedgerSource(value: unknown): string {
   return PostgresContracts.normalizeLedgerSource(value);
 }
 
-function normalizeSecuritySeverity(value) {
+function normalizeSecuritySeverity(value: unknown): string {
   return PostgresContracts.normalizeSecuritySeverity(value);
 }
 
-function normalizeIp(value) {
+function normalizeIp(value: unknown): string {
   return PostgresContracts.normalizeIp(value);
 }
 
 class PostgresStore {
-  [key: string]: any;
+  declare schema: string;
+  declare enabled: boolean;
+  declare logger: (...args: unknown[]) => void;
+  declare ready: boolean;
+  declare degraded: boolean;
+  declare initialized: boolean;
+  declare progressionReady: boolean;
+  declare pool: Pool | null;
+  declare bootstrapSqlPath: string;
+  declare autoBootstrap: boolean;
+  declare writeQueue: Promise<unknown>;
+  declare writeQueueDepth: number;
+  declare maxWriteQueueDepth: number;
 
   /**
    * @param {PixelMania.PostgresStoreOptions} options
@@ -426,8 +515,35 @@ class PostgresStore {
     return Boolean(this.enabled && this.pool && this.ready && !this.degraded);
   }
 
-  table(name) {
+  get db(): Pool {
+    if (!this.pool) {
+      throw new Error("PostgreSQL pool is not available");
+    }
+    return this.pool;
+  }
+
+  table(name: string): string {
     return `"${this.schema}"."${name}"`;
+  }
+
+  async queryReadWithRetry(label: unknown, query: string, values: any[] = []): Promise<QueryResult<any>> {
+    const cleanLabel = cleanName(label || "read") || "read";
+    for (let attempt = 1; attempt <= POSTGRES_READ_MAX_ATTEMPTS; attempt += 1) {
+      try {
+        return await this.db.query(query, values);
+      } catch (error) {
+        if (!isRetryablePostgresError(error) || attempt >= POSTGRES_READ_MAX_ATTEMPTS) {
+          throw error;
+        }
+        const retryDelay = POSTGRES_READ_RETRY_BASE_DELAY_MS * attempt;
+        this.logger(
+          `[postgres] ${cleanLabel} attempt ${attempt} hit a transient database conflict; retrying in ${retryDelay}ms.`,
+          getErrorMessage(error)
+        );
+        await delay(retryDelay);
+      }
+    }
+    throw new Error(`PostgreSQL ${cleanLabel} retry loop exited unexpectedly`);
   }
 
   async init() {
@@ -437,17 +553,17 @@ class PostgresStore {
 
     for (let attempt = 1; attempt <= POSTGRES_INIT_MAX_ATTEMPTS; attempt += 1) {
       try {
-        await this.pool.query("SELECT 1");
+        await this.db.query("SELECT 1");
         if (this.autoBootstrap && this.bootstrapSqlPath !== "") {
           await this.applyBootstrapSql(this.bootstrapSqlPath);
         }
-        const schemaExists = await this.pool.query("SELECT to_regnamespace($1) AS oid", [this.schema]);
+        const schemaExists = await this.db.query("SELECT to_regnamespace($1) AS oid", [this.schema]);
         if (!schemaExists.rows[0] || !schemaExists.rows[0].oid) {
           this.degraded = true;
           this.logger(`[postgres] schema '${this.schema}' is missing. DB mirrors are disabled.`);
           return;
         }
-        const accountsTable = await this.pool.query("SELECT to_regclass($1) AS oid", [`${this.schema}.accounts`]);
+        const accountsTable = await this.db.query("SELECT to_regclass($1) AS oid", [`${this.schema}.accounts`]);
         if (!accountsTable.rows[0] || !accountsTable.rows[0].oid) {
           this.degraded = true;
           this.logger(`[postgres] table '${this.schema}.accounts' is missing. DB mirrors are disabled.`);
@@ -460,7 +576,7 @@ class PostgresStore {
             throw error;
           }
           this.degraded = true;
-          this.logger("[postgres] inventory schema upgrade failed. DB mirrors are disabled.", error.message);
+          this.logger("[postgres] inventory schema upgrade failed. DB mirrors are disabled.", getErrorMessage(error));
           return;
         }
         try {
@@ -470,7 +586,7 @@ class PostgresStore {
             throw error;
           }
           this.degraded = true;
-          this.logger("[postgres] persistence schema upgrade failed. DB authority is disabled.", error.message);
+          this.logger("[postgres] persistence schema upgrade failed. DB authority is disabled.", getErrorMessage(error));
           return;
         }
         try {
@@ -480,7 +596,7 @@ class PostgresStore {
             throw error;
           }
           this.progressionReady = false;
-          this.logger("[postgres] progression schema upgrade failed. Level mirrors are disabled.", error.message);
+          this.logger("[postgres] progression schema upgrade failed. Level mirrors are disabled.", getErrorMessage(error));
         }
         this.ready = true;
         this.degraded = false;
@@ -488,18 +604,18 @@ class PostgresStore {
         return;
       } catch (error) {
         if (isRetryablePostgresError(error) && attempt < POSTGRES_INIT_MAX_ATTEMPTS) {
-          this.logger(`[postgres] initialization attempt ${attempt} failed; retrying.`, error.message);
+          this.logger(`[postgres] initialization attempt ${attempt} failed; retrying.`, getErrorMessage(error));
           await delay(POSTGRES_INIT_RETRY_BASE_DELAY_MS * attempt);
           continue;
         }
         this.degraded = true;
-        this.logger("[postgres] initialization failed. DB mirrors are disabled.", error.message);
+        this.logger("[postgres] initialization failed. DB mirrors are disabled.", getErrorMessage(error));
         return;
       }
     }
   }
 
-  async applyBootstrapSql(sqlPath) {
+  async applyBootstrapSql(sqlPath: string) {
     const resolved = path.resolve(sqlPath);
     if (!fs.existsSync(resolved)) {
       this.logger(`[postgres] bootstrap SQL not found: ${resolved}`);
@@ -507,24 +623,24 @@ class PostgresStore {
     }
     const sql = String(fs.readFileSync(resolved, "utf8") || "").trim();
     if (sql === "") return;
-    await this.pool.query(sql);
+    await this.db.query(sql);
     this.logger(`[postgres] applied bootstrap SQL: ${resolved}`);
   }
 
   async ensureInventorySchema() {
-    const inventoryTable = await this.pool.query("SELECT to_regclass($1) AS oid", [`${this.schema}.inventory`]);
+    const inventoryTable = await this.db.query("SELECT to_regclass($1) AS oid", [`${this.schema}.inventory`]);
     if (!inventoryTable.rows[0] || !inventoryTable.rows[0].oid) {
       throw new Error(`table '${this.schema}.inventory' is missing`);
     }
 
-    await this.pool.query(`
+    await this.db.query(`
       ALTER TABLE ${this.table("inventory")}
         ALTER COLUMN amount TYPE bigint USING amount::bigint,
         ALTER COLUMN stack_limit TYPE bigint USING stack_limit::bigint,
         ALTER COLUMN stack_limit SET DEFAULT 400;
     `);
 
-    await this.pool.query(`
+    await this.db.query(`
       UPDATE ${this.table("inventory")}
          SET stack_limit = 400
        WHERE stack_limit = 200;
@@ -544,13 +660,13 @@ class PostgresStore {
       "punishments",
     ];
     for (const tableName of requiredTables) {
-      const tableResult = await this.pool.query("SELECT to_regclass($1) AS oid", [`${this.schema}.${tableName}`]);
+      const tableResult = await this.db.query("SELECT to_regclass($1) AS oid", [`${this.schema}.${tableName}`]);
       if (!tableResult.rows[0] || !tableResult.rows[0].oid) {
         throw new Error(`table '${this.schema}.${tableName}' is missing`);
       }
     }
 
-    await this.pool.query(`
+    await this.db.query(`
       ALTER TABLE ${this.table("accounts")}
         ADD COLUMN IF NOT EXISTS password_salt text NOT NULL DEFAULT '',
         ADD COLUMN IF NOT EXISTS password_algorithm text NOT NULL DEFAULT 'legacy_scrypt',
@@ -1181,7 +1297,7 @@ class PostgresStore {
   }
 
   async ensureProgressionSchema() {
-    await this.pool.query(`
+    await this.db.query(`
       ALTER TABLE ${this.table("players")}
         ADD COLUMN IF NOT EXISTS player_level integer NOT NULL DEFAULT 1,
         ADD COLUMN IF NOT EXISTS player_xp bigint NOT NULL DEFAULT 0,
@@ -1228,7 +1344,7 @@ class PostgresStore {
     }
   }
 
-  enqueueWrite(label, work) {
+  enqueueWrite<T>(label: unknown, work: () => Promise<T> | T): Promise<T | null> {
     if (!this.isReady()) return Promise.resolve(null);
     const cleanLabel = cleanName(label || "transaction") || "transaction";
     if (this.writeQueueDepth >= this.maxWriteQueueDepth) {
@@ -1251,16 +1367,16 @@ class PostgresStore {
     return run;
   }
 
-  async withTransaction(work) {
+  async withTransaction<T>(work: TransactionWork<T>): Promise<T | null> {
     if (!this.isReady()) return null;
     return this.enqueueWrite("transaction", () => this.withTransactionNow(work));
   }
 
-  async withTransactionNow(work) {
+  async withTransactionNow<T>(work: TransactionWork<T>): Promise<T | null> {
     if (!this.isReady()) return null;
 
     for (let attempt = 1; attempt <= POSTGRES_TRANSACTION_MAX_ATTEMPTS; attempt += 1) {
-      const client = await this.pool.connect();
+      const client = await this.db.connect();
       let released = false;
       try {
         await client.query("BEGIN");
@@ -1293,16 +1409,22 @@ class PostgresStore {
     return null;
   }
 
-  runDetached(label, work) {
+  runDetached(label: unknown, work: DetachedWork): void {
     if (!this.isReady()) return;
     Promise.resolve()
       .then(work)
       .catch((error) => {
-        this.logger(`[postgres] ${label} failed:`, error.message);
+        this.logger(`[postgres] ${label} failed:`, getErrorMessage(error));
       });
   }
 
-  async ensurePlayerIdentity(client, username, email = "", role = "player", world = "") {
+  async ensurePlayerIdentity(
+    client: PoolClient,
+    username: unknown,
+    email = "",
+    role = "player",
+    world = ""
+  ) {
     const cleanUsername = cleanName(username);
     if (cleanUsername === "") return null;
     const providedEmail = cleanName(email || "");
@@ -1339,7 +1461,7 @@ class PostgresStore {
     return playerResult.rows[0] ? playerResult.rows[0].player_id : null;
   }
 
-  async ensurePlayerIdentityForExistingAccount(client, username, world = "") {
+  async ensurePlayerIdentityForExistingAccount(client: PoolClient, username: unknown, world = "") {
     const cleanUsername = cleanName(username);
     if (cleanUsername === "") return null;
     const cleanWorld = cleanName(world || "");
@@ -1370,7 +1492,7 @@ class PostgresStore {
     return playerResult.rows[0] ? playerResult.rows[0].player_id : null;
   }
 
-  async lookupPlayerIdByUsername(client, username) {
+  async lookupPlayerIdByUsername(client: PoolClient, username: unknown) {
     const cleanUsername = cleanName(username);
     if (cleanUsername === "") return null;
     const result = await client.query(
@@ -1386,12 +1508,12 @@ class PostgresStore {
     return result.rows[0]?.player_id || null;
   }
 
-  async lookupPlayerIdentityByUsername(username) {
+  async lookupPlayerIdentityByUsername(username: unknown) {
     if (!this.isReady()) return null;
     const cleanUsername = cleanName(username);
     if (cleanUsername === "") return null;
     try {
-      const result = await this.pool.query(
+      const result = await this.db.query(
         `
         SELECT p.player_id,
                a.account_id,
@@ -1411,12 +1533,12 @@ class PostgresStore {
         username: cleanName(row.username || ""),
       };
     } catch (error) {
-      this.logger("[postgres] player identity lookup failed:", error.message);
+      this.logger("[postgres] player identity lookup failed:", getErrorMessage(error));
       return null;
     }
   }
 
-  async lookupPlayerIdByAccountId(client, accountId) {
+  async lookupPlayerIdByAccountId(client: PoolClient, accountId: string) {
     const cleanAccountId = cleanName(accountId);
     if (!isUuid(cleanAccountId)) return null;
     const result = await client.query(
@@ -1431,7 +1553,7 @@ class PostgresStore {
     return result.rows[0]?.player_id || null;
   }
 
-  async lookupAccountIdByPlayerId(client, playerId) {
+  async lookupAccountIdByPlayerId(client: PoolClient, playerId: string) {
     const cleanPlayerId = cleanName(playerId);
     if (!isUuid(cleanPlayerId)) return null;
     const result = await client.query(
@@ -1446,7 +1568,7 @@ class PostgresStore {
     return result.rows[0]?.account_id || null;
   }
 
-  async lookupUsernameByPlayerId(client, playerId) {
+  async lookupUsernameByPlayerId(client: PoolClient, playerId: string) {
     const cleanPlayerId = cleanName(playerId);
     if (!isUuid(cleanPlayerId)) return "";
     const result = await client.query(
@@ -1462,7 +1584,7 @@ class PostgresStore {
     return cleanName(result.rows[0]?.username || "");
   }
 
-  async claimIdempotency(scope, key, username = "", metadata: any = {}, options: any = {}) {
+  async claimIdempotency(scope: unknown, key: unknown, username = "", metadata: any = {}, options: any = {}) {
     const cleanScope = cleanName(scope);
     const cleanKey = cleanName(key);
     if (!this.isReady() || cleanScope === "" || cleanKey === "") {
@@ -1489,16 +1611,16 @@ class PostgresStore {
           `,
           [cleanScope, cleanKey, playerId, JSON.stringify(safeJson(metadata)), expiresAt]
         );
-        return insert.rowCount > 0;
+        return (insert.rowCount ?? 0) > 0;
       });
       return { ok: true, duplicate: !result };
     } catch (error) {
-      this.logger("[postgres] idempotency write failed:", error.message);
+      this.logger("[postgres] idempotency write failed:", getErrorMessage(error));
       return { ok: false, duplicate: false };
     }
   }
 
-  async upsertAccountState(client, account, options: any = {}) {
+  async upsertAccountState(client: PoolClient, account: RuntimeRecord, options: any = {}) {
     const accountData = toObject(account);
     const username = cleanName(accountData.username || accountData.account_username || accountData.name || "");
     if (username === "") return null;
@@ -1606,7 +1728,7 @@ class PostgresStore {
     return accountId;
   }
 
-  async saveAccountState(account, options: any = {}) {
+  async saveAccountState(account: RuntimeRecord, options: any = {}) {
     if (!this.isReady()) return false;
     try {
       await this.withTransaction(async (client) => {
@@ -1614,7 +1736,7 @@ class PostgresStore {
       });
       return true;
     } catch (error) {
-      this.logger("[postgres] account save failed:", error.message);
+      this.logger("[postgres] account save failed:", getErrorMessage(error));
       return false;
     }
   }
@@ -1632,7 +1754,7 @@ class PostgresStore {
       });
       return true;
     } catch (error) {
-      this.logger("[postgres] accounts snapshot save failed:", error.message);
+      this.logger("[postgres] accounts snapshot save failed:", getErrorMessage(error));
       return false;
     }
   }
@@ -1641,7 +1763,7 @@ class PostgresStore {
     if (!this.isReady()) return [];
 
     try {
-      const result = await this.pool.query(`
+      const result = await this.queryReadWithRetry("account states load", `
         SELECT
           a.account_id::text AS account_id,
           p.player_id::text AS player_id,
@@ -1706,18 +1828,18 @@ class PostgresStore {
         };
       });
     } catch (error) {
-      this.logger("[postgres] account load failed:", error.message);
-      return [];
+      this.logger("[postgres] account load failed after retries:", getErrorMessage(error));
+      throw postgresError(error);
     }
   }
 
-  async loadAccountState(username) {
+  async loadAccountState(username: unknown) {
     if (!this.isReady()) return null;
     const cleanUsername = cleanName(username);
     if (cleanUsername === "") return null;
 
     try {
-      const result = await this.pool.query(
+      const result = await this.db.query(
         `
         SELECT
           a.account_id::text AS account_id,
@@ -1787,12 +1909,12 @@ class PostgresStore {
         last_seen_at: cleanName(accountState.last_seen_at || normalizeOptionalTimestamp(row.last_login_at) || ""),
       };
     } catch (error) {
-      this.logger("[postgres] single account load failed:", error.message);
+      this.logger("[postgres] single account load failed:", getErrorMessage(error));
       return null;
     }
   }
 
-  async replaceInventorySnapshot(client, playerId, playerState) {
+  async replaceInventorySnapshot(client: PoolClient, playerId: string, playerState: RuntimeRecord) {
     if (!playerId) return;
 
     await client.query(
@@ -1828,13 +1950,18 @@ class PostgresStore {
     await this.updatePlayerInventoryHash(client, playerId);
   }
 
-  async reconcileItemInstancesForInventory(client, playerId, playerState, details: any = {}) {
+  async reconcileItemInstancesForInventory(
+    client: PoolClient,
+    playerId: string,
+    playerState: RuntimeRecord,
+    details: any = {}
+  ) {
     if (!playerId) return;
     const reconcileDetails = toObject(details);
     const allowCreateMissing = reconcileDetails.allow_create_missing !== false;
     const allowRetireExtra = reconcileDetails.allow_retire_extra !== false;
 
-    const desiredCounts = new Map();
+    const desiredCounts = new Map<string, number>();
     for (const [field, fallbackCategory] of INVENTORY_FIELD_CATEGORY) {
       const bucket = toObject(playerState[field]);
       for (const [itemType, rawAmount] of Object.entries(bucket)) {
@@ -1862,14 +1989,15 @@ class PostgresStore {
       [playerId]
     );
 
-    const activeByItem = new Map();
+    const activeByItem = new Map<string, RuntimeRecord[]>();
     for (const row of activeResult.rows) {
       const itemType = cleanName(row.item_type);
       const itemCategory = resolveItemCategory(itemType, row.item_category || "");
       if (!shouldTrackItemInstance(itemType, itemCategory)) continue;
       const key = `${itemType}\u0000${itemCategory}`;
-      if (!activeByItem.has(key)) activeByItem.set(key, []);
-      activeByItem.get(key).push(row);
+      const itemRows = activeByItem.get(key) || [];
+      itemRows.push(row);
+      activeByItem.set(key, itemRows);
     }
 
     const source = extractItemInstanceSource(reconcileDetails, "inventory_snapshot_reconcile");
@@ -1973,7 +2101,7 @@ class PostgresStore {
     }
   }
 
-  async recordItemInstanceEvent(client, entry: any = {}) {
+  async recordItemInstanceEvent(client: PoolClient, entry: any = {}) {
     const e = toObject(entry);
     const itemInstanceId = cleanName(e.item_instance_id || e.instance_id || "");
     if (!isUuid(itemInstanceId)) return null;
@@ -2020,7 +2148,7 @@ class PostgresStore {
     return { ok: true };
   }
 
-  async getInventorySnapshotHash(client, playerId) {
+  async getInventorySnapshotHash(client: PoolClient | Pool, playerId: string) {
     if (!isUuid(playerId)) return null;
     const result = await client.query(
       `
@@ -2041,7 +2169,11 @@ class PostgresStore {
     return crypto.createHash("sha256").update(JSON.stringify(payload)).digest("hex");
   }
 
-  async updatePlayerInventoryHash(client, playerId, inventoryHash = null) {
+  async updatePlayerInventoryHash(
+    client: PoolClient | Pool,
+    playerId: string,
+    inventoryHash: string | null = null
+  ) {
     if (!isUuid(playerId)) return null;
     const nextHash = cleanName(inventoryHash || "") || await this.getInventorySnapshotHash(client, playerId);
     await client.query(
@@ -2058,7 +2190,7 @@ class PostgresStore {
     return nextHash;
   }
 
-  async recordTransactionLedger(client, entry: any = {}) {
+  async recordTransactionLedger(client: PoolClient, entry: any = {}) {
     const e = toObject(entry);
     const playerId = isUuid(e.player_id) ? cleanName(e.player_id) : null;
 
@@ -2066,7 +2198,7 @@ class PostgresStore {
       ? e.item_instances.map((item) => toObject(item)).filter((item) => isUuid(item.item_instance_id))
       : [];
     const rowsToWrite = itemInstances.length > 0 ? itemInstances : [null];
-    const insertedIds = [];
+    const insertedIds: Array<string | number | null> = [];
     const rawIpAddress = cleanName(e.ip_address || e.ip || "");
     const ipAddress = net.isIP(rawIpAddress) ? rawIpAddress : null;
     const transactionType = cleanName(e.transaction_type || e.type || "")
@@ -2299,8 +2431,8 @@ class PostgresStore {
         return { ok: ids.length > 0, transaction_ledger_ids: ids };
       });
     } catch (error) {
-      this.logger("[postgres] transaction ledger event failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] transaction ledger event failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
@@ -2318,9 +2450,9 @@ class PostgresStore {
       return { ok: false, reason: "target_required" };
     }
 
-    const where = [];
-    const params = [];
-    const addParam = (value) => {
+    const where: string[] = [];
+    const params: unknown[] = [];
+    const addParam = (value: unknown): string => {
       params.push(value);
       return `$${params.length}`;
     };
@@ -2349,7 +2481,7 @@ class PostgresStore {
     const limitParam = `$${params.length}`;
 
     try {
-      const result = await this.pool.query(
+      const result = await this.db.query(
         `
         SELECT tl.transaction_ledger_id,
                tl.transaction_id,
@@ -2436,8 +2568,8 @@ class PostgresStore {
         })),
       };
     } catch (error) {
-      this.logger("[postgres] transaction ledger lookup failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] transaction ledger lookup failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
@@ -2532,8 +2664,8 @@ class PostgresStore {
         };
       });
     } catch (error) {
-      this.logger("[postgres] item instance create failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] item instance create failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
@@ -2648,12 +2780,12 @@ class PostgresStore {
         };
       });
     } catch (error) {
-      this.logger("[postgres] item instance update failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] item instance update failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
-  async listActiveItemInstances(username, options: any = {}) {
+  async listActiveItemInstances(username: unknown, options: any = {}) {
     if (!this.isReady()) return [];
     const cleanUsername = cleanName(username);
     if (cleanUsername === "") return [];
@@ -2662,7 +2794,7 @@ class PostgresStore {
     const limit = Math.min(500, Math.max(1, toInt(options.limit, 100)));
 
     try {
-      const result = await this.pool.query(
+      const result = await this.db.query(
         `
         SELECT ii.item_instance_id,
                ii.public_item_instance_id,
@@ -2700,12 +2832,12 @@ class PostgresStore {
         updated_at: normalizeOptionalTimestamp(row.updated_at),
       }));
     } catch (error) {
-      this.logger("[postgres] item instance list failed:", error.message);
+      this.logger("[postgres] item instance list failed:", getErrorMessage(error));
       return [];
     }
   }
 
-  async listItemInstanceCopies(identifier, options: any = {}) {
+  async listItemInstanceCopies(identifier: unknown, options: any = {}) {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanIdentifier = cleanName(identifier);
     if (cleanIdentifier === "") return { ok: false, reason: "invalid_item_instance" };
@@ -2713,12 +2845,12 @@ class PostgresStore {
     const limit = Math.min(500, Math.max(1, toInt(options.limit, 100)));
     const lookupByUuid = isUuid(cleanIdentifier);
     const lookupByPublicId = cleanIdentifier.toUpperCase().startsWith("PM-ITEM-");
-    let anchor = null;
+    let anchor: RuntimeRecord | null = null;
     let itemType = cleanName(options.item_type || options.item_id || "");
 
     try {
       if (lookupByUuid || lookupByPublicId) {
-        const anchorResult = await this.pool.query(
+        const anchorResult = await this.db.query(
           `
           SELECT item_instance_id,
                  public_item_instance_id,
@@ -2738,7 +2870,7 @@ class PostgresStore {
 
       if (itemType === "") return { ok: false, reason: "item_instance_not_found" };
 
-      const result = await this.pool.query(
+      const result = await this.db.query(
         `
         WITH public_id_counts AS (
           SELECT public_item_instance_id, count(*)::int AS public_id_count
@@ -2826,12 +2958,12 @@ class PostgresStore {
         copies,
       };
     } catch (error) {
-      this.logger("[postgres] item instance copies lookup failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] item instance copies lookup failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
-  async getItemInstanceHistory(identifier, options: any = {}) {
+  async getItemInstanceHistory(identifier: unknown, options: any = {}) {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanIdentifier = cleanName(identifier);
     if (cleanIdentifier === "") return { ok: false, reason: "invalid_item_instance" };
@@ -2839,7 +2971,7 @@ class PostgresStore {
     const lookupByUuid = isUuid(cleanIdentifier);
 
     try {
-      const instanceResult = await this.pool.query(
+      const instanceResult = await this.db.query(
         `
         SELECT ii.item_instance_id,
                ii.public_item_instance_id,
@@ -2873,7 +3005,7 @@ class PostgresStore {
       const row = instanceResult.rows[0];
       if (!row?.item_instance_id) return { ok: false, reason: "item_instance_not_found" };
 
-      const eventsResult = await this.pool.query(
+      const eventsResult = await this.db.query(
         `
         SELECT e.item_instance_event_id,
                e.item_instance_id,
@@ -2926,7 +3058,7 @@ class PostgresStore {
         || sourceLower.includes("startup")
         || sourceLower.includes("save_player_state")
         || sourceLower.includes("inventory_snapshot");
-      const flags = [];
+      const flags: string[] = [];
       const publicIdCount = toInt(row.public_id_count, 0);
       if (publicIdCount !== 1) flags.push("duplicate_public_id");
       if (!originEvent) flags.push("no_origin_event");
@@ -2967,12 +3099,12 @@ class PostgresStore {
         events,
       };
     } catch (error) {
-      this.logger("[postgres] item instance history lookup failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] item instance history lookup failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
-  async adjustInventoryForItemInstanceModeration(client, entry: any = {}) {
+  async adjustInventoryForItemInstanceModeration(client: PoolClient, entry: any = {}) {
     const e = toObject(entry);
     const playerId = cleanName(e.player_id || "");
     const itemType = cleanName(e.item_type || "");
@@ -3092,11 +3224,11 @@ class PostgresStore {
     };
   }
 
-  async moderateItemInstance(identifier, action, options: any = {}) {
+  async moderateItemInstance(identifier: unknown, action: unknown, options: any = {}) {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const itemIdentifier = cleanName(identifier);
     const requestedAction = cleanName(action || options.action || "").toLowerCase().replace(/-/g, "_");
-    const actionAliases = {
+    const actionAliases: Record<string, string> = {
       delete: "retire",
       remove: "retire",
       destroy: "retire",
@@ -3148,14 +3280,14 @@ class PostgresStore {
         const previousLocation = normalizeItemInstanceLocation(previous.current_location || "unknown", "unknown");
         const previousOwnerUsername = previousOwnerId ? await this.lookupUsernameByPlayerId(client, previousOwnerId) : "";
         const wasActiveInventory = previousState === ITEM_INSTANCE_ACTIVE_STATE && previousLocation === "inventory";
-        const inventoryEffects = [];
+        const inventoryEffects: RuntimeRecord[] = [];
 
         let targetPlayerId = previousOwnerId;
         let targetUsername = previousOwnerUsername;
         let nextState = previousState;
         let nextLocation = previousLocation;
         let eventType = "updated";
-        let eventTransactionId = null;
+        let eventTransactionId: number | null = null;
 
         const moderationMetadata: any = {
           anti_dupe_action: normalizedAction,
@@ -3167,7 +3299,7 @@ class PostgresStore {
           previous_owner_username: previousOwnerUsername,
         };
 
-        const applyInventoryEffect = async (playerId, delta) => {
+        const applyInventoryEffect = async (playerId: string, delta: number) => {
           const effect = await this.adjustInventoryForItemInstanceModeration(client, {
             player_id: playerId,
             world_id: previous.world_id,
@@ -3326,24 +3458,24 @@ class PostgresStore {
         };
       });
     } catch (error) {
-      this.logger("[postgres] item instance moderation failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] item instance moderation failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
   async auditItemInstances(options: any = {}) {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const limit = Math.min(200, Math.max(1, toInt(options.limit, 50)));
-    const issues = [];
+    const issues: RuntimeRecord[] = [];
     const scannedAt = new Date().toISOString();
 
-    const pushIssue = (issue) => {
+    const pushIssue = (issue: RuntimeRecord): void => {
       if (issues.length >= limit) return;
       issues.push(issue);
     };
 
     try {
-      const duplicateResult = await this.pool.query(
+      const duplicateResult = await this.db.query(
         `
         SELECT public_item_instance_id,
                count(*)::int AS row_count,
@@ -3367,7 +3499,7 @@ class PostgresStore {
         });
       }
 
-      const impossibleResult = await this.pool.query(
+      const impossibleResult = await this.db.query(
         `
         SELECT ii.item_instance_id,
                ii.public_item_instance_id,
@@ -3407,7 +3539,7 @@ class PostgresStore {
         });
       }
 
-      const inventoryResult = await this.pool.query(
+      const inventoryResult = await this.db.query(
         `
         SELECT inv.player_id,
                a.username::text AS username,
@@ -3420,7 +3552,7 @@ class PostgresStore {
          WHERE inv.amount > 0
         `
       );
-      const activeResult = await this.pool.query(
+      const activeResult = await this.db.query(
         `
         SELECT owner_player_id AS player_id,
                item_type,
@@ -3486,8 +3618,8 @@ class PostgresStore {
       }
 
       const summary = {
-        duplicate_public_ids: duplicateResult.rowCount,
-        impossible_states: impossibleResult.rowCount,
+        duplicate_public_ids: duplicateResult.rowCount ?? 0,
+        impossible_states: impossibleResult.rowCount ?? 0,
         inventory_mismatches: issues.filter((issue) => issue.type === "inventory_count_mismatch").length,
         total_issues: issues.length,
         truncated: issues.length >= limit,
@@ -3500,8 +3632,8 @@ class PostgresStore {
         issues,
       };
     } catch (error) {
-      this.logger("[postgres] item instance audit failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] item instance audit failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
@@ -3512,8 +3644,8 @@ class PostgresStore {
     const transactionLimit = Math.min(2000, Math.max(1, toInt(options.transaction_limit, limit)));
     const snapshotLimit = Math.min(1000, Math.max(1, toInt(options.snapshot_limit, limit)));
     const scannedAt = new Date().toISOString();
-    const issues = [];
-    const pushIssue = (issue) => {
+    const issues: RuntimeRecord[] = [];
+    const pushIssue = (issue: RuntimeRecord): void => {
       if (issues.length >= limit) return;
       issues.push({
         severity: cleanName(issue.severity || "warning"),
@@ -3522,7 +3654,7 @@ class PostgresStore {
     };
 
     try {
-      const playerResult = await this.pool.query(
+      const playerResult = await this.db.query(
         `
         SELECT p.player_id,
                a.username::text AS username,
@@ -3541,7 +3673,7 @@ class PostgresStore {
       let missingInventoryHashes = 0;
       for (const row of playerResult.rows) {
         const playerId = cleanName(row.player_id || "");
-        const expectedHash = await this.getInventorySnapshotHash(this.pool, playerId);
+        const expectedHash = await this.getInventorySnapshotHash(this.db, playerId);
         const storedHash = cleanName(row.inventory_hash || "");
         if (storedHash === "") {
           missingInventoryHashes += 1;
@@ -3568,7 +3700,7 @@ class PostgresStore {
         }
       }
 
-      const ledgerResult = await this.pool.query(
+      const ledgerResult = await this.db.query(
         `
         SELECT transaction_ledger_id,
                transaction_id,
@@ -3643,7 +3775,7 @@ class PostgresStore {
         }
       }
 
-      const snapshotResult = await this.pool.query(
+      const snapshotResult = await this.db.query(
         `
         SELECT ws.world_snapshot_id,
                ws.snapshot_version,
@@ -3696,7 +3828,7 @@ class PostgresStore {
         }
       }
 
-      const inventoryLedgerResult = await this.pool.query(
+      const inventoryLedgerResult = await this.db.query(
         `
         SELECT inv.player_id,
                a.username::text AS username,
@@ -3736,7 +3868,7 @@ class PostgresStore {
         });
       }
 
-      const gemLedgerResult = await this.pool.query(
+      const gemLedgerResult = await this.db.query(
         `
         SELECT p.player_id,
                a.username::text AS username,
@@ -3773,7 +3905,7 @@ class PostgresStore {
         });
       }
 
-      const vendingCollisionResult = await this.pool.query(
+      const vendingCollisionResult = await this.db.query(
         `
         SELECT vend.public_item_instance_id,
                vend.item_instance_id AS vending_item_instance_id,
@@ -3821,18 +3953,18 @@ class PostgresStore {
 
       const summary = {
         scanned_at: scannedAt,
-        players_scanned: playerResult.rowCount,
-        transaction_rows_scanned: ledgerResult.rowCount,
-        world_snapshots_scanned: snapshotResult.rowCount,
+        players_scanned: playerResult.rowCount ?? 0,
+        transaction_rows_scanned: ledgerResult.rowCount ?? 0,
+        world_snapshots_scanned: snapshotResult.rowCount ?? 0,
         inventory_hash_mismatches: inventoryHashMismatches,
         missing_inventory_hashes: missingInventoryHashes,
         transaction_hash_mismatches: transactionHashMismatches,
         missing_transaction_hashes: missingTransactionHashes,
         world_snapshot_hash_mismatches: snapshotHashMismatches,
         missing_world_snapshot_hashes: missingSnapshotHashes,
-        inventory_item_ledger_mismatches: inventoryLedgerResult.rowCount,
-        gem_ledger_balance_mismatches: gemLedgerResult.rowCount,
-        vending_instance_collisions: vendingCollisionResult.rowCount,
+        inventory_item_ledger_mismatches: inventoryLedgerResult.rowCount ?? 0,
+        gem_ledger_balance_mismatches: gemLedgerResult.rowCount ?? 0,
+        vending_instance_collisions: vendingCollisionResult.rowCount ?? 0,
         item_instance_issues: itemAudit?.ok ? toInt(itemAudit.summary?.total_issues, 0) : null,
         total_issues: issues.length,
         critical_issues: issues.filter((issue) => cleanName(issue.severity) === "critical").length,
@@ -3845,7 +3977,7 @@ class PostgresStore {
         ? "issues_found"
         : "success";
 
-      await this.pool.query(
+      await this.db.query(
         `
         INSERT INTO ${this.table("integrity_audit_runs")} (
           run_type,
@@ -3878,8 +4010,8 @@ class PostgresStore {
         issues,
       };
     } catch (error) {
-      this.logger("[postgres] integrity hash audit failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] integrity hash audit failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
@@ -3900,19 +4032,19 @@ class PostgresStore {
         latestIntegrityAuditResult,
         recentSecuritySummaryResult,
       ] = await Promise.all([
-        this.pool.query(
+        this.db.query(
           `
           SELECT count(*)::int AS world_count
             FROM ${this.table("worlds")}
           `
         ),
-        this.pool.query(
+        this.db.query(
           `
           SELECT count(*)::int AS player_count
             FROM ${this.table("players")}
           `
         ),
-        this.pool.query(
+        this.db.query(
           `
           SELECT p.player_id,
                  a.username::text AS username,
@@ -3931,7 +4063,7 @@ class PostgresStore {
           `,
           [windowHours, limit]
         ),
-        this.pool.query(
+        this.db.query(
           `
           SELECT p.player_id,
                  a.username::text AS username,
@@ -3952,7 +4084,7 @@ class PostgresStore {
           `,
           [windowHours, limit]
         ),
-        this.pool.query(
+        this.db.query(
           `
           SELECT COALESCE(a.username, player_account.username, '')::text AS username,
                  COALESCE(se.player_id::text, p.player_id::text, '') AS player_id,
@@ -3981,7 +4113,7 @@ class PostgresStore {
           `,
           [windowHours, limit]
         ),
-        this.pool.query(
+        this.db.query(
           `
           SELECT run_type,
                  status,
@@ -3993,7 +4125,7 @@ class PostgresStore {
            LIMIT 1
           `
         ),
-        this.pool.query(
+        this.db.query(
           `
           SELECT severity,
                  COUNT(*)::int AS event_count
@@ -4008,13 +4140,13 @@ class PostgresStore {
 
       const itemAudit = await this.auditItemInstances({ limit: dupeLimit });
       const latestAuditRow = latestIntegrityAuditResult.rows[0] || null;
-      const latestAuditIssues = latestAuditRow && Array.isArray(latestAuditRow.issues)
+      const latestAuditIssues: RuntimeRecord[] = latestAuditRow && Array.isArray(latestAuditRow.issues)
         ? latestAuditRow.issues
         : [];
       const latestAuditSummary = latestAuditRow ? safeJson(latestAuditRow.summary) : {};
       const criticalIntegrityIssues = latestAuditIssues.filter((issue) => cleanName(issue?.severity) === "critical").length;
       const highIntegrityIssues = latestAuditIssues.filter((issue) => cleanName(issue?.severity) === "high").length;
-      const itemAuditIssues = itemAudit?.ok && Array.isArray(itemAudit.issues) ? itemAudit.issues : [];
+      const itemAuditIssues: RuntimeRecord[] = itemAudit?.ok && Array.isArray(itemAudit.issues) ? itemAudit.issues : [];
       const dupeWarnings = itemAuditIssues.map((issue) => ({
         type: cleanName(issue.type || "unknown"),
         severity: cleanName(issue.severity || "warning"),
@@ -4100,12 +4232,16 @@ class PostgresStore {
         },
       };
     } catch (error) {
-      this.logger("[postgres] admin monitoring dashboard failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] admin monitoring dashboard failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
-  async reconcileItemInstancesForUsername(username, playerState = null, details: any = {}) {
+  async reconcileItemInstancesForUsername(
+    username: unknown,
+    playerState: RuntimeRecord | null = null,
+    details: any = {}
+  ) {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanUsername = cleanName(username);
     if (cleanUsername === "") return { ok: false, reason: "invalid_username" };
@@ -4154,8 +4290,8 @@ class PostgresStore {
         };
       });
     } catch (error) {
-      this.logger("[postgres] item instance username reconcile failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] item instance username reconcile failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
@@ -4163,7 +4299,7 @@ class PostgresStore {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
 
     try {
-      const rows = await this.pool.query(
+      const rows = await this.db.query(
         `
         SELECT p.player_id, a.username::text AS username, p.player_state
           FROM ${this.table("players")} p
@@ -4174,7 +4310,7 @@ class PostgresStore {
         `
       );
 
-      if (rows.rowCount <= 0) return { ok: true, player_count: 0 };
+      if ((rows.rowCount ?? 0) <= 0) return { ok: true, player_count: 0 };
 
       let reconciled = 0;
       await this.withTransaction(async (client) => {
@@ -4189,12 +4325,12 @@ class PostgresStore {
 
       return { ok: true, player_count: reconciled };
     } catch (error) {
-      this.logger("[postgres] stored item instance reconcile failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] stored item instance reconcile failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
-  async savePlayerState(username, state) {
+  async savePlayerState(username: unknown, state: RuntimeRecord) {
     if (!this.isReady()) return false;
     const cleanUsername = cleanName(username || state?.account_username || state?.username || "");
     const playerState = safeJson({ ...toObject(state), account_username: cleanUsername });
@@ -4235,7 +4371,7 @@ class PostgresStore {
       });
       return true;
     } catch (error) {
-      this.logger("[postgres] player state save failed:", error.message);
+      this.logger("[postgres] player state save failed:", getErrorMessage(error));
       return false;
     }
   }
@@ -4253,13 +4389,13 @@ class PostgresStore {
     return true;
   }
 
-  async loadPlayerState(username) {
+  async loadPlayerState(username: unknown) {
     if (!this.isReady()) return { ok: false, found: false, reason: "postgres_unavailable" };
     const cleanUsername = cleanName(username);
     if (cleanUsername === "") return { ok: false, found: false, reason: "invalid_username" };
 
     try {
-      const result = await this.pool.query(
+      const result = await this.db.query(
         `
         SELECT
           p.player_id::text AS player_id,
@@ -4283,7 +4419,7 @@ class PostgresStore {
       const row = result.rows[0];
       if (!row) return { ok: true, found: false, username: cleanUsername };
 
-      const inventoryResult = await this.pool.query(
+      const inventoryResult = await this.db.query(
         `
         SELECT item_type, item_category, amount
           FROM ${this.table("inventory")}
@@ -4310,8 +4446,8 @@ class PostgresStore {
         },
       };
     } catch (error) {
-      this.logger("[postgres] single player state load failed:", error.message);
-      return { ok: false, found: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] single player state load failed:", getErrorMessage(error));
+      return { ok: false, found: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
@@ -4319,7 +4455,7 @@ class PostgresStore {
     if (!this.isReady()) return [];
 
     try {
-      const result = await this.pool.query(`
+      const result = await this.queryReadWithRetry("player states load", `
         SELECT
           p.player_id::text AS player_id,
           a.username::text AS username,
@@ -4342,7 +4478,8 @@ class PostgresStore {
         .map((row) => cleanName(row.player_id || ""))
         .filter((playerId) => playerId !== "");
       const inventoryResult = playerIds.length > 0
-        ? await this.pool.query(
+        ? await this.queryReadWithRetry(
+          "player inventories load",
           `
           SELECT player_id::text AS player_id, item_type, item_category, amount
             FROM ${this.table("inventory")}
@@ -4382,12 +4519,12 @@ class PostgresStore {
         };
       });
     } catch (error) {
-      this.logger("[postgres] player state load failed:", error.message);
-      return [];
+      this.logger("[postgres] player state load failed after retries:", getErrorMessage(error));
+      throw postgresError(error);
     }
   }
 
-  async ensureWorldIdentity(client, worldName) {
+  async ensureWorldIdentity(client: PoolClient, worldName: unknown) {
     const cleanWorldName = cleanName(worldName || "START") || "START";
     const result = await client.query(
       `
@@ -4402,7 +4539,7 @@ class PostgresStore {
     return result.rows[0]?.world_id || null;
   }
 
-  async upsertWorldState(client, worldName, worldState) {
+  async upsertWorldState(client: PoolClient, worldName: unknown, worldState: RuntimeRecord) {
     const cleanWorldName = cleanName(worldName || worldState?.world_name || "START") || "START";
     const state = safeJson({ ...toObject(worldState), world_name: cleanWorldName });
     const checksum = jsonChecksum(state);
@@ -4455,7 +4592,7 @@ class PostgresStore {
    * @param {PixelMania.UpsertWorldDropOptions | Record<string, unknown>} options
    * @returns {Promise<PixelMania.UpsertWorldDropResult>}
    */
-  async upsertWorldDropRow(client, worldId, drop: any = {}, options: any = {}) {
+  async upsertWorldDropRow(client: PoolClient, worldId: string, drop: any = {}, options: any = {}) {
     if (!worldId) return { ok: false, reason: "missing_world" };
     const normalized = normalizeWorldDropPayload(drop, options);
     if (!normalized) return { ok: false, reason: "invalid_drop" };
@@ -4549,7 +4686,7 @@ class PostgresStore {
    * @param {Record<string, unknown>} worldState
    * @returns {Promise<PixelMania.MirrorWorldDropsStateResult>}
    */
-  async mirrorWorldDropsState(client, worldId, worldState: any = {}) {
+  async mirrorWorldDropsState(client: PoolClient, worldId: string, worldState: any = {}) {
     if (!worldId) return { ok: false, reason: "missing_world" };
     const state = toObject(worldState);
     if (!Object.prototype.hasOwnProperty.call(state, "drops") && !Object.prototype.hasOwnProperty.call(state, "item_drops")) {
@@ -4559,7 +4696,7 @@ class PostgresStore {
     const rawDrops = Array.isArray(state.drops)
       ? state.drops
       : (Array.isArray(state.item_drops) ? state.item_drops : []);
-    const activeDropIds = [];
+    const activeDropIds: string[] = [];
     for (const rawDrop of rawDrops) {
       const upsert = await this.upsertWorldDropRow(client, worldId, rawDrop, {
         source: "world_state_mirror",
@@ -4612,7 +4749,7 @@ class PostgresStore {
     return { ok: true, active_drop_count: activeDropIds.length };
   }
 
-  async mirrorWorldLockState(client, worldId, worldState) {
+  async mirrorWorldLockState(client: PoolClient, worldId: string, worldState: RuntimeRecord) {
     if (!worldId) return;
     const state = toObject(worldState);
     const lock = toObject(state.world_lock);
@@ -4775,7 +4912,7 @@ class PostgresStore {
     }
   }
 
-  async mirrorWorldAreaLocksState(client, worldId, worldState) {
+  async mirrorWorldAreaLocksState(client: PoolClient, worldId: string, worldState: RuntimeRecord) {
     if (!worldId) return;
     const state = toObject(worldState);
     const rawLocks = Array.isArray(state.area_locks)
@@ -4885,7 +5022,7 @@ class PostgresStore {
     }
   }
 
-  async saveWorldState(worldName, state) {
+  async saveWorldState(worldName: unknown, state: RuntimeRecord) {
     if (!this.isReady()) return false;
     const cleanWorldName = cleanName(worldName || state?.world_name || "START") || "START";
 
@@ -4897,7 +5034,7 @@ class PostgresStore {
       });
       return true;
     } catch (error) {
-      this.logger("[postgres] world state save failed:", error.message);
+      this.logger("[postgres] world state save failed:", getErrorMessage(error));
       return false;
     }
   }
@@ -4908,7 +5045,7 @@ class PostgresStore {
    * @param {PixelMania.WorldChangeEntry | Record<string, unknown>} entry
    * @returns {Promise<PixelMania.PostgresWorldChangeInsertResult>}
    */
-  async insertWorldBlockChange(client, worldId, entry: any = {}) {
+  async insertWorldBlockChange(client: PoolClient, worldId: string, entry: any = {}) {
     if (!worldId) return null;
     const e = toObject(entry);
 
@@ -5021,7 +5158,7 @@ class PostgresStore {
    * @param {PixelMania.WorldChangeEntry | Record<string, unknown>} entry
    * @returns {Promise<PixelMania.PostgresWorldChangeInsertResult>}
    */
-  async insertWorldObjectChange(client, worldId, entry: any = {}) {
+  async insertWorldObjectChange(client: PoolClient, worldId: string, entry: any = {}) {
     if (!worldId) return null;
     const e = toObject(entry);
 
@@ -5113,7 +5250,7 @@ class PostgresStore {
    * @param {PixelMania.WorldChangeEntry | Record<string, unknown>} entry
    * @returns {Promise<PixelMania.PostgresWorldChangeInsertResult>}
    */
-  async recordWorldChangeEntry(client, worldId, entry: any = {}) {
+  async recordWorldChangeEntry(client: PoolClient, worldId: string, entry: any = {}) {
     if (this.isWorldObjectChangeEntry(entry)) {
       return this.insertWorldObjectChange(client, worldId, entry);
     }
@@ -5126,7 +5263,7 @@ class PostgresStore {
    * @param {PixelMania.TrackedWorldDropChangeEntry | PixelMania.WorldChangeEntry | Record<string, unknown>} change
    * @returns {Promise<void>}
    */
-  async recordWorldChangeAndTrackedDrops(client, worldId, change: any = {}) {
+  async recordWorldChangeAndTrackedDrops(client: PoolClient, worldId: string, change: any = {}) {
     await this.recordWorldChangeEntry(client, worldId, change);
     /** @type {PixelMania.TrackedWorldDropChangeDetails} */
     const changeDetails = toObject(change?.details);
@@ -5179,7 +5316,7 @@ class PostgresStore {
     }
   }
 
-  async loadWorldStateForUpdate(client, worldName) {
+  async loadWorldStateForUpdate(client: PoolClient, worldName: unknown) {
     const cleanWorldName = cleanName(worldName || "");
     if (cleanWorldName === "") return {};
 
@@ -5196,13 +5333,13 @@ class PostgresStore {
     return toObject(result.rows[0]?.world_state);
   }
 
-  async loadWorldState(worldName) {
+  async loadWorldState(worldName: unknown) {
     if (!this.isReady()) return { ok: false, found: false, reason: "postgres_unavailable" };
     const cleanWorldName = cleanName(worldName || "");
     if (cleanWorldName === "") return { ok: false, found: false, reason: "invalid_world" };
 
     try {
-      const result = await this.pool.query(
+      const result = await this.db.query(
         `
         SELECT world_name::text AS world_name, world_state, updated_at, last_saved_at
           FROM ${this.table("worlds")}
@@ -5221,12 +5358,12 @@ class PostgresStore {
       }
 
       const rawWorldState = toObject(row.world_state);
-      const state = {
+      const state: RuntimeRecord = {
         ...rawWorldState,
         world_name: cleanName(rawWorldState.world_name || row.world_name || cleanWorldName) || cleanWorldName,
       };
 
-      const worldLockResult = await this.pool.query(
+      const worldLockResult = await this.db.query(
         `
         SELECT w.world_name::text AS world_name,
                wl.lock_type,
@@ -5286,8 +5423,8 @@ class PostgresStore {
         last_saved_at: normalizeOptionalTimestamp(row.last_saved_at),
       };
     } catch (error) {
-      this.logger("[postgres] single world state load failed:", error.message);
-      return { ok: false, found: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] single world state load failed:", getErrorMessage(error));
+      return { ok: false, found: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
@@ -5297,7 +5434,7 @@ class PostgresStore {
     const beforeObjects = extractWorldObjectJournalMap(beforeState, worldName);
     const afterObjects = extractWorldObjectJournalMap(afterState, worldName);
     const keys = new Set([...beforeObjects.keys(), ...afterObjects.keys()]);
-    const changes = [];
+    const changes: RuntimeRecord[] = [];
 
     for (const key of keys) {
       if (changes.length >= WORLD_OBJECT_CHANGE_DIFF_LIMIT) break;
@@ -5335,7 +5472,11 @@ class PostgresStore {
    * @param {PixelMania.WorldChangeEntry[]} changes
    * @returns {Promise<PixelMania.PostgresSaveWorldStateWithWorldChangesResult>}
    */
-  async saveWorldStateWithWorldChanges(worldName, state, changes = []) {
+  async saveWorldStateWithWorldChanges(
+    worldName: unknown,
+    state: RuntimeRecord,
+    changes: RuntimeRecord[] = []
+  ) {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanWorldName = cleanName(worldName || state?.world_name || "START") || "START";
     const worldChanges = Array.isArray(changes) ? changes : [];
@@ -5363,8 +5504,8 @@ class PostgresStore {
       });
       return { ok: true };
     } catch (error) {
-      this.logger("[postgres] world state/change transaction failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] world state/change transaction failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
@@ -5372,7 +5513,7 @@ class PostgresStore {
     if (!this.isReady()) return [];
 
     try {
-      const result = await this.pool.query(`
+      const result = await this.queryReadWithRetry("world states load", `
         SELECT world_name::text AS world_name, world_state, updated_at, last_saved_at
           FROM ${this.table("worlds")}
          WHERE is_active = true
@@ -5386,7 +5527,7 @@ class PostgresStore {
       const worldsWithDropRows = new Set();
       const normalizedWorldLocksByWorld = new Map();
       if (worldNames.length > 0) {
-        const dropHistoryRows = await this.pool.query(`
+        const dropHistoryRows = await this.queryReadWithRetry("world drop history load", `
           SELECT DISTINCT w.world_name::text AS world_name
             FROM ${this.table("world_drops")} wd
             JOIN ${this.table("worlds")} w ON w.world_id = wd.world_id
@@ -5397,7 +5538,7 @@ class PostgresStore {
           worldsWithDropRows.add(worldName);
         }
 
-        const worldLockRows = await this.pool.query(`
+        const worldLockRows = await this.queryReadWithRetry("world locks load", `
           SELECT w.world_name::text AS world_name,
                  wl.lock_type,
                  wl.is_locked,
@@ -5424,7 +5565,7 @@ class PostgresStore {
       }
 
       if (worldNames.length > 0) {
-        const activeDropRows = await this.pool.query(`
+        const activeDropRows = await this.queryReadWithRetry("active world drops load", `
         SELECT w.world_name::text AS world_name,
                wd.drop_id,
                wd.item_type,
@@ -5451,7 +5592,7 @@ class PostgresStore {
 
       return result.rows.map((row) => {
         const worldName = cleanName(row.world_name);
-        const state = {
+        const state: RuntimeRecord = {
           ...toObject(row.world_state),
           world_name: cleanName(toObject(row.world_state).world_name || row.world_name),
         };
@@ -5486,12 +5627,12 @@ class PostgresStore {
         };
       });
     } catch (error) {
-      this.logger("[postgres] world state load failed:", error.message);
-      return [];
+      this.logger("[postgres] world state load failed after retries:", getErrorMessage(error));
+      throw postgresError(error);
     }
   }
 
-  async listOwnedWorldLocks(username, limit = 100, identity: any = {}) {
+  async listOwnedWorldLocks(username: unknown, limit = 100, identity: any = {}) {
     if (!this.isReady()) return [];
     const ownerName = cleanName(username || "");
     const ownerAccountId = cleanName(identity?.account_id || "");
@@ -5501,7 +5642,7 @@ class PostgresStore {
     const rowLimit = Math.max(1, Math.min(250, toInt(limit, 100)));
 
     try {
-      const result = await this.pool.query(
+      const result = await this.db.query(
         `
         SELECT w.world_name::text AS world_name,
                wl.lock_type,
@@ -5548,7 +5689,7 @@ class PostgresStore {
         })
         .filter((entry) => entry !== null);
     } catch (error) {
-      this.logger("[postgres] owned world locks lookup failed:", error.message);
+      this.logger("[postgres] owned world locks lookup failed:", getErrorMessage(error));
       return [];
     }
   }
@@ -5557,13 +5698,13 @@ class PostgresStore {
    * @param {PixelMania.WorldName | string} worldName
    * @returns {Promise<PixelMania.LoadActiveWorldDropsResult>}
    */
-  async loadActiveWorldDrops(worldName) {
+  async loadActiveWorldDrops(worldName: unknown) {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable", drops: [] };
     const cleanWorldName = cleanName(worldName || "");
     if (cleanWorldName === "") return { ok: false, reason: "invalid_world", drops: [] };
 
     try {
-      const historyResult = await this.pool.query(
+      const historyResult = await this.db.query(
         `
         SELECT EXISTS (
           SELECT 1
@@ -5579,7 +5720,7 @@ class PostgresStore {
         return { ok: true, world_name: cleanWorldName, skipped: true, reason: "no_world_drop_rows", drops: [] };
       }
 
-      const result = await this.pool.query(
+      const result = await this.db.query(
         `
         SELECT wd.drop_id,
                wd.item_type,
@@ -5602,12 +5743,12 @@ class PostgresStore {
 
       return { ok: true, world_name: cleanWorldName, drops: result.rows.map((row) => worldDropRowToPayload(row)) };
     } catch (error) {
-      this.logger("[postgres] active world drops load failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message, drops: [] };
+      this.logger("[postgres] active world drops load failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error), drops: [] };
     }
   }
 
-  async saveWorldSnapshot(worldName, snapshot, options: any = {}) {
+  async saveWorldSnapshot(worldName: unknown, snapshot: RuntimeRecord, options: any = {}) {
     if (!this.isReady()) return false;
     const cleanWorldName = cleanName(worldName || snapshot?.world_name || "START") || "START";
     const snapshotData = safeJson(snapshot);
@@ -5663,12 +5804,12 @@ class PostgresStore {
       });
       return true;
     } catch (error) {
-      this.logger("[postgres] world snapshot save failed:", error.message);
+      this.logger("[postgres] world snapshot save failed:", getErrorMessage(error));
       return false;
     }
   }
 
-  mirrorAdminAction(entry) {
+  mirrorAdminAction(entry: RuntimeRecord) {
     if (!this.isReady()) return;
     const e = toObject(entry);
 
@@ -5737,7 +5878,7 @@ class PostgresStore {
     });
   }
 
-  mirrorAccount(account, options: any = {}) {
+  mirrorAccount(account: RuntimeRecord, options: any = {}) {
     if (!this.isReady()) return;
     const accountData = toObject(account);
     const username = cleanName(accountData.username);
@@ -5854,7 +5995,7 @@ class PostgresStore {
     });
   }
 
-  async saveSession(account, details: any = {}) {
+  async saveSession(account: RuntimeRecord, details: any = {}) {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const accountData = toObject(account);
     const username = cleanName(accountData.username);
@@ -5973,16 +6114,16 @@ class PostgresStore {
         refresh_expires_at: normalizeOptionalTimestamp(refreshExpiresAt),
       };
     } catch (error) {
-      this.logger("[postgres] session save failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] session save failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
-  mirrorSession(account, details: any = {}) {
+  mirrorSession(account: RuntimeRecord, details: any = {}) {
     return this.saveSession(account, details);
   }
 
-  async validateSessionToken(username, sessionTokenHash, details: any = {}) {
+  async validateSessionToken(username: unknown, sessionTokenHash: unknown, details: any = {}) {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanUsername = cleanName(username);
     const cleanSessionHash = cleanName(sessionTokenHash);
@@ -6098,12 +6239,12 @@ class PostgresStore {
         };
       });
     } catch (error) {
-      this.logger("[postgres] session validation failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] session validation failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
-  async revokeSessionsForUsername(username, reason = "revoked") {
+  async revokeSessionsForUsername(username: unknown, reason = "revoked") {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanUsername = cleanName(username);
     if (cleanUsername === "") return { ok: false, reason: "invalid_username" };
@@ -6129,17 +6270,21 @@ class PostgresStore {
       });
       return { ok: true };
     } catch (error) {
-      this.logger("[postgres] session revoke failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] session revoke failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
-  revokeSessionsByUsername(username) {
+  revokeSessionsByUsername(username: unknown) {
     if (!this.isReady()) return Promise.resolve({ ok: false, reason: "postgres_unavailable" });
     return this.revokeSessionsForUsername(username);
   }
 
-  async revokeOtherSessionsForUsername(username, keepSessionTokenHash, reason = "one_active_session") {
+  async revokeOtherSessionsForUsername(
+    username: unknown,
+    keepSessionTokenHash: unknown,
+    reason = "one_active_session"
+  ) {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanUsername = cleanName(username);
     const keepHash = cleanName(keepSessionTokenHash);
@@ -6167,18 +6312,18 @@ class PostgresStore {
       });
       return { ok: true };
     } catch (error) {
-      this.logger("[postgres] other session revoke failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] other session revoke failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
-  async revokeSessionByTokenHash(sessionTokenHash, reason = "revoked") {
+  async revokeSessionByTokenHash(sessionTokenHash: unknown, reason = "revoked") {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanSessionHash = cleanName(sessionTokenHash);
     if (cleanSessionHash === "") return { ok: false, reason: "invalid_session" };
 
     try {
-      await this.pool.query(
+      await this.db.query(
         `
         UPDATE ${this.table("sessions")}
            SET revoked_at = now(),
@@ -6193,8 +6338,8 @@ class PostgresStore {
       );
       return { ok: true };
     } catch (error) {
-      this.logger("[postgres] session token revoke failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] session token revoke failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
@@ -6258,12 +6403,12 @@ class PostgresStore {
         return { ok: true };
       });
     } catch (error) {
-      this.logger("[postgres] password reset request write failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] password reset request write failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
-  async consumeAccountPasswordResetRequest(tokenHash) {
+  async consumeAccountPasswordResetRequest(tokenHash: unknown) {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanTokenHash = cleanName(tokenHash);
     if (cleanTokenHash === "") return { ok: false, reason: "missing_token" };
@@ -6307,12 +6452,12 @@ class PostgresStore {
         };
       });
     } catch (error) {
-      this.logger("[postgres] password reset request consume failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] password reset request consume failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
-  async consumeAccountEmailVerificationToken(tokenHash) {
+  async consumeAccountEmailVerificationToken(tokenHash: unknown) {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanTokenHash = cleanName(tokenHash);
     if (cleanTokenHash === "") return { ok: false, reason: "missing_token" };
@@ -6403,12 +6548,12 @@ class PostgresStore {
         };
       });
     } catch (error) {
-      this.logger("[postgres] email verification token consume failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] email verification token consume failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
-  async resetAccountPasswordWithToken(tokenHash, passwordData: any = {}) {
+  async resetAccountPasswordWithToken(tokenHash: unknown, passwordData: any = {}) {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanTokenHash = cleanName(tokenHash);
     const salt = cleanName(passwordData.salt || "");
@@ -6487,8 +6632,8 @@ class PostgresStore {
         };
       });
     } catch (error) {
-      this.logger("[postgres] password reset transaction failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] password reset transaction failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
@@ -6555,12 +6700,12 @@ class PostgresStore {
         return { ok: true };
       });
     } catch (error) {
-      this.logger("[postgres] email change request write failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] email change request write failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
-  async consumeAccountEmailChangeRequest(tokenHash) {
+  async consumeAccountEmailChangeRequest(tokenHash: unknown) {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanTokenHash = cleanName(tokenHash);
     if (cleanTokenHash === "") return { ok: false, reason: "missing_token" };
@@ -6605,12 +6750,12 @@ class PostgresStore {
         };
       });
     } catch (error) {
-      this.logger("[postgres] email change request consume failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] email change request consume failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
-  async updateAccountPassword(username, passwordData: any = {}) {
+  async updateAccountPassword(username: unknown, passwordData: any = {}) {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanUsername = cleanName(username);
     const salt = cleanName(passwordData.salt || "");
@@ -6621,7 +6766,7 @@ class PostgresStore {
     }
 
     try {
-      const result = await this.pool.query(
+      const result = await this.db.query(
         `
         UPDATE ${this.table("accounts")}
            SET password_salt = $2,
@@ -6640,15 +6785,15 @@ class PostgresStore {
           JSON.stringify({ password_salt: salt, password_hash: hash, password_algorithm: algorithm }),
         ]
       );
-      if (result.rowCount < 1) return { ok: false, reason: "account_not_found" };
+      if ((result.rowCount ?? 0) < 1) return { ok: false, reason: "account_not_found" };
       return { ok: true };
     } catch (error) {
-      this.logger("[postgres] account password update failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] account password update failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
-  async updateAccountEmail(username, newEmail) {
+  async updateAccountEmail(username: unknown, newEmail: unknown) {
     if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanUsername = cleanName(username);
     const cleanEmailValue = cleanName(newEmail);
@@ -6657,7 +6802,7 @@ class PostgresStore {
     }
 
     try {
-      const result = await this.pool.query(
+      const result = await this.db.query(
         `
         UPDATE ${this.table("accounts")}
            SET email = $2,
@@ -6682,18 +6827,18 @@ class PostgresStore {
           }),
         ]
       );
-      if (result.rowCount < 1) return { ok: false, reason: "account_not_found" };
+      if ((result.rowCount ?? 0) < 1) return { ok: false, reason: "account_not_found" };
       return { ok: true };
     } catch (error) {
-      if (String(error?.code || "") === "23505") {
+      if (getErrorCode(error) === "23505") {
         return { ok: false, reason: "email_in_use" };
       }
-      this.logger("[postgres] account email update failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] account email update failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
-  mirrorPlayerWorld(username, worldName) {
+  mirrorPlayerWorld(username: unknown, worldName: unknown) {
     if (!this.isReady()) return;
     const cleanUsername = cleanName(username);
     const cleanWorld = cleanName(worldName);
@@ -6715,7 +6860,7 @@ class PostgresStore {
     });
   }
 
-  async updatePlayerProgression(client, playerId, state) {
+  async updatePlayerProgression(client: PoolClient, playerId: string, state: RuntimeRecord) {
     if (!this.progressionReady || !playerId) return null;
     const progression = normalizeProgressionState(state);
     await client.query(
@@ -6743,7 +6888,7 @@ class PostgresStore {
     return progression;
   }
 
-  mirrorPlayerProgression(username, state, event = {}) {
+  mirrorPlayerProgression(username: unknown, state: RuntimeRecord, event: RuntimeRecord = {}) {
     if (!this.isReady() || !this.progressionReady) return;
     const cleanUsername = cleanName(username);
     if (cleanUsername === "") return;
@@ -6791,7 +6936,7 @@ class PostgresStore {
     });
   }
 
-  mirrorInventorySnapshot(username, state) {
+  mirrorInventorySnapshot(username: unknown, state: RuntimeRecord) {
     if (!this.isReady()) return;
     const cleanUsername = cleanName(username);
     const playerState = toObject(state);
@@ -6844,7 +6989,7 @@ class PostgresStore {
     });
   }
 
-  getItemInstanceLedgerDestination(source, action, delta) {
+  getItemInstanceLedgerDestination(source: unknown, action: unknown, delta: number) {
     const label = `${cleanName(source)} ${cleanName(action)}`.toLowerCase();
     if (delta >= 0) return { state: ITEM_INSTANCE_ACTIVE_STATE, location: "inventory" };
     if (label.includes("spend") || label.includes("purchase") || label.includes("buy_cost")) {
@@ -6863,7 +7008,7 @@ class PostgresStore {
    * @param {PixelMania.TrackedWorldDropChangeEntry | PixelMania.WorldChangeEntry | Record<string, unknown>} change
    * @returns {boolean}
    */
-  shouldCreateTrackedWorldDropItemInstancesForChange(change = {}) {
+  shouldCreateTrackedWorldDropItemInstancesForChange(change: RuntimeRecord = {}) {
     const e = toObject(change);
     /** @type {PixelMania.TrackedWorldDropChangeDetails} */
     const details = toObject(e.details);
@@ -6889,7 +7034,7 @@ class PostgresStore {
     );
   }
 
-  async syncItemInstancesForLedger(client, entry: any = {}) {
+  async syncItemInstancesForLedger(client: PoolClient, entry: any = {}) {
     const e = toObject(entry);
     const playerId = cleanName(e.player_id || "");
     const itemType = cleanName(e.item_type || e.item_id || "");
@@ -6926,8 +7071,13 @@ class PostgresStore {
 
     if (delta > 0) {
       const label = `${source} ${action}`.toLowerCase();
-      const releasePlans = [];
-      const addReleasePlan = (location, metadataAction, metadataTransactionId, planAmount) => {
+      const releasePlans: ReleasePlan[] = [];
+      const addReleasePlan = (
+        location: string,
+        metadataAction: string,
+        metadataTransactionId: string,
+        planAmount: number
+      ) => {
         const cleanLocation = cleanName(location || "").toLowerCase();
         if (!ITEM_INSTANCE_LOCATIONS.has(cleanLocation)) return;
         const cleanAction = cleanName(metadataAction || "");
@@ -6984,7 +7134,7 @@ class PostgresStore {
       }
 
       if (releasePlans.length > 0) {
-        const releasedInstances = [];
+        const releasedInstances: ItemInstanceMovement[] = [];
         for (const plan of releasePlans) {
           const lockedRows = await client.query(
             `
@@ -7009,7 +7159,7 @@ class PostgresStore {
             [playerId, itemType, itemCategory, plan.location, plan.metadata_action, plan.metadata_transaction_id, plan.amount]
           );
 
-          if (lockedRows.rowCount < plan.amount) {
+          if ((lockedRows.rowCount ?? 0) < plan.amount) {
             return {
               ok: false,
               tracked: true,
@@ -7017,7 +7167,7 @@ class PostgresStore {
               item_type: itemType,
               item_category: itemCategory,
               required_instances: plan.amount,
-              available_instances: lockedRows.rowCount,
+              available_instances: lockedRows.rowCount ?? 0,
               current_location: plan.location,
               metadata_action: plan.metadata_action,
             };
@@ -7104,7 +7254,7 @@ class PostgresStore {
         };
       }
 
-      const createdInstances = [];
+      const createdInstances: ItemInstanceMovement[] = [];
       for (let i = 0; i < createCount; i += 1) {
         const publicItemInstanceId = generatePublicItemInstanceId();
         const result = await client.query(
@@ -7195,7 +7345,7 @@ class PostgresStore {
       [playerId, itemType, itemCategory, movementCount]
     );
 
-    if (strict && activeRows.rowCount < movementCount) {
+    if (strict && (activeRows.rowCount ?? 0) < movementCount) {
       return {
         ok: false,
         tracked: true,
@@ -7203,11 +7353,11 @@ class PostgresStore {
         item_type: itemType,
         item_category: itemCategory,
         required_instances: movementCount,
-        available_instances: activeRows.rowCount,
+        available_instances: activeRows.rowCount ?? 0,
       };
     }
 
-    const movedInstances = [];
+    const movedInstances: ItemInstanceMovement[] = [];
     for (const row of activeRows.rows) {
       const previousLocation = cleanName(row.current_location || "inventory");
       await client.query(
@@ -7275,10 +7425,10 @@ class PostgresStore {
       });
     }
 
-    return { ok: true, tracked: true, created: 0, moved: activeRows.rowCount, item_instances: movedInstances };
+    return { ok: true, tracked: true, created: 0, moved: activeRows.rowCount ?? 0, item_instances: movedInstances };
   }
 
-  async transferTrackedItemInstances(client, entry: any = {}) {
+  async transferTrackedItemInstances(client: PoolClient, entry: any = {}) {
     const e = toObject(entry);
     const fromPlayerId = cleanName(e.from_player_id || "");
     const toPlayerId = cleanName(e.to_player_id || "");
@@ -7289,9 +7439,10 @@ class PostgresStore {
     }
 
     const strict = Boolean(e.strict_item_instances || e.strict || e.instance_id_first);
-    const rawIds = []
-      .concat(Array.isArray(e.public_item_instance_ids) ? e.public_item_instance_ids : [])
-      .concat(Array.isArray(e.item_instance_ids) ? e.item_instance_ids : []);
+    const rawIds: unknown[] = [
+      ...(Array.isArray(e.public_item_instance_ids) ? e.public_item_instance_ids : []),
+      ...(Array.isArray(e.item_instance_ids) ? e.item_instance_ids : []),
+    ];
     const requestedPublicIds = rawIds
       .map((id) => cleanName(id))
       .filter((id) => id !== "");
@@ -7388,7 +7539,7 @@ class PostgresStore {
         [fromPlayerId, itemType, itemCategory, fromStates, fromLocations, fromMetadataAction, fromMetadataTransactionId, preferredWorldName, requirePreferredWorldName, amount]
       );
 
-    if ((strict || requestedPublicIds.length > 0) && rows.rowCount < amount) {
+    if ((strict || requestedPublicIds.length > 0) && (rows.rowCount ?? 0) < amount) {
       return {
         ok: false,
         tracked: true,
@@ -7396,11 +7547,11 @@ class PostgresStore {
         item_type: itemType,
         item_category: itemCategory,
         required_instances: amount,
-        available_instances: rows.rowCount,
+        available_instances: rows.rowCount ?? 0,
       };
     }
 
-    const transferredInstances = [];
+    const transferredInstances: ItemInstanceMovement[] = [];
     for (const row of rows.rows) {
       await client.query(
         `
@@ -7462,10 +7613,10 @@ class PostgresStore {
       });
     }
 
-    return { ok: true, tracked: true, transferred: rows.rowCount, item_instances: transferredInstances };
+    return { ok: true, tracked: true, transferred: rows.rowCount ?? 0, item_instances: transferredInstances };
   }
 
-  async claimTrackedWorldDropItemInstances(client, entry: any = {}) {
+  async claimTrackedWorldDropItemInstances(client: PoolClient, entry: any = {}) {
     const e = toObject(entry);
     const toPlayerId = cleanName(e.to_player_id || e.player_id || "");
     const itemType = cleanName(e.item_type || e.item_id || "");
@@ -7506,7 +7657,7 @@ class PostgresStore {
       [itemType, itemCategory, worldId, dropId, amount]
     );
 
-    if (rows.rowCount < amount) {
+    if ((rows.rowCount ?? 0) < amount) {
       return {
         ok: false,
         tracked: true,
@@ -7515,11 +7666,11 @@ class PostgresStore {
         item_category: itemCategory,
         drop_id: dropId,
         required_instances: amount,
-        available_instances: rows.rowCount,
+        available_instances: rows.rowCount ?? 0,
       };
     }
 
-    const claimedInstances = [];
+    const claimedInstances: ItemInstanceMovement[] = [];
     for (const row of rows.rows) {
       await client.query(
         `
@@ -7582,10 +7733,10 @@ class PostgresStore {
       });
     }
 
-    return { ok: true, tracked: true, claimed: rows.rowCount, item_instances: claimedInstances };
+    return { ok: true, tracked: true, claimed: rows.rowCount ?? 0, item_instances: claimedInstances };
   }
 
-  async createTrackedWorldDropItemInstances(client, entry: any = {}) {
+  async createTrackedWorldDropItemInstances(client: PoolClient, entry: any = {}) {
     const e = toObject(entry);
     const itemType = cleanName(e.item_type || e.item_id || "");
     const itemCategory = resolveItemCategory(itemType, e.item_category || e.category || "");
@@ -7608,7 +7759,7 @@ class PostgresStore {
     const source = normalizeItemInstanceSource(e.source || "world_drop");
     const action = cleanName(e.action || "drop_create") || "drop_create";
     const details = safeJson(e.details);
-    const createdInstances = [];
+    const createdInstances: ItemInstanceMovement[] = [];
     let createCount = amount;
 
     if (dropId !== "" && worldId) {
@@ -7801,8 +7952,8 @@ class PostgresStore {
         );
         let worldId = worldResult.rows[0]?.world_id || null;
 
-        const ledgerEntries = [];
-        const transactionLedgerEntries = [];
+        const ledgerEntries: InventoryLedgerEntry[] = [];
+        const transactionLedgerEntries: RuntimeRecord[] = [];
         const inventoryBeforeHash = await this.getInventorySnapshotHash(client, playerId);
         for (const deltaEntry of deltas) {
           const itemInventory = await client.query(
@@ -7820,7 +7971,7 @@ class PostgresStore {
           const existing = itemInventory.rows[0];
           const storedBeforeAmount = Math.max(0, toInt(existing?.amount || 0, 0));
           let beforeAmount = storedBeforeAmount;
-          let repairedFromAmount = null;
+          let repairedFromAmount: number | null = null;
           const requestedStackLimit = getInventoryStackLimitForItem(deltaEntry.item_type, deltaEntry.stack_limit);
           const existingStackLimit = clampStackLimit(existing?.stack_limit || requestedStackLimit, requestedStackLimit);
           const stackLimit = Math.max(existingStackLimit, requestedStackLimit);
@@ -7944,7 +8095,7 @@ class PostgresStore {
           );
           const itemTransactionId = itemTransactionResult.rows[0]?.item_transaction_id || null;
 
-          let gemLedgerId = null;
+          let gemLedgerId: number | null = null;
           const isGemLedgerRow = deltaEntry.item_type === "gem" || deltaEntry.item_category === "currency";
           if (isGemLedgerRow) {
             const gemLedgerResult = await client.query(
@@ -8146,11 +8297,12 @@ class PostgresStore {
     } catch (error) {
       const trackedErrorResult = resultForTrackedItemMovementError(error);
       if (trackedErrorResult) return trackedErrorResult;
+      const pgError = postgresError(error);
       this.logger("[postgres] inventory delta transaction failed:", {
-        message: error.message,
-        code: error.code || "",
-        constraint: error.constraint || "",
-        detail: error.detail || "",
+        message: pgError.message,
+        code: pgError.code || "",
+        constraint: pgError.constraint || "",
+        detail: pgError.detail || "",
         source,
         action,
         reason,
@@ -8164,12 +8316,12 @@ class PostgresStore {
       });
       return InventoryContracts.buildPostgresInventoryDeltaTransactionFailure({
         reason: "database_error",
-        message: error.message,
+        message: getErrorMessage(error),
       });
     }
   }
 
-  mirrorItemLedger(entry) {
+  mirrorItemLedger(entry: RuntimeRecord) {
     if (!this.isReady()) return;
     const e = toObject(entry);
     const username = cleanName(e.account_username);
@@ -8283,7 +8435,7 @@ class PostgresStore {
     });
   }
 
-  mirrorGemLedger(entry) {
+  mirrorGemLedger(entry: RuntimeRecord) {
     if (!this.isReady()) return;
     const e = toObject(entry);
     const username = cleanName(e.account_username);
@@ -8331,7 +8483,7 @@ class PostgresStore {
     });
   }
 
-  mirrorShopPurchase(entry) {
+  mirrorShopPurchase(entry: RuntimeRecord) {
     if (!this.isReady()) return;
     const e = toObject(entry);
     const username = cleanName(e.account_username);
@@ -8388,7 +8540,7 @@ class PostgresStore {
     });
   }
 
-  mirrorTradeTransaction(entry) {
+  mirrorTradeTransaction(entry: RuntimeRecord) {
     if (!this.isReady()) return;
     const e = toObject(entry);
     const requester = cleanName(e.requester_username);
@@ -8504,7 +8656,7 @@ class PostgresStore {
     });
   }
 
-  mirrorVendingTransaction(entry) {
+  mirrorVendingTransaction(entry: RuntimeRecord) {
     if (!this.isReady()) return;
     const e = toObject(entry);
     const owner = cleanName(e.owner_username);
@@ -8660,7 +8812,7 @@ class PostgresStore {
           [worldId, dropId]
         );
 
-        if (worldDropRows.rowCount === 0 && Boolean(e.allow_world_drop_repair)) {
+        if ((worldDropRows.rowCount ?? 0) === 0 && Boolean(e.allow_world_drop_repair)) {
           const repairedDropAmount = Math.max(amount, toInt(e.drop_amount || e.drop_before_amount || amount, amount));
           await this.upsertWorldDropRow(client, worldId, {
             drop_id: dropId,
@@ -8702,7 +8854,7 @@ class PostgresStore {
           );
         }
 
-        if (worldDropRows.rowCount === 0) {
+        if ((worldDropRows.rowCount ?? 0) === 0) {
           return DropContracts.buildPostgresDropPickupFailure({ reason: "drop_not_available", drop_id: dropId });
         }
 
@@ -8746,7 +8898,7 @@ class PostgresStore {
         const existing = itemInventory.rows[0];
         const storedBeforeAmount = Math.max(0, toInt(existing?.amount || 0, 0));
         let beforeAmount = storedBeforeAmount;
-        let repairedFromAmount = null;
+        let repairedFromAmount: number | null = null;
         const existingStackLimit = clampStackLimit(existing?.stack_limit || requestedStackLimit, requestedStackLimit);
         const stackLimit = Math.max(existingStackLimit, requestedStackLimit);
         if (allowStateRepair && hasExpectedBefore && storedBeforeAmount !== expectedBeforeAmount) {
@@ -8880,7 +9032,7 @@ class PostgresStore {
           ]
         );
         const pickupTransactionId = pickupTransactionResult.rows[0]?.item_transaction_id || null;
-        let gemLedgerId = null;
+        let gemLedgerId: number | null = null;
         const isGemPickup = itemType === "gem" || itemCategory === "currency";
         if (isGemPickup) {
           const gemLedgerResult = await client.query(
@@ -9040,13 +9192,14 @@ class PostgresStore {
           message: cleanName(trackedErrorResult.message || ""),
         });
       }
-      this.logger("[postgres] drop_pickup transaction failed:", error.message, {
-        code: error.code || "",
-        schema: error.schema || "",
-        table: error.table || "",
-        column: error.column || "",
-        constraint: error.constraint || "",
-        detail: error.detail || "",
+      const pgError = postgresError(error);
+      this.logger("[postgres] drop_pickup transaction failed:", pgError.message, {
+        code: pgError.code || "",
+        schema: pgError.schema || "",
+        table: pgError.table || "",
+        column: pgError.column || "",
+        constraint: pgError.constraint || "",
+        detail: pgError.detail || "",
         username,
         world: worldName,
         drop_id: dropId,
@@ -9057,7 +9210,7 @@ class PostgresStore {
       });
       return DropContracts.buildPostgresDropPickupFailure({
         reason: "database_error",
-        message: error.message,
+        message: getErrorMessage(error),
       });
     }
   }
@@ -9087,9 +9240,10 @@ class PostgresStore {
       return { ok: false, reason: "invalid_payload" };
     }
 
-    const sanitizeOfferEntries = (offerItems) => {
-      const result = [];
-      for (const item of offerItems) {
+    const sanitizeOfferEntries = (offerItems: unknown): TradeOfferEntry[] => {
+      const result: TradeOfferEntry[] = [];
+      const entries = Array.isArray(offerItems) ? offerItems : [];
+      for (const item of entries) {
         const parsed = toObject(item);
         const itemType = cleanName(parsed.item_id || "");
         const itemCategory = cleanName(parsed.item_category || "block");
@@ -9103,8 +9257,8 @@ class PostgresStore {
     const normalizedRequesterOffers = sanitizeOfferEntries(requesterOffers);
     const normalizedTargetOffers = sanitizeOfferEntries(targetOffers);
 
-    const buildBaselineMap = (baselineItems) => {
-      const baseline = new Map();
+    const buildBaselineMap = (baselineItems: unknown): Map<string, RuntimeRecord> => {
+      const baseline = new Map<string, RuntimeRecord>();
       const entries = Array.isArray(baselineItems) ? baselineItems : [];
       for (const item of entries) {
         const parsed = toObject(item);
@@ -9123,10 +9277,13 @@ class PostgresStore {
     const requesterBaseline = buildBaselineMap(e.requester_inventory_baseline);
     const targetBaseline = buildBaselineMap(e.target_inventory_baseline);
 
-    const isWorldLockKeyTradeItem = (item) => cleanName(item?.item_id || item?.item_type || "") === "world_lock_key";
+    const isWorldLockKeyTradeItem = (item: unknown): boolean => {
+      const parsed = toObject(item);
+      return cleanName(parsed.item_id || parsed.item_type || "") === "world_lock_key";
+    };
 
-    const buildDeltaMap = (offerItems, options: any = {}) => {
-      const deltas = new Map();
+    const buildDeltaMap = (offerItems: TradeOfferEntry[], options: any = {}): Map<string, number> => {
+      const deltas = new Map<string, number>();
       for (const item of offerItems) {
         if (options.skipWorldLockKeys === true && isWorldLockKeyTradeItem(item)) continue;
         const key = `${item.item_id}\u0000${item.item_category || "block"}`;
@@ -9140,8 +9297,11 @@ class PostgresStore {
     const outgoingTarget = buildDeltaMap(normalizedTargetOffers);
     const incomingTarget = buildDeltaMap(normalizedRequesterOffers, { skipWorldLockKeys: true });
 
-    const buildNetMap = (negativeDeltas, positiveDeltas) => {
-      const net = new Map();
+    const buildNetMap = (
+      negativeDeltas: Map<string, number>,
+      positiveDeltas: Map<string, number>
+    ): Map<string, number> => {
+      const net = new Map<string, number>();
       for (const [key, amount] of negativeDeltas.entries()) {
         net.set(key, (net.get(key) || 0) - Math.max(0, amount));
       }
@@ -9154,8 +9314,13 @@ class PostgresStore {
     const netRequester = buildNetMap(outgoingRequester, incomingRequester);
     const netTarget = buildNetMap(outgoingTarget, incomingTarget);
 
-    const applyInventoryDeltas = async (client, playerId, deltas, baselineMap) => {
-      const ledgerEntries = [];
+    const applyInventoryDeltas = async (
+      client: PoolClient,
+      playerId: string,
+      deltas: Map<string, number>,
+      baselineMap: Map<string, RuntimeRecord>
+    ): Promise<InventoryDeltaResult> => {
+      const ledgerEntries: InventoryLedgerEntry[] = [];
       for (const [key, delta] of deltas.entries()) {
         if (!Number.isFinite(delta) || delta === 0) continue;
         const [itemType, itemCategory] = String(key).split("\u0000");
@@ -9181,7 +9346,7 @@ class PostgresStore {
         const baselineEntry = baselineMap instanceof Map ? baselineMap.get(`${safeItemType}\u0000${safeCategory}`) : null;
         const storedBeforeAmount = Math.max(0, toInt(inventoryRow?.amount || 0, 0));
         let beforeAmount = storedBeforeAmount;
-        let repairedFromAmount = null;
+        let repairedFromAmount: number | null = null;
         const itemDefaultStackLimit = getInventoryStackLimitForItem(safeItemType);
         const existingStackLimit = clampStackLimit(inventoryRow?.stack_limit || itemDefaultStackLimit, itemDefaultStackLimit);
         const baselineStackLimit = baselineEntry ? clampStackLimit(baselineEntry.stack_limit, itemDefaultStackLimit) : itemDefaultStackLimit;
@@ -9288,9 +9453,9 @@ class PostgresStore {
         const targetInventoryBeforeHash = await this.getInventorySnapshotHash(client, targetId);
 
         const requesterInventory = await applyInventoryDeltas(client, requesterId, netRequester, requesterBaseline);
-        if (!requesterInventory || requesterInventory.ok === false) return requesterInventory;
+        if (!requesterInventory.ok) return requesterInventory;
         const targetInventory = await applyInventoryDeltas(client, targetId, netTarget, targetBaseline);
-        if (!targetInventory || targetInventory.ok === false) return targetInventory;
+        if (!targetInventory.ok) return targetInventory;
 
         const tradeResult = await client.query(
           `
@@ -9391,7 +9556,7 @@ class PostgresStore {
           );
         }
 
-        const trackedInstanceMovements = [];
+        const trackedInstanceMovements: ItemInstanceMovement[] = [];
         for (const item of normalizedRequesterOffers) {
           const transferResult = await this.transferTrackedItemInstances(client, {
             from_player_id: requesterId,
@@ -9456,17 +9621,31 @@ class PostgresStore {
           }
         }
 
-        const tradeLedgerContextByEntry = new Map();
-        const tradeLedgerEntryKey = (playerId, entry) => `${playerId}\u0000${entry.item_type}\u0000${entry.item_category}\u0000${entry.delta}`;
-        const rememberTradeLedgerContext = (playerId, entry, context = {}) => {
+        const tradeLedgerContextByEntry = new Map<string, RuntimeRecord>();
+        const tradeLedgerEntryKey = (playerId: string, entry: InventoryLedgerEntry): string =>
+          `${playerId}\u0000${entry.item_type}\u0000${entry.item_category}\u0000${entry.delta}`;
+        const rememberTradeLedgerContext = (
+          playerId: string,
+          entry: InventoryLedgerEntry,
+          context: RuntimeRecord = {}
+        ): void => {
           tradeLedgerContextByEntry.set(tradeLedgerEntryKey(playerId, entry), {
             ...(tradeLedgerContextByEntry.get(tradeLedgerEntryKey(playerId, entry)) || {}),
             ...context,
           });
         };
-        const getTradeLedgerContext = (playerId, entry) => tradeLedgerContextByEntry.get(tradeLedgerEntryKey(playerId, entry)) || {};
-        const isGemLedgerEntry = (entry) => cleanName(entry?.item_type || "") === "gem" || cleanName(entry?.item_category || "") === "currency";
-        const recordTradeGemLedger = async (client, playerId, counterpartyUsername, entry) => {
+        const getTradeLedgerContext = (
+          playerId: string,
+          entry: InventoryLedgerEntry
+        ): RuntimeRecord => tradeLedgerContextByEntry.get(tradeLedgerEntryKey(playerId, entry)) || {};
+        const isGemLedgerEntry = (entry: InventoryLedgerEntry): boolean =>
+          cleanName(entry?.item_type || "") === "gem" || cleanName(entry?.item_category || "") === "currency";
+        const recordTradeGemLedger = async (
+          client: PoolClient,
+          playerId: string,
+          counterpartyUsername: string,
+          entry: InventoryLedgerEntry
+        ) => {
           if (!isGemLedgerEntry(entry)) return null;
           const action = entry.delta > 0 ? "trade_receive" : "trade_send";
           const result = await client.query(
@@ -9517,7 +9696,7 @@ class PostgresStore {
         };
 
         for (const entry of requesterInventory.ledgerEntries) {
-          let itemTransactionResult = null;
+          let itemTransactionResult: QueryResult<RuntimeRecord> | null = null;
           if (entry.delta > 0) {
             itemTransactionResult = await client.query(
               `
@@ -9634,7 +9813,7 @@ class PostgresStore {
         }
 
         for (const entry of targetInventory.ledgerEntries) {
-          let itemTransactionResult = null;
+          let itemTransactionResult: QueryResult<RuntimeRecord> | null = null;
           if (entry.delta > 0) {
             itemTransactionResult = await client.query(
               `
@@ -9799,7 +9978,7 @@ class PostgresStore {
         await this.updatePlayerInventoryHash(client, requesterId, requesterInventoryAfterHash);
         await this.updatePlayerInventoryHash(client, targetId, targetInventoryAfterHash);
         const tradeLedgerTransactionId = isUuid(tradeId) ? tradeId : null;
-        const instancesForTradeEntry = (playerId, entry) => {
+        const instancesForTradeEntry = (playerId: string, entry: InventoryLedgerEntry) => {
           if (!shouldTrackItemInstance(entry.item_type, entry.item_category)) return [];
           return trackedInstanceMovements.filter((instance) => {
             const item = toObject(instance);
@@ -9902,8 +10081,8 @@ class PostgresStore {
     } catch (error) {
       const trackedErrorResult = resultForTrackedItemMovementError(error);
       if (trackedErrorResult) return trackedErrorResult;
-      this.logger("[postgres] trade finalization transaction failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] trade finalization transaction failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
@@ -9937,8 +10116,8 @@ class PostgresStore {
       return { ok: false, reason: "invalid_payload" };
     }
 
-    const buildBaselineMap = (baselineItems) => {
-      const baseline = new Map();
+    const buildBaselineMap = (baselineItems: unknown): Map<string, RuntimeRecord> => {
+      const baseline = new Map<string, RuntimeRecord>();
       const entries = Array.isArray(baselineItems) ? baselineItems : [];
       for (const item of entries) {
         const parsed = toObject(item);
@@ -9992,7 +10171,7 @@ class PostgresStore {
         const lockBaseline = buyerBaseline.get("world_lock\u0000block");
         const storedBeforeLock = Math.max(0, toInt(lockInventory?.amount || 0, 0));
         let beforeLock = storedBeforeLock;
-        let repairedBeforeLock = null;
+        let repairedBeforeLock: number | null = null;
         const lockDefaultStackLimit = getInventoryStackLimitForItem("world_lock");
         const lockStack = Math.max(
           clampStackLimit(lockInventory?.stack_limit || lockDefaultStackLimit, lockDefaultStackLimit),
@@ -10056,7 +10235,7 @@ class PostgresStore {
         const itemBaseline = buyerBaseline.get(`${itemType}\u0000${itemCategory}`);
         const storedBeforeItem = Math.max(0, toInt(itemInventory?.amount || 0, 0));
         let beforeItem = storedBeforeItem;
-        let repairedBeforeItem = null;
+        let repairedBeforeItem: number | null = null;
         const itemDefaultStackLimit = getInventoryStackLimitForItem(itemType);
         const itemStack = Math.max(
           clampStackLimit(itemInventory?.stack_limit || itemDefaultStackLimit, itemDefaultStackLimit),
@@ -10491,8 +10670,8 @@ class PostgresStore {
     } catch (error) {
       const trackedErrorResult = resultForTrackedItemMovementError(error);
       if (trackedErrorResult) return trackedErrorResult;
-      this.logger("[postgres] vend buy transaction failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] vend buy transaction failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
@@ -10580,8 +10759,8 @@ class PostgresStore {
         };
       });
     } catch (error) {
-      this.logger("[postgres] punishment issue failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] punishment issue failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
@@ -10706,17 +10885,17 @@ class PostgresStore {
 
         return {
           ok: true,
-          revoked_count: result.rowCount,
+          revoked_count: result.rowCount ?? 0,
           punishment_ids: result.rows.map((row) => toInt(row.punishment_id, 0)).filter((id) => id > 0),
         };
       });
     } catch (error) {
-      this.logger("[postgres] punishment revoke failed:", error.message);
-      return { ok: false, reason: "database_error", message: error.message };
+      this.logger("[postgres] punishment revoke failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
   }
 
-  async getActivePunishments(username, options: any = {}) {
+  async getActivePunishments(username: unknown, options: any = {}) {
     if (!this.isReady()) return [];
     const cleanUsername = cleanName(username);
     if (cleanUsername === "") return [];
@@ -10725,7 +10904,7 @@ class PostgresStore {
     const worldName = cleanName(options.world || options.world_name || "");
 
     try {
-      const result = await this.pool.query(
+      const result = await this.db.query(
         `
         SELECT
           pu.punishment_id,
@@ -10765,12 +10944,12 @@ class PostgresStore {
         metadata: toObject(row.metadata),
       }));
     } catch (error) {
-      this.logger("[postgres] active punishment lookup failed:", error.message);
+      this.logger("[postgres] active punishment lookup failed:", getErrorMessage(error));
       return [];
     }
   }
 
-  async hasActivePunishment(username, type, options: any = {}) {
+  async hasActivePunishment(username: unknown, type: unknown, options: any = {}) {
     const rows = await this.getActivePunishments(username, {
       ...toObject(options),
       punishment_type: type,
@@ -10778,7 +10957,7 @@ class PostgresStore {
     return rows.length > 0;
   }
 
-  mirrorWorldChange(entry) {
+  mirrorWorldChange(entry: RuntimeRecord) {
     if (!this.isReady()) return;
     const e = toObject(entry);
     const worldName = cleanName(e.world);
@@ -10805,7 +10984,7 @@ class PostgresStore {
     });
   }
 
-  mirrorSecurityEvent(entry) {
+  mirrorSecurityEvent(entry: RuntimeRecord) {
     if (!this.isReady()) return;
     const e = toObject(entry);
 

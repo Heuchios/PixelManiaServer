@@ -27,6 +27,7 @@
     "src/server.ts",
     "world_snapshots",
     "worlds",
-    "players"
+    "players",
+    "src/postgres_store.ts"
   ]
 }

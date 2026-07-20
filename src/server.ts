@@ -1,55 +1,132 @@
 require("dotenv").config({ quiet: true });
 
-const WebSocket: any = require("ws");
-const childProcess: any = require("child_process");
-const crypto: any = require("crypto");
-const fs: any = require("fs");
-const http: any = require("http");
-const nodemailer: any = require("nodemailer");
-const os: any = require("os");
-const path: any = require("path");
-const ItemDatabase: any = require("./server_item_database");
-const ItemAtlasDB: any = require("./item_atlas_db");
-const DropContracts: any = require("./server_drop_contracts");
-const InventoryContracts: any = require("./server_inventory_contracts");
-const PacketContracts: any = require("./server_packet_contracts");
-const ServerMessageRouterHelpersModule: any = require("./server_message_router_helpers");
-const ServerBotRateLimitHelpersModule: any = require("./server_bot_rate_limit_helpers");
-const ServerInventoryTransactionHelpersModule: any = require("./server_inventory_transaction_helpers");
-const ServerWorldInteractionPayloadHelpersModule: any = require("./server_world_interaction_payload_helpers");
-const ServerSocketDeliveryHelpersModule: any = require("./server_socket_delivery_helpers");
-const ServerPunishmentHelpersModule: any = require("./server_punishment_helpers");
-const ServerPhase6HelpersModule: any = require("./server_phase6_helpers");
-const ServerPhase7DispatcherModule: any = require("./server_phase7_dispatcher");
-const ServerPhase8PlayerSessionRoutesModule: any = require("./server_phase8_player_session_routes");
-const ServerPhase8WorldActionRoutesModule: any = require("./server_phase8_world_action_routes");
-const ServerPhase8FinalRoutesModule: any = require("./server_phase8_final_routes");
-const ServerPhase9RemainingRoutesModule: any = require("./server_phase9_remaining_routes");
-const ServerAccountAuthRoutesModule: any = require("./server_account_auth_routes");
-const ServerAccountSessionHelpersModule: any = require("./server_account_session_helpers");
-const ServerAdminLookupRoutesModule: any = require("./server_admin_lookup_routes");
-const ServerFriendRoutesModule: any = require("./server_friend_routes");
-const ServerTradeRoutesModule: any = require("./server_trade_routes");
-const ServerInventoryEconomyRoutesModule: any = require("./server_inventory_economy_routes");
-const ServerPhase11aRuntimeModule: any = require("./server_phase11a_runtime");
-const ServerPhase11bLifecycleModule: any = require("./server_phase11b_lifecycle");
-const ServerPhase11cTrustedMovementModule: any = require("./server_phase11c_trusted_movement");
-const ServerPhase11dStandardMovementModule: any = require("./server_phase11d_standard_movement");
-const PostgresStore: any = require("./postgres_store");
-const RedisStore: any = require("./redis_store");
-const CrashDetails: any = require("./server_crash_details");
-const ServerEnvConfig: any = require("./server_env_config");
-const IdentityHelpers: any = require("./server_identity_helpers");
-const TextHelpers: any = require("./server_text_helpers");
-const VersionHelpers: any = require("./server_version_helpers");
-const AccountHelpers: any = require("./server_account_helpers");
-const PersistenceHelpers: any = require("./server_persistence_helpers");
-const PlayerStateHelpersModule: any = require("./server_player_state_helpers");
-const WorldStateHelpersModule: any = require("./server_world_state_helpers");
-const ServerRuntimeStats: any = require("./server_runtime_stats");
+const WebSocket = require("ws");
+const childProcess = require("child_process");
+const crypto = require("crypto");
+const fs = require("fs");
+const http = require("http");
+const nodemailer = require("nodemailer");
+const os = require("os");
+const path = require("path");
+const ItemDatabase = require("./server_item_database");
+const ItemAtlasDB = require("./item_atlas_db");
+const DropContracts = require("./server_drop_contracts");
+const InventoryContracts = require("./server_inventory_contracts");
+const PacketContracts = require("./server_packet_contracts");
+const ServerMessageRouterHelpersModule = require("./server_message_router_helpers");
+const ServerBotRateLimitHelpersModule = require("./server_bot_rate_limit_helpers");
+const ServerInventoryTransactionHelpersModule = require("./server_inventory_transaction_helpers");
+const ServerWorldInteractionPayloadHelpersModule = require("./server_world_interaction_payload_helpers");
+const ServerSocketDeliveryHelpersModule = require("./server_socket_delivery_helpers");
+const ServerPunishmentHelpersModule = require("./server_punishment_helpers");
+const ServerPhase6HelpersModule = require("./server_phase6_helpers");
+const ServerPhase7DispatcherModule = require("./server_phase7_dispatcher");
+const ServerPhase8PlayerSessionRoutesModule = require("./server_phase8_player_session_routes");
+const ServerPhase8WorldActionRoutesModule = require("./server_phase8_world_action_routes");
+const ServerPhase8FinalRoutesModule = require("./server_phase8_final_routes");
+const ServerPhase9RemainingRoutesModule = require("./server_phase9_remaining_routes");
+const ServerAccountAuthRoutesModule = require("./server_account_auth_routes");
+const ServerAccountSessionHelpersModule = require("./server_account_session_helpers");
+const ServerAdminLookupRoutesModule = require("./server_admin_lookup_routes");
+const ServerFriendRoutesModule = require("./server_friend_routes");
+const ServerTradeRoutesModule = require("./server_trade_routes");
+const ServerInventoryEconomyRoutesModule = require("./server_inventory_economy_routes");
+const ServerPhase11aRuntimeModule = require("./server_phase11a_runtime");
+const ServerPhase11bLifecycleModule = require("./server_phase11b_lifecycle");
+const ServerPhase11cTrustedMovementModule = require("./server_phase11c_trusted_movement");
+const ServerPhase11dStandardMovementModule = require("./server_phase11d_standard_movement");
+const PostgresStore = require("./postgres_store");
+const RedisStore = require("./redis_store");
+const CrashDetails = require("./server_crash_details");
+const ServerEnvConfig = require("./server_env_config");
+const IdentityHelpers = require("./server_identity_helpers");
+const TextHelpers = require("./server_text_helpers");
+const VersionHelpers = require("./server_version_helpers");
+const AccountHelpers = require("./server_account_helpers");
+const PersistenceHelpers = require("./server_persistence_helpers");
+const PlayerStateHelpersModule = require("./server_player_state_helpers");
+const WorldStateHelpersModule = require("./server_world_state_helpers");
+const ServerRuntimeStats = require("./server_runtime_stats");
 
-function isBrokenStdIoError(error: any) {
+type ServerPacketRecord = Record<string, unknown>;
+
+type ServerGridPoint = {
+  x: number;
+  y: number;
+};
+
+type ServerGridCandidate = ServerGridPoint & {
+  dist: number;
+};
+
+interface ServerAreaLockRecord extends ServerPacketRecord {
+  lock_id: string;
+  lock_grid_x: number;
+  lock_grid_y: number;
+}
+
+interface ServerCctvEventRecord extends ServerPacketRecord {
+  event_type: string;
+  event: string;
+  username: string;
+  player_name: string;
+  display_name: string;
+  at: string;
+}
+
+interface ServerInventoryDeltaRecord extends ServerPacketRecord {
+  item_type?: unknown;
+  item_category?: unknown;
+}
+
+interface ServerSaleRecord extends ServerPacketRecord {
+  item_id: string;
+  item_category: string;
+  amount: number;
+  sell_value: number;
+}
+
+interface ServerKilledTargetRecord {
+  playerId: string;
+  username: string;
+  player: unknown;
+  socket: unknown;
+}
+
+type ServerWebSocket = import("ws").WebSocket & {
+  playerId?: string;
+  userAgent?: string;
+  remoteAddress?: string;
+  rateLimits?: Map<unknown, unknown>;
+  rateLimitWarnings?: Map<unknown, unknown>;
+  rateLimitSecurityWarnings?: Map<unknown, unknown>;
+  authRequiredNotices?: Map<unknown, unknown>;
+  inboundMessageQueue?: Promise<void>;
+};
+
+interface ServerRouteContext {
+  playerId: string;
+  routeType: string;
+  usedActionPosition: boolean;
+}
+
+type ServerRouteHandler = (
+  socket: unknown,
+  player: ServerPacketRecord,
+  data: ServerPacketRecord,
+  context: ServerRouteContext,
+) => unknown | Promise<unknown>;
+
+function isBrokenStdIoError(error: unknown) {
   return ServerPhase11aRuntimeModule.isBrokenStdIoError(error);
+}
+
+function getErrorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function getErrorStack(error: unknown): string {
+  return error instanceof Error && error.stack ? error.stack : getErrorMessage(error);
 }
 
 function installConsoleWriteGuard() {
@@ -58,105 +135,105 @@ function installConsoleWriteGuard() {
 
 installConsoleWriteGuard();
 
-const HOST: any = String(process.env.HOST || "127.0.0.1").trim() || "127.0.0.1";
-const PORT: any = Math.max(1, Math.trunc(Number(process.env.PORT) || 8080));
-const PUBLIC_BASE_URL: any = String(process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, "");
-const PUBLIC_WS_URL: any = String(process.env.PUBLIC_WS_URL || PUBLIC_BASE_URL.replace(/^http/i, "ws") + "/ws").trim();
-const SERVER_INSTANCE_ID: any = String(process.env.SERVER_INSTANCE_ID || `${os.hostname()}-${process.pid}`).trim() || `${os.hostname()}-${process.pid}`;
-const SERVER_INSTANCE_WS_URL: any = String(process.env.SERVER_INSTANCE_WS_URL || PUBLIC_WS_URL).trim() || PUBLIC_WS_URL;
-const RUNTIME_ENVIRONMENT: any = String(process.env.ENVIRONMENT || process.env.NODE_ENV || "").trim().toLowerCase();
-const SERVER_CLIENT_VERSION: any = String(process.env.SERVER_CLIENT_VERSION || "1.0.1").trim() || "1.0.1";
-const MIN_CLIENT_VERSION: any = String(process.env.MIN_CLIENT_VERSION || SERVER_CLIENT_VERSION).trim() || SERVER_CLIENT_VERSION;
-const UPDATE_URL: any = String(process.env.UPDATE_URL || "https://pixelmaniagame.com").trim() || "https://pixelmaniagame.com";
-const DATA_FOLDER: any = process.env.PIXELMANIA_DATA_DIR ? path.resolve(process.env.PIXELMANIA_DATA_DIR) : __dirname;
-const WORLD_SAVE_FOLDER: any = process.env.WORLD_SAVE_FOLDER ? path.resolve(process.env.WORLD_SAVE_FOLDER) : path.join(DATA_FOLDER, "worlds");
-const PLAYER_SAVE_FOLDER: any = process.env.PLAYER_SAVE_FOLDER ? path.resolve(process.env.PLAYER_SAVE_FOLDER) : path.join(DATA_FOLDER, "players");
-const ACCOUNTS_SAVE_PATH: any = process.env.ACCOUNTS_SAVE_PATH ? path.resolve(process.env.ACCOUNTS_SAVE_PATH) : path.join(DATA_FOLDER, "accounts.json");
-const ADMIN_LOG_PATH: any = process.env.ADMIN_LOG_PATH ? path.resolve(process.env.ADMIN_LOG_PATH) : path.join(DATA_FOLDER, "admin_actions.log");
-const CRASH_REPORT_PATH: any = process.env.CRASH_REPORT_PATH ? path.resolve(process.env.CRASH_REPORT_PATH) : path.join(DATA_FOLDER, "crash_reports.log");
-const INTEGRITY_LOG_FOLDER: any = process.env.INTEGRITY_LOG_FOLDER ? path.resolve(process.env.INTEGRITY_LOG_FOLDER) : path.join(DATA_FOLDER, "integrity_logs");
-const WORLD_SNAPSHOT_FOLDER: any = process.env.WORLD_SNAPSHOT_FOLDER ? path.resolve(process.env.WORLD_SNAPSHOT_FOLDER) : path.join(DATA_FOLDER, "world_snapshots");
-const WORLD_SNAPSHOT_STORAGE: any = String(process.env.WORLD_SNAPSHOT_STORAGE || "local").trim().toLowerCase() || "local";
-const WORLD_SNAPSHOT_SPACES_TARGET: any = String(process.env.WORLD_SNAPSHOT_SPACES_TARGET || "").trim();
-const WORLD_SNAPSHOT_SPACES_ENDPOINT: any = String(process.env.WORLD_SNAPSHOT_SPACES_ENDPOINT || "").trim();
-const WORLD_SNAPSHOT_SPACES_REGION: any = String(process.env.WORLD_SNAPSHOT_SPACES_REGION || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1").trim() || "us-east-1";
-const WORLD_SNAPSHOT_POSTGRES_INLINE: any = !["0", "false", "no"].includes(String(process.env.WORLD_SNAPSHOT_POSTGRES_INLINE || "false").trim().toLowerCase());
-const SECURITY_EVENT_LOG_PATH: any = process.env.SECURITY_EVENT_LOG_PATH ? path.resolve(process.env.SECURITY_EVENT_LOG_PATH) : path.join(INTEGRITY_LOG_FOLDER, "security_events.log");
-const ITEM_LEDGER_PATH: any = process.env.ITEM_LEDGER_PATH ? path.resolve(process.env.ITEM_LEDGER_PATH) : path.join(INTEGRITY_LOG_FOLDER, "item_ledger.log");
-const GEM_LEDGER_PATH: any = process.env.GEM_LEDGER_PATH ? path.resolve(process.env.GEM_LEDGER_PATH) : path.join(INTEGRITY_LOG_FOLDER, "gem_ledger.log");
-const SHOP_PURCHASE_LOG_PATH: any = process.env.SHOP_PURCHASE_LOG_PATH ? path.resolve(process.env.SHOP_PURCHASE_LOG_PATH) : path.join(INTEGRITY_LOG_FOLDER, "shop_purchases.log");
-const TRADE_TRANSACTION_LOG_PATH: any = process.env.TRADE_TRANSACTION_LOG_PATH ? path.resolve(process.env.TRADE_TRANSACTION_LOG_PATH) : path.join(INTEGRITY_LOG_FOLDER, "trade_transactions.log");
-const VENDING_TRANSACTION_LOG_PATH: any = process.env.VENDING_TRANSACTION_LOG_PATH ? path.resolve(process.env.VENDING_TRANSACTION_LOG_PATH) : path.join(INTEGRITY_LOG_FOLDER, "vending_transactions.log");
-const WORLD_CHANGE_JOURNAL_PATH: any = process.env.WORLD_CHANGE_JOURNAL_PATH ? path.resolve(process.env.WORLD_CHANGE_JOURNAL_PATH) : path.join(INTEGRITY_LOG_FOLDER, "world_change_journal.log");
+const HOST = String(process.env.HOST || "127.0.0.1").trim() || "127.0.0.1";
+const PORT = Math.max(1, Math.trunc(Number(process.env.PORT) || 8080));
+const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, "");
+const PUBLIC_WS_URL = String(process.env.PUBLIC_WS_URL || PUBLIC_BASE_URL.replace(/^http/i, "ws") + "/ws").trim();
+const SERVER_INSTANCE_ID = String(process.env.SERVER_INSTANCE_ID || `${os.hostname()}-${process.pid}`).trim() || `${os.hostname()}-${process.pid}`;
+const SERVER_INSTANCE_WS_URL = String(process.env.SERVER_INSTANCE_WS_URL || PUBLIC_WS_URL).trim() || PUBLIC_WS_URL;
+const RUNTIME_ENVIRONMENT = String(process.env.ENVIRONMENT || process.env.NODE_ENV || "").trim().toLowerCase();
+const SERVER_CLIENT_VERSION = String(process.env.SERVER_CLIENT_VERSION || "1.0.1").trim() || "1.0.1";
+const MIN_CLIENT_VERSION = String(process.env.MIN_CLIENT_VERSION || SERVER_CLIENT_VERSION).trim() || SERVER_CLIENT_VERSION;
+const UPDATE_URL = String(process.env.UPDATE_URL || "https://pixelmaniagame.com").trim() || "https://pixelmaniagame.com";
+const DATA_FOLDER = process.env.PIXELMANIA_DATA_DIR ? path.resolve(process.env.PIXELMANIA_DATA_DIR) : __dirname;
+const WORLD_SAVE_FOLDER = process.env.WORLD_SAVE_FOLDER ? path.resolve(process.env.WORLD_SAVE_FOLDER) : path.join(DATA_FOLDER, "worlds");
+const PLAYER_SAVE_FOLDER = process.env.PLAYER_SAVE_FOLDER ? path.resolve(process.env.PLAYER_SAVE_FOLDER) : path.join(DATA_FOLDER, "players");
+const ACCOUNTS_SAVE_PATH = process.env.ACCOUNTS_SAVE_PATH ? path.resolve(process.env.ACCOUNTS_SAVE_PATH) : path.join(DATA_FOLDER, "accounts.json");
+const ADMIN_LOG_PATH = process.env.ADMIN_LOG_PATH ? path.resolve(process.env.ADMIN_LOG_PATH) : path.join(DATA_FOLDER, "admin_actions.log");
+const CRASH_REPORT_PATH = process.env.CRASH_REPORT_PATH ? path.resolve(process.env.CRASH_REPORT_PATH) : path.join(DATA_FOLDER, "crash_reports.log");
+const INTEGRITY_LOG_FOLDER = process.env.INTEGRITY_LOG_FOLDER ? path.resolve(process.env.INTEGRITY_LOG_FOLDER) : path.join(DATA_FOLDER, "integrity_logs");
+const WORLD_SNAPSHOT_FOLDER = process.env.WORLD_SNAPSHOT_FOLDER ? path.resolve(process.env.WORLD_SNAPSHOT_FOLDER) : path.join(DATA_FOLDER, "world_snapshots");
+const WORLD_SNAPSHOT_STORAGE = String(process.env.WORLD_SNAPSHOT_STORAGE || "local").trim().toLowerCase() || "local";
+const WORLD_SNAPSHOT_SPACES_TARGET = String(process.env.WORLD_SNAPSHOT_SPACES_TARGET || "").trim();
+const WORLD_SNAPSHOT_SPACES_ENDPOINT = String(process.env.WORLD_SNAPSHOT_SPACES_ENDPOINT || "").trim();
+const WORLD_SNAPSHOT_SPACES_REGION = String(process.env.WORLD_SNAPSHOT_SPACES_REGION || process.env.AWS_REGION || process.env.AWS_DEFAULT_REGION || "us-east-1").trim() || "us-east-1";
+const WORLD_SNAPSHOT_POSTGRES_INLINE = !["0", "false", "no"].includes(String(process.env.WORLD_SNAPSHOT_POSTGRES_INLINE || "false").trim().toLowerCase());
+const SECURITY_EVENT_LOG_PATH = process.env.SECURITY_EVENT_LOG_PATH ? path.resolve(process.env.SECURITY_EVENT_LOG_PATH) : path.join(INTEGRITY_LOG_FOLDER, "security_events.log");
+const ITEM_LEDGER_PATH = process.env.ITEM_LEDGER_PATH ? path.resolve(process.env.ITEM_LEDGER_PATH) : path.join(INTEGRITY_LOG_FOLDER, "item_ledger.log");
+const GEM_LEDGER_PATH = process.env.GEM_LEDGER_PATH ? path.resolve(process.env.GEM_LEDGER_PATH) : path.join(INTEGRITY_LOG_FOLDER, "gem_ledger.log");
+const SHOP_PURCHASE_LOG_PATH = process.env.SHOP_PURCHASE_LOG_PATH ? path.resolve(process.env.SHOP_PURCHASE_LOG_PATH) : path.join(INTEGRITY_LOG_FOLDER, "shop_purchases.log");
+const TRADE_TRANSACTION_LOG_PATH = process.env.TRADE_TRANSACTION_LOG_PATH ? path.resolve(process.env.TRADE_TRANSACTION_LOG_PATH) : path.join(INTEGRITY_LOG_FOLDER, "trade_transactions.log");
+const VENDING_TRANSACTION_LOG_PATH = process.env.VENDING_TRANSACTION_LOG_PATH ? path.resolve(process.env.VENDING_TRANSACTION_LOG_PATH) : path.join(INTEGRITY_LOG_FOLDER, "vending_transactions.log");
+const WORLD_CHANGE_JOURNAL_PATH = process.env.WORLD_CHANGE_JOURNAL_PATH ? path.resolve(process.env.WORLD_CHANGE_JOURNAL_PATH) : path.join(INTEGRITY_LOG_FOLDER, "world_change_journal.log");
 const LEGACY_DATA_FOLDERS: any = [
   path.join(__dirname, "node_modules"),
 ];
-const SAVE_DEBOUNCE_MS: any = 250;
-const WORLD_JSON_BACKUP_DEBOUNCE_MS: any = Math.max(0, Math.trunc(Number(process.env.WORLD_JSON_BACKUP_DEBOUNCE_MS) || 1000));
-const WORLD_NON_CRITICAL_WORLD_SAVE_DEBOUNCE_MS: any = Math.max(
+const SAVE_DEBOUNCE_MS = 250;
+const WORLD_JSON_BACKUP_DEBOUNCE_MS = Math.max(0, Math.trunc(Number(process.env.WORLD_JSON_BACKUP_DEBOUNCE_MS) || 1000));
+const WORLD_NON_CRITICAL_WORLD_SAVE_DEBOUNCE_MS = Math.max(
   SAVE_DEBOUNCE_MS,
   Math.max(250, Math.trunc(Number(process.env.WORLD_NON_CRITICAL_WORLD_SAVE_DEBOUNCE_MS) || 1200))
 );
 const WORLD_JSON_BACKUP_WHEN_PG_READY: any = ["1", "true", "yes", "on"].includes(String(process.env.WORLD_JSON_BACKUP_WHEN_PG_READY || "false").trim().toLowerCase());
-const PERIODIC_SAVE_MS: any = 30000;
-const MIN_USERNAME_LENGTH: any = 3;
-const MAX_USERNAME_LENGTH: any = 16;
-const MIN_PASSWORD_LENGTH: any = 8;
-const MAX_WORLD_NAME_LENGTH: any = 32;
-const MAX_PLAYERS_PER_WORLD: any = Math.max(1, Math.trunc(Number(process.env.MAX_PLAYERS_PER_WORLD) || 50));
-const WORLD_WIDTH: any = Math.max(1, Math.trunc(Number(process.env.WORLD_WIDTH) || 100));
-const WORLD_HEIGHT: any = Math.max(1, Math.trunc(Number(process.env.WORLD_HEIGHT) || 70));
-const BEDROCK_START_Y: any = Math.max(0, WORLD_HEIGHT - 4);
-const TILE_SIZE: any = Math.max(1, Math.trunc(Number(process.env.TILE_SIZE) || 32));
-const POSITION_MARGIN_PIXELS: any = TILE_SIZE * 4;
-const MAX_PACKET_BYTES: any = 64 * 1024;
-const MAX_DAMAGE_FLASH_MS: any = 2000;
-const PLAYER_POSITION_BROADCAST_INTERVAL_MS: any = Math.max(0, Math.trunc(Number(process.env.PLAYER_POSITION_BROADCAST_INTERVAL_MS) || 16));
-const PLAYER_POSITION_IDLE_HEARTBEAT_MS: any = Math.max(250, Math.trunc(Number(process.env.PLAYER_POSITION_IDLE_HEARTBEAT_MS) || 1000));
-const PLAYER_POSITION_BATCHING_ENABLED: any = !["0", "false", "no"].includes(String(process.env.PLAYER_POSITION_BATCHING_ENABLED || "true").trim().toLowerCase());
-const PLAYER_POSITION_BATCH_MIN_CLIENT_VERSION: any = String(process.env.PLAYER_POSITION_BATCH_MIN_CLIENT_VERSION || "1.0.3").trim() || "1.0.3";
-const PLAYER_POSITION_BATCH_MAX_ITEMS: any = Math.max(1, Math.trunc(Number(process.env.PLAYER_POSITION_BATCH_MAX_ITEMS) || 64));
-const WORLD_UPDATE_BATCHING_ENABLED: any = !["0", "false", "no"].includes(String(process.env.WORLD_UPDATE_BATCHING_ENABLED || "true").trim().toLowerCase());
-const WORLD_UPDATE_BATCH_MIN_CLIENT_VERSION: any = String(process.env.WORLD_UPDATE_BATCH_MIN_CLIENT_VERSION || "1.0.3").trim() || "1.0.3";
-const WORLD_UPDATE_BATCH_MAX_ITEMS: any = Math.max(1, Math.trunc(Number(process.env.WORLD_UPDATE_BATCH_MAX_ITEMS) || 64));
-const WORLD_UPDATE_BATCH_INTERVAL_MS: any = Math.max(0, Math.trunc(Number(process.env.WORLD_UPDATE_BATCH_INTERVAL_MS) || 16));
-const PACKET_TYPE_SIZE_SAMPLE_LIMIT: any = Math.max(16, Math.trunc(Number(process.env.PACKET_TYPE_SIZE_SAMPLE_LIMIT || 128)));
-const PACKET_SIZE_TELEMETRY_ENABLED: any = true;
-const DROP_INTEREST_MANAGEMENT_ENABLED: any = !["0", "false", "no"].includes(String(process.env.DROP_INTEREST_MANAGEMENT_ENABLED || "true").trim().toLowerCase());
-const DROP_INTEREST_RADIUS_PIXELS: any = Math.max(TILE_SIZE * 16, Math.trunc(Number(process.env.DROP_INTEREST_RADIUS_PIXELS) || TILE_SIZE * 80));
-const DROP_INTEREST_LEAVE_RADIUS_PIXELS: any = Math.max(
+const PERIODIC_SAVE_MS = 30000;
+const MIN_USERNAME_LENGTH = 3;
+const MAX_USERNAME_LENGTH = 16;
+const MIN_PASSWORD_LENGTH = 8;
+const MAX_WORLD_NAME_LENGTH = 32;
+const MAX_PLAYERS_PER_WORLD = Math.max(1, Math.trunc(Number(process.env.MAX_PLAYERS_PER_WORLD) || 50));
+const WORLD_WIDTH = Math.max(1, Math.trunc(Number(process.env.WORLD_WIDTH) || 100));
+const WORLD_HEIGHT = Math.max(1, Math.trunc(Number(process.env.WORLD_HEIGHT) || 70));
+const BEDROCK_START_Y = Math.max(0, WORLD_HEIGHT - 4);
+const TILE_SIZE = Math.max(1, Math.trunc(Number(process.env.TILE_SIZE) || 32));
+const POSITION_MARGIN_PIXELS = TILE_SIZE * 4;
+const MAX_PACKET_BYTES = 64 * 1024;
+const MAX_DAMAGE_FLASH_MS = 2000;
+const PLAYER_POSITION_BROADCAST_INTERVAL_MS = Math.max(0, Math.trunc(Number(process.env.PLAYER_POSITION_BROADCAST_INTERVAL_MS) || 16));
+const PLAYER_POSITION_IDLE_HEARTBEAT_MS = Math.max(250, Math.trunc(Number(process.env.PLAYER_POSITION_IDLE_HEARTBEAT_MS) || 1000));
+const PLAYER_POSITION_BATCHING_ENABLED = !["0", "false", "no"].includes(String(process.env.PLAYER_POSITION_BATCHING_ENABLED || "true").trim().toLowerCase());
+const PLAYER_POSITION_BATCH_MIN_CLIENT_VERSION = String(process.env.PLAYER_POSITION_BATCH_MIN_CLIENT_VERSION || "1.0.3").trim() || "1.0.3";
+const PLAYER_POSITION_BATCH_MAX_ITEMS = Math.max(1, Math.trunc(Number(process.env.PLAYER_POSITION_BATCH_MAX_ITEMS) || 64));
+const WORLD_UPDATE_BATCHING_ENABLED = !["0", "false", "no"].includes(String(process.env.WORLD_UPDATE_BATCHING_ENABLED || "true").trim().toLowerCase());
+const WORLD_UPDATE_BATCH_MIN_CLIENT_VERSION = String(process.env.WORLD_UPDATE_BATCH_MIN_CLIENT_VERSION || "1.0.3").trim() || "1.0.3";
+const WORLD_UPDATE_BATCH_MAX_ITEMS = Math.max(1, Math.trunc(Number(process.env.WORLD_UPDATE_BATCH_MAX_ITEMS) || 64));
+const WORLD_UPDATE_BATCH_INTERVAL_MS = Math.max(0, Math.trunc(Number(process.env.WORLD_UPDATE_BATCH_INTERVAL_MS) || 16));
+const PACKET_TYPE_SIZE_SAMPLE_LIMIT = Math.max(16, Math.trunc(Number(process.env.PACKET_TYPE_SIZE_SAMPLE_LIMIT || 128)));
+const PACKET_SIZE_TELEMETRY_ENABLED = true;
+const DROP_INTEREST_MANAGEMENT_ENABLED = !["0", "false", "no"].includes(String(process.env.DROP_INTEREST_MANAGEMENT_ENABLED || "true").trim().toLowerCase());
+const DROP_INTEREST_RADIUS_PIXELS = Math.max(TILE_SIZE * 16, Math.trunc(Number(process.env.DROP_INTEREST_RADIUS_PIXELS) || TILE_SIZE * 80));
+const DROP_INTEREST_LEAVE_RADIUS_PIXELS = Math.max(
   DROP_INTEREST_RADIUS_PIXELS,
   Math.trunc(Number(process.env.DROP_INTEREST_LEAVE_RADIUS_PIXELS) || DROP_INTEREST_RADIUS_PIXELS + TILE_SIZE * 16)
 );
-const DROP_INTEREST_SYNC_INTERVAL_MS: any = Math.max(0, Math.trunc(Number(process.env.DROP_INTEREST_SYNC_INTERVAL_MS) || 250));
-const PLAYER_INTEREST_MANAGEMENT_ENABLED: any = !["0", "false", "no"].includes(String(process.env.PLAYER_INTEREST_MANAGEMENT_ENABLED || "true").trim().toLowerCase());
-const PLAYER_INTEREST_RADIUS_PIXELS: any = Math.max(TILE_SIZE * 16, Math.trunc(Number(process.env.PLAYER_INTEREST_RADIUS_PIXELS) || TILE_SIZE * 80));
-const PLAYER_INTEREST_LEAVE_RADIUS_PIXELS: any = Math.max(
+const DROP_INTEREST_SYNC_INTERVAL_MS = Math.max(0, Math.trunc(Number(process.env.DROP_INTEREST_SYNC_INTERVAL_MS) || 250));
+const PLAYER_INTEREST_MANAGEMENT_ENABLED = !["0", "false", "no"].includes(String(process.env.PLAYER_INTEREST_MANAGEMENT_ENABLED || "true").trim().toLowerCase());
+const PLAYER_INTEREST_RADIUS_PIXELS = Math.max(TILE_SIZE * 16, Math.trunc(Number(process.env.PLAYER_INTEREST_RADIUS_PIXELS) || TILE_SIZE * 80));
+const PLAYER_INTEREST_LEAVE_RADIUS_PIXELS = Math.max(
   PLAYER_INTEREST_RADIUS_PIXELS,
   Math.trunc(Number(process.env.PLAYER_INTEREST_LEAVE_RADIUS_PIXELS) || PLAYER_INTEREST_RADIUS_PIXELS + TILE_SIZE * 16)
 );
-const PLAYER_ACTION_INTEREST_MANAGEMENT_ENABLED: any = !["0", "false", "no"].includes(String(process.env.PLAYER_ACTION_INTEREST_MANAGEMENT_ENABLED || "true").trim().toLowerCase());
-const MAX_BLOCK_HIT_METRIC: any = 1024;
-const MAX_CHAT_LENGTH: any = 220;
-const MAX_SIGN_TEXT_LENGTH: any = 500;
-const MAX_MAILBOX_MESSAGE_LENGTH: any = 128;
-const MAX_BULLETIN_BOARD_MESSAGE_LENGTH: any = 220;
-const MAX_DOOR_ID_LENGTH: any = 32;
-const MAX_DOOR_NAME_LENGTH: any = 64;
-const MAX_DOOR_DESTINATION_LENGTH: any = 80;
-const MAX_DOOR_PASSWORD_LENGTH: any = 32;
-const MAX_DROP_AMOUNT: any = 9999;
-const MAX_DROP_TILE_AMOUNT: any = 2000;
-const MAX_BULK_DROP_PICKUP_IDS: any = Math.max(1, Math.min(64, Math.trunc(Number(process.env.MAX_BULK_DROP_PICKUP_IDS) || 48)));
-const DROP_PICKUP_INVENTORY_LOCK_WAIT_MS: any = Math.max(0, Math.trunc(Number(process.env.DROP_PICKUP_INVENTORY_LOCK_WAIT_MS) || 650));
-const DROP_PICKUP_INVENTORY_LOCK_RETRY_MS: any = Math.max(5, Math.trunc(Number(process.env.DROP_PICKUP_INVENTORY_LOCK_RETRY_MS) || 25));
-const MAX_ITEM_STACK: any = ItemDatabase.DEFAULT_STACK_LIMIT;
-const MAX_SHOP_PRICE: any = 999999;
-const MAX_PLAYER_INVENTORY_KEYS: any = 500;
-const INVENTORY_MIN_SLOT_COUNT: any = 20;
-const INVENTORY_MAX_SLOT_COUNT: any = 300;
-const INVENTORY_SLOT_UPGRADE_STEP: any = 20;
-const INVENTORY_SLOT_UPGRADE_COSTS: any = Object.freeze([
+const PLAYER_ACTION_INTEREST_MANAGEMENT_ENABLED = !["0", "false", "no"].includes(String(process.env.PLAYER_ACTION_INTEREST_MANAGEMENT_ENABLED || "true").trim().toLowerCase());
+const MAX_BLOCK_HIT_METRIC = 1024;
+const MAX_CHAT_LENGTH = 220;
+const MAX_SIGN_TEXT_LENGTH = 500;
+const MAX_MAILBOX_MESSAGE_LENGTH = 128;
+const MAX_BULLETIN_BOARD_MESSAGE_LENGTH = 220;
+const MAX_DOOR_ID_LENGTH = 32;
+const MAX_DOOR_NAME_LENGTH = 64;
+const MAX_DOOR_DESTINATION_LENGTH = 80;
+const MAX_DOOR_PASSWORD_LENGTH = 32;
+const MAX_DROP_AMOUNT = 9999;
+const MAX_DROP_TILE_AMOUNT = 2000;
+const MAX_BULK_DROP_PICKUP_IDS = Math.max(1, Math.min(64, Math.trunc(Number(process.env.MAX_BULK_DROP_PICKUP_IDS) || 48)));
+const DROP_PICKUP_INVENTORY_LOCK_WAIT_MS = Math.max(0, Math.trunc(Number(process.env.DROP_PICKUP_INVENTORY_LOCK_WAIT_MS) || 650));
+const DROP_PICKUP_INVENTORY_LOCK_RETRY_MS = Math.max(5, Math.trunc(Number(process.env.DROP_PICKUP_INVENTORY_LOCK_RETRY_MS) || 25));
+const MAX_ITEM_STACK = ItemDatabase.DEFAULT_STACK_LIMIT;
+const MAX_SHOP_PRICE = 999999;
+const MAX_PLAYER_INVENTORY_KEYS = 500;
+const INVENTORY_MIN_SLOT_COUNT = 20;
+const INVENTORY_MAX_SLOT_COUNT = 300;
+const INVENTORY_SLOT_UPGRADE_STEP = 20;
+const INVENTORY_SLOT_UPGRADE_COSTS = Object.freeze([
   2000,
   4000,
   6000,
@@ -172,42 +249,42 @@ const INVENTORY_SLOT_UPGRADE_COSTS: any = Object.freeze([
   38000,
   48000,
 ]);
-const ADMIN_INVENTORY_LOOKUP_PURPOSE: any = "admin_inventory_lookup";
-const ADMIN_ITEM_INSTANCE_LOOKUP_PURPOSE: any = "admin_item_instance_lookup";
-const ADMIN_ITEM_INSTANCE_HISTORY_LOOKUP_PURPOSE: any = "admin_item_instance_history_lookup";
-const ADMIN_TRANSACTION_LEDGER_LOOKUP_PURPOSE: any = "admin_transaction_ledger_lookup";
-const ADMIN_MONITORING_DASHBOARD_PURPOSE: any = "admin_monitoring_dashboard";
-const ADMIN_ITEM_INSTANCE_LOOKUP_LIMIT: any = 250;
-const ADMIN_TRANSACTION_LEDGER_LOOKUP_LIMIT: any = 150;
-const ADMIN_MONITORING_DASHBOARD_LOOKUP_LIMIT: any = 40;
-const ADMIN_MONITORING_DASHBOARD_WINDOW_HOURS: any = Math.max(1, Math.trunc(Number(process.env.ADMIN_MONITORING_DASHBOARD_WINDOW_HOURS) || 24));
-const ADMIN_ITEM_INSTANCE_LOOKUP_TIMEOUT_MS: any = Math.max(1000, Math.trunc(Number(process.env.ADMIN_ITEM_INSTANCE_LOOKUP_TIMEOUT_MS) || 7000));
-const SERVER_TICK_MONITOR_INTERVAL_MS: any = Math.max(100, Math.trunc(Number(process.env.SERVER_TICK_MONITOR_INTERVAL_MS) || 1000));
-const antiDupeAuditIntervalEnv: any = process.env.ANTI_DUPE_AUDIT_INTERVAL_MS;
-const antiDupeAuditIntervalParsed: any = antiDupeAuditIntervalEnv == null || String(antiDupeAuditIntervalEnv).trim() === ""
+const ADMIN_INVENTORY_LOOKUP_PURPOSE = "admin_inventory_lookup";
+const ADMIN_ITEM_INSTANCE_LOOKUP_PURPOSE = "admin_item_instance_lookup";
+const ADMIN_ITEM_INSTANCE_HISTORY_LOOKUP_PURPOSE = "admin_item_instance_history_lookup";
+const ADMIN_TRANSACTION_LEDGER_LOOKUP_PURPOSE = "admin_transaction_ledger_lookup";
+const ADMIN_MONITORING_DASHBOARD_PURPOSE = "admin_monitoring_dashboard";
+const ADMIN_ITEM_INSTANCE_LOOKUP_LIMIT = 250;
+const ADMIN_TRANSACTION_LEDGER_LOOKUP_LIMIT = 150;
+const ADMIN_MONITORING_DASHBOARD_LOOKUP_LIMIT = 40;
+const ADMIN_MONITORING_DASHBOARD_WINDOW_HOURS = Math.max(1, Math.trunc(Number(process.env.ADMIN_MONITORING_DASHBOARD_WINDOW_HOURS) || 24));
+const ADMIN_ITEM_INSTANCE_LOOKUP_TIMEOUT_MS = Math.max(1000, Math.trunc(Number(process.env.ADMIN_ITEM_INSTANCE_LOOKUP_TIMEOUT_MS) || 7000));
+const SERVER_TICK_MONITOR_INTERVAL_MS = Math.max(100, Math.trunc(Number(process.env.SERVER_TICK_MONITOR_INTERVAL_MS) || 1000));
+const antiDupeAuditIntervalEnv = process.env.ANTI_DUPE_AUDIT_INTERVAL_MS;
+const antiDupeAuditIntervalParsed = antiDupeAuditIntervalEnv == null || String(antiDupeAuditIntervalEnv).trim() === ""
   ? NaN
   : Number(antiDupeAuditIntervalEnv);
-const ANTI_DUPE_AUDIT_INTERVAL_MS: any = Math.max(
+const ANTI_DUPE_AUDIT_INTERVAL_MS = Math.max(
   0,
   Math.trunc(Number.isFinite(antiDupeAuditIntervalParsed) ? antiDupeAuditIntervalParsed : (15 * 60 * 1000))
 );
-const ANTI_DUPE_AUDIT_LIMIT: any = Math.min(200, Math.max(1, Math.trunc(Number(process.env.ANTI_DUPE_AUDIT_LIMIT) || 100)));
+const ANTI_DUPE_AUDIT_LIMIT = Math.min(200, Math.max(1, Math.trunc(Number(process.env.ANTI_DUPE_AUDIT_LIMIT) || 100)));
 const ANTI_DUPE_AUDIT_LOG_CLEAN: any = ["1", "true", "yes"].includes(String(process.env.ANTI_DUPE_AUDIT_LOG_CLEAN || "false").trim().toLowerCase());
-const WORLD_SNAPSHOT_INTERVAL_ENV: any = process.env.WORLD_SNAPSHOT_INTERVAL_MINUTES;
-const WORLD_SNAPSHOT_INTERVAL_PARSED: any = WORLD_SNAPSHOT_INTERVAL_ENV == null || String(WORLD_SNAPSHOT_INTERVAL_ENV).trim() === ""
+const WORLD_SNAPSHOT_INTERVAL_ENV = process.env.WORLD_SNAPSHOT_INTERVAL_MINUTES;
+const WORLD_SNAPSHOT_INTERVAL_PARSED = WORLD_SNAPSHOT_INTERVAL_ENV == null || String(WORLD_SNAPSHOT_INTERVAL_ENV).trim() === ""
   ? NaN
   : Number(WORLD_SNAPSHOT_INTERVAL_ENV);
-const WORLD_SNAPSHOT_INTERVAL_MINUTES: any = Math.max(0, Math.trunc(Number.isFinite(WORLD_SNAPSHOT_INTERVAL_PARSED) ? WORLD_SNAPSHOT_INTERVAL_PARSED : 15));
-const WORLD_SNAPSHOT_INTERVAL_MS: any = WORLD_SNAPSHOT_INTERVAL_MINUTES * 60 * 1000;
-const WORLD_SNAPSHOT_MAX_WORLDS_PER_CYCLE: any = Math.max(0, Math.trunc(Number(process.env.WORLD_SNAPSHOT_MAX_WORLDS_PER_CYCLE) || 5));
+const WORLD_SNAPSHOT_INTERVAL_MINUTES = Math.max(0, Math.trunc(Number.isFinite(WORLD_SNAPSHOT_INTERVAL_PARSED) ? WORLD_SNAPSHOT_INTERVAL_PARSED : 15));
+const WORLD_SNAPSHOT_INTERVAL_MS = WORLD_SNAPSHOT_INTERVAL_MINUTES * 60 * 1000;
+const WORLD_SNAPSHOT_MAX_WORLDS_PER_CYCLE = Math.max(0, Math.trunc(Number(process.env.WORLD_SNAPSHOT_MAX_WORLDS_PER_CYCLE) || 5));
 const WORLD_SNAPSHOT_STARTUP_RUN: any = ["1", "true", "yes"].includes(String(process.env.WORLD_SNAPSHOT_STARTUP_RUN || "false").trim().toLowerCase());
-const ADMIN_PUNISHMENT_LOOKUP_PURPOSE: any = "admin_punishment_lookup";
-const PUNISHMENT_CACHE_TTL_MS: any = Math.max(1000, Math.trunc(Number(process.env.PUNISHMENT_CACHE_TTL_MS) || 5000));
-const PUNISHMENT_MAX_DURATION_MINUTES: any = Math.max(1, Math.trunc(Number(process.env.PUNISHMENT_MAX_DURATION_MINUTES) || (3650 * 24 * 60)));
+const ADMIN_PUNISHMENT_LOOKUP_PURPOSE = "admin_punishment_lookup";
+const PUNISHMENT_CACHE_TTL_MS = Math.max(1000, Math.trunc(Number(process.env.PUNISHMENT_CACHE_TTL_MS) || 5000));
+const PUNISHMENT_MAX_DURATION_MINUTES = Math.max(1, Math.trunc(Number(process.env.PUNISHMENT_MAX_DURATION_MINUTES) || (3650 * 24 * 60)));
 const PUNISHMENT_TYPES: any = new Set(["ban", "mute", "trade_ban", "world_ban", "lockout"]);
-const PUNISHMENT_SCOPE_GLOBAL: any = "global";
-const PUNISHMENT_SCOPE_WORLD: any = "world";
-const ADMIN_INVENTORY_LOOKUP_FIELDS: any = Object.freeze([
+const PUNISHMENT_SCOPE_GLOBAL = "global";
+const PUNISHMENT_SCOPE_WORLD = "world";
+const ADMIN_INVENTORY_LOOKUP_FIELDS = Object.freeze([
   { field: "inventory", category: "block" },
   { field: "seed_inventory", category: "seed" },
   { field: "tool_inventory", category: "tool" },
@@ -224,73 +301,73 @@ const ADMIN_INVENTORY_LOOKUP_FIELDS: any = Object.freeze([
   { field: "lure_inventory", category: "lure" },
   { field: "fish_inventory", category: "fish" },
 ]);
-const MAX_ITEM_ID_LENGTH: any = 64;
-const MAX_ITEM_CATEGORY_LENGTH: any = 64;
-const MAX_DROP_ID_LENGTH: any = 96;
-const PLAYER_LEVEL_MIN: any = 1;
-const PLAYER_LEVEL_MAX: any = 100;
-const PLAYER_XP_FIRST_LEVEL: any = 300;
+const MAX_ITEM_ID_LENGTH = 64;
+const MAX_ITEM_CATEGORY_LENGTH = 64;
+const MAX_DROP_ID_LENGTH = 96;
+const PLAYER_LEVEL_MIN = 1;
+const PLAYER_LEVEL_MAX = 100;
+const PLAYER_XP_FIRST_LEVEL = 300;
 const ALLOW_LEGACY_PLAYER_STATE_IMPORT: any = ["1", "true", "yes"].includes(String(process.env.ALLOW_LEGACY_PLAYER_STATE_IMPORT || "false").trim().toLowerCase());
 const ALLOW_LEGACY_WORLD_STATE_IMPORT: any = ["1", "true", "yes", "on"].includes(String(process.env.ALLOW_LEGACY_WORLD_STATE_IMPORT || "false").trim().toLowerCase());
-const MAX_MOVE_PIXELS_PER_SECOND: any = Math.max(100, Math.trunc(Number(process.env.MAX_MOVE_PIXELS_PER_SECOND) || 900));
-const MAX_MOVE_ACCEL_PIXELS_PER_SECOND2: any = Math.max(1000, Math.trunc(Number(process.env.MAX_MOVE_ACCEL_PIXELS_PER_SECOND2) || 36000));
-const MAX_MOVE_VELOCITY_DELTA_EXTRA: any = Math.max(0, Math.trunc(Number(process.env.MAX_MOVE_VELOCITY_DELTA_EXTRA) || 120));
-const MOVEMENT_DISTANCE_GRACE_PIXELS: any = Math.max(0, Math.trunc(Number(process.env.MOVEMENT_DISTANCE_GRACE_PIXELS) || TILE_SIZE * 0.75));
-const MOVEMENT_MAX_ELAPSED_SECONDS: any = Math.max(0.05, Math.min(1, Number(process.env.MOVEMENT_MAX_ELAPSED_SECONDS) || 0.25));
-const MOVEMENT_COLLISION_GUARD_ENABLED: any = !["0", "false", "no", "off"].includes(String(process.env.MOVEMENT_COLLISION_GUARD_ENABLED || "true").trim().toLowerCase());
-const MOVEMENT_COLLISION_CACHE_MAX_WORLDS: any = Math.max(1, Math.trunc(Number(process.env.MOVEMENT_COLLISION_CACHE_MAX_WORLDS) || 128));
-const MOVEMENT_CORRECTION_SNAP_DISTANCE: any = Math.max(TILE_SIZE, Math.trunc(Number(process.env.MOVEMENT_CORRECTION_SNAP_DISTANCE) || TILE_SIZE * 5));
-const MOVEMENT_CORRECTION_SMOOTH_MS: any = Math.max(0, Math.trunc(Number(process.env.MOVEMENT_CORRECTION_SMOOTH_MS) || 80));
-const WORLD_ENTRY_SPAWN_GUARD_MS: any = Math.max(5000, Math.trunc(Number(process.env.WORLD_ENTRY_SPAWN_GUARD_MS) || 30000));
-const WORLD_ENTRY_SPAWN_TOLERANCE_PIXELS: any = Math.max(
+const MAX_MOVE_PIXELS_PER_SECOND = Math.max(100, Math.trunc(Number(process.env.MAX_MOVE_PIXELS_PER_SECOND) || 900));
+const MAX_MOVE_ACCEL_PIXELS_PER_SECOND2 = Math.max(1000, Math.trunc(Number(process.env.MAX_MOVE_ACCEL_PIXELS_PER_SECOND2) || 36000));
+const MAX_MOVE_VELOCITY_DELTA_EXTRA = Math.max(0, Math.trunc(Number(process.env.MAX_MOVE_VELOCITY_DELTA_EXTRA) || 120));
+const MOVEMENT_DISTANCE_GRACE_PIXELS = Math.max(0, Math.trunc(Number(process.env.MOVEMENT_DISTANCE_GRACE_PIXELS) || TILE_SIZE * 0.75));
+const MOVEMENT_MAX_ELAPSED_SECONDS = Math.max(0.05, Math.min(1, Number(process.env.MOVEMENT_MAX_ELAPSED_SECONDS) || 0.25));
+const MOVEMENT_COLLISION_GUARD_ENABLED = !["0", "false", "no", "off"].includes(String(process.env.MOVEMENT_COLLISION_GUARD_ENABLED || "true").trim().toLowerCase());
+const MOVEMENT_COLLISION_CACHE_MAX_WORLDS = Math.max(1, Math.trunc(Number(process.env.MOVEMENT_COLLISION_CACHE_MAX_WORLDS) || 128));
+const MOVEMENT_CORRECTION_SNAP_DISTANCE = Math.max(TILE_SIZE, Math.trunc(Number(process.env.MOVEMENT_CORRECTION_SNAP_DISTANCE) || TILE_SIZE * 5));
+const MOVEMENT_CORRECTION_SMOOTH_MS = Math.max(0, Math.trunc(Number(process.env.MOVEMENT_CORRECTION_SMOOTH_MS) || 80));
+const WORLD_ENTRY_SPAWN_GUARD_MS = Math.max(5000, Math.trunc(Number(process.env.WORLD_ENTRY_SPAWN_GUARD_MS) || 30000));
+const WORLD_ENTRY_SPAWN_TOLERANCE_PIXELS = Math.max(
   1,
   Math.min(TILE_SIZE * 0.25, Number(process.env.WORLD_ENTRY_SPAWN_TOLERANCE_PIXELS) || 4)
 );
-const PLAYER_COLLISION_HALF_WIDTH: any = Math.max(1, Number(process.env.PLAYER_COLLISION_HALF_WIDTH) || 8);
-const PLAYER_COLLISION_HALF_HEIGHT: any = Math.max(1, Number(process.env.PLAYER_COLLISION_HALF_HEIGHT) || 12.5);
-const PLAYER_COLLISION_OFFSET_X: any = Number.isFinite(Number(process.env.PLAYER_COLLISION_OFFSET_X)) ? Number(process.env.PLAYER_COLLISION_OFFSET_X) : 1;
-const PLAYER_COLLISION_OFFSET_Y: any = Number.isFinite(Number(process.env.PLAYER_COLLISION_OFFSET_Y)) ? Number(process.env.PLAYER_COLLISION_OFFSET_Y) : -5;
-const PLAYER_COLLISION_SHRINK_PIXELS: any = Math.max(0, Math.min(PLAYER_COLLISION_HALF_WIDTH - 0.5, PLAYER_COLLISION_HALF_HEIGHT - 0.5, Number(process.env.PLAYER_COLLISION_SHRINK_PIXELS) || 2));
-const LAVA_REBOUND_MOVE_EXTRA_PIXELS: any = TILE_SIZE * 4;
-const LAVA_REBOUND_MOVE_RADIUS_TILES: any = 1;
-const MAX_PICKUP_DISTANCE_PIXELS: any = TILE_SIZE * 6;
-const MAX_GRID_ACTION_DISTANCE_PIXELS: any = TILE_SIZE * 6;
-const MAX_DROP_CREATE_DISTANCE_PIXELS: any = TILE_SIZE * 6;
-const MAX_FISHING_CAST_DISTANCE_PIXELS: any = TILE_SIZE * 4;
-const MOVEMENT_MODE_WEBSOCKET: any = "WEBSOCKET";
-const MOVEMENT_MODE_NETFOX_REAL: any = "NETFOX_REAL";
-const MOVEMENT_MODE_CUSTOM_AUTHORITATIVE: any = "CUSTOM_AUTHORITATIVE";
-const MAX_BREAK_REACH_TILES: any = Math.max(1, Math.trunc(Number(process.env.MAX_BREAK_REACH_TILES) || 4));
-const MAX_PLACE_REACH_TILES: any = Math.max(1, Math.trunc(Number(process.env.MAX_PLACE_REACH_TILES) || 4));
-const MAX_PUNCH_REACH_TILES: any = Math.max(1, Math.trunc(Number(process.env.MAX_PUNCH_REACH_TILES) || 3));
-const MAX_BREAK_REACH_PIXELS: any = TILE_SIZE * MAX_BREAK_REACH_TILES;
-const MAX_PLACE_REACH_PIXELS: any = TILE_SIZE * MAX_PLACE_REACH_TILES;
-const MAX_PUNCH_REACH_PIXELS: any = TILE_SIZE * MAX_PUNCH_REACH_TILES;
-const ACTION_RATE_LIMIT_MS: any = Math.max(0, Math.trunc(Number(process.env.ACTION_RATE_LIMIT_MS) || 25));
-const IDEMPOTENCY_TTL_MS: any = Math.max(250, Math.trunc(Number(process.env.IDEMPOTENCY_TTL_MS || 10000)));
-const IDEMPOTENCY_TTL_MS_CRITICAL: any = Math.max(
+const PLAYER_COLLISION_HALF_WIDTH = Math.max(1, Number(process.env.PLAYER_COLLISION_HALF_WIDTH) || 8);
+const PLAYER_COLLISION_HALF_HEIGHT = Math.max(1, Number(process.env.PLAYER_COLLISION_HALF_HEIGHT) || 12.5);
+const PLAYER_COLLISION_OFFSET_X = Number.isFinite(Number(process.env.PLAYER_COLLISION_OFFSET_X)) ? Number(process.env.PLAYER_COLLISION_OFFSET_X) : 1;
+const PLAYER_COLLISION_OFFSET_Y = Number.isFinite(Number(process.env.PLAYER_COLLISION_OFFSET_Y)) ? Number(process.env.PLAYER_COLLISION_OFFSET_Y) : -5;
+const PLAYER_COLLISION_SHRINK_PIXELS = Math.max(0, Math.min(PLAYER_COLLISION_HALF_WIDTH - 0.5, PLAYER_COLLISION_HALF_HEIGHT - 0.5, Number(process.env.PLAYER_COLLISION_SHRINK_PIXELS) || 2));
+const LAVA_REBOUND_MOVE_EXTRA_PIXELS = TILE_SIZE * 4;
+const LAVA_REBOUND_MOVE_RADIUS_TILES = 1;
+const MAX_PICKUP_DISTANCE_PIXELS = TILE_SIZE * 6;
+const MAX_GRID_ACTION_DISTANCE_PIXELS = TILE_SIZE * 6;
+const MAX_DROP_CREATE_DISTANCE_PIXELS = TILE_SIZE * 6;
+const MAX_FISHING_CAST_DISTANCE_PIXELS = TILE_SIZE * 4;
+const MOVEMENT_MODE_WEBSOCKET = "WEBSOCKET";
+const MOVEMENT_MODE_NETFOX_REAL = "NETFOX_REAL";
+const MOVEMENT_MODE_CUSTOM_AUTHORITATIVE = "CUSTOM_AUTHORITATIVE";
+const MAX_BREAK_REACH_TILES = Math.max(1, Math.trunc(Number(process.env.MAX_BREAK_REACH_TILES) || 4));
+const MAX_PLACE_REACH_TILES = Math.max(1, Math.trunc(Number(process.env.MAX_PLACE_REACH_TILES) || 4));
+const MAX_PUNCH_REACH_TILES = Math.max(1, Math.trunc(Number(process.env.MAX_PUNCH_REACH_TILES) || 3));
+const MAX_BREAK_REACH_PIXELS = TILE_SIZE * MAX_BREAK_REACH_TILES;
+const MAX_PLACE_REACH_PIXELS = TILE_SIZE * MAX_PLACE_REACH_TILES;
+const MAX_PUNCH_REACH_PIXELS = TILE_SIZE * MAX_PUNCH_REACH_TILES;
+const ACTION_RATE_LIMIT_MS = Math.max(0, Math.trunc(Number(process.env.ACTION_RATE_LIMIT_MS) || 25));
+const IDEMPOTENCY_TTL_MS = Math.max(250, Math.trunc(Number(process.env.IDEMPOTENCY_TTL_MS || 10000)));
+const IDEMPOTENCY_TTL_MS_CRITICAL = Math.max(
   250,
   Math.min(IDEMPOTENCY_TTL_MS, Math.trunc(Number(process.env.IDEMPOTENCY_TTL_MS_CRITICAL || 2500)))
 );
-const IDEMPOTENCY_TTL_MS_WORLD_ACTION: any = Math.max(
+const IDEMPOTENCY_TTL_MS_WORLD_ACTION = Math.max(
   250,
   Math.min(IDEMPOTENCY_TTL_MS_CRITICAL, Math.trunc(Number(process.env.IDEMPOTENCY_TTL_MS_WORLD_ACTION || 1200)))
 );
-const IDEMPOTENCY_TTL_MS_COMBAT: any = Math.max(
+const IDEMPOTENCY_TTL_MS_COMBAT = Math.max(
   100,
   Math.min(IDEMPOTENCY_TTL_MS_WORLD_ACTION, Math.trunc(Number(process.env.IDEMPOTENCY_TTL_MS_COMBAT || 600)))
 );
-const MAX_TRUSTED_POSITION_AGE_MS: any = Math.max(100, Math.trunc(Number(process.env.MAX_TRUSTED_POSITION_AGE_MS) || 1000));
-const MAX_TRUSTED_POSITION_AGE_MS_WORLD_ACTION: any = Math.max(75, Math.min(MAX_TRUSTED_POSITION_AGE_MS, Math.trunc(Number(process.env.MAX_TRUSTED_POSITION_AGE_MS_WORLD_ACTION) || 250)));
-const MAX_TRUSTED_POSITION_AGE_MS_COMBAT: any = Math.max(50, Math.min(MAX_TRUSTED_POSITION_AGE_MS_WORLD_ACTION, Math.trunc(Number(process.env.MAX_TRUSTED_POSITION_AGE_MS_COMBAT) || 180)));
-const TRUSTED_MOVEMENT_BASELINE_RESET_MS: any = Math.max(250, Math.trunc(Number(process.env.TRUSTED_MOVEMENT_BASELINE_RESET_MS) || 1500));
-const TRUSTED_MOVEMENT_SPEED_MULTIPLIER: any = Math.max(1, Number(process.env.TRUSTED_MOVEMENT_SPEED_MULTIPLIER) || 2.25);
-const TRUSTED_MOVEMENT_EXTRA_PIXELS: any = Math.max(TILE_SIZE, Math.trunc(Number(process.env.TRUSTED_MOVEMENT_EXTRA_PIXELS) || TILE_SIZE * 8));
-const TRUSTED_MOVEMENT_SOFT_RESYNC_PIXELS: any = Math.max(TILE_SIZE * 2, Math.trunc(Number(process.env.TRUSTED_MOVEMENT_SOFT_RESYNC_PIXELS) || TILE_SIZE * 16));
-const SERVER_DROP_PICKUP_DELAY: any = 0.25;
-const TRADE_SLOT_COUNT: any = 6;
-const HOTBAR_SLOT_COUNT: any = 6;
-const PlayerStateHelpers: any = PlayerStateHelpersModule.createPlayerStateHelpers({
+const MAX_TRUSTED_POSITION_AGE_MS = Math.max(100, Math.trunc(Number(process.env.MAX_TRUSTED_POSITION_AGE_MS) || 1000));
+const MAX_TRUSTED_POSITION_AGE_MS_WORLD_ACTION = Math.max(75, Math.min(MAX_TRUSTED_POSITION_AGE_MS, Math.trunc(Number(process.env.MAX_TRUSTED_POSITION_AGE_MS_WORLD_ACTION) || 250)));
+const MAX_TRUSTED_POSITION_AGE_MS_COMBAT = Math.max(50, Math.min(MAX_TRUSTED_POSITION_AGE_MS_WORLD_ACTION, Math.trunc(Number(process.env.MAX_TRUSTED_POSITION_AGE_MS_COMBAT) || 180)));
+const TRUSTED_MOVEMENT_BASELINE_RESET_MS = Math.max(250, Math.trunc(Number(process.env.TRUSTED_MOVEMENT_BASELINE_RESET_MS) || 1500));
+const TRUSTED_MOVEMENT_SPEED_MULTIPLIER = Math.max(1, Number(process.env.TRUSTED_MOVEMENT_SPEED_MULTIPLIER) || 2.25);
+const TRUSTED_MOVEMENT_EXTRA_PIXELS = Math.max(TILE_SIZE, Math.trunc(Number(process.env.TRUSTED_MOVEMENT_EXTRA_PIXELS) || TILE_SIZE * 8));
+const TRUSTED_MOVEMENT_SOFT_RESYNC_PIXELS = Math.max(TILE_SIZE * 2, Math.trunc(Number(process.env.TRUSTED_MOVEMENT_SOFT_RESYNC_PIXELS) || TILE_SIZE * 16));
+const SERVER_DROP_PICKUP_DELAY = 0.25;
+const TRADE_SLOT_COUNT = 6;
+const HOTBAR_SLOT_COUNT = 6;
+const PlayerStateHelpers = PlayerStateHelpersModule.createPlayerStateHelpers({
   itemDatabase: ItemDatabase,
   cleanAccountName,
   clampInteger,
@@ -305,29 +382,29 @@ const PlayerStateHelpers: any = PlayerStateHelpersModule.createPlayerStateHelper
   playerXpFirstLevel: PLAYER_XP_FIRST_LEVEL,
   hotbarSlotCount: HOTBAR_SLOT_COUNT,
 });
-const MAX_TRADE_DISTANCE_PIXELS: any = TILE_SIZE * 10;
-const PLAYER_PUNCH_RANGE_PIXELS: any = TILE_SIZE * 2.25;
-const PLAYER_PUNCH_VERTICAL_TOLERANCE_PIXELS: any = TILE_SIZE * 2.15;
-const PLAYER_PUNCH_DIRECT_DISTANCE_PIXELS: any = TILE_SIZE * 3.0;
-const PLAYER_PUNCH_BACKSIDE_TOLERANCE_PIXELS: any = TILE_SIZE * 0.45;
-const PLAYER_PUNCH_KNOCKBACK_X: any = 340;
-const PLAYER_PUNCH_KNOCKBACK_Y: any = 0;
-const PLAYER_PUNCH_COOLDOWN_MS: any = 180;
+const MAX_TRADE_DISTANCE_PIXELS = TILE_SIZE * 10;
+const PLAYER_PUNCH_RANGE_PIXELS = TILE_SIZE * 2.25;
+const PLAYER_PUNCH_VERTICAL_TOLERANCE_PIXELS = TILE_SIZE * 2.15;
+const PLAYER_PUNCH_DIRECT_DISTANCE_PIXELS = TILE_SIZE * 3.0;
+const PLAYER_PUNCH_BACKSIDE_TOLERANCE_PIXELS = TILE_SIZE * 0.45;
+const PLAYER_PUNCH_KNOCKBACK_X = 340;
+const PLAYER_PUNCH_KNOCKBACK_Y = 0;
+const PLAYER_PUNCH_COOLDOWN_MS = 180;
 const NETFOX_ACTION_DEBUG: any = ["1", "true", "yes", "on", "debug"].includes(String(process.env.NETFOX_ACTION_DEBUG || "false").trim().toLowerCase());
 const NETFOX_TRUSTED_POSITION_DEBUG: any = ["1", "true", "yes", "on", "debug"].includes(String(process.env.NETFOX_TRUSTED_POSITION_DEBUG || "false").trim().toLowerCase());
-const PHASE7_ACTION_LOGS: any = !["0", "false", "no", "off"].includes(String(process.env.PHASE7_ACTION_LOGS || "true").trim().toLowerCase());
-const NETFOX_SERVER_WORLD_STATE_TOKEN: any = String(process.env.NETFOX_SERVER_WORLD_STATE_TOKEN || "").trim();
-const NETFOX_SERVER_WORLD_STATE_TOKEN_HASH: any = String(process.env.NETFOX_SERVER_WORLD_STATE_TOKEN_HASH || "").trim().toLowerCase();
-const NETFOX_MOVEMENT_ENABLED: any = !["0", "false", "no", "off"].includes(String(process.env.NETFOX_MOVEMENT_ENABLED || "true").trim().toLowerCase());
-const NETFOX_MOVEMENT_PUBLIC_HOST: any = String(process.env.NETFOX_MOVEMENT_PUBLIC_HOST || process.env.PIXELMANIA_NETFOX_HOST || process.env.NETFOX_HOST || "127.0.0.1").trim() || "127.0.0.1";
-const NETFOX_MOVEMENT_PUBLIC_PORT: any = Math.max(1, Math.min(65535, Math.trunc(Number(process.env.NETFOX_MOVEMENT_PUBLIC_PORT || process.env.PIXELMANIA_NETFOX_PORT || process.env.NETFOX_PORT) || 24566)));
-const NETFOX_MOVEMENT_MAX_CLIENTS: any = Math.max(1, Math.min(512, Math.trunc(Number(process.env.NETFOX_MOVEMENT_MAX_CLIENTS || process.env.PIXELMANIA_NETFOX_MAX_CLIENTS) || 50)));
-const NETFOX_MOVEMENT_ROUTE_TTL_MS: any = Math.max(5000, Math.trunc(Number(process.env.NETFOX_MOVEMENT_ROUTE_TTL_MS) || 45000));
-const NETFOX_MOVEMENT_ALLOW_STATIC_FALLBACK: any = !["0", "false", "no", "off"].includes(String(process.env.NETFOX_MOVEMENT_ALLOW_STATIC_FALLBACK || "true").trim().toLowerCase());
-const NETFOX_MOVEMENT_STATIC_WORLD: any = cleanStaticNetfoxWorld(process.env.NETFOX_MOVEMENT_STATIC_WORLD || "START");
-const NETFOX_TRUSTED_PLAYER_STATE_ENABLED: any = !["0", "false", "no", "off"].includes(String(process.env.NETFOX_TRUSTED_PLAYER_STATE_ENABLED || "true").trim().toLowerCase());
+const PHASE7_ACTION_LOGS = !["0", "false", "no", "off"].includes(String(process.env.PHASE7_ACTION_LOGS || "true").trim().toLowerCase());
+const NETFOX_SERVER_WORLD_STATE_TOKEN = String(process.env.NETFOX_SERVER_WORLD_STATE_TOKEN || "").trim();
+const NETFOX_SERVER_WORLD_STATE_TOKEN_HASH = String(process.env.NETFOX_SERVER_WORLD_STATE_TOKEN_HASH || "").trim().toLowerCase();
+const NETFOX_MOVEMENT_ENABLED = !["0", "false", "no", "off"].includes(String(process.env.NETFOX_MOVEMENT_ENABLED || "true").trim().toLowerCase());
+const NETFOX_MOVEMENT_PUBLIC_HOST = String(process.env.NETFOX_MOVEMENT_PUBLIC_HOST || process.env.PIXELMANIA_NETFOX_HOST || process.env.NETFOX_HOST || "127.0.0.1").trim() || "127.0.0.1";
+const NETFOX_MOVEMENT_PUBLIC_PORT = Math.max(1, Math.min(65535, Math.trunc(Number(process.env.NETFOX_MOVEMENT_PUBLIC_PORT || process.env.PIXELMANIA_NETFOX_PORT || process.env.NETFOX_PORT) || 24566)));
+const NETFOX_MOVEMENT_MAX_CLIENTS = Math.max(1, Math.min(512, Math.trunc(Number(process.env.NETFOX_MOVEMENT_MAX_CLIENTS || process.env.PIXELMANIA_NETFOX_MAX_CLIENTS) || 50)));
+const NETFOX_MOVEMENT_ROUTE_TTL_MS = Math.max(5000, Math.trunc(Number(process.env.NETFOX_MOVEMENT_ROUTE_TTL_MS) || 45000));
+const NETFOX_MOVEMENT_ALLOW_STATIC_FALLBACK = !["0", "false", "no", "off"].includes(String(process.env.NETFOX_MOVEMENT_ALLOW_STATIC_FALLBACK || "true").trim().toLowerCase());
+const NETFOX_MOVEMENT_STATIC_WORLD = cleanStaticNetfoxWorld(process.env.NETFOX_MOVEMENT_STATIC_WORLD || "START");
+const NETFOX_TRUSTED_PLAYER_STATE_ENABLED = !["0", "false", "no", "off"].includes(String(process.env.NETFOX_TRUSTED_PLAYER_STATE_ENABLED || "true").trim().toLowerCase());
 const CUSTOM_TRUSTED_PLAYER_STATE_ENABLED: any = ["1", "true", "yes", "on"].includes(String(process.env.CUSTOM_TRUSTED_PLAYER_STATE_ENABLED || "false").trim().toLowerCase());
-const TRUSTED_MOVEMENT_REQUIRE_JOINED_WORLD: any = !["0", "false", "no", "off"].includes(String(process.env.TRUSTED_MOVEMENT_REQUIRE_JOINED_WORLD || "true").trim().toLowerCase());
+const TRUSTED_MOVEMENT_REQUIRE_JOINED_WORLD = !["0", "false", "no", "off"].includes(String(process.env.TRUSTED_MOVEMENT_REQUIRE_JOINED_WORLD || "true").trim().toLowerCase());
 const TRUSTED_MOVEMENT_ALLOWLIST_ENABLED: any = ["1", "true", "yes", "on"].includes(String(process.env.TRUSTED_MOVEMENT_ALLOWLIST_ENABLED || "false").trim().toLowerCase());
 const TRUSTED_MOVEMENT_ALLOWLIST: any = new Set(
   String(process.env.TRUSTED_MOVEMENT_ALLOWLIST || "")
@@ -335,84 +412,84 @@ const TRUSTED_MOVEMENT_ALLOWLIST: any = new Set(
     .map((value) => String(value || "").trim().toLowerCase())
     .filter(Boolean)
 );
-const NETFOX_SPAWN_TICKET_SECRET: any = String(process.env.NETFOX_SPAWN_TICKET_SECRET || "").trim();
-const NETFOX_SPAWN_TICKET_TTL_MS: any = Math.max(5000, Math.trunc(Number(process.env.NETFOX_SPAWN_TICKET_TTL_MS) || 30000));
-const CUSTOM_MOVEMENT_SERVER_WORLD_STATE_TOKEN: any = String(process.env.CUSTOM_MOVEMENT_SERVER_WORLD_STATE_TOKEN || "").trim();
-const CUSTOM_MOVEMENT_SERVER_WORLD_STATE_TOKEN_HASH: any = String(process.env.CUSTOM_MOVEMENT_SERVER_WORLD_STATE_TOKEN_HASH || "").trim().toLowerCase();
-const DEV_TOOLS_ENVIRONMENT: any = RUNTIME_ENVIRONMENT;
-const DEV_TOOLS_ALLOWED: any = DEV_TOOLS_ENVIRONMENT === "development" &&
+const NETFOX_SPAWN_TICKET_SECRET = String(process.env.NETFOX_SPAWN_TICKET_SECRET || "").trim();
+const NETFOX_SPAWN_TICKET_TTL_MS = Math.max(5000, Math.trunc(Number(process.env.NETFOX_SPAWN_TICKET_TTL_MS) || 30000));
+const CUSTOM_MOVEMENT_SERVER_WORLD_STATE_TOKEN = String(process.env.CUSTOM_MOVEMENT_SERVER_WORLD_STATE_TOKEN || "").trim();
+const CUSTOM_MOVEMENT_SERVER_WORLD_STATE_TOKEN_HASH = String(process.env.CUSTOM_MOVEMENT_SERVER_WORLD_STATE_TOKEN_HASH || "").trim().toLowerCase();
+const DEV_TOOLS_ENVIRONMENT = RUNTIME_ENVIRONMENT;
+const DEV_TOOLS_ALLOWED = DEV_TOOLS_ENVIRONMENT === "development" &&
   ["1", "true", "yes", "on", "debug"].includes(String(process.env.PIXELMANIA_ALLOW_DEV_TOOLS || "false").trim().toLowerCase());
-const NETFOX_ARCHIVE_TOOLS_ALLOWED: any = DEV_TOOLS_ALLOWED &&
+const NETFOX_ARCHIVE_TOOLS_ALLOWED = DEV_TOOLS_ALLOWED &&
   ["1", "true", "yes", "on", "debug"].includes(String(process.env.PIXELMANIA_ENABLE_NETFOX_ARCHIVE || "false").trim().toLowerCase());
 const DEV_BACKEND_LOGIN_ENABLED: any = ["1", "true", "yes", "on", "debug"].includes(String(process.env.PIXELMANIA_ENABLE_DEV_BACKEND_LOGIN || "false").trim().toLowerCase());
-const DEV_BACKEND_LOGIN_ALLOWED: any = DEV_BACKEND_LOGIN_ENABLED && DEV_TOOLS_ALLOWED;
-const PHASE7_DEV_JSON_FALLBACK_ALLOWED: any = DEV_BACKEND_LOGIN_ENABLED &&
+const DEV_BACKEND_LOGIN_ALLOWED = DEV_BACKEND_LOGIN_ENABLED && DEV_TOOLS_ALLOWED;
+const PHASE7_DEV_JSON_FALLBACK_ALLOWED = DEV_BACKEND_LOGIN_ENABLED &&
   DEV_TOOLS_ALLOWED;
-const VEND_BLOCK_EMPTY: any = "vend_empty";
-const VEND_BLOCK_PENDING: any = "vend_pending";
-const VEND_BLOCK_SOLD: any = "vend_sold";
+const VEND_BLOCK_EMPTY = "vend_empty";
+const VEND_BLOCK_PENDING = "vend_pending";
+const VEND_BLOCK_SOLD = "vend_sold";
 const VEND_BLOCK_TYPES: any = new Set([VEND_BLOCK_EMPTY, VEND_BLOCK_PENDING, VEND_BLOCK_SOLD]);
-const VEND_LOG_LIMIT: any = 30;
-const SAFE_BLOCK_TYPE: any = "safe";
+const VEND_LOG_LIMIT = 30;
+const SAFE_BLOCK_TYPE = "safe";
 const MAILBOX_BLOCK_TYPES: any = new Set(["blue_mail_box", "mail_box"]);
-const BULLETIN_BOARD_BLOCK_TYPE: any = "bulletin_board";
+const BULLETIN_BOARD_BLOCK_TYPE = "bulletin_board";
 const DISPLAY_BLOCK_TYPES: any = new Set(["display_box", "display_case"]);
-const TACKLE_BOX_BLOCK_TYPE: any = "tackle_box";
-const DICE_BLOCK_TYPE: any = "dice_block";
-const CHECKPOINT_BLOCK_TYPE: any = "checkpoint";
-const TACKLE_BOX_COOLDOWN_MS: any = 4 * 60 * 60 * 1000;
-const TACKLE_BOX_REWARD_COUNT: any = 5;
-const WATER_WELL_BLOCK_TYPE: any = "water_well";
-const WATER_WELL_COOLDOWN_MS: any = 5 * 60 * 1000;
-const WATER_WELL_REWARD_ITEM_ID: any = "water_bucket";
-const WATER_WELL_REWARD_ITEM_CATEGORY: any = "block";
-const WATER_WELL_REWARD_AMOUNT_MIN: any = 1;
-const WATER_WELL_REWARD_AMOUNT_MAX: any = 15;
-const CHICKEN_BLOCK_TYPE: any = "chicken";
-const CHICKEN_FEED_ITEM_ID: any = "grain";
-const CHICKEN_FEED_ITEM_CATEGORY: any = "material";
-const CHICKEN_EGG_ITEM_ID: any = "egg";
-const CHICKEN_GOLDEN_EGG_ITEM_ID: any = "golden_egg";
-const CHICKEN_REWARD_ITEM_CATEGORY: any = "material";
-const CHICKEN_PRODUCTION_MS: any = 12 * 60 * 60 * 1000;
-const CHICKEN_HUNGER_MS: any = 7 * 24 * 60 * 60 * 1000;
-const CHICKEN_GOLDEN_EGG_CHANCE: any = 0.01;
-const CHICKEN_TICK_MS: any = 60 * 1000;
-const COW_BLOCK_TYPE: any = "cow";
-const COW_FEED_ITEM_ID: any = "wheat";
-const COW_FEED_ITEM_CATEGORY: any = "material";
-const COW_MILK_ITEM_ID: any = "milk";
-const COW_REWARD_ITEM_CATEGORY: any = "material";
-const COW_PRODUCTION_MS: any = 12 * 60 * 60 * 1000;
-const COW_HUNGER_MS: any = 7 * 24 * 60 * 60 * 1000;
-const COW_TICK_MS: any = 60 * 1000;
-const DUCK_BLOCK_TYPE: any = "duck";
-const DUCK_FEED_ITEM_ID: any = "grain";
-const DUCK_FEED_ITEM_CATEGORY: any = "material";
-const DUCK_REWARD_ITEM_CATEGORY: any = "fish";
-const DUCK_PRODUCTION_MS: any = 12 * 60 * 60 * 1000;
-const DUCK_HUNGER_MS: any = 7 * 24 * 60 * 60 * 1000;
-const DUCK_TICK_MS: any = 60 * 1000;
-const BONE_BLOCK_TYPE: any = "bone";
-const FISH_MONGER_BLOCK_TYPE: any = "fish_monger";
-const ENTRANCE_GATE_TYPE: any = "entrance_gate";
-const LEGACY_WORLD_GENERATION_VERSION: any = 1;
-const CURRENT_WORLD_GENERATION_VERSION: any = 2;
-const LOWERED_ENTRANCE_GATE_GENERATION_VERSION: any = 2;
-const WORLD_LOCK_GRID_SENTINEL: any = 999999;
-const DEFAULT_TRUSTED_BUILDER_SLOT_LIMIT: any = 6;
-const MIN_TRUSTED_BUILDER_SLOT_LIMIT: any = 0;
-const MAX_TRUSTED_BUILDER_SLOT_LIMIT: any = 50;
+const TACKLE_BOX_BLOCK_TYPE = "tackle_box";
+const DICE_BLOCK_TYPE = "dice_block";
+const CHECKPOINT_BLOCK_TYPE = "checkpoint";
+const TACKLE_BOX_COOLDOWN_MS = 4 * 60 * 60 * 1000;
+const TACKLE_BOX_REWARD_COUNT = 5;
+const WATER_WELL_BLOCK_TYPE = "water_well";
+const WATER_WELL_COOLDOWN_MS = 5 * 60 * 1000;
+const WATER_WELL_REWARD_ITEM_ID = "water_bucket";
+const WATER_WELL_REWARD_ITEM_CATEGORY = "block";
+const WATER_WELL_REWARD_AMOUNT_MIN = 1;
+const WATER_WELL_REWARD_AMOUNT_MAX = 15;
+const CHICKEN_BLOCK_TYPE = "chicken";
+const CHICKEN_FEED_ITEM_ID = "grain";
+const CHICKEN_FEED_ITEM_CATEGORY = "material";
+const CHICKEN_EGG_ITEM_ID = "egg";
+const CHICKEN_GOLDEN_EGG_ITEM_ID = "golden_egg";
+const CHICKEN_REWARD_ITEM_CATEGORY = "material";
+const CHICKEN_PRODUCTION_MS = 12 * 60 * 60 * 1000;
+const CHICKEN_HUNGER_MS = 7 * 24 * 60 * 60 * 1000;
+const CHICKEN_GOLDEN_EGG_CHANCE = 0.01;
+const CHICKEN_TICK_MS = 60 * 1000;
+const COW_BLOCK_TYPE = "cow";
+const COW_FEED_ITEM_ID = "wheat";
+const COW_FEED_ITEM_CATEGORY = "material";
+const COW_MILK_ITEM_ID = "milk";
+const COW_REWARD_ITEM_CATEGORY = "material";
+const COW_PRODUCTION_MS = 12 * 60 * 60 * 1000;
+const COW_HUNGER_MS = 7 * 24 * 60 * 60 * 1000;
+const COW_TICK_MS = 60 * 1000;
+const DUCK_BLOCK_TYPE = "duck";
+const DUCK_FEED_ITEM_ID = "grain";
+const DUCK_FEED_ITEM_CATEGORY = "material";
+const DUCK_REWARD_ITEM_CATEGORY = "fish";
+const DUCK_PRODUCTION_MS = 12 * 60 * 60 * 1000;
+const DUCK_HUNGER_MS = 7 * 24 * 60 * 60 * 1000;
+const DUCK_TICK_MS = 60 * 1000;
+const BONE_BLOCK_TYPE = "bone";
+const FISH_MONGER_BLOCK_TYPE = "fish_monger";
+const ENTRANCE_GATE_TYPE = "entrance_gate";
+const LEGACY_WORLD_GENERATION_VERSION = 1;
+const CURRENT_WORLD_GENERATION_VERSION = 2;
+const LOWERED_ENTRANCE_GATE_GENERATION_VERSION = 2;
+const WORLD_LOCK_GRID_SENTINEL = 999999;
+const DEFAULT_TRUSTED_BUILDER_SLOT_LIMIT = 6;
+const MIN_TRUSTED_BUILDER_SLOT_LIMIT = 0;
+const MAX_TRUSTED_BUILDER_SLOT_LIMIT = 50;
 const WORLD_LOCK_ACCESS_ROLES: any = new Set(["admin", "builder", "visitor"]);
-const ELECTRICAL_WIRE_ITEM: any = "electric_wire";
-const ELECTRICAL_METAL_PAD_ITEM: any = "metal_pad";
-const ELECTRICAL_GENERATOR_ITEM: any = "generator";
-const ELECTRICAL_POLE_ITEM: any = "electric_pole";
-const ELECTRICAL_TOOL_ITEM: any = "electric_tool";
-const ELECTRICAL_DEVICE_WIRE: any = "wire";
-const ELECTRICAL_DEVICE_METAL_PAD: any = "metal_pad";
-const ELECTRICAL_DEVICE_GENERATOR: any = "generator";
-const ELECTRICAL_DEVICE_POLE: any = "electric_pole";
+const ELECTRICAL_WIRE_ITEM = "electric_wire";
+const ELECTRICAL_METAL_PAD_ITEM = "metal_pad";
+const ELECTRICAL_GENERATOR_ITEM = "generator";
+const ELECTRICAL_POLE_ITEM = "electric_pole";
+const ELECTRICAL_TOOL_ITEM = "electric_tool";
+const ELECTRICAL_DEVICE_WIRE = "wire";
+const ELECTRICAL_DEVICE_METAL_PAD = "metal_pad";
+const ELECTRICAL_DEVICE_GENERATOR = "generator";
+const ELECTRICAL_DEVICE_POLE = "electric_pole";
 const ELECTRICAL_ITEM_TYPES: any = new Set([
   ELECTRICAL_WIRE_ITEM,
   ELECTRICAL_METAL_PAD_ITEM,
@@ -426,169 +503,169 @@ const ELECTRICAL_VALID_DEVICE_TYPES: any = new Set([
   ELECTRICAL_DEVICE_POLE,
 ]);
 const ELECTRICAL_SIGNAL_MODES: any = new Set(["on_off", "power_storage", "power_output", "signal", "gate"]);
-const ELECTRICAL_GENERATOR_MAX_WATTS: any = 1000;
-const ELECTRICAL_PAD_GENERATION_WATTS: any = 3;
-const ELECTRICAL_GENERATOR_CIRCUIT_COUNT: any = 4;
-const ELECTRICAL_GENERATOR_CIRCUIT_CAPACITY: any = 5;
-const ELECTRICAL_MAX_PADS_PER_GENERATOR: any = ELECTRICAL_GENERATOR_CIRCUIT_COUNT * ELECTRICAL_GENERATOR_CIRCUIT_CAPACITY;
-const ELECTRICAL_GENERATOR_OUTPUT_COUNT: any = 4;
-const ELECTRICAL_GENERATOR_OUTPUT_CAPACITY: any = 5;
-const ELECTRICAL_MAX_POLES_PER_GENERATOR: any = ELECTRICAL_GENERATOR_OUTPUT_COUNT * ELECTRICAL_GENERATOR_OUTPUT_CAPACITY;
-const ELECTRICAL_MAX_TRANSFORMER_LINKS_PER_POLE: any = 10;
-const ELECTRICAL_MAX_POLE_LINKS_PER_POLE: any = 10;
-const OIL_REFINERY_BLOCK_TYPE: any = "oil_refinery";
-const OIL_REFINERY_CONSUMPTION_WATTS_PER_HOUR: any = 100;
-const OIL_REFINERY_OUTPUT_CAPACITY: any = 200;
-const OIL_REFINERY_TICK_MS: any = 5000;
-const OIL_REFINERY_MAX_ELAPSED_MS_PER_TICK: any = 5 * 60 * 1000;
-const OIL_REFINERY_BATTERY_ITEM_ID: any = "battery";
-const OIL_REFINERY_BATTERY_ITEM_CATEGORY: any = "material";
-const OIL_REFINERY_BATTERY_WATTS: any = 20;
-const OIL_REFINERY_BATTERY_INPUT_CAPACITY: any = 400;
-const OIL_REFINERY_BATTERY_WATT_CAPACITY: any = OIL_REFINERY_BATTERY_WATTS * OIL_REFINERY_BATTERY_INPUT_CAPACITY;
-const BATTERY_CHARGER_BLOCK_TYPE: any = "battery_charger";
-const BATTERY_CHARGER_OUTPUT_ITEM_ID: any = "battery";
-const BATTERY_CHARGER_OUTPUT_CATEGORY: any = "material";
-const BATTERY_CHARGER_CONSUMPTION_WATTS_PER_HOUR: any = 80;
-const BATTERY_CHARGER_OUTPUT_PER_HOUR: any = 3;
-const BATTERY_CHARGER_OUTPUT_CAPACITY: any = 200;
-const BATTERY_CHARGER_TICK_MS: any = 5000;
-const BATTERY_CHARGER_MAX_ELAPSED_MS_PER_TICK: any = 5 * 60 * 1000;
-const SAFE_SLOT_COUNT: any = 10;
-const MAILBOX_MESSAGE_LIMIT: any = 20;
-const BULLETIN_BOARD_MESSAGE_LIMIT: any = 30;
-const CCTV_EVENT_LIMIT: any = 20;
-const SERVER_SEED_GROW_TIME_SECONDS: any = Math.max(1, Number(process.env.SEED_GROW_TIME_SECONDS) || 8);
-const MATURE_SEED_EXTRA_DROP_CHANCE: any = Math.max(0, Math.min(1, Number(process.env.MATURE_SEED_EXTRA_DROP_CHANCE) || 0.65));
-const CONFIGURED_SEED_MUTATION_CHANCE: any = Number(process.env.SEED_MUTATION_CHANCE);
-const SEED_MUTATION_CHANCE: any = Math.max(0, Math.min(1, Number.isFinite(CONFIGURED_SEED_MUTATION_CHANCE) ? CONFIGURED_SEED_MUTATION_CHANCE : 0.005));
-const SNOW_STORM_EVENT_TYPE: any = "snow_storm";
-const SNOW_STORM_SYSTEM_MESSAGE: any = "Snow Storm is coming, find shelter! 10 minutes left.";
-const SNOW_STORM_EVENT_DURATION_MS: any = 10 * 60 * 1000;
-const SNOW_STORM_COUNTDOWN_MESSAGES: any = Object.freeze([
+const ELECTRICAL_GENERATOR_MAX_WATTS = 1000;
+const ELECTRICAL_PAD_GENERATION_WATTS = 3;
+const ELECTRICAL_GENERATOR_CIRCUIT_COUNT = 4;
+const ELECTRICAL_GENERATOR_CIRCUIT_CAPACITY = 5;
+const ELECTRICAL_MAX_PADS_PER_GENERATOR = ELECTRICAL_GENERATOR_CIRCUIT_COUNT * ELECTRICAL_GENERATOR_CIRCUIT_CAPACITY;
+const ELECTRICAL_GENERATOR_OUTPUT_COUNT = 4;
+const ELECTRICAL_GENERATOR_OUTPUT_CAPACITY = 5;
+const ELECTRICAL_MAX_POLES_PER_GENERATOR = ELECTRICAL_GENERATOR_OUTPUT_COUNT * ELECTRICAL_GENERATOR_OUTPUT_CAPACITY;
+const ELECTRICAL_MAX_TRANSFORMER_LINKS_PER_POLE = 10;
+const ELECTRICAL_MAX_POLE_LINKS_PER_POLE = 10;
+const OIL_REFINERY_BLOCK_TYPE = "oil_refinery";
+const OIL_REFINERY_CONSUMPTION_WATTS_PER_HOUR = 100;
+const OIL_REFINERY_OUTPUT_CAPACITY = 200;
+const OIL_REFINERY_TICK_MS = 5000;
+const OIL_REFINERY_MAX_ELAPSED_MS_PER_TICK = 5 * 60 * 1000;
+const OIL_REFINERY_BATTERY_ITEM_ID = "battery";
+const OIL_REFINERY_BATTERY_ITEM_CATEGORY = "material";
+const OIL_REFINERY_BATTERY_WATTS = 20;
+const OIL_REFINERY_BATTERY_INPUT_CAPACITY = 400;
+const OIL_REFINERY_BATTERY_WATT_CAPACITY = OIL_REFINERY_BATTERY_WATTS * OIL_REFINERY_BATTERY_INPUT_CAPACITY;
+const BATTERY_CHARGER_BLOCK_TYPE = "battery_charger";
+const BATTERY_CHARGER_OUTPUT_ITEM_ID = "battery";
+const BATTERY_CHARGER_OUTPUT_CATEGORY = "material";
+const BATTERY_CHARGER_CONSUMPTION_WATTS_PER_HOUR = 80;
+const BATTERY_CHARGER_OUTPUT_PER_HOUR = 3;
+const BATTERY_CHARGER_OUTPUT_CAPACITY = 200;
+const BATTERY_CHARGER_TICK_MS = 5000;
+const BATTERY_CHARGER_MAX_ELAPSED_MS_PER_TICK = 5 * 60 * 1000;
+const SAFE_SLOT_COUNT = 10;
+const MAILBOX_MESSAGE_LIMIT = 20;
+const BULLETIN_BOARD_MESSAGE_LIMIT = 30;
+const CCTV_EVENT_LIMIT = 20;
+const SERVER_SEED_GROW_TIME_SECONDS = Math.max(1, Number(process.env.SEED_GROW_TIME_SECONDS) || 8);
+const MATURE_SEED_EXTRA_DROP_CHANCE = Math.max(0, Math.min(1, Number(process.env.MATURE_SEED_EXTRA_DROP_CHANCE) || 0.65));
+const CONFIGURED_SEED_MUTATION_CHANCE = Number(process.env.SEED_MUTATION_CHANCE);
+const SEED_MUTATION_CHANCE = Math.max(0, Math.min(1, Number.isFinite(CONFIGURED_SEED_MUTATION_CHANCE) ? CONFIGURED_SEED_MUTATION_CHANCE : 0.005));
+const SNOW_STORM_EVENT_TYPE = "snow_storm";
+const SNOW_STORM_SYSTEM_MESSAGE = "Snow Storm is coming, find shelter! 10 minutes left.";
+const SNOW_STORM_EVENT_DURATION_MS = 10 * 60 * 1000;
+const SNOW_STORM_COUNTDOWN_MESSAGES = Object.freeze([
   Object.freeze({ remainingMs: 7 * 60 * 1000, label: "7 minutes" }),
   Object.freeze({ remainingMs: 3 * 60 * 1000, label: "3 minutes" }),
   Object.freeze({ remainingMs: 1 * 60 * 1000, label: "1 minute" }),
 ]);
 const SNOW_STORM_RANDOM_EVENTS_ENABLED: any = ["1", "true", "yes"].includes(String(process.env.SNOW_STORM_RANDOM_EVENTS_ENABLED || "false").trim().toLowerCase());
-const SNOW_STORM_RANDOM_INTERVAL_MS: any = Math.max(10000, Math.trunc(Number(process.env.SNOW_STORM_RANDOM_INTERVAL_MS) || 60000));
-const SNOW_STORM_RANDOM_CHANCE: any = Math.max(0, Math.min(1, Number(process.env.SNOW_STORM_RANDOM_CHANCE) || 0.05));
-const SNOW_STORM_PILE_OF_SNOW_CHANCE: any = Math.max(0, Math.min(1, Number(process.env.SNOW_STORM_PILE_OF_SNOW_CHANCE) || 0.08));
-const SNOW_STORM_ICE_VARIANT_SALT: any = 9047;
-const SNOW_STORM_EVENT_TILE_BATCH_SIZE: any = Math.max(25, Math.min(250, Math.trunc(Number(process.env.SNOW_STORM_EVENT_TILE_BATCH_SIZE) || 250)));
-const CONFIGURED_SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS: any = Number(process.env.SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS);
-const SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS: any = Math.max(0, Math.min(250, Math.trunc(Number.isFinite(CONFIGURED_SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS) ? CONFIGURED_SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS : 0)));
-const SNOW_STORM_MAX_CHANGED_TILES: any = Math.max(100, Math.min(WORLD_WIDTH * WORLD_HEIGHT, Math.trunc(Number(process.env.SNOW_STORM_MAX_CHANGED_TILES) || (WORLD_WIDTH * WORLD_HEIGHT))));
-const CONFIGURED_SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS: any = Number(process.env.SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS);
-const SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS: any = Math.max(0, Math.min(10000, Math.trunc(Number.isFinite(CONFIGURED_SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS) ? CONFIGURED_SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS : 1000)));
-const SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT: any = Math.max(256 * 1024, Math.min(32 * 1024 * 1024, Math.trunc(Number(process.env.SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT) || (4 * 1024 * 1024))));
-const SERVER_TERRAIN_SURFACE_VERTICAL_OFFSET: any = -8;
-const SERVER_TERRAIN_EXTRA_HILL_RANGE: any = 3;
-const SERVER_BOTTOM_LAVA_STONE_HEIGHT: any = 4;
-const SERVER_CAVE_BOTTOM_SOLID_PADDING: any = 7;
-const SERVER_CAVE_MIN_DEPTH: any = 8;
-const SERVER_SHALLOW_CAVE_START_DEPTH: any = 10;
-const SERVER_DEEP_CAVE_START_DEPTH: any = 18;
-const SERVER_TREE_MIN_HEIGHT: any = 5;
-const SERVER_TREE_MAX_HEIGHT: any = 8;
-const SERVER_TREE_SURFACE_NOISE_THRESHOLD: any = 0.30;
-const SERVER_TREE_RANDOM_PLACEMENT_CHANCE: any = 0.45;
-const SERVER_POND_WIDTH_MIN: any = 5;
-const SERVER_POND_WIDTH_MAX: any = 11;
-const SERVER_POND_COUNT_MIN: any = 2;
-const SERVER_POND_COUNT_MAX: any = 3;
-const SERVER_POND_ATTEMPT_LIMIT: any = 90;
-const SERVER_POND_EDGE_DEPTH: any = 2;
-const SERVER_POND_CENTER_DEPTH: any = 3;
-const SERVER_SURFACE_DECORATION_CHANCE: any = 0.62;
-const SERVER_SURFACE_DECORATION_GRASS_CHANCE: any = 0.22;
-const SERVER_SURFACE_DECORATION_ROSE_CHANCE: any = 0.30;
-const SERVER_SURFACE_DECORATION_TULIP_CHANCE: any = 0.30;
-const SERVER_SURFACE_DECORATION_SPACING_GAP_MAX: any = 0.84;
-const SERVER_SURFACE_DECORATION_NOISE_SCALE_X: any = 0.17;
-const SERVER_SURFACE_DECORATION_NOISE_SCALE_Y: any = 2.9;
-const SEED_MUTATION_REWARD_TABLE: any = Object.freeze([
+const SNOW_STORM_RANDOM_INTERVAL_MS = Math.max(10000, Math.trunc(Number(process.env.SNOW_STORM_RANDOM_INTERVAL_MS) || 60000));
+const SNOW_STORM_RANDOM_CHANCE = Math.max(0, Math.min(1, Number(process.env.SNOW_STORM_RANDOM_CHANCE) || 0.05));
+const SNOW_STORM_PILE_OF_SNOW_CHANCE = Math.max(0, Math.min(1, Number(process.env.SNOW_STORM_PILE_OF_SNOW_CHANCE) || 0.08));
+const SNOW_STORM_ICE_VARIANT_SALT = 9047;
+const SNOW_STORM_EVENT_TILE_BATCH_SIZE = Math.max(25, Math.min(250, Math.trunc(Number(process.env.SNOW_STORM_EVENT_TILE_BATCH_SIZE) || 250)));
+const CONFIGURED_SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS = Number(process.env.SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS);
+const SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS = Math.max(0, Math.min(250, Math.trunc(Number.isFinite(CONFIGURED_SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS) ? CONFIGURED_SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS : 0)));
+const SNOW_STORM_MAX_CHANGED_TILES = Math.max(100, Math.min(WORLD_WIDTH * WORLD_HEIGHT, Math.trunc(Number(process.env.SNOW_STORM_MAX_CHANGED_TILES) || (WORLD_WIDTH * WORLD_HEIGHT))));
+const CONFIGURED_SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS = Number(process.env.SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS);
+const SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS = Math.max(0, Math.min(10000, Math.trunc(Number.isFinite(CONFIGURED_SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS) ? CONFIGURED_SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS : 1000)));
+const SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT = Math.max(256 * 1024, Math.min(32 * 1024 * 1024, Math.trunc(Number(process.env.SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT) || (4 * 1024 * 1024))));
+const SERVER_TERRAIN_SURFACE_VERTICAL_OFFSET = -8;
+const SERVER_TERRAIN_EXTRA_HILL_RANGE = 3;
+const SERVER_BOTTOM_LAVA_STONE_HEIGHT = 4;
+const SERVER_CAVE_BOTTOM_SOLID_PADDING = 7;
+const SERVER_CAVE_MIN_DEPTH = 8;
+const SERVER_SHALLOW_CAVE_START_DEPTH = 10;
+const SERVER_DEEP_CAVE_START_DEPTH = 18;
+const SERVER_TREE_MIN_HEIGHT = 5;
+const SERVER_TREE_MAX_HEIGHT = 8;
+const SERVER_TREE_SURFACE_NOISE_THRESHOLD = 0.30;
+const SERVER_TREE_RANDOM_PLACEMENT_CHANCE = 0.45;
+const SERVER_POND_WIDTH_MIN = 5;
+const SERVER_POND_WIDTH_MAX = 11;
+const SERVER_POND_COUNT_MIN = 2;
+const SERVER_POND_COUNT_MAX = 3;
+const SERVER_POND_ATTEMPT_LIMIT = 90;
+const SERVER_POND_EDGE_DEPTH = 2;
+const SERVER_POND_CENTER_DEPTH = 3;
+const SERVER_SURFACE_DECORATION_CHANCE = 0.62;
+const SERVER_SURFACE_DECORATION_GRASS_CHANCE = 0.22;
+const SERVER_SURFACE_DECORATION_ROSE_CHANCE = 0.30;
+const SERVER_SURFACE_DECORATION_TULIP_CHANCE = 0.30;
+const SERVER_SURFACE_DECORATION_SPACING_GAP_MAX = 0.84;
+const SERVER_SURFACE_DECORATION_NOISE_SCALE_X = 0.17;
+const SERVER_SURFACE_DECORATION_NOISE_SCALE_Y = 2.9;
+const SEED_MUTATION_REWARD_TABLE = Object.freeze([
   { item_id: "glowing_dirt", item_category: "block", min_amount: 1, max_amount: 5, y_offset: -16, weight: 80 },
   { item_id: "sakura_sword", item_category: "tool", min_amount: 1, max_amount: 1, y_offset: -16, weight: 10 },
   { item_id: "pulu_pulu", item_category: "tool", min_amount: 1, max_amount: 1, y_offset: -16, weight: 10 },
 ]);
-const FISHING_SESSION_TTL_MS: any = Math.max(10000, Math.trunc(Number(process.env.FISHING_SESSION_TTL_MS) || 90000));
-const MIN_BLOCK_BREAK_INTERVAL_MS: any = Math.max(50, Math.trunc(Number(process.env.MIN_BLOCK_BREAK_INTERVAL_MS) || 75));
-const MIN_BLOCK_PLACE_INTERVAL_MS: any = Math.max(50, Math.trunc(Number(process.env.MIN_BLOCK_PLACE_INTERVAL_MS) || 75));
-const BLOCK_DAMAGE_RESET_MS: any = Math.max(500, Math.trunc(Number(process.env.BLOCK_DAMAGE_RESET_MS) || 3500));
-const EMAIL_VERIFICATION_TTL_MS: any = Math.max(5 * 60 * 1000, Math.trunc(Number(process.env.EMAIL_VERIFICATION_TTL_MINUTES) || 60) * 60 * 1000);
-const ACCOUNT_PASSWORD_RESET_TTL_MS: any = Math.max(5 * 60 * 1000, Math.trunc(Number(process.env.ACCOUNT_PASSWORD_RESET_TTL_MINUTES) || 30) * 60 * 1000);
-const ACCOUNT_EMAIL_CHANGE_TTL_MS: any = Math.max(5 * 60 * 1000, Math.trunc(Number(process.env.ACCOUNT_EMAIL_CHANGE_TTL_MINUTES) || 60) * 60 * 1000);
-const SESSION_TOKEN_TTL_MS: any = Math.max(15 * 60 * 1000, Math.trunc(Number(process.env.SESSION_TOKEN_TTL_MINUTES) || 1440) * 60 * 1000);
-const SESSION_REFRESH_TOKEN_TTL_MS: any = Math.max(SESSION_TOKEN_TTL_MS, Math.trunc(Number(process.env.SESSION_REFRESH_TOKEN_TTL_MINUTES) || (30 * 24 * 60)) * 60 * 1000);
-const ACCOUNT_ONE_ACTIVE_SESSION: any = String(process.env.ACCOUNT_ONE_ACTIVE_SESSION || "true").trim().toLowerCase() !== "false";
-const LOGIN_ATTEMPT_LIMIT_IP: any = Math.max(3, Math.trunc(Number(process.env.LOGIN_ATTEMPT_LIMIT_IP) || 20));
-const LOGIN_ATTEMPT_LIMIT_ACCOUNT: any = Math.max(3, Math.trunc(Number(process.env.LOGIN_ATTEMPT_LIMIT_ACCOUNT) || 10));
-const LOGIN_ATTEMPT_WINDOW_MS: any = Math.max(30 * 1000, Math.trunc(Number(process.env.LOGIN_ATTEMPT_WINDOW_SECONDS) || 300) * 1000);
-const PASSWORD_SCRYPT_N: any = Math.max(16384, Math.trunc(Number(process.env.PASSWORD_SCRYPT_N) || 16384));
-const PASSWORD_SCRYPT_R: any = Math.max(8, Math.trunc(Number(process.env.PASSWORD_SCRYPT_R) || 8));
-const PASSWORD_SCRYPT_P: any = Math.max(1, Math.trunc(Number(process.env.PASSWORD_SCRYPT_P) || 1));
-const PASSWORD_SCRYPT_KEYLEN: any = Math.max(32, Math.trunc(Number(process.env.PASSWORD_SCRYPT_KEYLEN) || 64));
-const PASSWORD_HASH_ALGORITHM: any = `scrypt:n=${PASSWORD_SCRYPT_N},r=${PASSWORD_SCRYPT_R},p=${PASSWORD_SCRYPT_P},keylen=${PASSWORD_SCRYPT_KEYLEN}`;
-const DEV_PIN: any = String(process.env.DEV_PIN || "").trim();
-const DEV_PIN_HASH: any = String(process.env.DEV_PIN_HASH || "").trim().toLowerCase();
-const DEV_PIN_REQUIRED: any = String(process.env.DEV_PIN_REQUIRED || "false").trim().toLowerCase() === "true" && (DEV_PIN !== "" || DEV_PIN_HASH !== "");
-const DEV_PIN_UNLOCK_TTL_MS: any = Math.max(60 * 1000, Math.trunc(Number(process.env.DEV_PIN_UNLOCK_TTL_MINUTES) || 15) * 60 * 1000);
-const ADMIN_2FA_REQUIRED: any = String(process.env.ADMIN_2FA_REQUIRED || "false").trim().toLowerCase() === "true";
-const ADMIN_2FA_SECRET: any = String(process.env.ADMIN_2FA_SECRET || "").trim();
-const ADMIN_2FA_SECRETS: any = String(process.env.ADMIN_2FA_SECRETS || "").trim();
-const ADMIN_2FA_UNLOCK_TTL_MS: any = Math.max(60 * 1000, Math.trunc(Number(process.env.ADMIN_2FA_UNLOCK_TTL_MINUTES) || 15) * 60 * 1000);
-const ADMIN_2FA_WINDOW_STEPS: any = Math.max(0, Math.min(2, Math.trunc(Number(process.env.ADMIN_2FA_WINDOW_STEPS) || 1)));
-const ADMIN_COMMAND_COOLDOWN_MS: any = Math.max(0, Math.trunc(Number(process.env.ADMIN_COMMAND_COOLDOWN_MS) || 1000));
-const ADMIN_COMMAND_CONFIRMATION_REQUIRED: any = String(process.env.ADMIN_COMMAND_CONFIRMATION_REQUIRED || "false").trim().toLowerCase() === "true";
-const ADMIN_COMMAND_CONFIRMATION_TTL_MS: any = Math.max(15 * 1000, Math.trunc(Number(process.env.ADMIN_COMMAND_CONFIRMATION_TTL_SECONDS) || 60) * 1000);
+const FISHING_SESSION_TTL_MS = Math.max(10000, Math.trunc(Number(process.env.FISHING_SESSION_TTL_MS) || 90000));
+const MIN_BLOCK_BREAK_INTERVAL_MS = Math.max(50, Math.trunc(Number(process.env.MIN_BLOCK_BREAK_INTERVAL_MS) || 75));
+const MIN_BLOCK_PLACE_INTERVAL_MS = Math.max(50, Math.trunc(Number(process.env.MIN_BLOCK_PLACE_INTERVAL_MS) || 75));
+const BLOCK_DAMAGE_RESET_MS = Math.max(500, Math.trunc(Number(process.env.BLOCK_DAMAGE_RESET_MS) || 3500));
+const EMAIL_VERIFICATION_TTL_MS = Math.max(5 * 60 * 1000, Math.trunc(Number(process.env.EMAIL_VERIFICATION_TTL_MINUTES) || 60) * 60 * 1000);
+const ACCOUNT_PASSWORD_RESET_TTL_MS = Math.max(5 * 60 * 1000, Math.trunc(Number(process.env.ACCOUNT_PASSWORD_RESET_TTL_MINUTES) || 30) * 60 * 1000);
+const ACCOUNT_EMAIL_CHANGE_TTL_MS = Math.max(5 * 60 * 1000, Math.trunc(Number(process.env.ACCOUNT_EMAIL_CHANGE_TTL_MINUTES) || 60) * 60 * 1000);
+const SESSION_TOKEN_TTL_MS = Math.max(15 * 60 * 1000, Math.trunc(Number(process.env.SESSION_TOKEN_TTL_MINUTES) || 1440) * 60 * 1000);
+const SESSION_REFRESH_TOKEN_TTL_MS = Math.max(SESSION_TOKEN_TTL_MS, Math.trunc(Number(process.env.SESSION_REFRESH_TOKEN_TTL_MINUTES) || (30 * 24 * 60)) * 60 * 1000);
+const ACCOUNT_ONE_ACTIVE_SESSION = String(process.env.ACCOUNT_ONE_ACTIVE_SESSION || "true").trim().toLowerCase() !== "false";
+const LOGIN_ATTEMPT_LIMIT_IP = Math.max(3, Math.trunc(Number(process.env.LOGIN_ATTEMPT_LIMIT_IP) || 20));
+const LOGIN_ATTEMPT_LIMIT_ACCOUNT = Math.max(3, Math.trunc(Number(process.env.LOGIN_ATTEMPT_LIMIT_ACCOUNT) || 10));
+const LOGIN_ATTEMPT_WINDOW_MS = Math.max(30 * 1000, Math.trunc(Number(process.env.LOGIN_ATTEMPT_WINDOW_SECONDS) || 300) * 1000);
+const PASSWORD_SCRYPT_N = Math.max(16384, Math.trunc(Number(process.env.PASSWORD_SCRYPT_N) || 16384));
+const PASSWORD_SCRYPT_R = Math.max(8, Math.trunc(Number(process.env.PASSWORD_SCRYPT_R) || 8));
+const PASSWORD_SCRYPT_P = Math.max(1, Math.trunc(Number(process.env.PASSWORD_SCRYPT_P) || 1));
+const PASSWORD_SCRYPT_KEYLEN = Math.max(32, Math.trunc(Number(process.env.PASSWORD_SCRYPT_KEYLEN) || 64));
+const PASSWORD_HASH_ALGORITHM = `scrypt:n=${PASSWORD_SCRYPT_N},r=${PASSWORD_SCRYPT_R},p=${PASSWORD_SCRYPT_P},keylen=${PASSWORD_SCRYPT_KEYLEN}`;
+const DEV_PIN = String(process.env.DEV_PIN || "").trim();
+const DEV_PIN_HASH = String(process.env.DEV_PIN_HASH || "").trim().toLowerCase();
+const DEV_PIN_REQUIRED = String(process.env.DEV_PIN_REQUIRED || "false").trim().toLowerCase() === "true" && (DEV_PIN !== "" || DEV_PIN_HASH !== "");
+const DEV_PIN_UNLOCK_TTL_MS = Math.max(60 * 1000, Math.trunc(Number(process.env.DEV_PIN_UNLOCK_TTL_MINUTES) || 15) * 60 * 1000);
+const ADMIN_2FA_REQUIRED = String(process.env.ADMIN_2FA_REQUIRED || "false").trim().toLowerCase() === "true";
+const ADMIN_2FA_SECRET = String(process.env.ADMIN_2FA_SECRET || "").trim();
+const ADMIN_2FA_SECRETS = String(process.env.ADMIN_2FA_SECRETS || "").trim();
+const ADMIN_2FA_UNLOCK_TTL_MS = Math.max(60 * 1000, Math.trunc(Number(process.env.ADMIN_2FA_UNLOCK_TTL_MINUTES) || 15) * 60 * 1000);
+const ADMIN_2FA_WINDOW_STEPS = Math.max(0, Math.min(2, Math.trunc(Number(process.env.ADMIN_2FA_WINDOW_STEPS) || 1)));
+const ADMIN_COMMAND_COOLDOWN_MS = Math.max(0, Math.trunc(Number(process.env.ADMIN_COMMAND_COOLDOWN_MS) || 1000));
+const ADMIN_COMMAND_CONFIRMATION_REQUIRED = String(process.env.ADMIN_COMMAND_CONFIRMATION_REQUIRED || "false").trim().toLowerCase() === "true";
+const ADMIN_COMMAND_CONFIRMATION_TTL_MS = Math.max(15 * 1000, Math.trunc(Number(process.env.ADMIN_COMMAND_CONFIRMATION_TTL_SECONDS) || 60) * 1000);
 const ADMIN_COMMAND_CONFIRMATION_ACTIONS: any = new Set(
   String(process.env.ADMIN_COMMAND_CONFIRMATION_ACTIONS || "clear,resetworld,reset_world,reworld,give,remove,ban,unban,mute,unmute,itemfreeze,itemunfreeze,itemretire,itemtransfer,itemflag")
     .split(",")
     .map((entry) => entry.trim().toLowerCase())
     .filter(Boolean)
 );
-const SMTP_HOST: any = String(process.env.SMTP_HOST || "").trim();
-const SMTP_PORT: any = Math.max(1, Math.trunc(Number(process.env.SMTP_PORT) || 587));
-const SMTP_SECURE: any = String(process.env.SMTP_SECURE || "").trim().toLowerCase() === "true";
-const SMTP_USER: any = String(process.env.SMTP_USER || "").trim();
-const SMTP_PASS: any = String(process.env.SMTP_PASS || "");
-const SMTP_FROM: any = String(process.env.SMTP_FROM || SMTP_USER || "PixelMania <no-reply@pixelmania.local>").trim();
-const POSTGRES_ENABLED: any = String(process.env.POSTGRES_ENABLED || "false").trim().toLowerCase() === "true";
-const POSTGRES_AUTO_BOOTSTRAP: any = String(process.env.POSTGRES_AUTO_BOOTSTRAP || "false").trim().toLowerCase() === "true";
-const POSTGRES_CONNECTION_STRING: any = String(process.env.POSTGRES_CONNECTION_STRING || process.env.DATABASE_URL || "").trim();
-const POSTGRES_HOST: any = String(process.env.POSTGRES_HOST || "").trim();
-const POSTGRES_PORT: any = Math.max(1, Math.trunc(Number(process.env.POSTGRES_PORT) || 5432));
-const POSTGRES_DATABASE: any = String(process.env.POSTGRES_DATABASE || "").trim();
-const POSTGRES_USER: any = String(process.env.POSTGRES_USER || "").trim();
-const POSTGRES_PASSWORD: any = String(process.env.POSTGRES_PASSWORD || "");
-const POSTGRES_SSL: any = String(process.env.POSTGRES_SSL || "false").trim().toLowerCase() === "true";
-const POSTGRES_SCHEMA: any = String(process.env.POSTGRES_SCHEMA || "pixelmania").trim() || "pixelmania";
-const POSTGRES_POOL_MAX: any = Math.max(1, Math.trunc(Number(process.env.POSTGRES_POOL_MAX) || 10));
-const POSTGRES_IDLE_TIMEOUT_MS: any = Math.max(1000, Math.trunc(Number(process.env.POSTGRES_IDLE_TIMEOUT_MS) || 30000));
-const POSTGRES_CONNECT_TIMEOUT_MS: any = Math.max(1000, Math.trunc(Number(process.env.POSTGRES_CONNECT_TIMEOUT_MS) || 8000));
-const POSTGRES_WRITE_QUEUE_MAX: any = Math.max(100, Math.trunc(Number(process.env.POSTGRES_WRITE_QUEUE_MAX) || 1000));
-const POSTGRES_BOOTSTRAP_SQL_PATH: any = String(
+const SMTP_HOST = String(process.env.SMTP_HOST || "").trim();
+const SMTP_PORT = Math.max(1, Math.trunc(Number(process.env.SMTP_PORT) || 587));
+const SMTP_SECURE = String(process.env.SMTP_SECURE || "").trim().toLowerCase() === "true";
+const SMTP_USER = String(process.env.SMTP_USER || "").trim();
+const SMTP_PASS = String(process.env.SMTP_PASS || "");
+const SMTP_FROM = String(process.env.SMTP_FROM || SMTP_USER || "PixelMania <no-reply@pixelmania.local>").trim();
+const POSTGRES_ENABLED = String(process.env.POSTGRES_ENABLED || "false").trim().toLowerCase() === "true";
+const POSTGRES_AUTO_BOOTSTRAP = String(process.env.POSTGRES_AUTO_BOOTSTRAP || "false").trim().toLowerCase() === "true";
+const POSTGRES_CONNECTION_STRING = String(process.env.POSTGRES_CONNECTION_STRING || process.env.DATABASE_URL || "").trim();
+const POSTGRES_HOST = String(process.env.POSTGRES_HOST || "").trim();
+const POSTGRES_PORT = Math.max(1, Math.trunc(Number(process.env.POSTGRES_PORT) || 5432));
+const POSTGRES_DATABASE = String(process.env.POSTGRES_DATABASE || "").trim();
+const POSTGRES_USER = String(process.env.POSTGRES_USER || "").trim();
+const POSTGRES_PASSWORD = String(process.env.POSTGRES_PASSWORD || "");
+const POSTGRES_SSL = String(process.env.POSTGRES_SSL || "false").trim().toLowerCase() === "true";
+const POSTGRES_SCHEMA = String(process.env.POSTGRES_SCHEMA || "pixelmania").trim() || "pixelmania";
+const POSTGRES_POOL_MAX = Math.max(1, Math.trunc(Number(process.env.POSTGRES_POOL_MAX) || 10));
+const POSTGRES_IDLE_TIMEOUT_MS = Math.max(1000, Math.trunc(Number(process.env.POSTGRES_IDLE_TIMEOUT_MS) || 30000));
+const POSTGRES_CONNECT_TIMEOUT_MS = Math.max(1000, Math.trunc(Number(process.env.POSTGRES_CONNECT_TIMEOUT_MS) || 8000));
+const POSTGRES_WRITE_QUEUE_MAX = Math.max(100, Math.trunc(Number(process.env.POSTGRES_WRITE_QUEUE_MAX) || 1000));
+const POSTGRES_BOOTSTRAP_SQL_PATH = String(
   process.env.POSTGRES_BOOTSTRAP_SQL_PATH ||
   path.join(__dirname, "docs", "postgres_security_foundation.sql")
 ).trim();
-const POSTGRES_AUTHORITATIVE: any = String(process.env.POSTGRES_AUTHORITATIVE || "true").trim().toLowerCase() !== "false";
+const POSTGRES_AUTHORITATIVE = String(process.env.POSTGRES_AUTHORITATIVE || "true").trim().toLowerCase() !== "false";
 const ALLOW_AUTHORITATIVE_JSON_FALLBACK: any = ["1", "true", "yes", "on"].includes(String(process.env.ALLOW_AUTHORITATIVE_JSON_FALLBACK || "false").trim().toLowerCase());
-const REQUIRE_POSTGRES_AUTHORITATIVE_FOR_GAMEPLAY: any = !["0", "false", "no", "off"].includes(String(
+const REQUIRE_POSTGRES_AUTHORITATIVE_FOR_GAMEPLAY = !["0", "false", "no", "off"].includes(String(
   process.env.REQUIRE_POSTGRES_AUTHORITATIVE_FOR_GAMEPLAY ||
   (RUNTIME_ENVIRONMENT === "production" ? "true" : "false")
 ).trim().toLowerCase());
-const REDIS_ENABLED: any = String(process.env.REDIS_ENABLED || "false").trim().toLowerCase() === "true";
-const REDIS_URL: any = String(process.env.REDIS_URL || "redis://127.0.0.1:6379").trim();
-const REDIS_KEY_PREFIX: any = String(process.env.REDIS_KEY_PREFIX || "pixelmania").trim() || "pixelmania";
-const REDIS_CONNECT_TIMEOUT_MS: any = Math.max(250, Math.trunc(Number(process.env.REDIS_CONNECT_TIMEOUT_MS) || 1500));
-const REDIS_ACTION_LOCK_TTL_MS: any = Math.max(1000, Math.trunc(Number(process.env.REDIS_ACTION_LOCK_TTL_MS) || 5000));
-const REDIS_ACTION_LOCK_GUARD_MS: any = Math.max(3000, REDIS_ACTION_LOCK_TTL_MS + 3000);
-const REDIS_PRESENCE_TTL_MS: any = Math.max(10000, Math.trunc(Number(process.env.REDIS_PRESENCE_TTL_MS) || 45000));
-const REDIS_ACTIVE_SESSION_TTL_MS: any = Math.max(REDIS_PRESENCE_TTL_MS, Math.trunc(Number(process.env.REDIS_ACTIVE_SESSION_TTL_MS) || 120000));
-const WORLD_ADMISSION_TTL_MS: any = Math.max(REDIS_PRESENCE_TTL_MS, Math.trunc(Number(process.env.WORLD_ADMISSION_TTL_MS) || REDIS_PRESENCE_TTL_MS));
-const WORLD_ROUTE_TTL_MS: any = Math.max(REDIS_PRESENCE_TTL_MS, Math.trunc(Number(process.env.WORLD_ROUTE_TTL_MS) || REDIS_PRESENCE_TTL_MS));
-const WORLD_ROUTE_ENFORCEMENT_ENABLED: any = String(process.env.WORLD_ROUTE_ENFORCEMENT_ENABLED || "false").trim().toLowerCase() === "true";
+const REDIS_ENABLED = String(process.env.REDIS_ENABLED || "false").trim().toLowerCase() === "true";
+const REDIS_URL = String(process.env.REDIS_URL || "redis://127.0.0.1:6379").trim();
+const REDIS_KEY_PREFIX = String(process.env.REDIS_KEY_PREFIX || "pixelmania").trim() || "pixelmania";
+const REDIS_CONNECT_TIMEOUT_MS = Math.max(250, Math.trunc(Number(process.env.REDIS_CONNECT_TIMEOUT_MS) || 1500));
+const REDIS_ACTION_LOCK_TTL_MS = Math.max(1000, Math.trunc(Number(process.env.REDIS_ACTION_LOCK_TTL_MS) || 5000));
+const REDIS_ACTION_LOCK_GUARD_MS = Math.max(3000, REDIS_ACTION_LOCK_TTL_MS + 3000);
+const REDIS_PRESENCE_TTL_MS = Math.max(10000, Math.trunc(Number(process.env.REDIS_PRESENCE_TTL_MS) || 45000));
+const REDIS_ACTIVE_SESSION_TTL_MS = Math.max(REDIS_PRESENCE_TTL_MS, Math.trunc(Number(process.env.REDIS_ACTIVE_SESSION_TTL_MS) || 120000));
+const WORLD_ADMISSION_TTL_MS = Math.max(REDIS_PRESENCE_TTL_MS, Math.trunc(Number(process.env.WORLD_ADMISSION_TTL_MS) || REDIS_PRESENCE_TTL_MS));
+const WORLD_ROUTE_TTL_MS = Math.max(REDIS_PRESENCE_TTL_MS, Math.trunc(Number(process.env.WORLD_ROUTE_TTL_MS) || REDIS_PRESENCE_TTL_MS));
+const WORLD_ROUTE_ENFORCEMENT_ENABLED = String(process.env.WORLD_ROUTE_ENFORCEMENT_ENABLED || "false").trim().toLowerCase() === "true";
 const REDIS_REQUIRED_FOR_ROUTE_ENFORCEMENT: any = ["1", "true", "yes", "on"].includes(String(process.env.REDIS_REQUIRED_FOR_ROUTE_ENFORCEMENT || "false").trim().toLowerCase());
 const ADMIN_USERNAMES: any = new Set(["uso"]);
 const DESIGNER_USERNAMES: any = new Set([
@@ -611,38 +688,38 @@ function makeBotRateLimitConfig(prefix: any, fallbackLimit: any, fallbackWindowM
   return ServerEnvConfig.makeBotRateLimitConfig(prefix, fallbackLimit, fallbackWindowMs, maxLimit);
 }
 
-const ServerBotRateLimitTables: any = ServerBotRateLimitHelpersModule.createServerBotRateLimitTables({
+const ServerBotRateLimitTables = ServerBotRateLimitHelpersModule.createServerBotRateLimitTables({
   serverEnvConfig: ServerEnvConfig,
   env: process.env,
 });
-const BOT_RATE_LIMITS: any = ServerBotRateLimitTables.botRateLimits;
-const BOT_RATE_LIMIT_SECURITY_LOG_WINDOW_MS: any = ServerBotRateLimitTables.botRateLimitSecurityLogWindowMs;
-const INVENTORY_TRANSACTION_ACTION_RATE_LIMITS: any = ServerBotRateLimitTables.inventoryTransactionActionRateLimits;
-const MESSAGE_RATE_LIMITS: any = ServerBotRateLimitTables.messageRateLimits;
+const BOT_RATE_LIMITS = ServerBotRateLimitTables.botRateLimits;
+const BOT_RATE_LIMIT_SECURITY_LOG_WINDOW_MS = ServerBotRateLimitTables.botRateLimitSecurityLogWindowMs;
+const INVENTORY_TRANSACTION_ACTION_RATE_LIMITS = ServerBotRateLimitTables.inventoryTransactionActionRateLimits;
+const MESSAGE_RATE_LIMITS = ServerBotRateLimitTables.messageRateLimits;
 const DEBUG_ACTION_POSITION_FLOW: any = ["1", "true", "yes"].includes(String(process.env.DEBUG_ACTION_POSITION_FLOW || "false").trim().toLowerCase());
 const DEBUG_PLAYER_PROGRESSION: any = ["1", "true", "yes"].includes(String(process.env.DEBUG_PLAYER_PROGRESSION || "false").trim().toLowerCase());
 const WORLD_STATE_REFRESH_TRACE: any = ["1", "true", "yes", "on"].includes(String(process.env.WORLD_STATE_REFRESH_TRACE || "false").trim().toLowerCase());
-const WORLD_LOCK_BLOCK_TYPE: any = "world_lock";
-const SUPER_WORLD_LOCK_BLOCK_TYPE: any = "super_world_lock";
-const WORLD_LOCK_KEY_ITEM_TYPE: any = "world_lock_key";
-const WORLD_LOCK_KEY_ITEM_CATEGORY: any = "material";
-const WORLD_LOCK_KEY_STORAGE_BLOCK_MESSAGE: any = 'remove items from "safe" "vend" "display" before trading the world';
+const WORLD_LOCK_BLOCK_TYPE = "world_lock";
+const SUPER_WORLD_LOCK_BLOCK_TYPE = "super_world_lock";
+const WORLD_LOCK_KEY_ITEM_TYPE = "world_lock_key";
+const WORLD_LOCK_KEY_ITEM_CATEGORY = "material";
+const WORLD_LOCK_KEY_STORAGE_BLOCK_MESSAGE = 'remove items from "safe" "vend" "display" before trading the world';
 function traceWorldLockKeyFlow(stage: any, details: any = {}) {
   console.log("[world-lock-key]", stage, details);
 }
-const LOCK_MOVER_ITEM_TYPE: any = "lock_mover";
-const DOOR_MOVER_ITEM_TYPE: any = "door_mover";
-const WATER_BLOCK_TYPE: any = "water";
-const WATER_BUCKET_ITEM_TYPE: any = "water_bucket";
-const SMALL_LOCK_BLOCK_TYPE: any = "small_lock";
-const MEDIUM_LOCK_BLOCK_TYPE: any = "medium_lock";
-const BIG_LOCK_BLOCK_TYPE: any = "big_lock";
+const LOCK_MOVER_ITEM_TYPE = "lock_mover";
+const DOOR_MOVER_ITEM_TYPE = "door_mover";
+const WATER_BLOCK_TYPE = "water";
+const WATER_BUCKET_ITEM_TYPE = "water_bucket";
+const SMALL_LOCK_BLOCK_TYPE = "small_lock";
+const MEDIUM_LOCK_BLOCK_TYPE = "medium_lock";
+const BIG_LOCK_BLOCK_TYPE = "big_lock";
 const AREA_LOCK_TILE_LIMITS: any = new Map([
   [SMALL_LOCK_BLOCK_TYPE, 10],
   [MEDIUM_LOCK_BLOCK_TYPE, 48],
   [BIG_LOCK_BLOCK_TYPE, 80],
 ]);
-const SUPER_WORLD_LOCK_EXCHANGE_RATE: any = 100;
+const SUPER_WORLD_LOCK_EXCHANGE_RATE = 100;
 const SHOP_CATALOG: any = new Map([
   ["small_lock", { item_id: "small_lock", item_category: "block", amount: 1, price: 500 }],
   ["medium_lock", { item_id: "medium_lock", item_category: "block", amount: 1, price: 1000 }],
@@ -734,7 +811,7 @@ const LURE_PACK_TABLE: any = [
   { item_id: "void_worm_lure", item_category: "lure", weight: 5 },
 ];
 const WORLD_BACKGROUND_THEMES: any = new Set(["night", "snow"]);
-const WorldStateHelpers: any = WorldStateHelpersModule.createWorldStateHelpers({
+const WorldStateHelpers = WorldStateHelpersModule.createWorldStateHelpers({
   itemDatabase: ItemDatabase,
   itemAtlasDb: ItemAtlasDB,
   dropContracts: DropContracts,
@@ -829,7 +906,7 @@ const WorldStateHelpers: any = WorldStateHelpersModule.createWorldStateHelpers({
   batteryChargerConsumptionWattsPerHour: BATTERY_CHARGER_CONSUMPTION_WATTS_PER_HOUR,
   batteryChargerOutputPerHour: BATTERY_CHARGER_OUTPUT_PER_HOUR,
 });
-const ServerMessageRouterHelpers: any = ServerMessageRouterHelpersModule.createServerMessageRouterHelpers({
+const ServerMessageRouterHelpers = ServerMessageRouterHelpersModule.createServerMessageRouterHelpers({
   packetContracts: PacketContracts,
   messageRateLimits: MESSAGE_RATE_LIMITS,
   inventoryTransactionActionRateLimits: INVENTORY_TRANSACTION_ACTION_RATE_LIMITS,
@@ -848,7 +925,7 @@ const ServerMessageRouterHelpers: any = ServerMessageRouterHelpersModule.createS
   clampString,
   cleanDropIdList,
 });
-const ServerInventoryTransactionHelpers: any = ServerInventoryTransactionHelpersModule.createServerInventoryTransactionHelpers({
+const ServerInventoryTransactionHelpers = ServerInventoryTransactionHelpersModule.createServerInventoryTransactionHelpers({
   itemDatabase: ItemDatabase,
   inventoryContracts: InventoryContracts,
   cleanAccountName,
@@ -858,7 +935,7 @@ const ServerInventoryTransactionHelpers: any = ServerInventoryTransactionHelpers
   getInventoryCount,
   makeRequestId,
 });
-const ServerWorldInteractionPayloadHelpers: any = ServerWorldInteractionPayloadHelpersModule.createServerWorldInteractionPayloadHelpers({
+const ServerWorldInteractionPayloadHelpers = ServerWorldInteractionPayloadHelpersModule.createServerWorldInteractionPayloadHelpers({
   chickenBlockType: CHICKEN_BLOCK_TYPE,
   cowBlockType: COW_BLOCK_TYPE,
   duckBlockType: DUCK_BLOCK_TYPE,
@@ -884,7 +961,7 @@ const ServerWorldInteractionPayloadHelpers: any = ServerWorldInteractionPayloadH
   cleanDoorPassword,
   isPasswordDoorBlockType,
 });
-const ServerPhase6Helpers: any = ServerPhase6HelpersModule.createServerPhase6Helpers({
+const ServerPhase6Helpers = ServerPhase6HelpersModule.createServerPhase6Helpers({
   packetContracts: PacketContracts,
   itemDatabase: ItemDatabase,
   maxDropCreateDistancePixels: MAX_DROP_CREATE_DISTANCE_PIXELS,
@@ -1138,19 +1215,19 @@ function getServerPhase8PlayerSessionRoutes() {
       ensurePlayerState,
       ensureWorldRouteForAction,
       getEquipmentSlotsFromPlayerState,
-      getFriendStatus: (...args) => getServerFriendRoutes().getFriendStatus(...args),
+      getFriendStatus: (...args: unknown[]) => getServerFriendRoutes().getFriendStatus(...args),
       getJoinWorldSpawnForWorld,
       getPlayersInWorld,
-      handleAdminInventoryLookupRequest: (...args) => getServerAdminLookupRoutes().handleAdminInventoryLookupRequest(...args),
-      handleAdminItemInstanceHistoryLookupRequest: (...args) => getServerAdminLookupRoutes().handleAdminItemInstanceHistoryLookupRequest(...args),
-      handleAdminItemInstanceLookupRequest: (...args) => getServerAdminLookupRoutes().handleAdminItemInstanceLookupRequest(...args),
-      handleAdminMonitoringDashboardRequest: (...args) => getServerAdminLookupRoutes().handleAdminMonitoringDashboardRequest(...args),
-      handleAdminTransactionLedgerLookupRequest: (...args) => getServerAdminLookupRoutes().handleAdminTransactionLedgerLookupRequest(...args),
+      handleAdminInventoryLookupRequest: (...args: unknown[]) => getServerAdminLookupRoutes().handleAdminInventoryLookupRequest(...args),
+      handleAdminItemInstanceHistoryLookupRequest: (...args: unknown[]) => getServerAdminLookupRoutes().handleAdminItemInstanceHistoryLookupRequest(...args),
+      handleAdminItemInstanceLookupRequest: (...args: unknown[]) => getServerAdminLookupRoutes().handleAdminItemInstanceLookupRequest(...args),
+      handleAdminMonitoringDashboardRequest: (...args: unknown[]) => getServerAdminLookupRoutes().handleAdminMonitoringDashboardRequest(...args),
+      handleAdminTransactionLedgerLookupRequest: (...args: unknown[]) => getServerAdminLookupRoutes().handleAdminTransactionLedgerLookupRequest(...args),
       isNetfoxRealMode,
       isPlayerOwnAccount,
       makeRequestId,
       mergeClientPlayerStateIntoServerState,
-      notifyOnlineFriendsOfFriendState: (...args) => getServerFriendRoutes().notifyOnlineFriendsOfFriendState(...args),
+      notifyOnlineFriendsOfFriendState: (...args: unknown[]) => getServerFriendRoutes().notifyOnlineFriendsOfFriendState(...args),
       publishPlayerPresenceUpdate,
       queuePlayerSave,
       flushPendingSessionPersistence,
@@ -1507,23 +1584,23 @@ function getServerPhase9RemainingRoutes() {
       handleDeveloperCommandRequest,
       handleDeveloperPinUnlock,
       handleDoorEnterRequest,
-      handleFriendListRequest: (...args) => getServerFriendRoutes().handleFriendListRequest(...args),
-      handleFriendRequest: (...args) => getServerFriendRoutes().handleFriendRequest(...args),
-      handleFriendResponse: (...args) => getServerFriendRoutes().handleFriendResponse(...args),
-      handleInventoryTransactionRequest: (...args) => getServerInventoryEconomyRoutes().handleInventoryTransactionRequest(...args),
-      handleInventoryUpgradePurchase: (...args) => getServerInventoryEconomyRoutes().handleInventoryUpgradePurchase(...args),
+      handleFriendListRequest: (...args: unknown[]) => getServerFriendRoutes().handleFriendListRequest(...args),
+      handleFriendRequest: (...args: unknown[]) => getServerFriendRoutes().handleFriendRequest(...args),
+      handleFriendResponse: (...args: unknown[]) => getServerFriendRoutes().handleFriendResponse(...args),
+      handleInventoryTransactionRequest: (...args: unknown[]) => getServerInventoryEconomyRoutes().handleInventoryTransactionRequest(...args),
+      handleInventoryUpgradePurchase: (...args: unknown[]) => getServerInventoryEconomyRoutes().handleInventoryUpgradePurchase(...args),
       handleNetfoxSpawnTicketRequest,
       handleNetfoxTrustedPlayerState,
       handleOilRefineryRequest,
       handleOwnedLockedWorldsRequest,
       handlePlayerPunch,
       handlePullPlayerRequest,
-      handleTradeCancel: (...args) => getServerTradeRoutes().handleTradeCancel(...args),
-      handleTradeConfirm: (...args) => getServerTradeRoutes().handleTradeConfirm(...args),
-      handleTradeFinalConfirm: (...args) => getServerTradeRoutes().handleTradeFinalConfirm(...args),
-      handleTradeOfferUpdate: (...args) => getServerTradeRoutes().handleTradeOfferUpdate(...args),
-      handleTradeRequest: (...args) => getServerTradeRoutes().handleTradeRequest(...args),
-      handleTradeResponse: (...args) => getServerTradeRoutes().handleTradeResponse(...args),
+      handleTradeCancel: (...args: unknown[]) => getServerTradeRoutes().handleTradeCancel(...args),
+      handleTradeConfirm: (...args: unknown[]) => getServerTradeRoutes().handleTradeConfirm(...args),
+      handleTradeFinalConfirm: (...args: unknown[]) => getServerTradeRoutes().handleTradeFinalConfirm(...args),
+      handleTradeOfferUpdate: (...args: unknown[]) => getServerTradeRoutes().handleTradeOfferUpdate(...args),
+      handleTradeRequest: (...args: unknown[]) => getServerTradeRoutes().handleTradeRequest(...args),
+      handleTradeResponse: (...args: unknown[]) => getServerTradeRoutes().handleTradeResponse(...args),
       rejectIfMuted,
       rejectIfTradeBanned,
       requireAuthenticated,
@@ -1581,7 +1658,7 @@ function getServerAccountAuthRoutes() {
       makeRequestId,
       makeSecureToken,
       makeTokenHash,
-      notifyOnlineFriendsOfFriendState: (...args) => getServerFriendRoutes().notifyOnlineFriendsOfFriendState(...args),
+      notifyOnlineFriendsOfFriendState: (...args: unknown[]) => getServerFriendRoutes().notifyOnlineFriendsOfFriendState(...args),
       normalizePlayerHotbarState,
       playerStates,
       postgresStore,
@@ -1592,14 +1669,14 @@ function getServerAccountAuthRoutes() {
       queueVerificationEmail,
       recordLoginAttempt,
       refreshAccountFromPostgres,
-      sanitizeAccountNameArray: (...args) => getServerFriendRoutes().sanitizeAccountNameArray(...args),
+      sanitizeAccountNameArray: (...args: unknown[]) => getServerFriendRoutes().sanitizeAccountNameArray(...args),
       sanitizeAccountState,
       sanitizeMovementMode,
       savePlayerState,
       sendAccountActionOk,
       sendAuthError,
       sendAuthOk,
-      sendFriendState: (...args) => getServerFriendRoutes().sendFriendState(...args),
+      sendFriendState: (...args: unknown[]) => getServerFriendRoutes().sendFriendState(...args),
       sendVerificationRequired,
       updatePlayerWorldIndex,
       validateEmail,
@@ -1682,7 +1759,7 @@ function getServerBotRateLimitHelpers() {
   return serverBotRateLimitHelpers;
 }
 
-const ServerPhase7Dispatcher: any = ServerPhase7DispatcherModule.createServerPhase7Dispatcher({
+const ServerPhase7Dispatcher = ServerPhase7DispatcherModule.createServerPhase7Dispatcher({
   packetContracts: PacketContracts,
   applyActionPositionFromPayload,
   getPlayerCurrentWorldName,
@@ -1737,7 +1814,7 @@ const ServerPhase7Dispatcher: any = ServerPhase7DispatcherModule.createServerPha
     world_item_drop_pickup: (socket, player, data, context) => getServerPhase8FinalRoutes().handleWorldItemDropPickup(socket, player, data, context),
     player_position: (socket, player, data, context) => getServerPhase8FinalRoutes().handlePlayerPosition(socket, player, data, context),
     player_punch: (socket, player, data, context) => getServerPhase9RemainingRoutes().handlePlayerPunchRoute(socket, player, data, context),
-  },
+  } satisfies Record<string, ServerRouteHandler>,
 });
 
 const POSTGRES_AUTHORITY_AUTH_ROUTE_TYPES: any = new Set([
@@ -1757,22 +1834,22 @@ const POSTGRES_AUTHORITY_LOBBY_ROUTE_TYPES: any = new Set([
   "server_status_request",
 ]);
 const POSTGRES_AUTHORITY_HANDLED_ROUTE_TYPES: any = new Set(ServerPhase7Dispatcher.getRouteCatalog().handled_routes || []);
-const POSTGRES_AUTHORITY_UNAVAILABLE_MESSAGE: any = "Server database is still loading. Please stay on the login screen and try again.";
+const POSTGRES_AUTHORITY_UNAVAILABLE_MESSAGE = "Server database is still loading. Please stay on the login screen and try again.";
 
-const httpServer: any = http.createServer(handleHttpRequest);
-const wss: any = new WebSocket.Server({
+const httpServer = http.createServer(handleHttpRequest);
+const wss = new WebSocket.Server({
   server: httpServer,
   maxPayload: MAX_PACKET_BYTES,
 });
 
-httpServer.on("error", (error) => {
-  const code: any = String(error?.code || "");
+httpServer.on("error", (error: NodeJS.ErrnoException) => {
+  const code = String(error?.code || "");
   if (code === "EADDRINUSE" || code === "EACCES") {
     handleFatalProcessError("http_server_error", error);
     return;
   }
 
-  const details: any = errorToCrashDetails(error);
+  const details = errorToCrashDetails(error);
   writeCrashReport("http_server_error", {
     error: details,
     runtime: getCrashRuntimeState(),
@@ -1780,8 +1857,8 @@ httpServer.on("error", (error) => {
   console.error("[http_server_error]", details.stack || details.message);
 });
 
-wss.on("error", (error) => {
-  const details: any = errorToCrashDetails(error);
+wss.on("error", (error: Error) => {
+  const details = errorToCrashDetails(error);
   writeCrashReport("websocket_server_error", {
     error: details,
     runtime: getCrashRuntimeState(),
@@ -1866,7 +1943,7 @@ const worldRouteStats: any = {
   admission_mismatches: 0,
 };
 let lastWorldRouteRedisUnhealthyWarnAt: any = 0;
-const serverTickStats: any = ServerRuntimeStats.createServerTickStats(SERVER_TICK_MONITOR_INTERVAL_MS);
+const serverTickStats = ServerRuntimeStats.createServerTickStats(SERVER_TICK_MONITOR_INTERVAL_MS);
 const playerNetworkStats: any = {
   started_at: new Date().toISOString(),
   inbound_messages_received: 0,
@@ -1901,7 +1978,7 @@ const playerNetworkStats: any = {
   idempotency_duplicates: 0,
   idempotency_db_failures: 0,
 };
-const ServerSocketDeliveryHelpers: any = ServerSocketDeliveryHelpersModule.createServerSocketDeliveryHelpers({
+const ServerSocketDeliveryHelpers = ServerSocketDeliveryHelpersModule.createServerSocketDeliveryHelpers({
   websocketOpenState: WebSocket.OPEN,
   maxPacketBytes: MAX_PACKET_BYTES,
   maxBufferedAmount: SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT,
@@ -1909,7 +1986,7 @@ const ServerSocketDeliveryHelpers: any = ServerSocketDeliveryHelpersModule.creat
   getRawLength,
   normalizePacketTypeName,
   recordPacketTypeSize,
-  warn(label, payload) {
+  warn(label: string, payload: unknown) {
     console.warn(label, payload);
   },
 });
@@ -1923,7 +2000,7 @@ const worldNetworkStats: any = {
   drop_interest_culls_sent: 0,
   drop_interest_syncs: 0,
 };
-const postgresStore: any = new PostgresStore({
+const postgresStore = new PostgresStore({
   enabled: POSTGRES_ENABLED,
   autoBootstrap: POSTGRES_AUTO_BOOTSTRAP,
   bootstrapSqlPath: POSTGRES_BOOTSTRAP_SQL_PATH,
@@ -1939,9 +2016,9 @@ const postgresStore: any = new PostgresStore({
   idleTimeoutMs: POSTGRES_IDLE_TIMEOUT_MS,
   connectTimeoutMs: POSTGRES_CONNECT_TIMEOUT_MS,
   maxWriteQueueDepth: POSTGRES_WRITE_QUEUE_MAX,
-  logger: (...args) => console.warn(...args),
+  logger: (...args: unknown[]) => console.warn(...args),
 });
-const ServerPunishmentHelpers: any = ServerPunishmentHelpersModule.createServerPunishmentHelpers({
+const ServerPunishmentHelpers = ServerPunishmentHelpersModule.createServerPunishmentHelpers({
   punishmentTypes: PUNISHMENT_TYPES,
   scopeGlobal: PUNISHMENT_SCOPE_GLOBAL,
   scopeWorld: PUNISHMENT_SCOPE_WORLD,
@@ -1951,20 +2028,20 @@ const ServerPunishmentHelpers: any = ServerPunishmentHelpersModule.createServerP
   accountKey,
   cleanAccountName,
   cleanWorld,
-  cleanPunishmentReason(value, limit) {
+  cleanPunishmentReason(value: unknown, limit: number) {
     return TextHelpers.cleanPunishmentReason(value, limit);
   },
   isPostgresAuthoritativeReady,
-  getActivePunishments(username, options) {
+  getActivePunishments(username: string, options: { punishment_type: string; scope: string; world: string }) {
     return postgresStore.getActivePunishments(username, options);
   },
 });
-const redisStore: any = new RedisStore({
+const redisStore = new RedisStore({
   enabled: REDIS_ENABLED,
   url: REDIS_URL,
   keyPrefix: REDIS_KEY_PREFIX,
   connectTimeoutMs: REDIS_CONNECT_TIMEOUT_MS,
-  logger: (...args) => console.warn(...args),
+  logger: (...args: unknown[]) => console.warn(...args),
 });
 
 function debugActionPositionFlow(label: any, player: any, extra: any = {}) {
@@ -1982,7 +2059,7 @@ function debugActionPositionFlow(label: any, player: any, extra: any = {}) {
 
 let fatalCrashReportWritten: any = false;
 
-const ServerPhase11bLifecycle: any = ServerPhase11bLifecycleModule.createServerPhase11bLifecycle({
+const ServerPhase11bLifecycle = ServerPhase11bLifecycleModule.createServerPhase11bLifecycle({
   ACCOUNTS_SAVE_PATH,
   ADMIN_LOG_PATH,
   ALLOW_LEGACY_WORLD_STATE_IMPORT,
@@ -2011,7 +2088,7 @@ const ServerPhase11bLifecycle: any = ServerPhase11bLifecycleModule.createServerP
   createWorldSnapshot,
   deserializeWorldState,
   errorToCrashDetails,
-  exitProcess: (code) => process.exit(code),
+  exitProcess: (code: number) => process.exit(code),
   fileSystem: fs,
   flushWorldStateJsonBackups,
   getAccountsSaveTimer: () => accountsSaveTimer,
@@ -2038,7 +2115,7 @@ const ServerPhase11bLifecycle: any = ServerPhase11bLifecycleModule.createServerP
   savePlayerState,
   saveWorldState,
   serializeWorldState,
-  setAccountsSaveTimer: (timer) => {
+  setAccountsSaveTimer: (timer: ReturnType<typeof setTimeout> | null) => {
     accountsSaveTimer = timer;
   },
   stopGameplaySchedulers: stopGameplaySchedulersForShutdown,
@@ -2049,7 +2126,7 @@ const ServerPhase11bLifecycle: any = ServerPhase11bLifecycleModule.createServerP
   writeCrashReport,
 });
 
-const ServerPhase11aRuntime: any = ServerPhase11aRuntimeModule.createServerPhase11aRuntime({
+const ServerPhase11aRuntime = ServerPhase11aRuntimeModule.createServerPhase11aRuntime({
   ALLOW_LEGACY_WORLD_STATE_IMPORT,
   CUSTOM_TRUSTED_PLAYER_STATE_ENABLED,
   DEV_BACKEND_LOGIN_ALLOWED,
@@ -2139,7 +2216,7 @@ const ServerPhase11aRuntime: any = ServerPhase11aRuntimeModule.createServerPhase
   CRASH_REPORT_PATH,
   errorToCrashDetails,
   escapeHtml,
-  exitProcess: (code) => process.exit(code),
+  exitProcess: (code: number) => process.exit(code),
   fileSystem: fs,
   getNetfoxMovementRouteForWorld,
   getNetfoxMovementRouteStats,
@@ -2190,7 +2267,7 @@ const ServerPhase11aRuntime: any = ServerPhase11aRuntimeModule.createServerPhase
   wss,
 });
 
-const ServerPhase11cTrustedMovement: any = ServerPhase11cTrustedMovementModule.createServerPhase11cTrustedMovement({
+const ServerPhase11cTrustedMovement = ServerPhase11cTrustedMovementModule.createServerPhase11cTrustedMovement({
   ACTION_RATE_LIMIT_MS,
   CUSTOM_TRUSTED_PLAYER_STATE_ENABLED,
   LAVA_REBOUND_MOVE_EXTRA_PIXELS,
@@ -2236,7 +2313,7 @@ const ServerPhase11cTrustedMovement: any = ServerPhase11cTrustedMovementModule.c
   touchLivePresence,
 });
 
-const ServerPhase11dStandardMovement: any = ServerPhase11dStandardMovementModule.createServerPhase11dStandardMovement({
+const ServerPhase11dStandardMovement = ServerPhase11dStandardMovementModule.createServerPhase11dStandardMovement({
   LAVA_REBOUND_MOVE_EXTRA_PIXELS,
   MAX_DAMAGE_FLASH_MS,
   MAX_MOVE_ACCEL_PIXELS_PER_SECOND2,
@@ -2394,8 +2471,8 @@ bootstrapServer().catch((error) => {
   process.exit(1);
 });
 
-wss.on("connection", (socket, request = null) => {
-  const playerId: any = crypto.randomUUID();
+wss.on("connection", (socket: ServerWebSocket, request: import("node:http").IncomingMessage | null = null) => {
+  const playerId = crypto.randomUUID();
 
   players.set(playerId, {
     id: playerId,
@@ -2458,7 +2535,7 @@ wss.on("connection", (socket, request = null) => {
   socket.authRequiredNotices = new Map();
   socket.inboundMessageQueue = Promise.resolve();
 
-  socket.on("error", (error) => {
+  socket.on("error", (error: Error) => {
     console.warn("[socket_error]", {
       player_id: playerId,
       message: error && error.message ? error.message : String(error),
@@ -2470,10 +2547,10 @@ wss.on("connection", (socket, request = null) => {
     player_id: playerId,
   });
 
-  socket.on("message", (raw) => {
-    const processMessage: any = async () => {
+  socket.on("message", (raw: import("ws").RawData) => {
+    const processMessage = async () => {
     try {
-      const messageBytes: any = getRawLength(raw);
+      const messageBytes = getRawLength(raw);
       playerNetworkStats.inbound_messages_received += 1;
       playerNetworkStats.inbound_bytes_received += Math.max(0, Math.trunc(messageBytes || 0));
       if (isPacketTypeTelemetryEnabled()) {
@@ -2496,22 +2573,22 @@ wss.on("connection", (socket, request = null) => {
       let data;
 
       try {
-        data = JSON.parse(raw);
+        data = JSON.parse(String(raw));
       } catch {
         return;
       }
 
-      const incomingMessageType: any = ServerMessageRouterHelpers.getInboundMessageType(data);
+      const incomingMessageType = ServerMessageRouterHelpers.getInboundMessageType(data);
       recordPacketTypeSize("inbound", incomingMessageType, messageBytes);
       if (!data || typeof data !== "object" || Array.isArray(data)) return;
 
-      const player: any = players.get(playerId);
+      const player = players.get(playerId);
       if (!player) return;
 
       if (!(await checkMessageRateLimit(socket, player, String(data.type || "unknown"), data))) return;
       if (!(await checkBotActionRateLimit(socket, player, String(data.type || "unknown"), data))) return;
 
-      const clientVersion: any = getClientVersion(data);
+      const clientVersion = getClientVersion(data);
       if (!isClientVersionAllowed(clientVersion)) {
         sendClientUpdateRequired(socket, data, clientVersion);
         return;
@@ -2526,13 +2603,13 @@ wss.on("connection", (socket, request = null) => {
         return;
       }
 
-      const phase7Dispatch: any = await ServerPhase7Dispatcher.dispatch(socket, player, data, {
+      const phase7Dispatch = await ServerPhase7Dispatcher.dispatch(socket, player, data, {
         playerId,
       });
       if (phase7Dispatch.handled) return;
       return;
     } catch (error) {
-      console.warn("[socket_message_error]", error.message);
+      console.warn("[socket_message_error]", getErrorMessage(error));
     }
     };
     socket.inboundMessageQueue = Promise.resolve(socket.inboundMessageQueue).then(processMessage, processMessage);
@@ -2540,13 +2617,13 @@ wss.on("connection", (socket, request = null) => {
 
   socket.on("close", () => {
     void (async () => {
-      await Promise.resolve(socket.inboundMessageQueue).catch((error) => {
-        console.warn("[socket_message_queue] disconnect drain failed:", error.message);
+      await Promise.resolve(socket.inboundMessageQueue).catch((error: unknown) => {
+        console.warn("[socket_message_queue] disconnect drain failed:", getErrorMessage(error));
       });
 
-      const player: any = players.get(playerId);
-      const closedUsername: any = player ? player.account_username : "";
-      const closedWorld: any = player && player.joined_world ? cleanWorld(player.world || "START") : "";
+      const player = players.get(playerId);
+      const closedUsername = player ? player.account_username : "";
+      const closedWorld = player && player.joined_world ? cleanWorld(player.world || "START") : "";
       if (player) {
         cancelActiveTradeForPlayer(playerId, "Trade canceled because a player disconnected.");
         activeFishingSessions.delete(playerId);
@@ -2557,11 +2634,11 @@ wss.on("connection", (socket, request = null) => {
           try {
             await removeWorldLockKeysFromPlayerInventory(socket, player, player.world, "disconnect", { silent: true });
           } catch (error) {
-            console.warn("[world-lock-key] disconnect cleanup failed:", error.message);
+            console.warn("[world-lock-key] disconnect cleanup failed:", getErrorMessage(error));
           }
         }
 
-        const persistenceFlush: any = await flushPendingSessionPersistence(
+        const persistenceFlush = await flushPendingSessionPersistence(
           player.account_username,
           closedWorld,
           "disconnect"
@@ -2632,9 +2709,9 @@ function stableIdentityEquals(left: any, right: any) {
 }
 
 function getPlayerLockIdentity(player: any) {
-  const accountId: any = cleanStableIdentityId(player?.account_id || player?.accountId || "");
-  const profileId: any = cleanStableIdentityId(player?.profile_id || player?.postgres_player_id || player?.player_profile_id || "");
-  const username: any = cleanAccountName(player?.account_username || player?.name || "").toUpperCase();
+  const accountId = cleanStableIdentityId(player?.account_id || player?.accountId || "");
+  const profileId = cleanStableIdentityId(player?.profile_id || player?.postgres_player_id || player?.player_profile_id || "");
+  const username = cleanAccountName(player?.account_username || player?.name || "").toUpperCase();
   return {
     account_id: accountId,
     owner_account_id: accountId,
@@ -2649,7 +2726,7 @@ function getPlayerLockIdentity(player: any) {
 
 function applyPlayerLockIdentityToState(target: any, player: any, options: any = {}) {
   if (!target || typeof target !== "object") return target;
-  const identity: any = getPlayerLockIdentity(player);
+  const identity = getPlayerLockIdentity(player);
   if (identity.owner_name !== "" && options.keepExistingName !== true) {
     target.owner_name = identity.owner_name;
   }
@@ -2667,7 +2744,7 @@ function applyPlayerLockIdentityToState(target: any, player: any, options: any =
 
 function lockOwnerMatchesPlayer(lock: any, player: any) {
   if (!lock || !player) return false;
-  const identity: any = getPlayerLockIdentity(player);
+  const identity = getPlayerLockIdentity(player);
   if (identity.owner_account_id !== "" && stableIdentityEquals(lock.owner_account_id || lock.account_id, identity.owner_account_id)) {
     return true;
   }
@@ -2679,7 +2756,7 @@ function lockOwnerMatchesPlayer(lock: any, player: any) {
 
 function lockTradeKeyHolderMatchesPlayer(lock: any, player: any) {
   if (!lock || !player) return false;
-  const identity: any = getPlayerLockIdentity(player);
+  const identity = getPlayerLockIdentity(player);
   if (identity.owner_account_id !== "" && stableIdentityEquals(lock.trade_key_holder_account_id || lock.key_holder_account_id, identity.owner_account_id)) {
     return true;
   }
@@ -2781,7 +2858,7 @@ function shouldAllowPhase7DevJsonFallback(player: any = null, data: any = null, 
   if (!usesTrustedMovementPosition(player)) return false;
   if (!player || player.authenticated !== true) return false;
 
-  const rawWorld: any = options.world || data?.world || player.current_world_id || player.current_world || player.world || "";
+  const rawWorld = options.world || data?.world || player.current_world_id || player.current_world || player.world || "";
   if (!["NETFOX_TEST", "CUSTOM_TEST", "TEST"].includes(cleanWorld(rawWorld))) return false;
 
   return options.allow_dev_json_fallback === true || data?.type === "world_block_update";
@@ -2864,22 +2941,22 @@ function getBlockActionReachPixels(update: any) {
 }
 
 function getPhase7InventoryCount(state: any, itemId: any, itemCategory: any = "") {
-  const cleanItemId: any = clampString(itemId || "");
+  const cleanItemId = clampString(itemId || "");
   if (cleanItemId === "" || !state || typeof state !== "object" || Array.isArray(state)) return 0;
-  const resolvedCategory: any = resolveInventoryCategory(cleanItemId, itemCategory || "");
-  const field: any = ItemDatabase.CATEGORY_TO_FIELD?.[resolvedCategory] || "";
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory || "");
+  const field = ItemDatabase.CATEGORY_TO_FIELD?.[resolvedCategory] || "";
   if (field === "") return 0;
-  const inventory: any = state[field];
+  const inventory = state[field];
   if (!inventory || typeof inventory !== "object" || Array.isArray(inventory)) return 0;
-  const count: any = Number(inventory[cleanItemId] || 0);
+  const count = Number(inventory[cleanItemId] || 0);
   return Number.isFinite(count) ? Math.trunc(count) : 0;
 }
 
 function getPhase7BlockActionDistance(position: any, update: any) {
-  const playerX: any = Number(position?.x);
-  const playerY: any = Number(position?.y);
-  const targetX: any = (Number(update?.x) || 0) * TILE_SIZE;
-  const targetY: any = (Number(update?.y) || 0) * TILE_SIZE;
+  const playerX = Number(position?.x);
+  const playerY = Number(position?.y);
+  const targetX = (Number(update?.x) || 0) * TILE_SIZE;
+  const targetY = (Number(update?.y) || 0) * TILE_SIZE;
   const distancePixels: any = [playerX, playerY, targetX, targetY].every(Number.isFinite)
     ? Math.hypot(playerX - targetX, playerY - targetY)
     : NaN;
@@ -2894,13 +2971,13 @@ function getPhase7BlockActionDistance(position: any, update: any) {
 }
 
 function formatPhase7Number(value: any) {
-  const number: any = Number(value);
+  const number = Number(value);
   if (!Number.isFinite(number)) return "n/a";
   return Math.round(number * 100) / 100;
 }
 
 function normalizePhase7Reason(value: any, fallback: any = "unknown") {
-  const clean: any = String(value || fallback)
+  const clean = String(value || fallback)
     .trim()
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "_")
@@ -2911,11 +2988,11 @@ function normalizePhase7Reason(value: any, fallback: any = "unknown") {
 function beginPhase7BlockActionContext(socket: any, player: any, worldName: any, update: any, position: any) {
   if (!socket || !usesTrustedMovementPosition(player)) return null;
 
-  const state: any = ensurePlayerState(player.account_username);
-  const itemId: any = clampString(update?.block_type || "");
-  const itemCategory: any = resolveInventoryCategory(itemId, "block");
-  const distance: any = getPhase7BlockActionDistance(position, update);
-  const movementMode: any = getTrustedMovementModeLabel(player);
+  const state = ensurePlayerState(player.account_username);
+  const itemId = clampString(update?.block_type || "");
+  const itemCategory = resolveInventoryCategory(itemId, "block");
+  const distance = getPhase7BlockActionDistance(position, update);
+  const movementMode = getTrustedMovementModeLabel(player);
   const context: any = {
     active: true,
     logged: false,
@@ -2956,19 +3033,19 @@ function clearPhase7BlockActionContext(socket: any) {
 
 function logPhase7ActionResult(socket: any, result: any, reason: any, overrides: any = {}) {
   if (!PHASE7_ACTION_LOGS) return;
-  const context: any = socket?._phase7BlockActionContext;
+  const context = socket?._phase7BlockActionContext;
   if (!context || context.active !== true || context.logged === true) return;
   context.logged = true;
 
   const merged: any = { ...context, ...overrides };
-  const profile: any = cleanAccountName(merged.profile || merged.inventory_owner || "");
-  const action: any = String(merged.action || "");
-  const playerTileX: any = merged.player_tile_x == null ? "n/a" : merged.player_tile_x;
-  const playerTileY: any = merged.player_tile_y == null ? "n/a" : merged.player_tile_y;
-  const targetX: any = merged.target_x == null ? "n/a" : merged.target_x;
-  const targetY: any = merged.target_y == null ? "n/a" : merged.target_y;
-  const finalReason: any = normalizePhase7Reason(reason || merged.reason || merged.trusted_reason || "unknown");
-  const logPrefix: any = clampString(merged.log_prefix || "Phase7Action") || "Phase7Action";
+  const profile = cleanAccountName(merged.profile || merged.inventory_owner || "");
+  const action = String(merged.action || "");
+  const playerTileX = merged.player_tile_x == null ? "n/a" : merged.player_tile_x;
+  const playerTileY = merged.player_tile_y == null ? "n/a" : merged.player_tile_y;
+  const targetX = merged.target_x == null ? "n/a" : merged.target_x;
+  const targetY = merged.target_y == null ? "n/a" : merged.target_y;
+  const finalReason = normalizePhase7Reason(reason || merged.reason || merged.trusted_reason || "unknown");
+  const logPrefix = clampString(merged.log_prefix || "Phase7Action") || "Phase7Action";
   let line: any = `[${logPrefix}] profile=${profile} action=${action} player_tile=(${playerTileX},${playerTileY}) target=(${targetX},${targetY}) ` +
     `distance=${formatPhase7Number(merged.distance_tiles)} max=${formatPhase7Number(merged.max_tiles)} result=${String(result || "").toUpperCase()} ` +
     `reason=${finalReason} item=${clampString(merged.item || "")} count=${Math.trunc(Number(merged.count) || 0)} ` +
@@ -2991,8 +3068,8 @@ function handleNetfoxTrustedPlayerState(socket: any, player: any, data: any) {
 async function handleNetfoxSpawnTicketRequest(socket: any, player: any, data: any) {
   if (!requireAuthenticated(socket, player, "join Netfox movement")) return;
 
-  const requestedWorld: any = cleanWorld(data.world || getPlayerCurrentWorldName(player));
-  const currentWorld: any = getPlayerCurrentWorldName(player);
+  const requestedWorld = cleanWorld(data.world || getPlayerCurrentWorldName(player));
+  const currentWorld = getPlayerCurrentWorldName(player);
   if (requestedWorld !== currentWorld || !player.joined_world) {
     sendJson(socket, {
       type: "netfox_spawn_ticket",
@@ -3004,7 +3081,7 @@ async function handleNetfoxSpawnTicketRequest(socket: any, player: any, data: an
     return;
   }
 
-  const netfoxRoute: any = await buildNetfoxSpawnTicketPayload(player, requestedWorld);
+  const netfoxRoute = await buildNetfoxSpawnTicketPayload(player, requestedWorld);
   sendJson(socket, {
     type: "netfox_spawn_ticket",
     ok: Boolean(netfoxRoute.ticket),
@@ -3182,7 +3259,7 @@ function getPostgresAuthorityStoreReady() {
 function getPostgresAuthorityRouteType(routeType: any, data: any) {
   let cleanRouteType: any = normalizePacketTypeName(routeType);
   try {
-    const phase7RouteType: any = ServerPhase7DispatcherModule.getPhase7RouteType(data, PacketContracts);
+    const phase7RouteType = ServerPhase7DispatcherModule.getPhase7RouteType(data, PacketContracts);
     if (phase7RouteType) cleanRouteType = normalizePacketTypeName(phase7RouteType);
   } catch {
     // Keep the already-normalized packet type for malformed packets.
@@ -3194,13 +3271,13 @@ function shouldRequirePostgresAuthorityForRoute(routeType: any, data: any = null
   if (!REQUIRE_POSTGRES_AUTHORITATIVE_FOR_GAMEPLAY) return false;
   if (isPostgresAuthoritativeReady()) return false;
 
-  const cleanRouteType: any = getPostgresAuthorityRouteType(routeType, data);
+  const cleanRouteType = getPostgresAuthorityRouteType(routeType, data);
   if (cleanRouteType === "" || POSTGRES_AUTHORITY_LOBBY_ROUTE_TYPES.has(cleanRouteType)) return false;
   return POSTGRES_AUTHORITY_HANDLED_ROUTE_TYPES.has(cleanRouteType);
 }
 
 function makePostgresAuthorityUnavailablePayload(routeType: any, data: any = null) {
-  const requestId: any = makeRequestId(data);
+  const requestId = makeRequestId(data);
   const payload: any = {
     reason: "postgres_authoritative_not_ready",
     route_type: routeType,
@@ -3220,7 +3297,7 @@ function makePostgresAuthorityUnavailablePayload(routeType: any, data: any = nul
 function rejectIfPostgresAuthorityUnavailable(socket: any, player: any, routeType: any, data: any = null) {
   if (!shouldRequirePostgresAuthorityForRoute(routeType, data)) return false;
 
-  const cleanRouteType: any = getPostgresAuthorityRouteType(routeType, data);
+  const cleanRouteType = getPostgresAuthorityRouteType(routeType, data);
   if (shouldLogSocketPacketWarning(socket, "postgres_authority_gate", 3000)) {
     console.warn("[postgres_authority_gate]", {
       player_id: String(player?.id || socket?.playerId || ""),
@@ -3232,7 +3309,7 @@ function rejectIfPostgresAuthorityUnavailable(socket: any, player: any, routeTyp
     });
   }
 
-  const payload: any = makePostgresAuthorityUnavailablePayload(cleanRouteType, data);
+  const payload = makePostgresAuthorityUnavailablePayload(cleanRouteType, data);
   if (POSTGRES_AUTHORITY_AUTH_ROUTE_TYPES.has(cleanRouteType)) {
     sendAuthError(socket, payload.request_id || "", cleanRouteType, POSTGRES_AUTHORITY_UNAVAILABLE_MESSAGE, payload);
   } else {
@@ -3246,11 +3323,11 @@ async function refreshAccountFromPostgres(username: any) {
     return null;
   }
 
-  const freshAccount: any = sanitizeAccountState(await postgresStore.loadAccountState(username));
+  const freshAccount = sanitizeAccountState(await postgresStore.loadAccountState(username));
   if (!freshAccount) return null;
 
-  const key: any = accountKey(freshAccount.username);
-  const account: any = accounts.get(key) || freshAccount;
+  const key = accountKey(freshAccount.username);
+  const account = accounts.get(key) || freshAccount;
   Object.assign(account, freshAccount);
   accounts.set(key, account);
   return account;
@@ -3286,7 +3363,7 @@ function makeRequestId(data: any) {
 
 function withTimeout(promise: any, timeoutMs: any, label: any) {
   let timer: any = null;
-  const timeoutPromise: any = new Promise((_, reject) => {
+  const timeoutPromise = new Promise((_, reject) => {
     timer = setTimeout(() => {
       reject(new Error(`${label} timed out after ${timeoutMs}ms`));
     }, timeoutMs);
@@ -3313,8 +3390,8 @@ function getMessageIdempotencyTTLMs(data: any = {}) {
 }
 
 function sendDuplicateRequestNotice(socket: any, data: any) {
-  const type: any = String(data?.type || "").trim();
-  const requestId: any = makeRequestId(data);
+  const type = String(data?.type || "").trim();
+  const requestId = makeRequestId(data);
 
   if (type === "inventory_transaction_request") {
     sendInventoryTransactionRejected(socket, data, "Duplicate request ignored.");
@@ -3356,14 +3433,14 @@ function sendDuplicateRequestNotice(socket: any, data: any) {
 async function enforceMessageIdempotency(socket: any, player: any, data: any) {
   if (!postgresStore.isReady()) return true;
 
-  const scope: any = makeMessageIdempotencyScope(data);
+  const scope = makeMessageIdempotencyScope(data);
   if (scope === "") return true;
 
-  const key: any = makeMessageIdempotencyKey(player, data, scope);
+  const key = makeMessageIdempotencyKey(player, data, scope);
   if (key === "") return true;
-  const idempotencyTTLMs: any = getMessageIdempotencyTTLMs(data);
+  const idempotencyTTLMs = getMessageIdempotencyTTLMs(data);
 
-  const claim: any = await postgresStore.claimIdempotency(
+  const claim = await postgresStore.claimIdempotency(
     scope,
     key,
     cleanAccountName(player?.account_username || data?.username || data?.account_username || ""),
@@ -3550,9 +3627,9 @@ function hasPassword(account: any) {
 }
 
 function getAccountRole(username: any) {
-  const key: any = accountKey(username);
-  const account: any = accounts.get(key);
-  const role: any = String(account?.role || "").trim().toLowerCase();
+  const key = accountKey(username);
+  const account = accounts.get(key);
+  const role = String(account?.role || "").trim().toLowerCase();
 
   if (role === "admin" || role === "developer" || role === "designer") return role;
   if (role === "moderator" || role === "mod") return "moderator";
@@ -3562,7 +3639,7 @@ function getAccountRole(username: any) {
 }
 
 function isDeveloperRole(role: any) {
-  const cleanRole: any = String(role || "").trim().toLowerCase();
+  const cleanRole = String(role || "").trim().toLowerCase();
   return cleanRole === "admin" || cleanRole === "developer";
 }
 
@@ -3572,14 +3649,14 @@ function isDesignerRole(role: any) {
 
 function getPublicPlayerRole(player: any) {
   if (!player || !player.authenticated) return "player";
-  const role: any = getAccountRole(player.account_username || player.name);
+  const role = getAccountRole(player.account_username || player.name);
   if (isDeveloperRole(role)) return "admin";
   if (isDesignerRole(role)) return "designer";
   return "player";
 }
 
 function getPublicPlayerIdentity(player: any, fallbackName: any = "Player") {
-  const displayName: any = cleanAccountName(player?.account_username || player?.name || fallbackName) || fallbackName;
+  const displayName = cleanAccountName(player?.account_username || player?.name || fallbackName) || fallbackName;
   return {
     name: displayName,
     username: displayName,
@@ -3610,21 +3687,21 @@ function canUseAdminCommands(player: any) {
 }
 
 function canActivateAccount(username: any, playerId: any) {
-  const key: any = accountKey(username);
-  const activePlayerId: any = activeAccountSessions.get(key);
+  const key = accountKey(username);
+  const activePlayerId = activeAccountSessions.get(key);
   return !activePlayerId || activePlayerId === playerId;
 }
 
 function replaceActiveAccountSession(username: any, replacementPlayerId: any) {
-  const key: any = accountKey(username);
-  const activePlayerId: any = activeAccountSessions.get(key);
+  const key = accountKey(username);
+  const activePlayerId = activeAccountSessions.get(key);
   if (!activePlayerId || activePlayerId === replacementPlayerId) return;
 
-  const existingPlayer: any = players.get(activePlayerId);
-  const existingSocket: any = getSocketByPlayerId(activePlayerId);
+  const existingPlayer = players.get(activePlayerId);
+  const existingSocket = getSocketByPlayerId(activePlayerId);
   activeAccountSessions.delete(key);
-  redisStore.clearActiveSession(username, activePlayerId).catch((error) => {
-    console.warn("[redis] active session replacement cleanup failed:", error.message);
+  redisStore.clearActiveSession(username, activePlayerId).catch((error: unknown) => {
+    console.warn("[redis] active session replacement cleanup failed:", getErrorMessage(error));
   });
 
   if (existingPlayer) {
@@ -3643,13 +3720,13 @@ function replaceActiveAccountSession(username: any, replacementPlayerId: any) {
   }
 
   if (existingPlayer && existingPlayer.joined_world) {
-    const existingWorld: any = cleanWorld(existingPlayer.world || "START");
+    const existingWorld = cleanWorld(existingPlayer.world || "START");
     clearPlayerWorldIndex(existingPlayer);
-    releasePlayerWorldAdmission(existingPlayer, existingWorld).catch((error) => {
-      console.warn("[redis] world admission replacement cleanup failed:", error.message);
+    releasePlayerWorldAdmission(existingPlayer, existingWorld).catch((error: unknown) => {
+      console.warn("[redis] world admission replacement cleanup failed:", getErrorMessage(error));
     });
-    releaseOwnedWorldRouteIfEmpty(existingWorld).catch((error) => {
-      console.warn("[redis] world route replacement cleanup failed:", error.message);
+    releaseOwnedWorldRouteIfEmpty(existingWorld).catch((error: unknown) => {
+      console.warn("[redis] world route replacement cleanup failed:", getErrorMessage(error));
     });
     broadcastToWorld(existingPlayer.world, buildPublicPlayerPresencePayload("player_left", existingPlayer, existingPlayer.world), activePlayerId);
     broadcastSystemToWorld(existingPlayer.world, `${existingPlayer.name} left ${existingPlayer.world}`, activePlayerId);
@@ -3662,22 +3739,22 @@ function replaceActiveAccountSession(username: any, replacementPlayerId: any) {
 function releaseActiveAccountSession(player: any) {
   if (!player || !player.account_username) return;
 
-  const key: any = accountKey(player.account_username);
+  const key = accountKey(player.account_username);
   if (activeAccountSessions.get(key) === player.id) {
     activeAccountSessions.delete(key);
-    redisStore.clearActiveSession(player.account_username, player.id).catch((error) => {
-      console.warn("[redis] active session cleanup failed:", error.message);
+    redisStore.clearActiveSession(player.account_username, player.id).catch((error: unknown) => {
+      console.warn("[redis] active session cleanup failed:", getErrorMessage(error));
     });
-    redisStore.clearPresence(player.account_username).catch((error) => {
-      console.warn("[redis] presence cleanup failed:", error.message);
+    redisStore.clearPresence(player.account_username).catch((error: unknown) => {
+      console.warn("[redis] presence cleanup failed:", getErrorMessage(error));
     });
   }
 }
 
 function touchLivePresence(socket: any, player: any, options: any = {}) {
   if (!redisStore.isReady() || !player || !player.authenticated || !player.account_username) return;
-  const now: any = Date.now();
-  const force: any = Boolean(options.force);
+  const now = Date.now();
+  const force = Boolean(options.force);
   if (!force && now - Number(player.last_presence_at || 0) < Math.floor(REDIS_PRESENCE_TTL_MS / 3)) return;
 
   player.last_presence_at = now;
@@ -3691,11 +3768,11 @@ function touchLivePresence(socket: any, player: any, options: any = {}) {
     updated_at: new Date(now).toISOString(),
   };
 
-  redisStore.setPresence(player.account_username, presence, REDIS_PRESENCE_TTL_MS).catch((error) => {
-    console.warn("[redis] presence update failed:", error.message);
+  redisStore.setPresence(player.account_username, presence, REDIS_PRESENCE_TTL_MS).catch((error: unknown) => {
+    console.warn("[redis] presence update failed:", getErrorMessage(error));
   });
-  redisStore.setActiveSession(player.account_username, player.id, REDIS_ACTIVE_SESSION_TTL_MS).catch((error) => {
-    console.warn("[redis] active session update failed:", error.message);
+  redisStore.setActiveSession(player.account_username, player.id, REDIS_ACTIVE_SESSION_TTL_MS).catch((error: unknown) => {
+    console.warn("[redis] active session update failed:", getErrorMessage(error));
   });
   refreshPlayerWorldAdmission(player).catch((error) => {
     console.warn("[redis] world admission refresh failed:", error.message);
@@ -3709,9 +3786,9 @@ function scheduleLiveActionLockCleanup(lockHandle: any) {
   if (!lockHandle || !lockHandle.localSet || !lockHandle.resource) return;
   if (lockHandle.cleanupTimer) return;
 
-  const timer: any = setTimeout(() => {
+  const timer = setTimeout(() => {
     if (!lockHandle.released && lockHandle.localSet && lockHandle.resource) {
-      const removed: any = lockHandle.localSet.delete(lockHandle.resource);
+      const removed = lockHandle.localSet.delete(lockHandle.resource);
       if (removed) {
         console.warn("[redis] auto-released stale local action lock", {
           scope: lockHandle.scope,
@@ -3732,7 +3809,7 @@ function clearLiveActionLockCleanup(lockHandle: any) {
 }
 
 async function acquireLiveActionLock(localSet: any, scope: any, resource: any, owner: any = "") {
-  const cleanResource: any = String(resource || "").trim();
+  const cleanResource = String(resource || "").trim();
   if (!localSet || cleanResource === "") return { acquired: false };
   if (localSet.has(cleanResource)) return { acquired: false };
 
@@ -3763,8 +3840,8 @@ function releaseLiveActionLock(lockHandle: any) {
   }
   clearLiveActionLockCleanup(lockHandle);
   lockHandle.released = true;
-  redisStore.releaseLock(lockHandle.lock).catch((error) => {
-    console.warn("[redis] action lock release failed:", error.message);
+  redisStore.releaseLock(lockHandle.lock).catch((error: unknown) => {
+    console.warn("[redis] action lock release failed:", getErrorMessage(error));
   });
 }
 
@@ -3798,7 +3875,7 @@ async function acquirePlayerInventoryLocks(usernames: any, owner: any = "") {
 }
 
 async function acquirePlayerInventoryLocksWithWait(usernames: any, owner: any = "", maxWaitMs: any = DROP_PICKUP_INVENTORY_LOCK_WAIT_MS, retryMs: any = DROP_PICKUP_INVENTORY_LOCK_RETRY_MS) {
-  const deadline: any = Date.now() + Math.max(0, maxWaitMs);
+  const deadline = Date.now() + Math.max(0, maxWaitMs);
   let lastLock: any = null;
   while (true) {
     lastLock = await acquirePlayerInventoryLocks(usernames, owner);
@@ -3811,7 +3888,7 @@ async function acquirePlayerInventoryLocksWithWait(usernames: any, owner: any = 
 }
 
 function releasePlayerInventoryLocks(lockHandle: any) {
-  const locks: any = Array.isArray(lockHandle?.locks) ? lockHandle.locks : [];
+  const locks = Array.isArray(lockHandle?.locks) ? lockHandle.locks : [];
   for (let i: any = locks.length - 1; i >= 0; i -= 1) {
     releaseLiveActionLock(locks[i]);
   }
@@ -3835,7 +3912,7 @@ function activatePlayerAccount(socket: any, player: any, account: any, options: 
   player.authenticated = true;
   player.name = account.username;
   player.role = getAccountRole(account.username);
-  const state: any = ensurePlayerState(account.username);
+  const state = ensurePlayerState(account.username);
   player.equipment_slots = sanitizeEquipmentSlots(getEquipmentSlotsFromPlayerState(state), account.username, state);
   activeAccountSessions.set(accountKey(account.username), player.id);
   touchLivePresence(socket, player, { force: true });
@@ -3859,9 +3936,9 @@ function sendAuthError(socket: any, requestId: any, action: any, message: any, e
 }
 
 function sendAuthOk(socket: any, requestId: any, action: any, account: any, tokens: any) {
-  const role: any = getAccountRole(account.username);
-  const tokenPayload: any = typeof tokens === "string" ? { sessionToken: tokens, refreshToken: "" } : (tokens || {});
-  const livePlayerId: any = String(socket?.playerId || "");
+  const role = getAccountRole(account.username);
+  const tokenPayload = typeof tokens === "string" ? { sessionToken: tokens, refreshToken: "" } : (tokens || {});
+  const livePlayerId = String(socket?.playerId || "");
   sendJson(socket, {
     type: "account_auth_ok",
     ok: true,
@@ -3956,10 +4033,10 @@ function requireAuthenticated(socket: any, player: any, action: any) {
     return true;
   }
 
-  const noticeKey: any = String(action || "action");
-  const now: any = Date.now();
+  const noticeKey = String(action || "action");
+  const now = Date.now();
   if (!socket.authRequiredNotices) socket.authRequiredNotices = new Map();
-  const lastNoticeAt: any = socket.authRequiredNotices.get(noticeKey) || 0;
+  const lastNoticeAt = socket.authRequiredNotices.get(noticeKey) || 0;
   if (now - lastNoticeAt < 3000) {
     return false;
   }
@@ -3973,7 +4050,7 @@ function requireAuthenticated(socket: any, player: any, action: any) {
 }
 
 function sendPlayerState(socket: any, username: any) {
-  const state: any = ensurePlayerState(username);
+  const state = ensurePlayerState(username);
   sendJson(socket, {
     type: "player_state",
     found: state !== null,
@@ -3988,10 +4065,10 @@ function sendInventoryTransactionResult(socket: any, payload: any) {
 }
 
 function sendWorldUpdateToRequesterAndWorld(socket: any, player: any, worldName: any, payload: any, requesterFields: any = null) {
-  const publicPayload: any = payload && typeof payload === "object" && !Array.isArray(payload)
+  const publicPayload = payload && typeof payload === "object" && !Array.isArray(payload)
     ? sanitizeWorldInteractionPayloadForClient(payload, worldName)
     : payload;
-  const requesterPayload: any = requesterFields && typeof requesterFields === "object" && !Array.isArray(requesterFields)
+  const requesterPayload = requesterFields && typeof requesterFields === "object" && !Array.isArray(requesterFields)
     ? { ...publicPayload, ...requesterFields }
     : publicPayload;
 
@@ -4112,12 +4189,12 @@ function sendPunishmentNotice(socket: any, player: any, message: any, punishment
 }
 
 async function rejectIfMuted(socket: any, player: any, action: any = "chat") {
-  const punishment: any = await getBlockingPunishment(player?.account_username || "", ["mute"], {
+  const punishment = await getBlockingPunishment(player?.account_username || "", ["mute"], {
     scope: PUNISHMENT_SCOPE_GLOBAL,
   });
   if (!punishment) return false;
 
-  const message: any = formatPunishmentBlockMessage(action, punishment);
+  const message = formatPunishmentBlockMessage(action, punishment);
   sendPunishmentNotice(socket, player, message, punishment);
   logSecurityEvent(socket, player, "punishment_blocked_action", {
     action,
@@ -4128,12 +4205,12 @@ async function rejectIfMuted(socket: any, player: any, action: any = "chat") {
 }
 
 async function rejectIfTradeBanned(socket: any, player: any, data: any = {}) {
-  const punishment: any = await getBlockingPunishment(player?.account_username || "", ["trade_ban"], {
+  const punishment = await getBlockingPunishment(player?.account_username || "", ["trade_ban"], {
     scope: PUNISHMENT_SCOPE_GLOBAL,
   });
   if (!punishment) return false;
 
-  const message: any = formatPunishmentBlockMessage("trade", punishment);
+  const message = formatPunishmentBlockMessage("trade", punishment);
   sendTradeError(socket, data, message);
   logSecurityEvent(socket, player, "punishment_blocked_action", {
     action: "trade",
@@ -4144,14 +4221,14 @@ async function rejectIfTradeBanned(socket: any, player: any, data: any = {}) {
 }
 
 async function rejectIfWorldBanned(socket: any, player: any, worldName: any, action: any = "world") {
-  const cleanWorldName: any = cleanWorldNameForPunishment(worldName);
-  const punishment: any = await getBlockingPunishment(player?.account_username || "", ["world_ban"], {
+  const cleanWorldName = cleanWorldNameForPunishment(worldName);
+  const punishment = await getBlockingPunishment(player?.account_username || "", ["world_ban"], {
     scope: PUNISHMENT_SCOPE_WORLD,
     world: cleanWorldName,
   });
   if (!punishment) return false;
 
-  const message: any = formatPunishmentBlockMessage("world", punishment);
+  const message = formatPunishmentBlockMessage("world", punishment);
   sendActionRejected(socket, action, message, {
     world: cleanWorldName,
     punishment: publicPunishmentPayload(punishment),
@@ -4186,8 +4263,8 @@ function getOtherTradePartyId(trade: any, playerId: any) {
 }
 
 function getTradeParticipantRecord(playerId: any) {
-  const player: any = players.get(playerId);
-  const socket: any = getSocketByPlayerId(playerId);
+  const player = players.get(playerId);
+  const socket = getSocketByPlayerId(playerId);
   if (!player || !socket) return null;
   return { player, socket };
 }
@@ -4205,7 +4282,7 @@ function sendTradeError(socket: any, data: any, message: any) {
 }
 
 function sendTradeChat(playerId: any, message: any) {
-  const record: any = getTradeParticipantRecord(playerId);
+  const record = getTradeParticipantRecord(playerId);
   if (!record) return;
 
   sendJson(record.socket, {
@@ -4232,12 +4309,12 @@ function serializeTradeSlots(slots: any) {
   if (!Array.isArray(slots)) return result;
 
   for (let i: any = 0; i < Math.min(slots.length, TRADE_SLOT_COUNT); i += 1) {
-    const item: any = slots[i];
+    const item = slots[i];
     if (!item) continue;
-    const itemId: any = clampString(item.item_id || "");
+    const itemId = clampString(item.item_id || "");
     if (!ItemDatabase.hasItem(itemId)) continue;
 
-    const itemCategory: any = resolveInventoryCategory(itemId, item.item_category || item.category || "");
+    const itemCategory = resolveInventoryCategory(itemId, item.item_category || item.category || "");
     if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) continue;
 
     result[i] = {
@@ -4277,10 +4354,10 @@ function buildTradeStateMessage(trade: any, message: any = "") {
 }
 
 function sendTradeState(trade: any, message: any = "") {
-  const payload: any = buildTradeStateMessage(trade, message);
+  const payload = buildTradeStateMessage(trade, message);
 
   for (const playerId of getTradePartyIds(trade)) {
-    const record: any = getTradeParticipantRecord(playerId);
+    const record = getTradeParticipantRecord(playerId);
     if (!record) continue;
     sendJson(record.socket, payload);
   }
@@ -4297,7 +4374,7 @@ function cancelTrade(trade: any, message: any = "Trade canceled.") {
   if (!trade) return;
 
   for (const playerId of getTradePartyIds(trade)) {
-    const record: any = getTradeParticipantRecord(playerId);
+    const record = getTradeParticipantRecord(playerId);
     if (!record) continue;
     sendJson(record.socket, {
       type: "trade_canceled",
@@ -4311,17 +4388,17 @@ function cancelTrade(trade: any, message: any = "Trade canceled.") {
 }
 
 function cancelActiveTradeForPlayer(playerId: any, message: any = "Trade canceled.") {
-  const tradeId: any = tradeByPlayerId.get(playerId);
+  const tradeId = tradeByPlayerId.get(playerId);
   if (!tradeId) return;
   cancelTrade(activeTrades.get(tradeId), message);
 }
 
 function findOnlinePlayerByPlayerId(playerId: any) {
-  const cleanId: any = String(playerId || "").trim();
+  const cleanId = String(playerId || "").trim();
   if (cleanId === "") return null;
 
-  const player: any = players.get(cleanId);
-  const socket: any = getSocketByPlayerId(cleanId);
+  const player = players.get(cleanId);
+  const socket = getSocketByPlayerId(cleanId);
   if (!player || !socket) return null;
   return { player, socket };
 }
@@ -4330,10 +4407,10 @@ function arePlayersCloseEnoughForTrade(playerA: any, playerB: any) {
   if (!playerA || !playerB) return false;
   if (playerA.world !== playerB.world) return false;
 
-  const ax: any = Number(playerA.x);
-  const ay: any = Number(playerA.y);
-  const bx: any = Number(playerB.x);
-  const by: any = Number(playerB.y);
+  const ax = Number(playerA.x);
+  const ay = Number(playerA.y);
+  const bx = Number(playerB.x);
+  const by = Number(playerB.y);
   if (![ax, ay, bx, by].every(Number.isFinite)) return true;
 
   return Math.hypot(ax - bx, ay - by) <= MAX_TRADE_DISTANCE_PIXELS;
@@ -4480,18 +4557,18 @@ function handleTradeCancel(socket: any, player: any, data: any) {
  * @returns {PixelMania.WorldLockKeyTradeCandidateResult}
  */
 function validateWorldLockKeyTradeCandidate(worldName: any, fromUsername: any, fromPlayer: any = null) {
-  const clean: any = cleanWorld(worldName);
-  const state: any = ensureWorldState(clean);
+  const clean = cleanWorld(worldName);
+  const state = ensureWorldState(clean);
   const lock: any = getEffectiveWorldLockStateInState(state);
-  const lockBlock: any = getWorldLockBlockEntry(state);
+  const lockBlock = getWorldLockBlockEntry(state);
   if (!lock.is_locked || !lockBlock || !isWorldLockBlockType(lockBlock.block_type)) {
     return { ok: false, message: "That world is not locked by a World Lock." };
   }
   if (fromPlayer ? !lockOwnerMatchesPlayer(lock, fromPlayer) : !isWorldLockOwnerAccount(lock, fromUsername)) {
     return { ok: false, message: "World Lock Key can only trade the world you own." };
   }
-  const holderKey: any = accountKey(lock.trade_key_holder || "");
-  const hasHolderIdentity: any =
+  const holderKey = accountKey(lock.trade_key_holder || "");
+  const hasHolderIdentity =
     holderKey !== "" ||
     cleanStableIdentityId(lock.trade_key_holder_account_id || "") !== "" ||
     cleanStableIdentityId(lock.trade_key_holder_player_id || lock.trade_key_holder_profile_id || "") !== "";
@@ -4502,7 +4579,7 @@ function validateWorldLockKeyTradeCandidate(worldName: any, fromUsername: any, f
     return { ok: false, message: "This world key is not held by the current owner." };
   }
 
-  const blockers: any = getWorldLockKeyStorageBlockers(clean);
+  const blockers = getWorldLockKeyStorageBlockers(clean);
   if (blockers.length > 0) {
     return {
       ok: false,
@@ -4523,7 +4600,7 @@ function validateWorldLockKeyTradeCandidate(worldName: any, fromUsername: any, f
  * @returns {PixelMania.TradeWorldLockKeyTransfersResult}
  */
 function validateTradeWorldLockKeyTransfers(trade: any, offersA: any, offersB: any, requesterRecord: any = null, targetRecord: any = null) {
-  const tradeWorld: any = cleanWorld(trade.world || "START");
+  const tradeWorld = cleanWorld(trade.world || "START");
   const sides: any = [
     {
       from_player_id: trade.requester_id,
@@ -4549,7 +4626,7 @@ function validateTradeWorldLockKeyTransfers(trade: any, offersA: any, offersB: a
   for (const side of sides) {
     for (const item of side.offers || []) {
       if (clampString(item.item_id || item.item_type || "") !== WORLD_LOCK_KEY_ITEM_TYPE) continue;
-      const itemCategory: any = resolveInventoryCategory(WORLD_LOCK_KEY_ITEM_TYPE, item.item_category || item.category || "");
+      const itemCategory = resolveInventoryCategory(WORLD_LOCK_KEY_ITEM_TYPE, item.item_category || item.category || "");
       if (itemCategory !== WORLD_LOCK_KEY_ITEM_CATEGORY) {
         return { ok: false, message: "Invalid World Lock Key." };
       }
@@ -4557,7 +4634,7 @@ function validateTradeWorldLockKeyTransfers(trade: any, offersA: any, offersB: a
         return { ok: false, message: "Trade one World Lock Key at a time." };
       }
 
-      const candidate: any = validateWorldLockKeyTradeCandidate(tradeWorld, side.from_username, side.from_player);
+      const candidate = validateWorldLockKeyTradeCandidate(tradeWorld, side.from_username, side.from_player);
       if (!candidate.ok) {
         return {
           ok: false,
@@ -4588,7 +4665,7 @@ function validateTradeWorldLockKeyTransfers(trade: any, offersA: any, offersB: a
  */
 function isWorldLockKeyTradeItem(item: any) {
   if (!item || typeof item !== "object") return false;
-  const itemId: any = clampString(item.item_id || item.item_type || "");
+  const itemId = clampString(item.item_id || item.item_type || "");
   if (itemId !== WORLD_LOCK_KEY_ITEM_TYPE) return false;
   return resolveInventoryCategory(WORLD_LOCK_KEY_ITEM_TYPE, item.item_category || item.category || "") === WORLD_LOCK_KEY_ITEM_CATEGORY;
 }
@@ -4599,7 +4676,7 @@ function isWorldLockKeyTradeItem(item: any) {
  * @returns {PixelMania.ItemInstanceMovement | null}
  */
 function getWorldLockKeyMovementForTransfer(transfer: any, itemInstanceMovements: any) {
-  const rows: any = Array.isArray(itemInstanceMovements) ? itemInstanceMovements : [];
+  const rows = Array.isArray(itemInstanceMovements) ? itemInstanceMovements : [];
   return rows.find((instance) => (
     clampString(instance?.item_type || instance?.item_id || "") === WORLD_LOCK_KEY_ITEM_TYPE &&
     resolveInventoryCategory(WORLD_LOCK_KEY_ITEM_TYPE, instance?.item_category || "") === WORLD_LOCK_KEY_ITEM_CATEGORY &&
@@ -4618,9 +4695,9 @@ function asPlainRecord(value: any) {
  * @returns {PixelMania.WorldName}
  */
 function getWorldLockKeyBoundWorldFromMovement(movement: any, fallbackWorld: any = "") {
-  const metadata: any = asPlainRecord(movement?.metadata);
-  const details: any = asPlainRecord(metadata.details);
-  const rawWorld: any = details.world_name || details.world || metadata.world_name || metadata.world || fallbackWorld;
+  const metadata = asPlainRecord(movement?.metadata);
+  const details = asPlainRecord(metadata.details);
+  const rawWorld = details.world_name || details.world || metadata.world_name || metadata.world || fallbackWorld;
   return cleanWorld(rawWorld || fallbackWorld || "START");
 }
 
@@ -4634,7 +4711,7 @@ function getWorldLockKeyBoundWorldFromMovement(movement: any, fallbackWorld: any
  * @returns {Promise<PixelMania.WorldLockKeyOwnershipTransferResult>}
  */
 async function applyWorldLockKeyTradeOwnershipTransfers(trade: any, transfers: any, itemInstanceMovements: any, requesterRecord: any, targetRecord: any, tradeTransactionId: any) {
-  const rows: any = Array.isArray(transfers) ? transfers : [];
+  const rows = Array.isArray(transfers) ? transfers : [];
   if (rows.length === 0) return { ok: true, applied: [] };
 
   const recordByPlayerId: any = new Map([
@@ -4644,12 +4721,12 @@ async function applyWorldLockKeyTradeOwnershipTransfers(trade: any, transfers: a
   const applied: any = [];
 
   for (const transfer of rows) {
-    const movement: any = getWorldLockKeyMovementForTransfer(transfer, itemInstanceMovements);
-    const worldName: any = getWorldLockKeyBoundWorldFromMovement(movement, transfer.world || trade.world || "START");
-    const state: any = ensureWorldState(worldName);
+    const movement = getWorldLockKeyMovementForTransfer(transfer, itemInstanceMovements);
+    const worldName = getWorldLockKeyBoundWorldFromMovement(movement, transfer.world || trade.world || "START");
+    const state = ensureWorldState(worldName);
     const currentLock: any = getEffectiveWorldLockStateInState(state);
-    const fromRecord: any = recordByPlayerId.get(transfer.from_player_id) || requesterRecord || targetRecord;
-    const toRecord: any = recordByPlayerId.get(transfer.to_player_id) || targetRecord || requesterRecord;
+    const fromRecord = recordByPlayerId.get(transfer.from_player_id) || requesterRecord || targetRecord;
+    const toRecord = recordByPlayerId.get(transfer.to_player_id) || targetRecord || requesterRecord;
     if (!currentLock.is_locked || !lockOwnerMatchesPlayer(currentLock, fromRecord?.player || transfer.from_player)) {
       console.warn("[world-lock-key] skipped ownership transfer after trade validation drift", {
         trade_id: trade.id,
@@ -4667,21 +4744,21 @@ async function applyWorldLockKeyTradeOwnershipTransfers(trade: any, transfers: a
       };
     }
 
-    const publicItemInstanceId: any = clampString(movement?.public_item_instance_id || "", 128);
-    const toOwnerName: any = cleanAccountName(transfer.to_username).toUpperCase();
-    const toOwnerKey: any = accountKey(toOwnerName);
-    const toIdentity: any = getPlayerLockIdentity(toRecord?.player || transfer.to_player || {});
-    const allowedPlayers: any = Array.isArray(currentLock.allowed_players)
-      ? currentLock.allowed_players.filter((name) => accountKey(name) !== toOwnerKey)
+    const publicItemInstanceId = clampString(movement?.public_item_instance_id || "", 128);
+    const toOwnerName = cleanAccountName(transfer.to_username).toUpperCase();
+    const toOwnerKey = accountKey(toOwnerName);
+    const toIdentity = getPlayerLockIdentity(toRecord?.player || transfer.to_player || {});
+    const allowedPlayers = Array.isArray(currentLock.allowed_players)
+      ? currentLock.allowed_players.filter((name: unknown) => accountKey(name) !== toOwnerKey)
       : [];
-    const allowedAccountIds: any = Array.isArray(currentLock.allowed_account_ids)
-      ? currentLock.allowed_account_ids.filter((id) => !stableIdentityEquals(id, toIdentity.account_id))
+    const allowedAccountIds = Array.isArray(currentLock.allowed_account_ids)
+      ? currentLock.allowed_account_ids.filter((id: unknown) => !stableIdentityEquals(id, toIdentity.account_id))
       : [];
-    const allowedPlayerIds: any = Array.isArray(currentLock.allowed_player_ids)
-      ? currentLock.allowed_player_ids.filter((id) => !stableIdentityEquals(id, toIdentity.player_id))
+    const allowedPlayerIds = Array.isArray(currentLock.allowed_player_ids)
+      ? currentLock.allowed_player_ids.filter((id: unknown) => !stableIdentityEquals(id, toIdentity.player_id))
       : [];
     const playerRoles: any = {};
-    const rawRoles: any = currentLock.player_roles && typeof currentLock.player_roles === "object" && !Array.isArray(currentLock.player_roles)
+    const rawRoles = currentLock.player_roles && typeof currentLock.player_roles === "object" && !Array.isArray(currentLock.player_roles)
       ? currentLock.player_roles
       : {};
     for (const [name, role] of Object.entries<any>(rawRoles)) {
@@ -4690,7 +4767,7 @@ async function applyWorldLockKeyTradeOwnershipTransfers(trade: any, transfers: a
       }
     }
     const playerRolesByAccountId: any = {};
-    const rawRolesByAccountId: any = currentLock.player_roles_by_account_id && typeof currentLock.player_roles_by_account_id === "object" && !Array.isArray(currentLock.player_roles_by_account_id)
+    const rawRolesByAccountId = currentLock.player_roles_by_account_id && typeof currentLock.player_roles_by_account_id === "object" && !Array.isArray(currentLock.player_roles_by_account_id)
       ? currentLock.player_roles_by_account_id
       : {};
     for (const [id, role] of Object.entries<any>(rawRolesByAccountId)) {
@@ -4699,7 +4776,7 @@ async function applyWorldLockKeyTradeOwnershipTransfers(trade: any, transfers: a
       }
     }
     const playerRolesByPlayerId: any = {};
-    const rawRolesByPlayerId: any = currentLock.player_roles_by_player_id && typeof currentLock.player_roles_by_player_id === "object" && !Array.isArray(currentLock.player_roles_by_player_id)
+    const rawRolesByPlayerId = currentLock.player_roles_by_player_id && typeof currentLock.player_roles_by_player_id === "object" && !Array.isArray(currentLock.player_roles_by_player_id)
       ? currentLock.player_roles_by_player_id
       : {};
     for (const [id, role] of Object.entries<any>(rawRolesByPlayerId)) {
@@ -4708,8 +4785,8 @@ async function applyWorldLockKeyTradeOwnershipTransfers(trade: any, transfers: a
       }
     }
 
-    const beforeLock: any = cloneJson(currentLock);
-    const nextLock: any = sanitizeWorldLockState(applyPlayerLockIdentityToState({
+    const beforeLock = cloneJson(currentLock);
+    const nextLock = sanitizeWorldLockState(applyPlayerLockIdentityToState({
       ...currentLock,
       owner_name: toOwnerName,
       allowed_players: allowedPlayers,
@@ -4728,7 +4805,7 @@ async function applyWorldLockKeyTradeOwnershipTransfers(trade: any, transfers: a
     }, toRecord?.player || transfer.to_player || {}, { keepExistingName: true }));
     state.world_lock = nextLock;
 
-    const lockBlock: any = transfer.lock_block || getWorldLockBlockEntry(state) || {};
+    const lockBlock = transfer.lock_block || getWorldLockBlockEntry(state) || {};
     const update: any = {
       action: "world_lock_key_trade",
       source_type: "world_lock_key",
@@ -4739,7 +4816,7 @@ async function applyWorldLockKeyTradeOwnershipTransfers(trade: any, transfers: a
       block_type: lockBlock.block_type || nextLock.lock_block_type,
       state: nextLock,
     };
-    const worldChange: any = buildWorldObjectChangeEntry(fromRecord?.socket || null, fromRecord?.player || null, worldName, update, beforeLock, nextLock, tradeTransactionId, {
+    const worldChange = buildWorldObjectChangeEntry(fromRecord?.socket || null, fromRecord?.player || null, worldName, update, beforeLock, nextLock, tradeTransactionId, {
       trade_id: trade.id,
       from_username: transfer.from_username,
       to_username: transfer.to_username,
@@ -4747,8 +4824,8 @@ async function applyWorldLockKeyTradeOwnershipTransfers(trade: any, transfers: a
     });
     logWorldChange(fromRecord?.socket || null, fromRecord?.player || null, worldChange);
 
-    const serializedWorld: any = serializeWorldState(worldName);
-    const persisted: any = await persistAuthoritativeWorldState(worldName, serializedWorld, "world_lock_key_trade");
+    const serializedWorld = serializeWorldState(worldName);
+    const persisted = await persistAuthoritativeWorldState(worldName, serializedWorld, "world_lock_key_trade");
     if (!persisted.ok) {
       console.warn("[world-lock-key] world ownership transfer persistence failed", {
         trade_id: trade.id,
@@ -4763,7 +4840,7 @@ async function applyWorldLockKeyTradeOwnershipTransfers(trade: any, transfers: a
       };
     }
 
-    const statePayload: any = makeWorldLockStatePayload(worldName, nextLock);
+    const statePayload = makeWorldLockStatePayload(worldName, nextLock);
     if (fromRecord?.socket) {
       sendJson(fromRecord.socket, statePayload);
     }
@@ -4786,10 +4863,10 @@ async function applyWorldLockKeyTradeOwnershipTransfers(trade: any, transfers: a
  * @returns {PixelMania.TradeInventoryValidationResult}
  */
 function validateFullTradeInventory(trade: any, stateA: any, stateB: any) {
-  const offersA: any = getTradeOfferTotals(trade.offers[trade.requester_id] || makeTradeSlots());
-  const offersB: any = getTradeOfferTotals(trade.offers[trade.target_id] || makeTradeSlots());
-  const stagedA: any = cloneJson(stateA);
-  const stagedB: any = cloneJson(stateB);
+  const offersA = getTradeOfferTotals(trade.offers[trade.requester_id] || makeTradeSlots());
+  const offersB = getTradeOfferTotals(trade.offers[trade.target_id] || makeTradeSlots());
+  const stagedA = cloneJson(stateA);
+  const stagedB = cloneJson(stateB);
 
   for (const item of offersA) {
     if (!ItemDatabase.isTradeableItem(item.item_id)) {
@@ -4883,14 +4960,14 @@ async function executeTrade(trade: any) {
     return;
   }
 
-  const requesterRecord: any = getTradeParticipantRecord(trade.requester_id);
-  const targetRecord: any = getTradeParticipantRecord(trade.target_id);
+  const requesterRecord = getTradeParticipantRecord(trade.requester_id);
+  const targetRecord = getTradeParticipantRecord(trade.target_id);
   if (!requesterRecord || !targetRecord) {
     cancelTrade(trade, "Trade canceled because a player is no longer online.");
     return;
   }
 
-  const tradeWorld: any = cleanWorld(trade.world || "START");
+  const tradeWorld = cleanWorld(trade.world || "START");
   if (cleanWorld(requesterRecord.player.world || "START") !== tradeWorld || cleanWorld(targetRecord.player.world || "START") !== tradeWorld) {
     cancelTrade(trade, "Trade canceled because a player left the trade world.");
     return;
@@ -4903,7 +4980,7 @@ async function executeTrade(trade: any) {
 
   trade._finalizing = true;
   let inventoryLocks: any = null;
-  const tradeTransactionId: any = makeAuditId("trade");
+  const tradeTransactionId = makeAuditId("trade");
 
   try {
     inventoryLocks = await acquirePlayerInventoryLocks(
@@ -4915,8 +4992,8 @@ async function executeTrade(trade: any) {
       return;
     }
 
-    const stateA: any = ensureWritablePlayerState(trade.requester_username);
-    const stateB: any = ensureWritablePlayerState(trade.target_username);
+    const stateA = ensureWritablePlayerState(trade.requester_username);
+    const stateB = ensureWritablePlayerState(trade.target_username);
     if (!stateA || !stateB) {
       cancelTrade(trade, "Trade canceled because server inventory could not be loaded.");
       return;
@@ -4928,7 +5005,7 @@ async function executeTrade(trade: any) {
       return;
     }
 
-    const worldKeyValidation: any = validateTradeWorldLockKeyTransfers(trade, validation.offersA, validation.offersB, requesterRecord, targetRecord);
+    const worldKeyValidation = validateTradeWorldLockKeyTransfers(trade, validation.offersA, validation.offersB, requesterRecord, targetRecord);
     if (!worldKeyValidation.ok) {
       if (worldKeyValidation.owner_message && worldKeyValidation.owner_player_id) {
         sendTradeChat(worldKeyValidation.owner_player_id, worldKeyValidation.message);
@@ -4939,7 +5016,7 @@ async function executeTrade(trade: any) {
       return;
     }
 
-    const tradeResult: any = await postgresStore.applyTradeFinalizationTransaction({
+    const tradeResult = await postgresStore.applyTradeFinalizationTransaction({
       requester_username: trade.requester_username,
       target_username: trade.target_username,
       trade_id: trade.id,
@@ -4969,7 +5046,7 @@ async function executeTrade(trade: any) {
     persistPlayerInventoryChange(trade.requester_username, stateA);
     persistPlayerInventoryChange(trade.target_username, stateB);
 
-    const worldKeyTransferResult: any = await applyWorldLockKeyTradeOwnershipTransfers(
+    const worldKeyTransferResult = await applyWorldLockKeyTradeOwnershipTransfers(
       trade,
       worldKeyValidation.transfers,
       tradeResult.item_instance_movements || [],
@@ -4978,7 +5055,7 @@ async function executeTrade(trade: any) {
       tradeTransactionId
     );
     if (!worldKeyTransferResult.ok) {
-      const transferMessage: any = worldKeyTransferResult.message || "World ownership transfer could not be completed.";
+      const transferMessage = worldKeyTransferResult.message || "World ownership transfer could not be completed.";
       console.warn("[world-lock-key] trade completed but ownership transfer failed", {
         trade_id: trade.id,
         reason: worldKeyTransferResult.reason || "unknown",
@@ -5117,7 +5194,7 @@ function isVendAwaitingCollection(vend: any) {
 }
 
 function getVendVisualBlockType(vend: any) {
-  const status: any = getVendStatus(vend);
+  const status = getVendStatus(vend);
   if (status === "sold") return VEND_BLOCK_SOLD;
   if (status === "listed") return VEND_BLOCK_PENDING;
   return VEND_BLOCK_EMPTY;
@@ -5129,7 +5206,7 @@ function getVendVisualBlockType(vend: any) {
  * @returns {PixelMania.VendClientState}
  */
 function serializeVendStateForClient(vend: any, player: any = null) {
-  const safe: any = sanitizeVendState(vend, vend?.world || "", vend?.x || 0, vend?.y || 0);
+  const safe = sanitizeVendState(vend, vend?.world || "", vend?.x || 0, vend?.y || 0);
   return {
     action: "vend_state",
     world: cleanWorld(safe.world || ""),
@@ -5139,25 +5216,25 @@ function serializeVendStateForClient(vend: any, player: any = null) {
     owner_name: safe.owner_name,
     listing: safe.listing ? { ...safe.listing } : {},
     pending_wls: safe.pending_wls,
-    logs: safe.logs.map((entry) => ({ ...entry })),
+    logs: safe.logs.map((entry: ServerPacketRecord) => ({ ...entry })),
     status: getVendStatus(safe),
     can_manage: canPlayerManageVend(player, safe, safe.world),
   };
 }
 
 function isWorldLocked(worldName: any) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   return Boolean(getEffectiveWorldLockStateInState(state).is_locked);
 }
 
 function normalizeWorldLockBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "").toLowerCase();
+  const clean = clampString(blockType || "").toLowerCase();
   if (clean === SUPER_WORLD_LOCK_BLOCK_TYPE) return SUPER_WORLD_LOCK_BLOCK_TYPE;
   return WORLD_LOCK_BLOCK_TYPE;
 }
 
 function isWorldLockBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "").toLowerCase();
+  const clean = clampString(blockType || "").toLowerCase();
   return clean === WORLD_LOCK_BLOCK_TYPE || clean === SUPER_WORLD_LOCK_BLOCK_TYPE;
 }
 
@@ -5183,15 +5260,15 @@ function getWorldLockBlockEntry(state: any) {
   if (!state) return null;
 
   const lock: any = state.world_lock || {};
-  const lockGridX: any = Math.trunc(Number(lock.lock_grid_x));
-  const lockGridY: any = Math.trunc(Number(lock.lock_grid_y));
+  const lockGridX = Math.trunc(Number(lock.lock_grid_x));
+  const lockGridY = Math.trunc(Number(lock.lock_grid_y));
   if (
     Number.isFinite(lockGridX) &&
     Number.isFinite(lockGridY) &&
     lockGridX !== WORLD_LOCK_GRID_SENTINEL &&
     lockGridY !== WORLD_LOCK_GRID_SENTINEL
   ) {
-    const block: any = state.foreground.get(gridKey(lockGridX, lockGridY));
+    const block = state.foreground.get(gridKey(lockGridX, lockGridY));
     if (block && isWorldLockBlockType(block.block_type || "")) {
       return {
         x: lockGridX,
@@ -5215,10 +5292,10 @@ function getWorldLockBlockEntry(state: any) {
 }
 
 function reconcileWorldLockStateWithBlocks(worldName: any) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   if (!state.world_lock?.is_locked) return false;
 
-  const lockBlock: any = getWorldLockBlockEntry(state);
+  const lockBlock = getWorldLockBlockEntry(state);
   if (lockBlock) {
     const lock: any = sanitizeWorldLockState({
       ...state.world_lock,
@@ -5227,7 +5304,7 @@ function reconcileWorldLockStateWithBlocks(worldName: any) {
       lock_grid_x: lockBlock.x,
       lock_grid_y: lockBlock.y,
     });
-    const changed: any =
+    const changed =
       state.world_lock.lock_block_type !== lock.lock_block_type ||
       state.world_lock.lock_type !== lock.lock_type ||
       Math.trunc(Number(state.world_lock.lock_grid_x)) !== lock.lock_grid_x ||
@@ -5248,7 +5325,7 @@ function reconcileWorldLockStateWithBlocks(worldName: any) {
 
 function isWorldLockPlacementBlocked(worldName: any) {
   reconcileWorldLockStateWithBlocks(worldName);
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   return Boolean(state.world_lock?.is_locked) || hasWorldLockBlockInState(state);
 }
 
@@ -5260,7 +5337,7 @@ function getEffectiveWorldLockStateInState(state: any) {
   const lock: any = sanitizeWorldLockState(state?.world_lock || {});
   if (!lock.is_locked) return {};
 
-  const lockBlock: any = getWorldLockBlockEntry(state);
+  const lockBlock = getWorldLockBlockEntry(state);
   if (lockBlock) {
     return sanitizeWorldLockState({
       ...lock,
@@ -5279,7 +5356,7 @@ function getEffectiveWorldLockStateInState(state: any) {
 }
 
 function normalizeAreaLockBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "").toLowerCase();
+  const clean = clampString(blockType || "").toLowerCase();
   return AREA_LOCK_TILE_LIMITS.has(clean) ? clean : "";
 }
 
@@ -5288,17 +5365,17 @@ function isAreaLockBlockType(blockType: any) {
 }
 
 function getAreaLockTileLimit(blockType: any) {
-  const clean: any = normalizeAreaLockBlockType(blockType);
+  const clean = normalizeAreaLockBlockType(blockType);
   return clean ? AREA_LOCK_TILE_LIMITS.get(clean) || 0 : 0;
 }
 
 function makeAreaLockId(x: any, y: any, blockType: any) {
-  const clean: any = normalizeAreaLockBlockType(blockType) || SMALL_LOCK_BLOCK_TYPE;
+  const clean = normalizeAreaLockBlockType(blockType) || SMALL_LOCK_BLOCK_TYPE;
   return `${clean}:${Math.trunc(Number(x) || 0)}:${Math.trunc(Number(y) || 0)}`;
 }
 
 function normalizeAreaLockRole(role: any) {
-  const clean: any = clampString(role || "builder").toLowerCase();
+  const clean = clampString(role || "builder").toLowerCase();
   if (clean === "admin") return "admin";
   if (clean === "visitor") return "visitor";
   return "builder";
@@ -5306,41 +5383,41 @@ function normalizeAreaLockRole(role: any) {
 
 function sanitizeAreaLockEntry(raw: any) {
   if (!raw || typeof raw !== "object") return null;
-  const lockType: any = normalizeAreaLockBlockType(raw.lock_type || raw.block_type);
+  const lockType = normalizeAreaLockBlockType(raw.lock_type || raw.block_type);
   if (!lockType) return null;
-  const lockX: any = clampInteger(raw.lock_grid_x ?? raw.x, 0, WORLD_WIDTH - 1);
-  const lockY: any = clampInteger(raw.lock_grid_y ?? raw.y, 0, WORLD_HEIGHT - 1);
+  const lockX = clampInteger(raw.lock_grid_x ?? raw.x, 0, WORLD_WIDTH - 1);
+  const lockY = clampInteger(raw.lock_grid_y ?? raw.y, 0, WORLD_HEIGHT - 1);
   if (!isGridInWorld(lockX, lockY)) return null;
-  const lockId: any = clampString(raw.lock_id || makeAreaLockId(lockX, lockY, lockType), 96) || makeAreaLockId(lockX, lockY, lockType);
-  const ownerName: any = cleanAccountName(raw.owner_name || raw.owner_username || raw.owner || "").toUpperCase();
-  const ownerAccountId: any = cleanStableIdentityId(raw.owner_account_id || raw.account_id || "");
-  const ownerPlayerId: any = cleanStableIdentityId(raw.owner_player_id || raw.owner_profile_id || raw.profile_id || "");
+  const lockId = clampString(raw.lock_id || makeAreaLockId(lockX, lockY, lockType), 96) || makeAreaLockId(lockX, lockY, lockType);
+  const ownerName = cleanAccountName(raw.owner_name || raw.owner_username || raw.owner || "").toUpperCase();
+  const ownerAccountId = cleanStableIdentityId(raw.owner_account_id || raw.account_id || "");
+  const ownerPlayerId = cleanStableIdentityId(raw.owner_player_id || raw.owner_profile_id || raw.profile_id || "");
   const allowed: any = [];
   const allowedAccountIds: any = [];
   const allowedPlayerIds: any = [];
   const roles: any = {};
   const rolesByAccountId: any = {};
   const rolesByPlayerId: any = {};
-  const rawAllowed: any = Array.isArray(raw.allowed_players) ? raw.allowed_players : [];
-  const rawAllowedAccountIds: any = Array.isArray(raw.allowed_account_ids) ? raw.allowed_account_ids : [];
-  const rawAllowedPlayerIds: any = Array.isArray(raw.allowed_player_ids) ? raw.allowed_player_ids : [];
-  const rawRoles: any = raw.player_roles && typeof raw.player_roles === "object" ? raw.player_roles : {};
-  const rawRolesByAccountId: any = raw.player_roles_by_account_id && typeof raw.player_roles_by_account_id === "object" ? raw.player_roles_by_account_id : {};
-  const rawRolesByPlayerId: any = raw.player_roles_by_player_id && typeof raw.player_roles_by_player_id === "object" ? raw.player_roles_by_player_id : {};
+  const rawAllowed = Array.isArray(raw.allowed_players) ? raw.allowed_players : [];
+  const rawAllowedAccountIds = Array.isArray(raw.allowed_account_ids) ? raw.allowed_account_ids : [];
+  const rawAllowedPlayerIds = Array.isArray(raw.allowed_player_ids) ? raw.allowed_player_ids : [];
+  const rawRoles = raw.player_roles && typeof raw.player_roles === "object" ? raw.player_roles : {};
+  const rawRolesByAccountId = raw.player_roles_by_account_id && typeof raw.player_roles_by_account_id === "object" ? raw.player_roles_by_account_id : {};
+  const rawRolesByPlayerId = raw.player_roles_by_player_id && typeof raw.player_roles_by_player_id === "object" ? raw.player_roles_by_player_id : {};
   for (const entry of rawAllowed) {
-    const playerName: any = cleanAccountName(entry).toUpperCase();
+    const playerName = cleanAccountName(entry).toUpperCase();
     if (!playerName || allowed.includes(playerName)) continue;
     allowed.push(playerName);
     roles[playerName] = normalizeAreaLockRole(rawRoles[playerName] || rawRoles[playerName.toLowerCase()] || "builder");
   }
   for (const entry of rawAllowedAccountIds) {
-    const playerId: any = cleanStableIdentityId(entry);
+    const playerId = cleanStableIdentityId(entry);
     if (!playerId || stableIdentityEquals(playerId, ownerAccountId) || allowedAccountIds.includes(playerId)) continue;
     allowedAccountIds.push(playerId);
     rolesByAccountId[playerId] = normalizeAreaLockRole(rawRolesByAccountId[playerId] || rawRolesByAccountId[playerId.toLowerCase()] || "builder");
   }
   for (const entry of rawAllowedPlayerIds) {
-    const playerId: any = cleanStableIdentityId(entry);
+    const playerId = cleanStableIdentityId(entry);
     if (!playerId || stableIdentityEquals(playerId, ownerPlayerId) || allowedPlayerIds.includes(playerId)) continue;
     allowedPlayerIds.push(playerId);
     rolesByPlayerId[playerId] = normalizeAreaLockRole(rawRolesByPlayerId[playerId] || rawRolesByPlayerId[playerId.toLowerCase()] || "builder");
@@ -5385,14 +5462,14 @@ function sanitizeAreaLockPositions(rawPositions: any) {
       x = Math.trunc(Number(rawPos[0]));
       y = Math.trunc(Number(rawPos[1]));
     } else {
-      const rawX: any = rawPos.x ?? rawPos.grid_x;
-      const rawY: any = rawPos.y ?? rawPos.grid_y;
+      const rawX = rawPos.x ?? rawPos.grid_x;
+      const rawY = rawPos.y ?? rawPos.grid_y;
       if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) continue;
       x = Math.trunc(rawX);
       y = Math.trunc(rawY);
     }
     if (!isGridInWorld(x, y)) continue;
-    const key: any = gridKey(x, y);
+    const key = gridKey(x, y);
     if (seen.has(key)) continue;
     seen.add(key);
     positions.push({ x, y });
@@ -5402,7 +5479,7 @@ function sanitizeAreaLockPositions(rawPositions: any) {
 }
 
 function sanitizeAreaLocksList(rawLocks: any) {
-  const source: any = Array.isArray(rawLocks)
+  const source = Array.isArray(rawLocks)
     ? rawLocks
     : (rawLocks && typeof rawLocks === "object" && Array.isArray(rawLocks.area_locks) ? rawLocks.area_locks : []);
   const locks: any = [];
@@ -5424,14 +5501,14 @@ function sanitizeAreaLockState(rawState: any) {
 function areaLockHasChainBlockAt(state: any, x: any, y: any, centerX: any, centerY: any) {
   if (x === centerX && y === centerY) return true;
   if (!state || !isGridInWorld(x, y)) return false;
-  const key: any = gridKey(x, y);
+  const key = gridKey(x, y);
   return state.foreground.has(key) || state.background.has(key);
 }
 
 function getConnectedAreaLockPositions(areaLock: any, state: any = null) {
-  const centerX: any = clampInteger(areaLock?.lock_grid_x, 0, WORLD_WIDTH - 1);
-  const centerY: any = clampInteger(areaLock?.lock_grid_y, 0, WORLD_HEIGHT - 1);
-  const maxTiles: any = Math.max(1, Math.min(256, Math.trunc(Number(areaLock?.max_tiles) || getAreaLockTileLimit(areaLock?.lock_type) || 1)));
+  const centerX = clampInteger(areaLock?.lock_grid_x, 0, WORLD_WIDTH - 1);
+  const centerY = clampInteger(areaLock?.lock_grid_y, 0, WORLD_HEIGHT - 1);
+  const maxTiles = Math.max(1, Math.min(256, Math.trunc(Number(areaLock?.max_tiles) || getAreaLockTileLimit(areaLock?.lock_type) || 1)));
   const positions: any = [];
   const queue: any = [{ x: centerX, y: centerY }];
   const visited: any = new Set([gridKey(centerX, centerY)]);
@@ -5443,13 +5520,13 @@ function getConnectedAreaLockPositions(areaLock: any, state: any = null) {
   ];
 
   while (queue.length > 0 && positions.length < maxTiles) {
-    const current: any = queue.shift();
+    const current = queue.shift();
     if (!areaLockHasChainBlockAt(state, current.x, current.y, centerX, centerY)) continue;
     positions.push(current);
     for (const direction of directions) {
       const next: any = { x: current.x + direction.x, y: current.y + direction.y };
       if (!isGridInWorld(next.x, next.y)) continue;
-      const key: any = gridKey(next.x, next.y);
+      const key = gridKey(next.x, next.y);
       if (visited.has(key)) continue;
       visited.add(key);
       if (areaLockHasChainBlockAt(state, next.x, next.y, centerX, centerY)) {
@@ -5463,57 +5540,59 @@ function getConnectedAreaLockPositions(areaLock: any, state: any = null) {
 
 function getAreaLockPositions(areaLock: any, state: any = null) {
   if (areaLock?.ignore_empty_space === true) {
-    const snapshot: any = sanitizeAreaLockPositions(areaLock?.locked_positions);
+    const snapshot = sanitizeAreaLockPositions(areaLock?.locked_positions);
     if (snapshot.length > 0) return snapshot;
     if (state) return getConnectedAreaLockPositions(areaLock, state);
     return [];
   }
 
-  const centerX: any = clampInteger(areaLock?.lock_grid_x, 0, WORLD_WIDTH - 1);
-  const centerY: any = clampInteger(areaLock?.lock_grid_y, 0, WORLD_HEIGHT - 1);
-  const maxTiles: any = Math.max(1, Math.min(256, Math.trunc(Number(areaLock?.max_tiles) || getAreaLockTileLimit(areaLock?.lock_type) || 1)));
+  const centerX = clampInteger(areaLock?.lock_grid_x, 0, WORLD_WIDTH - 1);
+  const centerY = clampInteger(areaLock?.lock_grid_y, 0, WORLD_HEIGHT - 1);
+  const maxTiles = Math.max(1, Math.min(256, Math.trunc(Number(areaLock?.max_tiles) || getAreaLockTileLimit(areaLock?.lock_type) || 1)));
   const candidates: any = [];
-  const radiusLimit: any = Math.max(WORLD_WIDTH, WORLD_HEIGHT);
+  const radiusLimit = Math.max(WORLD_WIDTH, WORLD_HEIGHT);
   for (let radius: any = 0; radius <= radiusLimit && candidates.length < maxTiles; radius += 1) {
     candidates.length = 0;
     for (let y: any = centerY - radius; y <= centerY + radius; y += 1) {
       for (let x: any = centerX - radius; x <= centerX + radius; x += 1) {
         if (!isGridInWorld(x, y)) continue;
-        const dist: any = Math.abs(x - centerX) + Math.abs(y - centerY);
+        const dist = Math.abs(x - centerX) + Math.abs(y - centerY);
         if (dist <= radius) candidates.push({ x, y, dist });
       }
     }
   }
-  candidates.sort((a, b) => a.dist - b.dist || a.y - b.y || a.x - b.x);
-  return candidates.slice(0, maxTiles).map(({ x, y }) => ({ x, y }));
+  candidates.sort((a: ServerGridCandidate, b: ServerGridCandidate) => a.dist - b.dist || a.y - b.y || a.x - b.x);
+  return candidates.slice(0, maxTiles).map(({ x, y }: ServerGridCandidate) => ({ x, y }));
 }
 
 function getAreaLockAtGrid(state: any, x: any, y: any) {
-  const lockX: any = Math.trunc(Number(x) || 0);
-  const lockY: any = Math.trunc(Number(y) || 0);
-  return sanitizeAreaLocksList(state?.area_locks || []).find((lock) => lock.lock_grid_x === lockX && lock.lock_grid_y === lockY) || null;
+  const lockX = Math.trunc(Number(x) || 0);
+  const lockY = Math.trunc(Number(y) || 0);
+  return sanitizeAreaLocksList(state?.area_locks || []).find(
+    (lock: ServerAreaLockRecord) => lock.lock_grid_x === lockX && lock.lock_grid_y === lockY,
+  ) || null;
 }
 
 function getAreaLockCoveringGrid(state: any, x: any, y: any) {
-  const gridX: any = Math.trunc(Number(x) || 0);
-  const gridY: any = Math.trunc(Number(y) || 0);
+  const gridX = Math.trunc(Number(x) || 0);
+  const gridY = Math.trunc(Number(y) || 0);
   for (const lock of sanitizeAreaLocksList(state?.area_locks || [])) {
-    if (getAreaLockPositions(lock, state).some((pos) => pos.x === gridX && pos.y === gridY)) return lock;
+    if (getAreaLockPositions(lock, state).some((pos: ServerGridPoint) => pos.x === gridX && pos.y === gridY)) return lock;
   }
   return null;
 }
 
 function getAreaLockRoleForAccount(areaLock: any, username: any) {
-  const clean: any = cleanAccountName(username || "").toUpperCase();
+  const clean = cleanAccountName(username || "").toUpperCase();
   if (!clean) return "visitor";
   if (clean === cleanAccountName(areaLock?.owner_name || "").toUpperCase()) return "owner";
-  const roles: any = areaLock?.player_roles && typeof areaLock.player_roles === "object" ? areaLock.player_roles : {};
+  const roles = areaLock?.player_roles && typeof areaLock.player_roles === "object" ? areaLock.player_roles : {};
   return normalizeAreaLockRole(roles[clean] || roles[clean.toLowerCase()] || "visitor");
 }
 
 function areaLockOwnerMatchesPlayer(areaLock: any, player: any) {
   if (!areaLock || !player) return false;
-  const identity: any = getPlayerLockIdentity(player);
+  const identity = getPlayerLockIdentity(player);
   if (identity.owner_account_id !== "" && stableIdentityEquals(areaLock.owner_account_id || areaLock.account_id, identity.owner_account_id)) {
     return true;
   }
@@ -5527,9 +5606,9 @@ function getAreaLockRoleForPlayer(areaLock: any, player: any) {
   if (!player || !areaLock) return "visitor";
   if (areaLockOwnerMatchesPlayer(areaLock, player)) return "owner";
 
-  const identity: any = getPlayerLockIdentity(player);
-  const rolesByAccountId: any = areaLock?.player_roles_by_account_id && typeof areaLock.player_roles_by_account_id === "object" ? areaLock.player_roles_by_account_id : {};
-  const rolesByPlayerId: any = areaLock?.player_roles_by_player_id && typeof areaLock.player_roles_by_player_id === "object" ? areaLock.player_roles_by_player_id : {};
+  const identity = getPlayerLockIdentity(player);
+  const rolesByAccountId = areaLock?.player_roles_by_account_id && typeof areaLock.player_roles_by_account_id === "object" ? areaLock.player_roles_by_account_id : {};
+  const rolesByPlayerId = areaLock?.player_roles_by_player_id && typeof areaLock.player_roles_by_player_id === "object" ? areaLock.player_roles_by_player_id : {};
   if (identity.account_id !== "" && Object.prototype.hasOwnProperty.call(rolesByAccountId, identity.account_id)) {
     return normalizeAreaLockRole(rolesByAccountId[identity.account_id] || "visitor");
   }
@@ -5550,19 +5629,19 @@ function canPlayerBuildInAreaLock(player: any, worldName: any, areaLock: any) {
   if (!areaLock) return true;
   if (canPlayerManageAreaLock(player, worldName, areaLock)) return true;
   if (areaLock.public_build === true) return true;
-  const role: any = getAreaLockRoleForPlayer(areaLock, player);
+  const role = getAreaLockRoleForPlayer(areaLock, player);
   return role === "admin" || role === "builder";
 }
 
 function canPlayerBuildAtGrid(player: any, worldName: any, x: any, y: any) {
   if (!canPlayerBuildInWorld(player, worldName)) return false;
-  const state: any = ensureWorldState(worldName);
-  const areaLock: any = getAreaLockCoveringGrid(state, x, y);
+  const state = ensureWorldState(worldName);
+  const areaLock = getAreaLockCoveringGrid(state, x, y);
   return !areaLock || canPlayerBuildInAreaLock(player, worldName, areaLock);
 }
 
 function getAreaLocksJournalData(worldName: any) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   return cloneJson(sanitizeAreaLocksList(state.area_locks || []));
 }
 
@@ -5573,12 +5652,14 @@ function shouldApplyAreaLockStateForBlockUpdate(_worldName: any, update: any) {
 
 function applyAreaLockStateForBlockUpdate(worldName: any, update: any, player: any, shouldApplyState: any) {
   if (!shouldApplyState || !update || update.layer !== "foreground") return null;
-  const state: any = ensureWorldState(worldName);
-  const x: any = Math.trunc(Number(update.x) || 0);
-  const y: any = Math.trunc(Number(update.y) || 0);
-  const lockType: any = normalizeAreaLockBlockType(update.block_type);
+  const state = ensureWorldState(worldName);
+  const x = Math.trunc(Number(update.x) || 0);
+  const y = Math.trunc(Number(update.y) || 0);
+  const lockType = normalizeAreaLockBlockType(update.block_type);
   if (!lockType) return null;
-  const nextLocks: any = sanitizeAreaLocksList(state.area_locks || []).filter((lock) => !(lock.lock_grid_x === x && lock.lock_grid_y === y));
+  const nextLocks = sanitizeAreaLocksList(state.area_locks || []).filter(
+    (lock: ServerAreaLockRecord) => !(lock.lock_grid_x === x && lock.lock_grid_y === y),
+  );
   if (update.action === "place") {
     nextLocks.push(applyPlayerLockIdentityToState({
       lock_id: makeAreaLockId(x, y, lockType),
@@ -5607,13 +5688,13 @@ function applyAreaLockStateForBlockUpdate(worldName: any, update: any, player: a
 }
 
 function prepareAreaLockStateUpdate(socket: any, player: any, worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const requestedLocks: any = sanitizeAreaLocksList(update?.state?.area_locks || update?.state || []);
-  const existingLocks: any = sanitizeAreaLocksList(state.area_locks || []);
-  const existingById: any = new Map(existingLocks.map((lock) => [lock.lock_id, lock]));
+  const state = ensureWorldState(worldName);
+  const requestedLocks = sanitizeAreaLocksList(update?.state?.area_locks || update?.state || []);
+  const existingLocks = sanitizeAreaLocksList(state.area_locks || []);
+  const existingById: any = new Map(existingLocks.map((lock: ServerAreaLockRecord) => [lock.lock_id, lock]));
   const nextLocks: any = [];
   for (const requested of requestedLocks) {
-    const existing: any = existingById.get(requested.lock_id) || getAreaLockAtGrid(state, requested.lock_grid_x, requested.lock_grid_y);
+    const existing = existingById.get(requested.lock_id) || getAreaLockAtGrid(state, requested.lock_grid_x, requested.lock_grid_y);
     if (!existing) {
       sendActionRejected(socket, "area_lock_state", "That area lock no longer exists.", { reason: "area_lock_missing" });
       return false;
@@ -5622,7 +5703,7 @@ function prepareAreaLockStateUpdate(socket: any, player: any, worldName: any, up
       sendActionRejected(socket, "area_lock_state", "You do not control that area lock.", { reason: "area_lock_denied" });
       return false;
     }
-    const block: any = state.foreground.get(gridKey(requested.lock_grid_x, requested.lock_grid_y));
+    const block = state.foreground.get(gridKey(requested.lock_grid_x, requested.lock_grid_y));
     if (!isAreaLockBlockType(block?.block_type || "")) {
       sendActionRejected(socket, "area_lock_state", "The lock block is missing.", { reason: "area_lock_missing" });
       return false;
@@ -5634,7 +5715,7 @@ function prepareAreaLockStateUpdate(socket: any, player: any, worldName: any, up
     requested.owner_profile_id = existing.owner_profile_id || existing.owner_player_id || "";
     requested.max_tiles = getAreaLockTileLimit(requested.lock_type);
     if (requested.ignore_empty_space === true) {
-      const existingSnapshot: any = sanitizeAreaLockPositions(existing.locked_positions);
+      const existingSnapshot = sanitizeAreaLockPositions(existing.locked_positions);
       if (existing.ignore_empty_space === true && existingSnapshot.length > 0) {
         requested.locked_positions = existingSnapshot;
       } else {
@@ -5645,7 +5726,7 @@ function prepareAreaLockStateUpdate(socket: any, player: any, worldName: any, up
     }
     nextLocks.push(requested);
   }
-  const requestedIds: any = new Set(nextLocks.map((lock) => lock.lock_id));
+  const requestedIds: any = new Set(nextLocks.map((lock: ServerAreaLockRecord) => lock.lock_id));
   for (const existing of existingLocks) {
     if (!requestedIds.has(existing.lock_id)) {
       nextLocks.push(existing);
@@ -5659,8 +5740,8 @@ function isActiveWorldLockGrid(state: any, x: any, y: any) {
   const lock: any = state.world_lock || {};
   if (!lock.is_locked) return false;
 
-  const lockGridX: any = Math.trunc(Number(lock.lock_grid_x));
-  const lockGridY: any = Math.trunc(Number(lock.lock_grid_y));
+  const lockGridX = Math.trunc(Number(lock.lock_grid_x));
+  const lockGridY = Math.trunc(Number(lock.lock_grid_y));
   if (!Number.isFinite(lockGridX) || !Number.isFinite(lockGridY) || lockGridX === 999999 || lockGridY === 999999) {
     return true;
   }
@@ -5673,8 +5754,8 @@ function shouldApplyWorldLockStateForBlockUpdate(worldName: any, update: any) {
   if (update.action === "place") return isWorldLockBlockType(update.block_type);
   if (update.action !== "break") return false;
 
-  const state: any = ensureWorldState(worldName);
-  const serverBlock: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const serverBlock = state.foreground.get(gridKey(update.x, update.y));
   if (isWorldLockBlockType(update.block_type) || isWorldLockBlockType(serverBlock?.block_type || "")) {
     return true;
   }
@@ -5687,7 +5768,7 @@ function shouldApplyWorldLockStateForBlockUpdate(worldName: any, update: any) {
  * @returns {PixelMania.WorldLockState}
  */
 function makeWorldLockStateForPlacement(player: any, update: any) {
-  const lockBlockType: any = normalizeWorldLockBlockType(update?.block_type || WORLD_LOCK_BLOCK_TYPE);
+  const lockBlockType = normalizeWorldLockBlockType(update?.block_type || WORLD_LOCK_BLOCK_TYPE);
   return sanitizeWorldLockState(applyPlayerLockIdentityToState({
     is_locked: true,
     lock_block_type: lockBlockType,
@@ -5729,7 +5810,7 @@ function makeWorldLockStatePayload(worldName: any, state: any) {
 function applyWorldLockStateForBlockUpdate(worldName: any, update: any, player: any, shouldApplyState: any) {
   if (!shouldApplyState) return null;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   if (update.action === "place") {
     state.world_lock = makeWorldLockStateForPlacement(player, update);
     return makeWorldLockStatePayload(worldName, state.world_lock);
@@ -5744,11 +5825,11 @@ function applyWorldLockStateForBlockUpdate(worldName: any, update: any, player: 
 }
 
 function getWorldLockProtectedStorageBlocks(worldName: any) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const protectedBlocks: any = [];
 
   for (const block of state.foreground.values()) {
-    const blockType: any = clampString(block?.block_type || "");
+    const blockType = clampString(block?.block_type || "");
     if (isVendBlockType(blockType) || isSafeBlockType(blockType) || isDisplayBlockType(blockType) || isFishMongerBlockType(blockType)) {
       protectedBlocks.push(block);
     }
@@ -5790,8 +5871,8 @@ function preserveWorldLockTradeKeyFields(currentLock: any, nextLock: any) {
     }
   }
   for (const field of ["player_roles_by_account_id", "player_roles_by_player_id"]) {
-    const nextMap: any = nextLock[field] && typeof nextLock[field] === "object" && !Array.isArray(nextLock[field]) ? nextLock[field] : {};
-    const currentMap: any = currentLock[field] && typeof currentLock[field] === "object" && !Array.isArray(currentLock[field]) ? currentLock[field] : {};
+    const nextMap = nextLock[field] && typeof nextLock[field] === "object" && !Array.isArray(nextLock[field]) ? nextLock[field] : {};
+    const currentMap = currentLock[field] && typeof currentLock[field] === "object" && !Array.isArray(currentLock[field]) ? currentLock[field] : {};
     if (Object.keys(nextMap).length === 0 && Object.keys(currentMap).length > 0) {
       nextLock[field] = { ...currentMap };
     }
@@ -5804,24 +5885,26 @@ function preserveWorldLockTradeKeyFields(currentLock: any, nextLock: any) {
  * @returns {string[]}
  */
 function getWorldLockKeyStorageBlockers(worldName: any) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const blockers: any = new Set();
 
   for (const block of state.foreground.values()) {
-    const blockType: any = clampString(block?.block_type || "");
-    const x: any = Math.trunc(Number(block?.x) || 0);
-    const y: any = Math.trunc(Number(block?.y) || 0);
+    const blockType = clampString(block?.block_type || "");
+    const x = Math.trunc(Number(block?.x) || 0);
+    const y = Math.trunc(Number(block?.y) || 0);
 
     if (isSafeBlockType(blockType)) {
-      const safe: any = getSafeStateAt(worldName, x, y, false);
-      if (Array.isArray(safe.slots) && safe.slots.some((slot) => slot && Number(slot.amount || 0) > 0)) {
+      const safe = getSafeStateAt(worldName, x, y, false);
+      if (Array.isArray(safe.slots) && safe.slots.some(
+        (slot: ServerPacketRecord | null) => slot && Number(slot.amount || 0) > 0,
+      )) {
         blockers.add("safe");
       }
       continue;
     }
 
     if (isVendBlockType(blockType)) {
-      const vend: any = getVendStateAt(worldName, x, y, false);
+      const vend = getVendStateAt(worldName, x, y, false);
       if ((vend.listing && Number(vend.listing.stock || 0) > 0) || Number(vend.pending_wls || 0) > 0) {
         blockers.add("vend");
       }
@@ -5829,7 +5912,7 @@ function getWorldLockKeyStorageBlockers(worldName: any) {
     }
 
     if (isDisplayBlockType(blockType)) {
-      const display: any = getDisplayStateAt(worldName, x, y, false);
+      const display = getDisplayStateAt(worldName, x, y, false);
       if (display.slot && clampString(display.slot.item_id || display.slot.item_type || "") !== "") {
         blockers.add("display");
       }
@@ -5846,16 +5929,16 @@ function getWorldLockKeyStorageBlockers(worldName: any) {
  * @returns {PixelMania.OwnedWorldLockEntry | null}
  */
 function makeOwnedWorldLockEntry(worldName: any, lock: any, sourceLabel: any = "LIVE") {
-  const cleanName: any = cleanWorld(worldName || "");
+  const cleanName = cleanWorld(worldName || "");
   const safeLock: any = sanitizeWorldLockState(lock || {});
   if (cleanName === "" || !safeLock.is_locked) return null;
 
-  const ownerName: any = cleanAccountName(safeLock.owner_name || safeLock.owner_username || "").toUpperCase();
+  const ownerName = cleanAccountName(safeLock.owner_name || safeLock.owner_username || "").toUpperCase();
   if (ownerName === "") return null;
 
-  const allowedPlayers: any = Array.isArray(safeLock.allowed_players) ? safeLock.allowed_players : [];
-  const lockX: any = Number.isFinite(Number(safeLock.lock_grid_x)) ? Math.trunc(Number(safeLock.lock_grid_x)) : WORLD_LOCK_GRID_SENTINEL;
-  const lockY: any = Number.isFinite(Number(safeLock.lock_grid_y)) ? Math.trunc(Number(safeLock.lock_grid_y)) : WORLD_LOCK_GRID_SENTINEL;
+  const allowedPlayers = Array.isArray(safeLock.allowed_players) ? safeLock.allowed_players : [];
+  const lockX = Number.isFinite(Number(safeLock.lock_grid_x)) ? Math.trunc(Number(safeLock.lock_grid_x)) : WORLD_LOCK_GRID_SENTINEL;
+  const lockY = Number.isFinite(Number(safeLock.lock_grid_y)) ? Math.trunc(Number(safeLock.lock_grid_y)) : WORLD_LOCK_GRID_SENTINEL;
 
   return {
     world_name: cleanName,
@@ -5882,7 +5965,7 @@ function makeOwnedWorldLockEntry(worldName: any, lock: any, sourceLabel: any = "
  */
 function mergeOwnedWorldLockEntry(entriesByWorld: any, entry: any) {
   if (!entry || typeof entry !== "object") return;
-  const worldName: any = cleanWorld(entry.world_name || "");
+  const worldName = cleanWorld(entry.world_name || "");
   if (worldName === "") return;
 
   entriesByWorld.set(worldName, {
@@ -5907,13 +5990,13 @@ function mergeOwnedWorldLockEntry(entriesByWorld: any, entry: any) {
  * @returns {Promise<PixelMania.OwnedWorldLockEntry[]>}
  */
 async function listOwnedWorldLocksForAccount(username: any, player: any = null) {
-  const ownerKey: any = accountKey(username || "");
-  const identity: any = getPlayerLockIdentity(player || { account_username: username });
+  const ownerKey = accountKey(username || "");
+  const identity = getPlayerLockIdentity(player || { account_username: username });
   if (ownerKey === "" && identity.account_id === "" && identity.player_id === "") return [];
 
   const entriesByWorld: any = new Map();
   if (postgresStore && typeof postgresStore.listOwnedWorldLocks === "function") {
-    const databaseEntries: any = await postgresStore.listOwnedWorldLocks(username, 150, {
+    const databaseEntries = await postgresStore.listOwnedWorldLocks(username, 150, {
       account_id: identity.account_id,
       player_id: identity.player_id,
     });
@@ -5925,15 +6008,15 @@ async function listOwnedWorldLocksForAccount(username: any, player: any = null) 
   for (const [worldName, state] of worldStates.entries()) {
     const lock: any = getEffectiveWorldLockStateInState(state);
     if (!lock.is_locked) continue;
-    const ownsLock: any = player ? lockOwnerMatchesPlayer(lock, player) : isWorldLockOwnerAccount(lock, username);
+    const ownsLock = player ? lockOwnerMatchesPlayer(lock, player) : isWorldLockOwnerAccount(lock, username);
     if (!ownsLock) continue;
 
     mergeOwnedWorldLockEntry(entriesByWorld, makeOwnedWorldLockEntry(worldName, lock, "LIVE"));
   }
 
   return Array.from<any>(entriesByWorld.values()).sort((a, b) => {
-    const aWorld: any = cleanWorld(a.world_name || "");
-    const bWorld: any = cleanWorld(b.world_name || "");
+    const aWorld = cleanWorld(a.world_name || "");
+    const bWorld = cleanWorld(b.world_name || "");
     if (aWorld < bWorld) return -1;
     if (aWorld > bWorld) return 1;
     return 0;
@@ -5943,8 +6026,8 @@ async function listOwnedWorldLocksForAccount(username: any, player: any = null) 
 async function handleOwnedLockedWorldsRequest(socket: any, player: any, data: any) {
   if (!requireAuthenticated(socket, player, "load owned locked worlds")) return;
 
-  const requestId: any = makeRequestId(data);
-  const username: any = cleanAccountName(player.account_username || player.name || "");
+  const requestId = makeRequestId(data);
+  const username = cleanAccountName(player.account_username || player.name || "");
   if (username === "") {
     sendJson(socket, {
       type: "owned_locked_worlds_result",
@@ -5957,7 +6040,7 @@ async function handleOwnedLockedWorldsRequest(socket: any, player: any, data: an
     return;
   }
 
-  const worlds: any = await listOwnedWorldLocksForAccount(username, player);
+  const worlds = await listOwnedWorldLocksForAccount(username, player);
   sendJson(socket, {
     type: "owned_locked_worlds_result",
     ok: true,
@@ -5971,22 +6054,22 @@ function canPlayerUseWorldLockAccess(player: any, worldName: any) {
   if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const lock: any = getEffectiveWorldLockStateInState(state);
   if (!lock.is_locked) return false;
 
-  const playerKey: any = accountKey(player.account_username);
+  const playerKey = accountKey(player.account_username);
   if (playerKey === "") return false;
   if (lockOwnerMatchesPlayer(lock, player)) return true;
 
-  const allowedPlayers: any = Array.isArray(lock.allowed_players) ? lock.allowed_players : [];
-  if (allowedPlayers.some((name) => accountKey(name) === playerKey)) return true;
+  const allowedPlayers = Array.isArray(lock.allowed_players) ? lock.allowed_players : [];
+  if (allowedPlayers.some((name: unknown) => accountKey(name) === playerKey)) return true;
 
-  const identity: any = getPlayerLockIdentity(player);
-  const allowedAccountIds: any = Array.isArray(lock.allowed_account_ids) ? lock.allowed_account_ids : [];
-  if (identity.account_id !== "" && allowedAccountIds.some((id) => stableIdentityEquals(id, identity.account_id))) return true;
-  const allowedPlayerIds: any = Array.isArray(lock.allowed_player_ids) ? lock.allowed_player_ids : [];
-  return identity.player_id !== "" && allowedPlayerIds.some((id) => stableIdentityEquals(id, identity.player_id));
+  const identity = getPlayerLockIdentity(player);
+  const allowedAccountIds = Array.isArray(lock.allowed_account_ids) ? lock.allowed_account_ids : [];
+  if (identity.account_id !== "" && allowedAccountIds.some((id: unknown) => stableIdentityEquals(id, identity.account_id))) return true;
+  const allowedPlayerIds = Array.isArray(lock.allowed_player_ids) ? lock.allowed_player_ids : [];
+  return identity.player_id !== "" && allowedPlayerIds.some((id: unknown) => stableIdentityEquals(id, identity.player_id));
 }
 
 function canPlayerPlaceVendingMachine(player: any, worldName: any) {
@@ -5997,7 +6080,7 @@ function canPlayerPlaceVendingMachine(player: any, worldName: any) {
 function canPlayerManageVend(player: any, vend: any, worldName: any = "") {
   if (!player || !player.authenticated) return false;
 
-  const cleanWorldName: any = cleanWorld(worldName || vend?.world || "");
+  const cleanWorldName = cleanWorld(worldName || vend?.world || "");
   return isWorldLocked(cleanWorldName) && isPlayerWorldOwner(player, cleanWorldName);
 }
 
@@ -6005,8 +6088,8 @@ function canPlayerBreakVendingMachine(player: any, worldName: any, update: any) 
   if (!player || !player.authenticated) return false;
   if (!update || (update.action !== "break" && update.action !== "hit") || update.layer === "background") return false;
 
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isVendBlockType(block.block_type)) return false;
 
   return isWorldLocked(worldName) && isPlayerWorldOwner(player, worldName);
@@ -6023,8 +6106,8 @@ function isFishMongerBlockType(blockType: any) {
 function getCollisionAreaAnchorInState(state: any, x: any, y: any) {
   if (!state) return null;
 
-  const directKey: any = gridKey(x, y);
-  const directBlock: any = state.foreground.get(directKey);
+  const directKey = gridKey(x, y);
+  const directBlock = state.foreground.get(directKey);
   if (directBlock) return directBlock;
 
   const tileRect: any = {
@@ -6035,10 +6118,10 @@ function getCollisionAreaAnchorInState(state: any, x: any, y: any) {
   };
 
   for (const block of state.foreground.values()) {
-    const blockType: any = clampString(block?.block_type || "");
+    const blockType = clampString(block?.block_type || "");
     if (!blockOccupiesCollisionArea(blockType)) continue;
 
-    const blockRect: any = getBlockCollisionRectForGrid(block.x, block.y, blockType);
+    const blockRect = getBlockCollisionRectForGrid(block.x, block.y, blockType);
     if (rectsIntersect(blockRect, tileRect)) {
       return block;
     }
@@ -6048,8 +6131,8 @@ function getCollisionAreaAnchorInState(state: any, x: any, y: any) {
 }
 
 function getFishMongerAnchorAt(worldName: any, x: any, y: any) {
-  const state: any = ensureWorldState(worldName);
-  const anchor: any = getCollisionAreaAnchorInState(state, x, y);
+  const state = ensureWorldState(worldName);
+  const anchor = getCollisionAreaAnchorInState(state, x, y);
   if (!anchor || !isFishMongerBlockType(anchor.block_type)) return null;
   return anchor;
 }
@@ -6069,22 +6152,22 @@ function canPlayerBreakFishMonger(player: any, worldName: any, update: any) {
   if (!player || !player.authenticated) return false;
   if (!update || (update.action !== "break" && update.action !== "hit") || update.layer === "background") return false;
 
-  const block: any = getFishMongerAnchorAt(worldName, update.x, update.y);
+  const block = getFishMongerAnchorAt(worldName, update.x, update.y);
   if (!block) return false;
 
   return canPlayerUseWorldLockAccess(player, worldName);
 }
 
 function canListItemInVend(itemId: any, itemCategory: any) {
-  const cleanItemId: any = clampString(itemId || "");
+  const cleanItemId = clampString(itemId || "");
   if (cleanItemId === "" || !ItemDatabase.hasItem(cleanItemId)) return false;
   if (cleanItemId === "punch" || isWorldLockBlockType(cleanItemId) || cleanItemId === WORLD_LOCK_KEY_ITEM_TYPE) return false;
   if (isVendBlockType(cleanItemId)) return false;
 
-  const definition: any = ItemDatabase.getItemDefinition(cleanItemId);
+  const definition = ItemDatabase.getItemDefinition(cleanItemId);
   if (!definition || definition.hidden) return false;
 
-  const resolvedCategory: any = resolveInventoryCategory(cleanItemId, itemCategory);
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
   return ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory) && ItemDatabase.isVendableItem(cleanItemId);
 }
 
@@ -6096,17 +6179,17 @@ function canListItemInVend(itemId: any, itemCategory: any) {
  * @returns {PixelMania.VendState}
  */
 function getVendStateAt(worldName: any, x: any, y: any, createIfMissing: any = false) {
-  const state: any = ensureWorldState(worldName);
-  const key: any = gridKey(x, y);
-  const existing: any = state.interactions.get(key);
+  const state = ensureWorldState(worldName);
+  const key = gridKey(x, y);
+  const existing = state.interactions.get(key);
 
   if (existing && existing.action === "vend_state") {
-    const safe: any = sanitizeVendState(existing, worldName, x, y);
+    const safe = sanitizeVendState(existing, worldName, x, y);
     state.interactions.set(key, safe);
     return safe;
   }
 
-  const empty: any = makeEmptyVendState(worldName, x, y);
+  const empty = makeEmptyVendState(worldName, x, y);
   if (createIfMissing) {
     state.interactions.set(key, empty);
   }
@@ -6119,8 +6202,8 @@ function getVendStateAt(worldName: any, x: any, y: any, createIfMissing: any = f
  * @returns {PixelMania.VendState}
  */
 function setVendStateAt(worldName: any, vend: any) {
-  const state: any = ensureWorldState(worldName);
-  const safe: any = sanitizeVendState(vend, worldName, vend.x, vend.y);
+  const state = ensureWorldState(worldName);
+  const safe = sanitizeVendState(vend, worldName, vend.x, vend.y);
   safe.updated_at = new Date().toISOString();
   state.interactions.set(gridKey(safe.x, safe.y), safe);
   return safe;
@@ -6134,25 +6217,25 @@ function clearVendOwnerIfEmpty(vend: any) {
 
 function initializeVendOwnerOnPlace(worldName: any, update: any, player: any) {
   if (!player || !player.authenticated) return;
-  const vend: any = makeEmptyVendState(worldName, update.x, update.y);
+  const vend = makeEmptyVendState(worldName, update.x, update.y);
   vend.owner_username = player.account_username;
   vend.owner_name = player.account_username.toUpperCase();
   setVendStateAt(worldName, vend);
 }
 
 function syncVendVisualBlock(worldName: any, vend: any) {
-  const state: any = ensureWorldState(worldName);
-  const key: any = gridKey(vend.x, vend.y);
-  const block: any = state.foreground.get(key);
+  const state = ensureWorldState(worldName);
+  const key = gridKey(vend.x, vend.y);
+  const block = state.foreground.get(key);
   if (!block || !isVendBlockType(block.block_type)) return "";
 
-  const blockType: any = getVendVisualBlockType(vend);
+  const blockType = getVendVisualBlockType(vend);
   block.block_type = blockType;
   return blockType;
 }
 
 function sendVendStateUpdateToWorld(worldName: any, vend: any) {
-  const blockType: any = syncVendVisualBlock(worldName, vend);
+  const blockType = syncVendVisualBlock(worldName, vend);
   if (blockType !== "") {
     queueWorldUpdateBroadcast(worldName, {
       type: "world_block_update",
@@ -6175,8 +6258,8 @@ function sendVendStateUpdateToWorld(worldName: any, vend: any) {
 function sendVendPurchaseSoundToRequesterAndWorld(socket: any, player: any, worldName: any, vend: any) {
   if (!vend) return;
 
-  const x: any = Math.trunc(Number(vend.x));
-  const y: any = Math.trunc(Number(vend.y));
+  const x = Math.trunc(Number(vend.x));
+  const y = Math.trunc(Number(vend.y));
   if (!isGridInWorld(x, y)) return;
 
   sendWorldUpdateToRequesterAndWorld(socket, player, worldName, {
@@ -6199,8 +6282,8 @@ function validateVendAccess(socket: any, player: any, data: any, worldName: any,
     return false;
   }
 
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(grid.x, grid.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(grid.x, grid.y));
   if (!block || !isVendBlockType(block.block_type)) {
     sendInventoryTransactionRejected(socket, data, "That is not a vending machine.");
     return false;
@@ -6235,8 +6318,8 @@ function rejectVendTransaction(socket: any, data: any, message: any) {
 }
 
 async function handleVendingTransaction(socket: any, player: any, data: any) {
-  const action: any = String(data.action || "").trim();
-  const worldName: any = getTransactionWorldName(player, data);
+  const action = String(data.action || "").trim();
+  const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "use that vending machine")) return;
   if (await rejectIfWorldBanned(socket, player, worldName, "vending")) return;
 
@@ -6248,7 +6331,7 @@ async function handleVendingTransaction(socket: any, player: any, data: any) {
     return;
   }
 
-  const vend: any = getVendStateAt(worldName, grid.x, grid.y, true);
+  const vend = getVendStateAt(worldName, grid.x, grid.y, true);
 
   if (action === "vend_get_state") {
     sendVendTransactionResult(socket, data, player, vend, true, "");
@@ -6292,8 +6375,8 @@ async function handleVendingTransaction(socket: any, player: any, data: any) {
  * @returns {Promise<Record<string, any> | null>}
  */
 async function acquireVendMutationLock(socket: any, player: any, data: any, worldName: any, vend: any) {
-  const vendActionKey: any = `${worldName}:${vend.x},${vend.y}`;
-  const vendLock: any = await acquireLiveActionLock(worldVendActionLocks, "vend", vendActionKey, player.id);
+  const vendActionKey = `${worldName}:${vend.x},${vend.y}`;
+  const vendLock = await acquireLiveActionLock(worldVendActionLocks, "vend", vendActionKey, player.id);
   if (!vendLock.acquired) {
     rejectVendTransaction(socket, data, "That vending machine is busy.");
     return null;
@@ -6311,7 +6394,7 @@ async function acquireVendMutationLock(socket: any, player: any, data: any, worl
  * @returns {Promise<void>}
  */
 async function handleVendSetListing(socket: any, player: any, data: any, worldName: any, vend: any) {
-  const hasOwner: any = accountKey(vend.owner_username || "") !== "";
+  const hasOwner = accountKey(vend.owner_username || "") !== "";
   if (!hasOwner && !canPlayerPlaceVendingMachine(player, worldName)) {
     rejectVendTransaction(socket, data, isWorldLocked(worldName) ? "Only the world owner can list items in vending machines here." : "You cannot use this vending machine.");
     return;
@@ -6332,15 +6415,15 @@ async function handleVendSetListing(socket: any, player: any, data: any, worldNa
     return;
   }
 
-  const vendLock: any = await acquireVendMutationLock(socket, player, data, worldName, vend);
+  const vendLock = await acquireVendMutationLock(socket, player, data, worldName, vend);
   if (!vendLock) return;
 
   try {
-  const itemId: any = clampString(data.item_id || data.item_type || "");
-  const itemCategory: any = resolveInventoryCategory(itemId, data.item_category || data.category || "");
-  const stock: any = clampInteger(data.stock || data.amount || 0, 1, ItemDatabase.getStackLimit(itemId));
-  const amountPerSale: any = clampInteger(data.amount_per_sale || data.per_sale || 1, 1, ItemDatabase.getStackLimit(itemId));
-  const priceWls: any = clampInteger(data.price_wls || data.price || 1, 1, ItemDatabase.getStackLimit("world_lock"));
+  const itemId = clampString(data.item_id || data.item_type || "");
+  const itemCategory = resolveInventoryCategory(itemId, data.item_category || data.category || "");
+  const stock = clampInteger(data.stock || data.amount || 0, 1, ItemDatabase.getStackLimit(itemId));
+  const amountPerSale = clampInteger(data.amount_per_sale || data.per_sale || 1, 1, ItemDatabase.getStackLimit(itemId));
+  const priceWls = clampInteger(data.price_wls || data.price || 1, 1, ItemDatabase.getStackLimit("world_lock"));
 
   if (!canListItemInVend(itemId, itemCategory)) {
     rejectVendTransaction(socket, data, "That item cannot be sold in a vending machine.");
@@ -6352,13 +6435,13 @@ async function handleVendSetListing(socket: any, player: any, data: any, worldNa
     return;
   }
 
-  const state: any = ensureWritablePlayerState(player.account_username);
+  const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     rejectVendTransaction(socket, data, "Could not load your server inventory.");
     return;
   }
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
 
   if (getInventoryCount(stagedState, itemId, itemCategory) < stock) {
     rejectVendTransaction(socket, data, `Not enough ${itemId}.`);
@@ -6370,8 +6453,8 @@ async function handleVendSetListing(socket: any, player: any, data: any, worldNa
     return;
   }
 
-  const originalVend: any = cloneJson(vend);
-  const vendTransactionId: any = makeAuditId("vend");
+  const originalVend = cloneJson(vend);
+  const vendTransactionId = makeAuditId("vend");
   vend.owner_username = player.account_username;
   vend.owner_name = player.account_username.toUpperCase();
   vend.listing = {
@@ -6385,9 +6468,9 @@ async function handleVendSetListing(socket: any, player: any, data: any, worldNa
   };
   vend.pending_wls = 0;
 
-  const savedVend: any = setVendStateAt(worldName, vend);
-  const serializedWorld: any = serializeWorldState(worldName);
-  const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+  const savedVend = setVendStateAt(worldName, vend);
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "vending",
     action: "vending_list",
     reason: "vend_listing",
@@ -6409,7 +6492,7 @@ async function handleVendSetListing(socket: any, player: any, data: any, worldNa
     rejectVendTransaction(socket, data, commit.message);
     return;
   }
-  const committedState: any = commit.state;
+  const committedState = commit.state;
   persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   logVendingTransaction(socket, player, {
     transaction_id: vendTransactionId,
@@ -6461,23 +6544,23 @@ async function handleVendBuy(socket: any, player: any, data: any, worldName: any
     return;
   }
 
-  const listing: any = vend.listing;
-  const soldItemId: any = listing.item_id;
-  const soldItemCategory: any = listing.item_category;
-  const amountPerSale: any = Number(listing.amount_per_sale);
-  const pricePerSale: any = Number(listing.price_wls);
-  const maxSaleCount: any = Math.max(1, Math.floor(Number(listing.stock) / Number(listing.amount_per_sale)));
-  const saleCount: any = clampInteger(data.sale_count || 1, 1, maxSaleCount);
-  const itemAmount: any = amountPerSale * saleCount;
-  const priceWls: any = pricePerSale * saleCount;
-  const pendingLimit: any = ItemDatabase.getStackLimit("world_lock");
+  const listing = vend.listing;
+  const soldItemId = listing.item_id;
+  const soldItemCategory = listing.item_category;
+  const amountPerSale = Number(listing.amount_per_sale);
+  const pricePerSale = Number(listing.price_wls);
+  const maxSaleCount = Math.max(1, Math.floor(Number(listing.stock) / Number(listing.amount_per_sale)));
+  const saleCount = clampInteger(data.sale_count || 1, 1, maxSaleCount);
+  const itemAmount = amountPerSale * saleCount;
+  const priceWls = pricePerSale * saleCount;
+  const pendingLimit = ItemDatabase.getStackLimit("world_lock");
 
   if (Number(vend.pending_wls) + priceWls > pendingLimit) {
     rejectVendTransaction(socket, data, "This vending machine needs to be collected first.");
     return;
   }
 
-  const buyerState: any = ensureWritablePlayerState(player.account_username);
+  const buyerState = ensureWritablePlayerState(player.account_username);
   if (!buyerState) {
     rejectVendTransaction(socket, data, "Could not load your server inventory.");
     return;
@@ -6493,8 +6576,8 @@ async function handleVendBuy(socket: any, player: any, data: any, worldName: any
     return;
   }
 
-  const vendActionKey: any = `${worldName}:${vend.x},${vend.y}`;
-  const vendLock: any = await acquireLiveActionLock(worldVendActionLocks, "vend", vendActionKey, player.id);
+  const vendActionKey = `${worldName}:${vend.x},${vend.y}`;
+  const vendLock = await acquireLiveActionLock(worldVendActionLocks, "vend", vendActionKey, player.id);
   if (!vendLock.acquired) {
     rejectVendTransaction(socket, data, "That vending machine is busy.");
     return;
@@ -6511,9 +6594,9 @@ async function handleVendBuy(socket: any, player: any, data: any, worldName: any
       return;
     }
 
-    const vendTransactionId: any = makeAuditId("vend");
-    const originalVend: any = cloneJson(vend);
-    const transaction: any = await postgresStore.applyVendBuyTransaction({
+    const vendTransactionId = makeAuditId("vend");
+    const originalVend = cloneJson(vend);
+    const transaction = await postgresStore.applyVendBuyTransaction({
       owner_username: String(vend.owner_username || ""),
       buyer_username: player.account_username,
       world: worldName,
@@ -6572,9 +6655,9 @@ async function handleVendBuy(socket: any, player: any, data: any, worldName: any
       vend.listing = null;
     }
 
-    const savedVend: any = setVendStateAt(worldName, vend);
+    const savedVend = setVendStateAt(worldName, vend);
     persistPlayerInventoryChange(player.account_username, buyerState);
-    const vendWorldCommit: any = await commitWorldStateWithBlockChanges(worldName, [
+    const vendWorldCommit = await commitWorldStateWithBlockChanges(worldName, [
       buildWorldObjectChangeEntry(
         socket,
         player,
@@ -6632,7 +6715,7 @@ async function handleVendBuy(socket: any, player: any, data: any, worldName: any
       y: vend.y,
       owner_username: vend.owner_username,
     }, { skipPostgres: true });
-    const buyerInventoryDeltas: any = buildInventoryDeltaClientPayloads([
+    const buyerInventoryDeltas = buildInventoryDeltaClientPayloads([
       { item_type: "world_lock", item_category: "block", delta: -priceWls },
       { item_type: soldItemId, item_category: soldItemCategory, delta: itemAmount },
     ], buyerState);
@@ -6661,17 +6744,17 @@ async function handleVendCollect(socket: any, player: any, data: any, worldName:
     return;
   }
 
-  const pendingWls: any = clampInteger(vend.pending_wls || 0, 0, ItemDatabase.getStackLimit("world_lock"));
+  const pendingWls = clampInteger(vend.pending_wls || 0, 0, ItemDatabase.getStackLimit("world_lock"));
   if (pendingWls <= 0) {
     rejectVendTransaction(socket, data, "No World Locks to collect.");
     return;
   }
 
-  const vendLock: any = await acquireVendMutationLock(socket, player, data, worldName, vend);
+  const vendLock = await acquireVendMutationLock(socket, player, data, worldName, vend);
   if (!vendLock) return;
 
   try {
-  const state: any = ensureWritablePlayerState(player.account_username);
+  const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     rejectVendTransaction(socket, data, "Could not load your server inventory.");
     return;
@@ -6682,21 +6765,21 @@ async function handleVendCollect(socket: any, player: any, data: any, worldName:
     return;
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
   if (!addItemToState(stagedState, "world_lock", "block", pendingWls)) {
     rejectVendTransaction(socket, data, "Your inventory cannot hold those World Locks.");
     return;
   }
 
-  const originalVend: any = cloneJson(vend);
+  const originalVend = cloneJson(vend);
   vend.pending_wls = 0;
   clearVendOwnerIfEmpty(vend);
 
-  const savedVend: any = setVendStateAt(worldName, vend);
-  const vendTransactionId: any = makeAuditId("vend");
-  const serializedWorld: any = serializeWorldState(worldName);
-  const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+  const savedVend = setVendStateAt(worldName, vend);
+  const vendTransactionId = makeAuditId("vend");
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "vending",
     action: "vending_collect",
     reason: "vend_collect",
@@ -6711,7 +6794,7 @@ async function handleVendCollect(socket: any, player: any, data: any, worldName:
     rejectVendTransaction(socket, data, commit.message);
     return;
   }
-  const committedState: any = commit.state;
+  const committedState = commit.state;
   persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   logVendingTransaction(socket, player, {
     transaction_id: vendTransactionId,
@@ -6758,12 +6841,12 @@ async function handleVendCancel(socket: any, player: any, data: any, worldName: 
     return;
   }
 
-  const listing: any = vend.listing;
-  const vendLock: any = await acquireVendMutationLock(socket, player, data, worldName, vend);
+  const listing = vend.listing;
+  const vendLock = await acquireVendMutationLock(socket, player, data, worldName, vend);
   if (!vendLock) return;
 
   try {
-  const state: any = ensureWritablePlayerState(player.account_username);
+  const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     rejectVendTransaction(socket, data, "Could not load your server inventory.");
     return;
@@ -6774,21 +6857,21 @@ async function handleVendCancel(socket: any, player: any, data: any, worldName: 
     return;
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
   if (!addItemToState(stagedState, listing.item_id, listing.item_category, listing.stock)) {
     rejectVendTransaction(socket, data, "Your inventory cannot hold the returned items.");
     return;
   }
 
-  const originalVend: any = cloneJson(vend);
+  const originalVend = cloneJson(vend);
   vend.listing = null;
   clearVendOwnerIfEmpty(vend);
 
-  const savedVend: any = setVendStateAt(worldName, vend);
-  const vendTransactionId: any = makeAuditId("vend");
-  const serializedWorld: any = serializeWorldState(worldName);
-  const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+  const savedVend = setVendStateAt(worldName, vend);
+  const vendTransactionId = makeAuditId("vend");
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "vending",
     action: "vending_cancel",
     reason: "vend_cancel",
@@ -6810,7 +6893,7 @@ async function handleVendCancel(socket: any, player: any, data: any, worldName: 
     rejectVendTransaction(socket, data, commit.message);
     return;
   }
-  const committedState: any = commit.state;
+  const committedState = commit.state;
   persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   logVendingTransaction(socket, player, {
     transaction_id: vendTransactionId,
@@ -6868,14 +6951,14 @@ function makeEmptySafeState(worldName: any, x: any, y: any) {
 }
 
 function canStoreItemInSafe(itemId: any, itemCategory: any) {
-  const cleanItemId: any = clampString(itemId || "");
+  const cleanItemId = clampString(itemId || "");
   if (cleanItemId === "" || !ItemDatabase.hasItem(cleanItemId)) return false;
   if (cleanItemId === "punch" || cleanItemId === SAFE_BLOCK_TYPE || cleanItemId === WORLD_LOCK_KEY_ITEM_TYPE) return false;
 
-  const definition: any = ItemDatabase.getItemDefinition(cleanItemId);
+  const definition = ItemDatabase.getItemDefinition(cleanItemId);
   if (!definition || definition.hidden) return false;
 
-  const resolvedCategory: any = resolveInventoryCategory(cleanItemId, itemCategory);
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
   return ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory);
 }
 
@@ -6904,7 +6987,7 @@ function sanitizeSafeState(rawEntry: any, worldName: any, x: any, y: any) {
  * @returns {PixelMania.SafeClientState}
  */
 function serializeSafeStateForClient(safe: any, player: any = null) {
-  const cleanSafe: any = sanitizeSafeState(safe, safe?.world || "", safe?.x || 0, safe?.y || 0);
+  const cleanSafe = sanitizeSafeState(safe, safe?.world || "", safe?.x || 0, safe?.y || 0);
   return {
     action: "safe_state",
     world: cleanWorld(cleanSafe.world || ""),
@@ -6912,7 +6995,7 @@ function serializeSafeStateForClient(safe: any, player: any = null) {
     y: cleanSafe.y,
     owner_username: cleanSafe.owner_username,
     owner_name: cleanSafe.owner_name,
-    slots: cleanSafe.slots.map((slot) => ({ ...slot })),
+    slots: cleanSafe.slots.map((slot: ServerPacketRecord) => ({ ...slot })),
     max_slots: SAFE_SLOT_COUNT,
     can_manage: canPlayerManageSafe(player, cleanSafe, cleanSafe.world),
   };
@@ -6924,7 +7007,7 @@ function canPlayerPlaceSafe(player: any, worldName: any) {
 
 function canPlayerManageSafe(player: any, safe: any, worldName: any = "") {
   if (!player || !player.authenticated) return false;
-  const cleanWorldName: any = cleanWorld(worldName || safe?.world || "");
+  const cleanWorldName = cleanWorld(worldName || safe?.world || "");
   return isWorldLocked(cleanWorldName) && isPlayerWorldOwner(player, cleanWorldName);
 }
 
@@ -6932,8 +7015,8 @@ function canPlayerBreakSafe(player: any, worldName: any, update: any) {
   if (!player || !player.authenticated) return false;
   if (!update || (update.action !== "break" && update.action !== "hit") || update.layer === "background") return false;
 
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isSafeBlockType(block.block_type)) return false;
 
   return isWorldLocked(worldName) && isPlayerWorldOwner(player, worldName);
@@ -6947,17 +7030,17 @@ function canPlayerBreakSafe(player: any, worldName: any, update: any) {
  * @returns {PixelMania.SafeState}
  */
 function getSafeStateAt(worldName: any, x: any, y: any, createIfMissing: any = false) {
-  const state: any = ensureWorldState(worldName);
-  const key: any = gridKey(x, y);
-  const existing: any = state.interactions.get(key);
+  const state = ensureWorldState(worldName);
+  const key = gridKey(x, y);
+  const existing = state.interactions.get(key);
 
   if (existing && existing.action === "safe_state") {
-    const safe: any = sanitizeSafeState(existing, worldName, x, y);
+    const safe = sanitizeSafeState(existing, worldName, x, y);
     state.interactions.set(key, safe);
     return safe;
   }
 
-  const empty: any = makeEmptySafeState(worldName, x, y);
+  const empty = makeEmptySafeState(worldName, x, y);
   if (createIfMissing) {
     state.interactions.set(key, empty);
   }
@@ -6970,8 +7053,8 @@ function getSafeStateAt(worldName: any, x: any, y: any, createIfMissing: any = f
  * @returns {PixelMania.SafeState}
  */
 function setSafeStateAt(worldName: any, safe: any) {
-  const state: any = ensureWorldState(worldName);
-  const cleanSafe: any = sanitizeSafeState(safe, worldName, safe.x, safe.y);
+  const state = ensureWorldState(worldName);
+  const cleanSafe = sanitizeSafeState(safe, worldName, safe.x, safe.y);
   cleanSafe.updated_at = new Date().toISOString();
   state.interactions.set(gridKey(cleanSafe.x, cleanSafe.y), cleanSafe);
   return cleanSafe;
@@ -6979,7 +7062,7 @@ function setSafeStateAt(worldName: any, safe: any) {
 
 function initializeSafeOwnerOnPlace(worldName: any, update: any, player: any) {
   if (!player || !player.authenticated) return;
-  const safe: any = makeEmptySafeState(worldName, update.x, update.y);
+  const safe = makeEmptySafeState(worldName, update.x, update.y);
   safe.owner_username = player.account_username;
   safe.owner_name = player.account_username.toUpperCase();
   setSafeStateAt(worldName, safe);
@@ -7004,8 +7087,8 @@ function validateSafeAccess(socket: any, player: any, data: any, worldName: any,
     return false;
   }
 
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(grid.x, grid.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(grid.x, grid.y));
   if (!block || !isSafeBlockType(block.block_type)) {
     sendInventoryTransactionRejected(socket, data, "That is not a safe.");
     return false;
@@ -7040,8 +7123,8 @@ function rejectSafeTransaction(socket: any, data: any, message: any) {
 }
 
 async function handleSafeTransaction(socket: any, player: any, data: any) {
-  const action: any = String(data.action || "").trim();
-  const worldName: any = getTransactionWorldName(player, data);
+  const action = String(data.action || "").trim();
+  const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "use that safe")) return;
   if (await rejectIfWorldBanned(socket, player, worldName, "safe")) return;
 
@@ -7053,7 +7136,7 @@ async function handleSafeTransaction(socket: any, player: any, data: any) {
     return;
   }
 
-  const safe: any = getSafeStateAt(worldName, grid.x, grid.y, true);
+  const safe = getSafeStateAt(worldName, grid.x, grid.y, true);
 
   if (!canPlayerManageSafe(player, safe, worldName)) {
     rejectSafeTransaction(socket, data, "Only the world owner can open this safe.");
@@ -7066,7 +7149,7 @@ async function handleSafeTransaction(socket: any, player: any, data: any) {
   }
 
   if (action === "safe_get_state") {
-    const savedSafe: any = setSafeStateAt(worldName, safe);
+    const savedSafe = setSafeStateAt(worldName, safe);
     sendSafeTransactionResult(socket, data, player, savedSafe, true, "");
     return;
   }
@@ -7090,9 +7173,9 @@ async function handleSafeTransaction(socket: any, player: any, data: any) {
 }
 
 function findSafeMergeSlot(safe: any, itemId: any, itemCategory: any, amount: any) {
-  const stackLimit: any = ItemDatabase.getStackLimit(itemId);
+  const stackLimit = ItemDatabase.getStackLimit(itemId);
   for (let i: any = 0; i < safe.slots.length; i += 1) {
-    const slot: any = safe.slots[i];
+    const slot = safe.slots[i];
     if (!slot) continue;
     if (slot.item_id === itemId && slot.item_category === itemCategory && Number(slot.amount) + amount <= stackLimit) {
       return i;
@@ -7110,7 +7193,7 @@ function findSafeMergeSlot(safe: any, itemId: any, itemCategory: any, amount: an
  * @returns {Promise<Record<string, any> | null>}
  */
 async function acquireSafeMutationLock(socket: any, player: any, data: any, worldName: any, safe: any) {
-  const safeActionKey: any = `${worldName}:${safe.x},${safe.y}`;
+  const safeActionKey = `${worldName}:${safe.x},${safe.y}`;
   const safeLock: any = await acquireLiveActionLock(worldSafeActionLocks, "safe", safeActionKey, player.id);
   if (!safeLock.acquired) {
     rejectSafeTransaction(socket, data, "That safe is busy.");
@@ -7129,16 +7212,16 @@ async function acquireSafeMutationLock(socket: any, player: any, data: any, worl
  * @returns {Promise<void>}
  */
 async function handleSafeDeposit(socket: any, player: any, data: any, worldName: any, safe: any) {
-  const itemId: any = clampString(data.item_id || data.item_type || "");
-  const itemCategory: any = resolveInventoryCategory(itemId, data.item_category || data.category || "");
-  const amount: any = clampInteger(data.amount || 0, 1, ItemDatabase.getStackLimit(itemId));
+  const itemId = clampString(data.item_id || data.item_type || "");
+  const itemCategory = resolveInventoryCategory(itemId, data.item_category || data.category || "");
+  const amount = clampInteger(data.amount || 0, 1, ItemDatabase.getStackLimit(itemId));
 
   if (!canStoreItemInSafe(itemId, itemCategory)) {
     rejectSafeTransaction(socket, data, "That item cannot be stored in a safe.");
     return;
   }
 
-  const mergeIndex: any = findSafeMergeSlot(safe, itemId, itemCategory, amount);
+  const mergeIndex = findSafeMergeSlot(safe, itemId, itemCategory, amount);
   if (mergeIndex < 0 && safe.slots.length >= SAFE_SLOT_COUNT) {
     rejectSafeTransaction(socket, data, "That safe is full.");
     return;
@@ -7148,7 +7231,7 @@ async function handleSafeDeposit(socket: any, player: any, data: any, worldName:
   if (!safeLock) return;
 
   try {
-  const state: any = ensureWritablePlayerState(player.account_username);
+  const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     rejectSafeTransaction(socket, data, "Could not load your server inventory.");
     return;
@@ -7159,14 +7242,14 @@ async function handleSafeDeposit(socket: any, player: any, data: any, worldName:
     return;
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
   if (!spendItemFromState(stagedState, itemId, itemCategory, amount)) {
     rejectSafeTransaction(socket, data, "Server inventory changed. Try again.");
     return;
   }
 
-  const originalSafe: any = cloneJson(safe);
+  const originalSafe = cloneJson(safe);
   if (mergeIndex >= 0) {
     safe.slots[mergeIndex].amount = clampInteger(Number(safe.slots[mergeIndex].amount) + amount, 1, ItemDatabase.getStackLimit(itemId));
   } else {
@@ -7177,10 +7260,10 @@ async function handleSafeDeposit(socket: any, player: any, data: any, worldName:
     });
   }
 
-  const savedSafe: any = setSafeStateAt(worldName, safe);
-  const safeTransactionId: any = makeAuditId("safe");
-  const serializedWorld: any = serializeWorldState(worldName);
-  const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+  const savedSafe = setSafeStateAt(worldName, safe);
+  const safeTransactionId = makeAuditId("safe");
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "safe",
     action: "safe_deposit",
     reason: "safe_storage",
@@ -7195,7 +7278,7 @@ async function handleSafeDeposit(socket: any, player: any, data: any, worldName:
     rejectSafeTransaction(socket, data, commit.message);
     return;
   }
-  const committedState: any = commit.state;
+  const committedState = commit.state;
   persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   logWorldChange(socket, player, {
     source_type: "safe_transaction",
@@ -7229,7 +7312,7 @@ async function handleSafeDeposit(socket: any, player: any, data: any, worldName:
  * @returns {Promise<void>}
  */
 async function handleSafeWithdraw(socket: any, player: any, data: any, worldName: any, safe: any) {
-  const slotIndex: any = clampInteger(data.slot_index || data.slot || 0, 0, SAFE_SLOT_COUNT - 1);
+  const slotIndex = clampInteger(data.slot_index || data.slot || 0, 0, SAFE_SLOT_COUNT - 1);
 
   const safeLock: any = await acquireSafeMutationLock(socket, player, data, worldName, safe);
   if (!safeLock) return;
@@ -7240,18 +7323,18 @@ async function handleSafeWithdraw(socket: any, player: any, data: any, worldName
     return;
   }
 
-  const slot: any = sanitizeSafeSlot(safe.slots[slotIndex]);
+  const slot = sanitizeSafeSlot(safe.slots[slotIndex]);
   if (!slot) {
     safe.slots.splice(slotIndex, 1);
-    const savedSafe: any = setSafeStateAt(worldName, safe);
+    const savedSafe = setSafeStateAt(worldName, safe);
     queueWorldSave(worldName);
     sendSafeStateUpdateToWorld(worldName, savedSafe);
     rejectSafeTransaction(socket, data, "That safe slot was invalid.");
     return;
   }
 
-  const amount: any = clampInteger(data.amount || slot.amount, 1, slot.amount);
-  const state: any = ensureWritablePlayerState(player.account_username);
+  const amount = clampInteger(data.amount || slot.amount, 1, slot.amount);
+  const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     rejectSafeTransaction(socket, data, "Could not load your server inventory.");
     return;
@@ -7262,14 +7345,14 @@ async function handleSafeWithdraw(socket: any, player: any, data: any, worldName
     return;
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
   if (!addItemToState(stagedState, slot.item_id, slot.item_category, amount)) {
     rejectSafeTransaction(socket, data, "Your inventory cannot hold that item.");
     return;
   }
 
-  const originalSafe: any = cloneJson(safe);
+  const originalSafe = cloneJson(safe);
   slot.amount -= amount;
   if (slot.amount <= 0) {
     safe.slots.splice(slotIndex, 1);
@@ -7277,10 +7360,10 @@ async function handleSafeWithdraw(socket: any, player: any, data: any, worldName
     safe.slots[slotIndex] = slot;
   }
 
-  const savedSafe: any = setSafeStateAt(worldName, safe);
-  const safeTransactionId: any = makeAuditId("safe");
-  const serializedWorld: any = serializeWorldState(worldName);
-  const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+  const savedSafe = setSafeStateAt(worldName, safe);
+  const safeTransactionId = makeAuditId("safe");
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "safe",
     action: "safe_withdraw",
     reason: "safe_withdraw",
@@ -7295,7 +7378,7 @@ async function handleSafeWithdraw(socket: any, player: any, data: any, worldName
     rejectSafeTransaction(socket, data, commit.message);
     return;
   }
-  const committedState: any = commit.state;
+  const committedState = commit.state;
   persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   logWorldChange(socket, player, {
     source_type: "safe_transaction",
@@ -7324,8 +7407,8 @@ async function handleSafeWithdraw(socket: any, player: any, data: any, worldName
  * @returns {Promise<PixelMania.WorldInventoryValidationResult>}
  */
 async function prepareSafeBreakInventoryReturn(socket: any, player: any, worldName: any, update: any) {
-  const safe: any = getSafeStateAt(worldName, update.x, update.y, false);
-  const slots: any = Array.isArray(safe.slots) ? safe.slots.map(sanitizeSafeSlot).filter(Boolean) : [];
+  const safe = getSafeStateAt(worldName, update.x, update.y, false);
+  const slots = Array.isArray(safe.slots) ? safe.slots.map(sanitizeSafeSlot).filter(Boolean) : [];
 
   if (slots.length === 0) {
     return { ok: true, playerState: null, message: "" };
@@ -7339,7 +7422,7 @@ async function prepareSafeBreakInventoryReturn(socket: any, player: any, worldNa
     return { ok: false };
   }
 
-  const state: any = ensureWritablePlayerState(player.account_username);
+  const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     sendActionRejected(socket, "world_block_update", "Could not load your server inventory.", {
       reason: "inventory_unavailable",
@@ -7348,9 +7431,9 @@ async function prepareSafeBreakInventoryReturn(socket: any, player: any, worldNa
     return { ok: false };
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
-  const originalSafe: any = cloneJson(safe);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  const originalSafe = cloneJson(safe);
   for (const slot of slots) {
     if (!canAddItemToState(stagedState, slot.item_id, slot.item_category, slot.amount)) {
       sendActionRejected(socket, "world_block_update", "Your inventory cannot hold the safe contents.", {
@@ -7362,11 +7445,11 @@ async function prepareSafeBreakInventoryReturn(socket: any, player: any, worldNa
     addItemToState(stagedState, slot.item_id, slot.item_category, slot.amount);
   }
 
-  const rollbackWorldState: any = serializeWorldState(worldName);
+  const rollbackWorldState = serializeWorldState(worldName);
   safe.slots = [];
   setSafeStateAt(worldName, safe);
-  const safeBreakTransactionId: any = makeAuditId("safe_break");
-  const safeBreakWorldChange: any = buildWorldObjectChangeEntry(
+  const safeBreakTransactionId = makeAuditId("safe_break");
+  const safeBreakWorldChange = buildWorldObjectChangeEntry(
     socket,
     player,
     worldName,
@@ -7409,7 +7492,7 @@ async function prepareSafeBreakInventoryReturn(socket: any, player: any, worldNa
       rollbackWorldState,
       worldChanges: [safeBreakWorldChange],
       postCommitLogs: {
-        itemLedgerEntries: slots.map((slot) => ({
+        itemLedgerEntries: slots.map((slot: { item_id: string; item_category: string; amount: number }) => ({
           item_id: slot.item_id,
           item_category: slot.item_category,
           amount: slot.amount,
@@ -7423,8 +7506,8 @@ async function prepareSafeBreakInventoryReturn(socket: any, player: any, worldNa
     };
   }
 
-  const serializedWorld: any = serializeWorldState(worldName);
-  const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "safe",
     action: "safe_break_return",
     reason: "safe_break_return",
@@ -7442,7 +7525,7 @@ async function prepareSafeBreakInventoryReturn(socket: any, player: any, worldNa
     });
     return { ok: false };
   }
-  const committedState: any = commit.state;
+  const committedState = commit.state;
   persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   logWorldChange(socket, player, {
     source_type: "safe_break_return",
@@ -7475,81 +7558,81 @@ function isDisplayBlockType(blockType: any) {
 }
 
 function isTackleBoxBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
+  const clean = clampString(blockType || "");
   if (clean === TACKLE_BOX_BLOCK_TYPE) return true;
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const definition = ItemDatabase.getItemDefinition(clean);
   return Boolean(definition && definition.category === "block" && definition.tackle_box_block);
 }
 
 function isChickenBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
+  const clean = clampString(blockType || "");
   if (clean === CHICKEN_BLOCK_TYPE) return true;
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const definition = ItemDatabase.getItemDefinition(clean);
   return Boolean(definition && definition.category === "block" && definition.chicken_block);
 }
 
 function isCowBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
+  const clean = clampString(blockType || "");
   if (clean === COW_BLOCK_TYPE) return true;
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const definition = ItemDatabase.getItemDefinition(clean);
   return Boolean(definition && definition.category === "block" && definition.cow_block);
 }
 
 function isDuckBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
+  const clean = clampString(blockType || "");
   if (clean === DUCK_BLOCK_TYPE) return true;
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const definition = ItemDatabase.getItemDefinition(clean);
   return Boolean(definition && definition.category === "block" && definition.duck_block);
 }
 
 function isWaterWellBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
+  const clean = clampString(blockType || "");
   if (clean === WATER_WELL_BLOCK_TYPE) return true;
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const definition = ItemDatabase.getItemDefinition(clean);
   return Boolean(definition && definition.category === "block" && definition.water_well_block);
 }
 
 function isDiceBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
+  const clean = clampString(blockType || "");
   if (clean === DICE_BLOCK_TYPE) return true;
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const definition = ItemDatabase.getItemDefinition(clean);
   return Boolean(definition && definition.category === "block" && definition.dice_block);
 }
 
 function isCheckpointBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
+  const clean = clampString(blockType || "");
   if (clean === CHECKPOINT_BLOCK_TYPE) return true;
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const definition = ItemDatabase.getItemDefinition(clean);
   return Boolean(definition && definition.category === "block" && definition.checkpoint_block);
 }
 
 function isAntiPunchBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const clean = clampString(blockType || "");
+  const definition = ItemDatabase.getItemDefinition(clean);
   return Boolean(definition && definition.category === "block" && definition.anti_punch_block);
 }
 
 function isAntiTalkBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const clean = clampString(blockType || "");
+  const definition = ItemDatabase.getItemDefinition(clean);
   return Boolean(definition && definition.category === "block" && definition.anti_talk_block);
 }
 
 function isAntiGravityBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const clean = clampString(blockType || "");
+  const definition = ItemDatabase.getItemDefinition(clean);
   return Boolean(definition && definition.category === "block" && definition.anti_gravity_block);
 }
 
 function isSnowRepellentBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const clean = clampString(blockType || "");
+  const definition = ItemDatabase.getItemDefinition(clean);
   return Boolean(definition && definition.category === "block" && definition.snow_repellent_block);
 }
 
 function isThemeMachineBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const clean = clampString(blockType || "");
+  const definition = ItemDatabase.getItemDefinition(clean);
   return Boolean(definition && definition.category === "block" && definition.theme_machine_block)
     || clean === "night_theme_machine"
     || clean === "snow_theme_machine"
@@ -7557,27 +7640,27 @@ function isThemeMachineBlockType(blockType: any) {
 }
 
 function isOilRefineryBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
+  const clean = clampString(blockType || "");
   if (clean === OIL_REFINERY_BLOCK_TYPE) return true;
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const definition = ItemDatabase.getItemDefinition(clean);
   return Boolean(definition && definition.category === "block" && definition.oil_refinery_block);
 }
 
 function isBatteryChargerBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
+  const clean = clampString(blockType || "");
   if (clean === BATTERY_CHARGER_BLOCK_TYPE) return true;
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const definition = ItemDatabase.getItemDefinition(clean);
   return Boolean(definition && definition.category === "block" && definition.battery_charger_block);
 }
 
 function isCctvBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const clean = clampString(blockType || "");
+  const definition = ItemDatabase.getItemDefinition(clean);
   return Boolean(definition && definition.category === "block" && definition.cctv_block);
 }
 
 function hasAntiPunchBlock(worldName: any) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   for (const block of state.foreground.values()) {
     if (block && isAntiPunchBlockType(block.block_type || "")) return true;
   }
@@ -7585,7 +7668,7 @@ function hasAntiPunchBlock(worldName: any) {
 }
 
 function hasAntiTalkBlock(worldName: any) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   for (const block of state.foreground.values()) {
     if (block && isAntiTalkBlockType(block.block_type || "")) return true;
   }
@@ -7593,7 +7676,7 @@ function hasAntiTalkBlock(worldName: any) {
 }
 
 function hasAntiGravityBlock(worldName: any) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   for (const block of state.foreground.values()) {
     if (block && isAntiGravityBlockType(block.block_type || "")) return true;
   }
@@ -7601,7 +7684,7 @@ function hasAntiGravityBlock(worldName: any) {
 }
 
 function hasSnowRepellentBlock(worldName: any) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   for (const block of state.foreground.values()) {
     if (block && isSnowRepellentBlockType(block.block_type || "")) return true;
   }
@@ -7609,7 +7692,7 @@ function hasSnowRepellentBlock(worldName: any) {
 }
 
 function getCctvBlocksInWorld(worldName: any) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const blocks: any = [];
   for (const block of state.foreground.values()) {
     if (!block || !isCctvBlockType(block.block_type || "")) continue;
@@ -7635,19 +7718,19 @@ function makeEmptyCctvWorldState(worldName: any = "") {
 }
 
 function normalizeCctvEventType(value: any) {
-  const clean: any = clampString(value || "", 24).toLowerCase();
+  const clean = clampString(value || "", 24).toLowerCase();
   if (clean === "leave" || clean === "left" || clean === "exit" || clean === "disconnect") return "leave";
   return "enter";
 }
 
 function sanitizeCctvEvent(rawEvent: any = {}) {
-  const raw: any = rawEvent && typeof rawEvent === "object" && !Array.isArray(rawEvent) ? rawEvent : {};
-  const eventType: any = normalizeCctvEventType(raw.event_type || raw.event || raw.type || "");
-  const username: any = cleanAccountName(raw.username || raw.account_username || raw.player_name || raw.name || "");
-  const displayName: any = cleanName(raw.display_name || raw.name || raw.player_name || username || "Player").slice(0, 64);
-  const rawAt: any = String(raw.at || raw.timestamp || raw.created_at || "").trim();
-  const parsedAt: any = rawAt !== "" ? Date.parse(rawAt) : NaN;
-  const at: any = Number.isFinite(parsedAt) ? new Date(parsedAt).toISOString() : new Date().toISOString();
+  const raw = rawEvent && typeof rawEvent === "object" && !Array.isArray(rawEvent) ? rawEvent : {};
+  const eventType = normalizeCctvEventType(raw.event_type || raw.event || raw.type || "");
+  const username = cleanAccountName(raw.username || raw.account_username || raw.player_name || raw.name || "");
+  const displayName = cleanName(raw.display_name || raw.name || raw.player_name || username || "Player").slice(0, 64);
+  const rawAt = String(raw.at || raw.timestamp || raw.created_at || "").trim();
+  const parsedAt = rawAt !== "" ? Date.parse(rawAt) : NaN;
+  const at = Number.isFinite(parsedAt) ? new Date(parsedAt).toISOString() : new Date().toISOString();
   return {
     event_type: eventType,
     event: eventType,
@@ -7659,18 +7742,18 @@ function sanitizeCctvEvent(rawEvent: any = {}) {
 }
 
 function sanitizeCctvWorldState(rawState: any = {}, worldName: any = "") {
-  const raw: any = rawState && typeof rawState === "object" && !Array.isArray(rawState) ? rawState : {};
-  const rawEntries: any = Array.isArray(raw.entries)
+  const raw = rawState && typeof rawState === "object" && !Array.isArray(rawState) ? rawState : {};
+  const rawEntries = Array.isArray(raw.entries)
     ? raw.entries
     : (Array.isArray(raw.events) ? raw.events : []);
-  const entries: any = rawEntries
-    .map((entry) => sanitizeCctvEvent(entry))
+  const entries = rawEntries
+    .map((entry: unknown) => sanitizeCctvEvent(entry) as ServerCctvEventRecord)
     .filter(Boolean)
-    .sort((left, right) => Date.parse(right.at || "") - Date.parse(left.at || ""))
+    .sort((left: ServerCctvEventRecord, right: ServerCctvEventRecord) => Date.parse(right.at || "") - Date.parse(left.at || ""))
     .slice(0, CCTV_EVENT_LIMIT);
-  const latestAt: any = entries.length > 0 ? entries[0].at : "";
-  const rawUpdatedAt: any = String(raw.updated_at || raw.last_updated_at || "").trim();
-  const parsedUpdatedAt: any = rawUpdatedAt !== "" ? Date.parse(rawUpdatedAt) : NaN;
+  const latestAt = entries.length > 0 ? entries[0].at : "";
+  const rawUpdatedAt = String(raw.updated_at || raw.last_updated_at || "").trim();
+  const parsedUpdatedAt = rawUpdatedAt !== "" ? Date.parse(rawUpdatedAt) : NaN;
   return {
     world: cleanWorld(raw.world || worldName || "START"),
     entries,
@@ -7682,7 +7765,7 @@ function canPlayerViewCctv(player: any, worldName: any) {
   if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const lock: any = getEffectiveWorldLockStateInState(state);
   if (!lock.is_locked) return false;
   if (lockOwnerMatchesPlayer(lock, player)) return true;
@@ -7690,14 +7773,14 @@ function canPlayerViewCctv(player: any, worldName: any) {
 }
 
 function getCctvStateForClient(worldName: any, receiverPlayer: any = null) {
-  const clean: any = cleanWorld(worldName);
-  const state: any = ensureWorldState(clean);
-  const cctv: any = sanitizeCctvWorldState(state.cctv_state || {}, clean);
+  const clean = cleanWorld(worldName);
+  const state = ensureWorldState(clean);
+  const cctv = sanitizeCctvWorldState(state.cctv_state || {}, clean);
   state.cctv_state = cctv;
-  const canView: any = canPlayerViewCctv(receiverPlayer, clean);
+  const canView = canPlayerViewCctv(receiverPlayer, clean);
   return {
     world: clean,
-    entries: canView ? cctv.entries.map((entry) => ({ ...entry })) : [],
+    entries: canView ? cctv.entries.map((entry: ServerCctvEventRecord) => ({ ...entry })) : [],
     entry_count: cctv.entries.length,
     max_entries: CCTV_EVENT_LIMIT,
     has_entries: cctv.entries.length > 0,
@@ -7707,7 +7790,7 @@ function getCctvStateForClient(worldName: any, receiverPlayer: any = null) {
 }
 
 function broadcastCctvWorldState(worldName: any) {
-  const clean: any = cleanWorld(worldName);
+  const clean = cleanWorld(worldName);
   for (const { player: receiver, socket: client } of getWorldPlayerRecords(clean, { includeSocket: true })) {
     sendJson(client, {
       type: "world_interaction_update",
@@ -7719,26 +7802,26 @@ function broadcastCctvWorldState(worldName: any) {
 }
 
 async function appendCctvWorldEvent(worldName: any, player: any, eventType: any, options: any = {}) {
-  const clean: any = cleanWorld(worldName || player?.world || "START");
-  const cctvBlocks: any = getCctvBlocksInWorld(clean);
+  const clean = cleanWorld(worldName || player?.world || "START");
+  const cctvBlocks = getCctvBlocksInWorld(clean);
   if (cctvBlocks.length === 0) return { ok: false, reason: "no_cctv" };
 
-  const state: any = ensureWorldState(clean);
-  const previousState: any = cloneJson(sanitizeCctvWorldState(state.cctv_state || {}, clean));
-  const event: any = sanitizeCctvEvent({
+  const state = ensureWorldState(clean);
+  const previousState = cloneJson(sanitizeCctvWorldState(state.cctv_state || {}, clean));
+  const event = sanitizeCctvEvent({
     event_type: eventType,
     username: player?.account_username || player?.name || "",
     player_name: player?.name || player?.account_username || "Player",
     at: new Date().toISOString(),
   });
-  const nextState: any = sanitizeCctvWorldState(previousState, clean);
+  const nextState = sanitizeCctvWorldState(previousState, clean);
   nextState.entries = [event, ...nextState.entries]
     .sort((left, right) => Date.parse(right.at || "") - Date.parse(left.at || ""))
     .slice(0, CCTV_EVENT_LIMIT);
   nextState.updated_at = event.at;
   state.cctv_state = nextState;
 
-  const anchor: any = cctvBlocks[0] || { x: 0, y: 0, block_type: "cctv" };
+  const anchor = cctvBlocks[0] || { x: 0, y: 0, block_type: "cctv" };
   const update: any = {
     type: "world_interaction_update",
     world: clean,
@@ -7751,8 +7834,8 @@ async function appendCctvWorldEvent(worldName: any, player: any, eventType: any,
     player_name: event.player_name,
     reason: clampString(options.reason || "", 40),
   };
-  const sourceId: any = makeAuditId("cctv");
-  const change: any = buildWorldObjectChangeEntry(
+  const sourceId = makeAuditId("cctv");
+  const change = buildWorldObjectChangeEntry(
     null,
     player,
     clean,
@@ -7762,7 +7845,7 @@ async function appendCctvWorldEvent(worldName: any, player: any, eventType: any,
     sourceId,
     buildWorldInteractionDetails(update)
   );
-  const commit: any = await commitWorldStateWithBlockChanges(clean, [change], {
+  const commit = await commitWorldStateWithBlockChanges(clean, [change], {
     player,
     allow_dev_json_fallback: true,
   });
@@ -7778,7 +7861,7 @@ async function appendCctvWorldEvent(worldName: any, player: any, eventType: any,
 }
 
 function getUniqueSpecialBlockPlacementLockResource(worldName: any, blockType: any) {
-  const cleanWorldName: any = cleanWorld(worldName);
+  const cleanWorldName = cleanWorld(worldName);
   if (cleanWorldName === "") return "";
   if (isAntiPunchBlockType(blockType)) return `${cleanWorldName}:anti_punch`;
   if (isAntiTalkBlockType(blockType)) return `${cleanWorldName}:anti_talk`;
@@ -7802,14 +7885,14 @@ function makeEmptyDisplayState(worldName: any, x: any, y: any) {
 }
 
 function canStoreItemInDisplay(itemId: any, itemCategory: any) {
-  const cleanItemId: any = clampString(itemId || "");
+  const cleanItemId = clampString(itemId || "");
   if (cleanItemId === "" || !ItemDatabase.hasItem(cleanItemId)) return false;
   if (cleanItemId === "punch" || cleanItemId === SAFE_BLOCK_TYPE || isDisplayBlockType(cleanItemId) || cleanItemId === WORLD_LOCK_KEY_ITEM_TYPE) return false;
 
-  const definition: any = ItemDatabase.getItemDefinition(cleanItemId);
+  const definition = ItemDatabase.getItemDefinition(cleanItemId);
   if (!definition || definition.hidden) return false;
 
-  const resolvedCategory: any = resolveInventoryCategory(cleanItemId, itemCategory);
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
   return ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory);
 }
 
@@ -7822,7 +7905,7 @@ function sanitizeDisplayState(rawEntry: any, worldName: any, x: any, y: any) {
 }
 
 function serializeDisplayStateForClient(display: any, player: any = null) {
-  const cleanDisplay: any = sanitizeDisplayState(display, display?.world || "", display?.x || 0, display?.y || 0);
+  const cleanDisplay = sanitizeDisplayState(display, display?.world || "", display?.x || 0, display?.y || 0);
   return {
     action: "display_state",
     world: cleanWorld(cleanDisplay.world || ""),
@@ -7841,7 +7924,7 @@ function canPlayerPlaceDisplay(player: any, worldName: any) {
 
 function canPlayerManageDisplay(player: any, display: any, worldName: any = "") {
   if (!player || !player.authenticated) return false;
-  const cleanWorldName: any = cleanWorld(worldName || display?.world || "");
+  const cleanWorldName = cleanWorld(worldName || display?.world || "");
   return isWorldLocked(cleanWorldName) && isPlayerWorldOwner(player, cleanWorldName);
 }
 
@@ -7849,25 +7932,25 @@ function canPlayerBreakDisplay(player: any, worldName: any, update: any) {
   if (!player || !player.authenticated) return false;
   if (!update || (update.action !== "break" && update.action !== "hit") || update.layer === "background") return false;
 
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isDisplayBlockType(block.block_type)) return false;
 
   return isWorldLocked(worldName) && isPlayerWorldOwner(player, worldName);
 }
 
 function getDisplayStateAt(worldName: any, x: any, y: any, createIfMissing: any = false) {
-  const state: any = ensureWorldState(worldName);
-  const key: any = gridKey(x, y);
-  const existing: any = state.interactions.get(key);
+  const state = ensureWorldState(worldName);
+  const key = gridKey(x, y);
+  const existing = state.interactions.get(key);
 
   if (existing && existing.action === "display_state") {
-    const display: any = sanitizeDisplayState(existing, worldName, x, y);
+    const display = sanitizeDisplayState(existing, worldName, x, y);
     state.interactions.set(key, display);
     return display;
   }
 
-  const empty: any = makeEmptyDisplayState(worldName, x, y);
+  const empty = makeEmptyDisplayState(worldName, x, y);
   if (createIfMissing) {
     state.interactions.set(key, empty);
   }
@@ -7875,8 +7958,8 @@ function getDisplayStateAt(worldName: any, x: any, y: any, createIfMissing: any 
 }
 
 function setDisplayStateAt(worldName: any, display: any) {
-  const state: any = ensureWorldState(worldName);
-  const cleanDisplay: any = sanitizeDisplayState(display, worldName, display.x, display.y);
+  const state = ensureWorldState(worldName);
+  const cleanDisplay = sanitizeDisplayState(display, worldName, display.x, display.y);
   cleanDisplay.updated_at = new Date().toISOString();
   state.interactions.set(gridKey(cleanDisplay.x, cleanDisplay.y), cleanDisplay);
   return cleanDisplay;
@@ -7884,7 +7967,7 @@ function setDisplayStateAt(worldName: any, display: any) {
 
 function initializeDisplayOwnerOnPlace(worldName: any, update: any, player: any) {
   if (!player || !player.authenticated) return;
-  const display: any = makeEmptyDisplayState(worldName, update.x, update.y);
+  const display = makeEmptyDisplayState(worldName, update.x, update.y);
   display.owner_username = player.account_username;
   display.owner_name = player.account_username.toUpperCase();
   setDisplayStateAt(worldName, display);
@@ -7909,8 +7992,8 @@ function validateDisplayAccess(socket: any, player: any, data: any, worldName: a
     return false;
   }
 
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(grid.x, grid.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(grid.x, grid.y));
   if (!block || !isDisplayBlockType(block.block_type)) {
     sendInventoryTransactionRejected(socket, data, "That is not a display.");
     return false;
@@ -7945,8 +8028,8 @@ function rejectDisplayTransaction(socket: any, data: any, message: any) {
 }
 
 async function handleDisplayTransaction(socket: any, player: any, data: any) {
-  const action: any = String(data.action || "").trim();
-  const worldName: any = getTransactionWorldName(player, data);
+  const action = String(data.action || "").trim();
+  const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "use that display")) return;
   if (await rejectIfWorldBanned(socket, player, worldName, "display")) return;
 
@@ -7958,7 +8041,7 @@ async function handleDisplayTransaction(socket: any, player: any, data: any) {
     return;
   }
 
-  const display: any = getDisplayStateAt(worldName, grid.x, grid.y, true);
+  const display = getDisplayStateAt(worldName, grid.x, grid.y, true);
   if (!canPlayerManageDisplay(player, display, worldName)) {
     rejectDisplayTransaction(socket, data, "Only the world owner can use this display.");
     return;
@@ -7970,7 +8053,7 @@ async function handleDisplayTransaction(socket: any, player: any, data: any) {
   }
 
   if (action === "display_get_state") {
-    const savedDisplay: any = setDisplayStateAt(worldName, display);
+    const savedDisplay = setDisplayStateAt(worldName, display);
     sendDisplayTransactionResult(socket, data, player, savedDisplay, true, "");
     return;
   }
@@ -7994,8 +8077,8 @@ async function handleDisplayTransaction(socket: any, player: any, data: any) {
 }
 
 async function acquireDisplayMutationLock(socket: any, player: any, data: any, worldName: any, display: any) {
-  const displayActionKey: any = `${worldName}:${display.x},${display.y}`;
-  const displayLock: any = await acquireLiveActionLock(worldDisplayActionLocks, "display", displayActionKey, player.id);
+  const displayActionKey = `${worldName}:${display.x},${display.y}`;
+  const displayLock = await acquireLiveActionLock(worldDisplayActionLocks, "display", displayActionKey, player.id);
   if (!displayLock.acquired) {
     rejectDisplayTransaction(socket, data, "That display is busy.");
     return null;
@@ -8004,8 +8087,8 @@ async function acquireDisplayMutationLock(socket: any, player: any, data: any, w
 }
 
 async function handleDisplayDeposit(socket: any, player: any, data: any, worldName: any, display: any) {
-  const itemId: any = clampString(data.item_id || data.item_type || "");
-  const itemCategory: any = resolveInventoryCategory(itemId, data.item_category || data.category || "");
+  const itemId = clampString(data.item_id || data.item_type || "");
+  const itemCategory = resolveInventoryCategory(itemId, data.item_category || data.category || "");
 
   if (!canStoreItemInDisplay(itemId, itemCategory)) {
     rejectDisplayTransaction(socket, data, "That item cannot be displayed.");
@@ -8017,11 +8100,11 @@ async function handleDisplayDeposit(socket: any, player: any, data: any, worldNa
     return;
   }
 
-  const displayLock: any = await acquireDisplayMutationLock(socket, player, data, worldName, display);
+  const displayLock = await acquireDisplayMutationLock(socket, player, data, worldName, display);
   if (!displayLock) return;
 
   try {
-    const state: any = ensureWritablePlayerState(player.account_username);
+    const state = ensureWritablePlayerState(player.account_username);
     if (!state) {
       rejectDisplayTransaction(socket, data, "Could not load your server inventory.");
       return;
@@ -8032,15 +8115,15 @@ async function handleDisplayDeposit(socket: any, player: any, data: any, worldNa
       return;
     }
 
-    const beforeState: any = cloneJson(state);
-    const stagedState: any = cloneJson(state);
+    const beforeState = cloneJson(state);
+    const stagedState = cloneJson(state);
     if (!spendItemFromState(stagedState, itemId, itemCategory, 1)) {
       rejectDisplayTransaction(socket, data, "Server inventory changed. Try again.");
       return;
     }
 
-    const displayTransactionId: any = makeAuditId("display");
-    const originalDisplay: any = cloneJson(display);
+    const displayTransactionId = makeAuditId("display");
+    const originalDisplay = cloneJson(display);
     display.slot = {
       item_id: itemId,
       item_type: itemId,
@@ -8050,9 +8133,9 @@ async function handleDisplayDeposit(socket: any, player: any, data: any, worldNa
       display_transaction_id: displayTransactionId,
     };
 
-    const savedDisplay: any = setDisplayStateAt(worldName, display);
-    const serializedWorld: any = serializeWorldState(worldName);
-    const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+    const savedDisplay = setDisplayStateAt(worldName, display);
+    const serializedWorld = serializeWorldState(worldName);
+    const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
       source: "display",
       action: "display_deposit",
       reason: "display_storage",
@@ -8074,7 +8157,7 @@ async function handleDisplayDeposit(socket: any, player: any, data: any, worldNa
       rejectDisplayTransaction(socket, data, commit.message);
       return;
     }
-    const committedState: any = commit.state;
+    const committedState = commit.state;
     persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
     logWorldChange(socket, player, {
       source_type: "display_transaction",
@@ -8100,21 +8183,21 @@ async function handleDisplayDeposit(socket: any, player: any, data: any, worldNa
 }
 
 async function handleDisplayWithdraw(socket: any, player: any, data: any, worldName: any, display: any) {
-  const displayLock: any = await acquireDisplayMutationLock(socket, player, data, worldName, display);
+  const displayLock = await acquireDisplayMutationLock(socket, player, data, worldName, display);
   if (!displayLock) return;
 
   try {
-    const slot: any = sanitizeDisplaySlot(display.slot);
+    const slot = sanitizeDisplaySlot(display.slot);
     if (!slot) {
       display.slot = null;
-      const savedDisplay: any = setDisplayStateAt(worldName, display);
+      const savedDisplay = setDisplayStateAt(worldName, display);
       queueWorldSave(worldName);
       sendDisplayStateUpdateToWorld(worldName, savedDisplay);
       rejectDisplayTransaction(socket, data, "That display slot was invalid.");
       return;
     }
 
-    const state: any = ensureWritablePlayerState(player.account_username);
+    const state = ensureWritablePlayerState(player.account_username);
     if (!state) {
       rejectDisplayTransaction(socket, data, "Could not load your server inventory.");
       return;
@@ -8125,20 +8208,20 @@ async function handleDisplayWithdraw(socket: any, player: any, data: any, worldN
       return;
     }
 
-    const beforeState: any = cloneJson(state);
-    const stagedState: any = cloneJson(state);
+    const beforeState = cloneJson(state);
+    const stagedState = cloneJson(state);
     if (!addItemToState(stagedState, slot.item_id, slot.item_category, 1)) {
       rejectDisplayTransaction(socket, data, "Your inventory cannot hold that item.");
       return;
     }
 
-    const originalDisplay: any = cloneJson(display);
+    const originalDisplay = cloneJson(display);
     display.slot = null;
 
-    const savedDisplay: any = setDisplayStateAt(worldName, display);
-    const displayTransactionId: any = makeAuditId("display");
-    const serializedWorld: any = serializeWorldState(worldName);
-    const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+    const savedDisplay = setDisplayStateAt(worldName, display);
+    const displayTransactionId = makeAuditId("display");
+    const serializedWorld = serializeWorldState(worldName);
+    const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
       source: "display",
       action: "display_withdraw",
       reason: "display_withdraw",
@@ -8160,7 +8243,7 @@ async function handleDisplayWithdraw(socket: any, player: any, data: any, worldN
       rejectDisplayTransaction(socket, data, commit.message);
       return;
     }
-    const committedState: any = commit.state;
+    const committedState = commit.state;
     persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
     logWorldChange(socket, player, {
       source_type: "display_transaction",
@@ -8189,8 +8272,8 @@ async function handleDisplayWithdraw(socket: any, player: any, data: any, worldN
  * @returns {Promise<PixelMania.WorldInventoryValidationResult>}
  */
 async function prepareDisplayBreakInventoryReturn(socket: any, player: any, worldName: any, update: any) {
-  const display: any = getDisplayStateAt(worldName, update.x, update.y, false);
-  const slot: any = sanitizeDisplaySlot(display.slot);
+  const display = getDisplayStateAt(worldName, update.x, update.y, false);
+  const slot = sanitizeDisplaySlot(display.slot);
   if (!slot) {
     return { ok: true, playerState: null, message: "" };
   }
@@ -8203,7 +8286,7 @@ async function prepareDisplayBreakInventoryReturn(socket: any, player: any, worl
     return { ok: false };
   }
 
-  const state: any = ensureWritablePlayerState(player.account_username);
+  const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     sendActionRejected(socket, "world_block_update", "Could not load your server inventory.", {
       reason: "inventory_unavailable",
@@ -8220,16 +8303,16 @@ async function prepareDisplayBreakInventoryReturn(socket: any, player: any, worl
     return { ok: false };
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
   addItemToState(stagedState, slot.item_id, slot.item_category, 1);
-  const originalDisplay: any = cloneJson(display);
-  const rollbackWorldState: any = serializeWorldState(worldName);
+  const originalDisplay = cloneJson(display);
+  const rollbackWorldState = serializeWorldState(worldName);
   display.slot = null;
   setDisplayStateAt(worldName, display);
 
-  const displayBreakTransactionId: any = makeAuditId("display_break");
-  const displayBreakWorldChange: any = buildWorldObjectChangeEntry(
+  const displayBreakTransactionId = makeAuditId("display_break");
+  const displayBreakWorldChange = buildWorldObjectChangeEntry(
     socket,
     player,
     worldName,
@@ -8292,8 +8375,8 @@ async function prepareDisplayBreakInventoryReturn(socket: any, player: any, worl
     };
   }
 
-  const serializedWorld: any = serializeWorldState(worldName);
-  const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "display",
     action: "display_break_return",
     reason: "display_break_return",
@@ -8312,7 +8395,7 @@ async function prepareDisplayBreakInventoryReturn(socket: any, player: any, worl
     return { ok: false };
   }
 
-  const committedState: any = commit.state;
+  const committedState = commit.state;
   persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   logWorldChange(socket, player, {
     source_type: "display_break_return",
@@ -8386,17 +8469,17 @@ function sanitizeMailboxState(rawEntry: any, worldName: any, x: any, y: any) {
  * @returns {PixelMania.MailboxState}
  */
 function getMailboxStateAt(worldName: any, x: any, y: any, createIfMissing: any = false) {
-  const state: any = ensureWorldState(worldName);
-  const key: any = gridKey(x, y);
-  const existing: any = state.interactions.get(key);
+  const state = ensureWorldState(worldName);
+  const key = gridKey(x, y);
+  const existing = state.interactions.get(key);
 
   if (existing && existing.action === "mailbox_state") {
-    const mailbox: any = sanitizeMailboxState(existing, worldName, x, y);
+    const mailbox = sanitizeMailboxState(existing, worldName, x, y);
     state.interactions.set(key, mailbox);
     return mailbox;
   }
 
-  const empty: any = makeEmptyMailboxState(worldName, x, y);
+  const empty = makeEmptyMailboxState(worldName, x, y);
   if (createIfMissing) {
     state.interactions.set(key, empty);
   }
@@ -8409,8 +8492,8 @@ function getMailboxStateAt(worldName: any, x: any, y: any, createIfMissing: any 
  * @returns {PixelMania.MailboxState}
  */
 function setMailboxStateAt(worldName: any, mailbox: any) {
-  const state: any = ensureWorldState(worldName);
-  const cleanMailbox: any = sanitizeMailboxState(mailbox, worldName, mailbox.x, mailbox.y);
+  const state = ensureWorldState(worldName);
+  const cleanMailbox = sanitizeMailboxState(mailbox, worldName, mailbox.x, mailbox.y);
   cleanMailbox.updated_at = new Date().toISOString();
   state.interactions.set(gridKey(cleanMailbox.x, cleanMailbox.y), cleanMailbox);
   return cleanMailbox;
@@ -8427,14 +8510,14 @@ function canPlayerManageMailbox(player: any, worldName: any) {
  * @returns {PixelMania.MailboxClientState}
  */
 function serializeMailboxStateForClient(mailbox: any, player: any = null) {
-  const cleanMailbox: any = sanitizeMailboxState(mailbox, mailbox?.world || "", mailbox?.x || 0, mailbox?.y || 0);
-  const canManage: any = canPlayerManageMailbox(player, cleanMailbox.world);
+  const cleanMailbox = sanitizeMailboxState(mailbox, mailbox?.world || "", mailbox?.x || 0, mailbox?.y || 0);
+  const canManage = canPlayerManageMailbox(player, cleanMailbox.world);
   return {
     action: "mailbox_state",
     world: cleanWorld(cleanMailbox.world || ""),
     x: cleanMailbox.x,
     y: cleanMailbox.y,
-    messages: cleanMailbox.messages.map((message) => ({ ...message })),
+    messages: cleanMailbox.messages.map((message: ServerPacketRecord) => ({ ...message })),
     capacity: MAILBOX_MESSAGE_LIMIT,
     can_empty: canManage,
     can_manage: canManage,
@@ -8449,8 +8532,8 @@ function serializeMailboxStateForClient(mailbox: any, player: any = null) {
  * @returns {boolean}
  */
 function prepareMailboxStateUpdate(socket: any, player: any, worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isMailboxBlockType(block.block_type)) {
     sendActionRejected(socket, "world_interaction_update", "Mailbox missing.");
     return false;
@@ -8461,8 +8544,8 @@ function prepareMailboxStateUpdate(socket: any, player: any, worldName: any, upd
     return false;
   }
 
-  const operation: any = clampString(update.operation || "").toLowerCase();
-  const mailbox: any = getMailboxStateAt(worldName, update.x, update.y, false);
+  const operation = clampString(update.operation || "").toLowerCase();
+  const mailbox = getMailboxStateAt(worldName, update.x, update.y, false);
 
   if (operation === "empty") {
     if (!canPlayerManageMailbox(player, worldName)) {
@@ -8471,7 +8554,7 @@ function prepareMailboxStateUpdate(socket: any, player: any, worldName: any, upd
     }
     mailbox.messages = [];
   } else if (operation === "send") {
-    const message: any = String(update.message || "").trim().slice(0, MAX_MAILBOX_MESSAGE_LENGTH);
+    const message = String(update.message || "").trim().slice(0, MAX_MAILBOX_MESSAGE_LENGTH);
     if (message === "") {
       sendActionRejected(socket, "world_interaction_update", "Mailbox message is empty.");
       return false;
@@ -8497,9 +8580,9 @@ function prepareMailboxStateUpdate(socket: any, player: any, worldName: any, upd
 }
 
 function isBulletinBoardBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
+  const clean = clampString(blockType || "");
   if (clean === BULLETIN_BOARD_BLOCK_TYPE) return true;
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const definition = ItemDatabase.getItemDefinition(clean);
   return Boolean(definition && definition.category === "block" && definition.bulletin_board_block);
 }
 
@@ -8547,17 +8630,17 @@ function sanitizeBulletinBoardState(rawEntry: any, worldName: any, x: any, y: an
  * @returns {PixelMania.BulletinBoardState}
  */
 function getBulletinBoardStateAt(worldName: any, x: any, y: any, createIfMissing: any = false) {
-  const state: any = ensureWorldState(worldName);
-  const key: any = gridKey(x, y);
-  const existing: any = state.interactions.get(key);
+  const state = ensureWorldState(worldName);
+  const key = gridKey(x, y);
+  const existing = state.interactions.get(key);
 
   if (existing && existing.action === "bulletin_board_state") {
-    const board: any = sanitizeBulletinBoardState(existing, worldName, x, y);
+    const board = sanitizeBulletinBoardState(existing, worldName, x, y);
     state.interactions.set(key, board);
     return board;
   }
 
-  const empty: any = makeEmptyBulletinBoardState(worldName, x, y);
+  const empty = makeEmptyBulletinBoardState(worldName, x, y);
   if (createIfMissing) {
     state.interactions.set(key, empty);
   }
@@ -8570,8 +8653,8 @@ function getBulletinBoardStateAt(worldName: any, x: any, y: any, createIfMissing
  * @returns {PixelMania.BulletinBoardState}
  */
 function setBulletinBoardStateAt(worldName: any, board: any) {
-  const state: any = ensureWorldState(worldName);
-  const cleanBoard: any = sanitizeBulletinBoardState(board, worldName, board.x, board.y);
+  const state = ensureWorldState(worldName);
+  const cleanBoard = sanitizeBulletinBoardState(board, worldName, board.x, board.y);
   cleanBoard.updated_at = new Date().toISOString();
   state.interactions.set(gridKey(cleanBoard.x, cleanBoard.y), cleanBoard);
   return cleanBoard;
@@ -8587,14 +8670,14 @@ function canPlayerManageBulletinBoard(player: any, worldName: any) {
  * @returns {PixelMania.BulletinBoardClientState}
  */
 function serializeBulletinBoardStateForClient(board: any, player: any = null) {
-  const cleanBoard: any = sanitizeBulletinBoardState(board, board?.world || "", board?.x || 0, board?.y || 0);
-  const canManage: any = canPlayerManageBulletinBoard(player, cleanBoard.world);
+  const cleanBoard = sanitizeBulletinBoardState(board, board?.world || "", board?.x || 0, board?.y || 0);
+  const canManage = canPlayerManageBulletinBoard(player, cleanBoard.world);
   return {
     action: "bulletin_board_state",
     world: cleanWorld(cleanBoard.world || ""),
     x: cleanBoard.x,
     y: cleanBoard.y,
-    messages: cleanBoard.messages.map((message) => ({ ...message })),
+    messages: cleanBoard.messages.map((message: ServerPacketRecord) => ({ ...message })),
     capacity: BULLETIN_BOARD_MESSAGE_LIMIT,
     can_clear: canManage,
     can_manage: canManage,
@@ -8610,8 +8693,8 @@ function serializeBulletinBoardStateForClient(board: any, player: any = null) {
  * @returns {boolean}
  */
 function prepareBulletinBoardStateUpdate(socket: any, player: any, worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isBulletinBoardBlockType(block.block_type)) {
     sendActionRejected(socket, "world_interaction_update", "Bulletin Board missing.");
     return false;
@@ -8622,8 +8705,8 @@ function prepareBulletinBoardStateUpdate(socket: any, player: any, worldName: an
     return false;
   }
 
-  const operation: any = clampString(update.operation || "").toLowerCase();
-  const board: any = sanitizeBulletinBoardState(getBulletinBoardStateAt(worldName, update.x, update.y, false), worldName, update.x, update.y);
+  const operation = clampString(update.operation || "").toLowerCase();
+  const board = sanitizeBulletinBoardState(getBulletinBoardStateAt(worldName, update.x, update.y, false), worldName, update.x, update.y);
 
   if (operation === "clear") {
     if (!canPlayerManageBulletinBoard(player, worldName)) {
@@ -8638,7 +8721,7 @@ function prepareBulletinBoardStateUpdate(socket: any, player: any, worldName: an
       });
       return false;
     }
-    const message: any = String(update.message || "").trim().slice(0, MAX_BULLETIN_BOARD_MESSAGE_LENGTH);
+    const message = String(update.message || "").trim().slice(0, MAX_BULLETIN_BOARD_MESSAGE_LENGTH);
     if (message === "") {
       sendActionRejected(socket, "world_interaction_update", "Bulletin Board message is empty.");
       return false;
@@ -8666,19 +8749,19 @@ function parseTackleBoxTimestampMs(value: any) {
   if (Number.isFinite(Number(value))) {
     return Math.max(0, Math.trunc(Number(value)));
   }
-  const parsed: any = Date.parse(String(value || ""));
+  const parsed = Date.parse(String(value || ""));
   return Number.isFinite(parsed) && parsed > 0 ? parsed : 0;
 }
 
 function getTimedProviderCooldownMsForBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
-  const definition: any = ItemDatabase.getItemDefinition(clean) || {};
+  const clean = clampString(blockType || "");
+  const definition = ItemDatabase.getItemDefinition(clean) || {};
   if (isWaterWellBlockType(clean)) {
-    const seconds: any = Number(definition.water_well_cooldown_seconds);
+    const seconds = Number(definition.water_well_cooldown_seconds);
     if (Number.isFinite(seconds)) return clampInteger(Math.round(seconds * 1000), 0, 30 * 24 * 60 * 60 * 1000);
     return WATER_WELL_COOLDOWN_MS;
   }
-  const seconds: any = Number(definition.tackle_box_cooldown_seconds);
+  const seconds = Number(definition.tackle_box_cooldown_seconds);
   if (Number.isFinite(seconds)) return clampInteger(Math.round(seconds * 1000), 0, 30 * 24 * 60 * 60 * 1000);
   return TACKLE_BOX_COOLDOWN_MS;
 }
@@ -8703,17 +8786,17 @@ function sanitizeTackleBoxState(rawEntry: any, worldName: any, x: any, y: any, c
 }
 
 function getTackleBoxStateAt(worldName: any, x: any, y: any, createIfMissing: any = false, cooldownMs: any = TACKLE_BOX_COOLDOWN_MS) {
-  const state: any = ensureWorldState(worldName);
-  const key: any = gridKey(x, y);
-  const existing: any = state.interactions.get(key);
+  const state = ensureWorldState(worldName);
+  const key = gridKey(x, y);
+  const existing = state.interactions.get(key);
 
   if (existing && existing.action === "tackle_box_state") {
-    const tackle: any = sanitizeTackleBoxState(existing, worldName, x, y, cooldownMs);
+    const tackle = sanitizeTackleBoxState(existing, worldName, x, y, cooldownMs);
     state.interactions.set(key, tackle);
     return tackle;
   }
 
-  const empty: any = makeEmptyTackleBoxState(worldName, x, y, cooldownMs);
+  const empty = makeEmptyTackleBoxState(worldName, x, y, cooldownMs);
   if (createIfMissing) {
     state.interactions.set(key, empty);
   }
@@ -8721,17 +8804,17 @@ function getTackleBoxStateAt(worldName: any, x: any, y: any, createIfMissing: an
 }
 
 function setTackleBoxStateAt(worldName: any, tackle: any, cooldownMs: any = TACKLE_BOX_COOLDOWN_MS) {
-  const state: any = ensureWorldState(worldName);
-  const cleanTackle: any = sanitizeTackleBoxState(tackle, worldName, tackle.x, tackle.y, cooldownMs);
+  const state = ensureWorldState(worldName);
+  const cleanTackle = sanitizeTackleBoxState(tackle, worldName, tackle.x, tackle.y, cooldownMs);
   cleanTackle.updated_at = new Date().toISOString();
   state.interactions.set(gridKey(cleanTackle.x, cleanTackle.y), cleanTackle);
   return cleanTackle;
 }
 
 function initializeTackleBoxOnPlace(worldName: any, update: any) {
-  const nowMs: any = Date.now();
-  const cooldownMs: any = getTimedProviderCooldownMsForBlockType(update.block_type);
-  const nextMs: any = nowMs + cooldownMs;
+  const nowMs = Date.now();
+  const cooldownMs = getTimedProviderCooldownMsForBlockType(update.block_type);
+  const nextMs = nowMs + cooldownMs;
   return setTackleBoxStateAt(worldName, {
     ...makeEmptyTackleBoxState(worldName, update.x, update.y, cooldownMs),
     next_harvest_at_ms: nextMs,
@@ -8741,9 +8824,9 @@ function initializeTackleBoxOnPlace(worldName: any, update: any) {
 }
 
 function serializeTackleBoxStateForClient(tackle: any) {
-  const cleanTackle: any = sanitizeTackleBoxState(tackle, tackle?.world || "", tackle?.x || 0, tackle?.y || 0);
-  const nowMs: any = Date.now();
-  const remainingMs: any = Math.max(0, Math.trunc(Number(cleanTackle.next_harvest_at_ms || 0) - nowMs));
+  const cleanTackle = sanitizeTackleBoxState(tackle, tackle?.world || "", tackle?.x || 0, tackle?.y || 0);
+  const nowMs = Date.now();
+  const remainingMs = Math.max(0, Math.trunc(Number(cleanTackle.next_harvest_at_ms || 0) - nowMs));
   return {
     action: "tackle_box_state",
     world: cleanWorld(cleanTackle.world || ""),
@@ -8797,7 +8880,7 @@ function makeEmptyChickenState(worldName: any, x: any, y: any) {
 }
 
 function normalizeChickenStatus(rawStatus: any, nextHarvestAtMs: any, diesAtMs: any, nowMs: any = Date.now()) {
-  const cleanStatus: any = clampString(rawStatus || "").toLowerCase();
+  const cleanStatus = clampString(rawStatus || "").toLowerCase();
   if (nextHarvestAtMs > 0) {
     return nowMs >= nextHarvestAtMs ? "ready" : "producing";
   }
@@ -8811,17 +8894,17 @@ function sanitizeChickenState(rawEntry: any, worldName: any, x: any, y: any) {
 }
 
 function getChickenStateAt(worldName: any, x: any, y: any, createIfMissing: any = false) {
-  const state: any = ensureWorldState(worldName);
-  const key: any = gridKey(x, y);
-  const existing: any = state.interactions.get(key);
+  const state = ensureWorldState(worldName);
+  const key = gridKey(x, y);
+  const existing = state.interactions.get(key);
 
   if (existing && existing.action === "chicken_state") {
-    const chicken: any = sanitizeChickenState(existing, worldName, x, y);
+    const chicken = sanitizeChickenState(existing, worldName, x, y);
     state.interactions.set(key, chicken);
     return chicken;
   }
 
-  const empty: any = makeEmptyChickenState(worldName, x, y);
+  const empty = makeEmptyChickenState(worldName, x, y);
   if (createIfMissing) {
     state.interactions.set(key, empty);
   }
@@ -8829,16 +8912,16 @@ function getChickenStateAt(worldName: any, x: any, y: any, createIfMissing: any 
 }
 
 function setChickenStateAt(worldName: any, chicken: any) {
-  const state: any = ensureWorldState(worldName);
-  const cleanChicken: any = sanitizeChickenState(chicken, worldName, chicken.x, chicken.y);
+  const state = ensureWorldState(worldName);
+  const cleanChicken = sanitizeChickenState(chicken, worldName, chicken.x, chicken.y);
   cleanChicken.updated_at = new Date().toISOString();
   state.interactions.set(gridKey(cleanChicken.x, cleanChicken.y), cleanChicken);
   return cleanChicken;
 }
 
 function initializeChickenOnPlace(worldName: any, update: any) {
-  const nowMs: any = Date.now();
-  const diesAtMs: any = nowMs + CHICKEN_HUNGER_MS;
+  const nowMs = Date.now();
+  const diesAtMs = nowMs + CHICKEN_HUNGER_MS;
   return setChickenStateAt(worldName, {
     ...makeEmptyChickenState(worldName, update.x, update.y),
     status: "hungry",
@@ -8852,8 +8935,8 @@ function initializeChickenOnPlace(worldName: any, update: any) {
 }
 
 function serializeChickenStateForClient(chicken: any) {
-  const cleanChicken: any = sanitizeChickenState(chicken, chicken?.world || "", chicken?.x || 0, chicken?.y || 0);
-  const nowMs: any = Date.now();
+  const cleanChicken = sanitizeChickenState(chicken, chicken?.world || "", chicken?.x || 0, chicken?.y || 0);
+  const nowMs = Date.now();
   let status: any = cleanChicken.status;
   if (cleanChicken.next_harvest_at_ms > 0) {
     status = nowMs >= cleanChicken.next_harvest_at_ms ? "ready" : "producing";
@@ -8907,13 +8990,13 @@ function makeChickenStatePayload(worldName: any, x: any, y: any, blockType: any,
 }
 
 function isChickenHungerExpired(chicken: any, nowMs: any = Date.now()) {
-  const clientState: any = serializeChickenStateForClient(chicken);
+  const clientState = serializeChickenStateForClient(chicken);
   return clientState.status === "hungry" && Number(clientState.dies_at_ms || 0) > 0 && nowMs >= Number(clientState.dies_at_ms || 0);
 }
 
 async function handleChickenStateUpdate(socket: any, player: any, worldName: any, update: any, requestId: any = "") {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isChickenBlockType(block.block_type)) {
     sendActionRejected(socket, "world_interaction_update", "Chicken missing.", {
       reason: "chicken_missing",
@@ -8932,7 +9015,7 @@ async function handleChickenStateUpdate(socket: any, player: any, worldName: any
     return false;
   }
 
-  const operation: any = clampString(update.operation || "harvest").toLowerCase();
+  const operation = clampString(update.operation || "harvest").toLowerCase();
   if (operation !== "feed" && operation !== "harvest") {
     sendActionRejected(socket, "world_interaction_update", "Unknown chicken action.", {
       reason: "unknown_chicken_action",
@@ -8940,8 +9023,8 @@ async function handleChickenStateUpdate(socket: any, player: any, worldName: any
     return false;
   }
 
-  const chickenActionKey: any = `${cleanWorld(worldName)}:${update.x}:${update.y}`;
-  const chickenLock: any = await acquireLiveActionLock(worldChickenActionLocks, "chicken", chickenActionKey, player.id);
+  const chickenActionKey = `${cleanWorld(worldName)}:${update.x}:${update.y}`;
+  const chickenLock = await acquireLiveActionLock(worldChickenActionLocks, "chicken", chickenActionKey, player.id);
   if (!chickenLock) {
     sendActionRejected(socket, "world_interaction_update", "That Chicken is busy.", {
       reason: "chicken_busy",
@@ -8949,16 +9032,16 @@ async function handleChickenStateUpdate(socket: any, player: any, worldName: any
     return false;
   }
 
-  const previousWorldState: any = serializeWorldState(worldName);
-  const sourceId: any = makeAuditId("chicken");
+  const previousWorldState = serializeWorldState(worldName);
+  const sourceId = makeAuditId("chicken");
   try {
     const chickenBeforeUpdate: any = {
       ...update,
       block_type: block.block_type,
     };
-    const objectBefore: any = getWorldObjectJournalData(worldName, chickenBeforeUpdate);
-    const chicken: any = getChickenStateAt(worldName, update.x, update.y, true);
-    const clientState: any = serializeChickenStateForClient(chicken);
+    const objectBefore = getWorldObjectJournalData(worldName, chickenBeforeUpdate);
+    const chicken = getChickenStateAt(worldName, update.x, update.y, true);
+    const clientState = serializeChickenStateForClient(chicken);
 
     if (operation === "feed") {
       if (isChickenHungerExpired(chicken)) {
@@ -8969,7 +9052,7 @@ async function handleChickenStateUpdate(socket: any, player: any, worldName: any
         return false;
       }
       if (!clientState.can_feed) {
-        const statePayload: any = makeChickenStatePayload(worldName, update.x, update.y, block.block_type, chicken, clientState.status);
+        const statePayload = makeChickenStatePayload(worldName, update.x, update.y, block.block_type, chicken, clientState.status);
         sendJson(socket, sanitizeChickenPayloadForClient(statePayload, worldName));
         sendActionRejected(socket, "world_interaction_update", "Chicken does not need grain yet.", {
           reason: "chicken_not_hungry",
@@ -8978,7 +9061,7 @@ async function handleChickenStateUpdate(socket: any, player: any, worldName: any
         return false;
       }
 
-      const playerState: any = ensureWritablePlayerState(player.account_username);
+      const playerState = ensureWritablePlayerState(player.account_username);
       if (!playerState) {
         sendActionRejected(socket, "world_interaction_update", "Could not load your server inventory.", {
           reason: "player_inventory_missing",
@@ -8994,8 +9077,8 @@ async function handleChickenStateUpdate(socket: any, player: any, worldName: any
         return false;
       }
 
-      const beforePlayerState: any = cloneJson(playerState);
-      const stagedPlayerState: any = cloneJson(playerState);
+      const beforePlayerState = cloneJson(playerState);
+      const stagedPlayerState = cloneJson(playerState);
       if (!spendItemFromState(stagedPlayerState, CHICKEN_FEED_ITEM_ID, CHICKEN_FEED_ITEM_CATEGORY, 1)) {
         sendActionRejected(socket, "world_interaction_update", "Could not spend Grain.", {
           reason: "inventory_spend_failed",
@@ -9003,9 +9086,9 @@ async function handleChickenStateUpdate(socket: any, player: any, worldName: any
         return false;
       }
 
-      const nowMs: any = Date.now();
-      const nextMs: any = nowMs + CHICKEN_PRODUCTION_MS;
-      const savedChicken: any = setChickenStateAt(worldName, {
+      const nowMs = Date.now();
+      const nextMs = nowMs + CHICKEN_PRODUCTION_MS;
+      const savedChicken = setChickenStateAt(worldName, {
         ...chicken,
         status: "producing",
         fed_at_ms: nowMs,
@@ -9019,14 +9102,14 @@ async function handleChickenStateUpdate(socket: any, player: any, worldName: any
         production_ms: CHICKEN_PRODUCTION_MS,
         hunger_ms: CHICKEN_HUNGER_MS,
       });
-      const statePayload: any = makeChickenStatePayload(worldName, update.x, update.y, block.block_type, savedChicken, "feed");
-      const objectAfter: any = getWorldObjectJournalData(worldName, statePayload);
-      const objectChange: any = buildWorldObjectChangeEntry(socket, player, worldName, statePayload, objectBefore, objectAfter, sourceId, {
+      const statePayload = makeChickenStatePayload(worldName, update.x, update.y, block.block_type, savedChicken, "feed");
+      const objectAfter = getWorldObjectJournalData(worldName, statePayload);
+      const objectChange = buildWorldObjectChangeEntry(socket, player, worldName, statePayload, objectBefore, objectAfter, sourceId, {
         chicken_action: "feed",
         next_harvest_at: savedChicken.next_harvest_at,
       });
-      const serializedWorld: any = serializeWorldState(worldName);
-      const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforePlayerState, stagedPlayerState, {
+      const serializedWorld = serializeWorldState(worldName);
+      const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforePlayerState, stagedPlayerState, {
         source: "chicken",
         action: "chicken_feed",
         reason: "chicken_feed",
@@ -9050,7 +9133,7 @@ async function handleChickenStateUpdate(socket: any, player: any, worldName: any
         return false;
       }
 
-      const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, commit.state);
+      const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, commit.state);
       persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
       sendWorldUpdateToRequesterAndWorld(socket, player, worldName, statePayload);
       logWorldChange(socket, player, objectChange, { skipPostgres: commit.postgres_committed });
@@ -9071,7 +9154,7 @@ async function handleChickenStateUpdate(socket: any, player: any, worldName: any
     }
 
     if (!clientState.ready) {
-      const statePayload: any = makeChickenStatePayload(worldName, update.x, update.y, block.block_type, chicken, clientState.status);
+      const statePayload = makeChickenStatePayload(worldName, update.x, update.y, block.block_type, chicken, clientState.status);
       sendJson(socket, sanitizeChickenPayloadForClient(statePayload, worldName));
       sendActionRejected(socket, "world_interaction_update", "Chicken is not ready yet.", {
         reason: "chicken_not_ready",
@@ -9081,12 +9164,12 @@ async function handleChickenStateUpdate(socket: any, player: any, worldName: any
       return false;
     }
 
-    const rewardItemId: any = crypto.randomInt(0, 10000) < Math.round(CHICKEN_GOLDEN_EGG_CHANCE * 10000)
+    const rewardItemId = crypto.randomInt(0, 10000) < Math.round(CHICKEN_GOLDEN_EGG_CHANCE * 10000)
       ? CHICKEN_GOLDEN_EGG_ITEM_ID
       : CHICKEN_EGG_ITEM_ID;
-    const nowMs: any = Date.now();
-    const diesAtMs: any = nowMs + CHICKEN_HUNGER_MS;
-    const savedChicken: any = setChickenStateAt(worldName, {
+    const nowMs = Date.now();
+    const diesAtMs = nowMs + CHICKEN_HUNGER_MS;
+    const savedChicken = setChickenStateAt(worldName, {
       ...chicken,
       status: "hungry",
       fed_at_ms: 0,
@@ -9102,8 +9185,8 @@ async function handleChickenStateUpdate(socket: any, player: any, worldName: any
       production_ms: CHICKEN_PRODUCTION_MS,
       hunger_ms: CHICKEN_HUNGER_MS,
     });
-    const dropPosition: any = getGridCenterPixels(update.x, update.y);
-    const rewardDrop: any = createServerDrop(
+    const dropPosition = getGridCenterPixels(update.x, update.y);
+    const rewardDrop = createServerDrop(
       worldName,
       rewardItemId,
       CHICKEN_REWARD_ITEM_CATEGORY,
@@ -9121,9 +9204,9 @@ async function handleChickenStateUpdate(socket: any, player: any, worldName: any
       });
       return false;
     }
-    const statePayload: any = makeChickenStatePayload(worldName, update.x, update.y, block.block_type, savedChicken, "harvest");
-    const objectAfter: any = getWorldObjectJournalData(worldName, statePayload);
-    const objectChange: any = buildWorldObjectChangeEntry(socket, player, worldName, statePayload, objectBefore, objectAfter, sourceId, {
+    const statePayload = makeChickenStatePayload(worldName, update.x, update.y, block.block_type, savedChicken, "harvest");
+    const objectAfter = getWorldObjectJournalData(worldName, statePayload);
+    const objectChange = buildWorldObjectChangeEntry(socket, player, worldName, statePayload, objectBefore, objectAfter, sourceId, {
       chicken_action: "harvest",
       reward_item_id: rewardItemId,
       reward_drop_id: rewardDrop.drop_id,
@@ -9147,7 +9230,7 @@ async function handleChickenStateUpdate(socket: any, player: any, worldName: any
         source_block: block.block_type,
       },
     };
-    const commit: any = await commitWorldStateWithBlockChanges(worldName, [objectChange, dropChange], {
+    const commit = await commitWorldStateWithBlockChanges(worldName, [objectChange, dropChange], {
       player,
       allow_dev_json_fallback: true,
     });
@@ -9196,7 +9279,7 @@ function makeEmptyCowState(worldName: any, x: any, y: any) {
 }
 
 function normalizeCowStatus(rawStatus: any, nextHarvestAtMs: any, diesAtMs: any, nowMs: any = Date.now()) {
-  const cleanStatus: any = clampString(rawStatus || "").toLowerCase();
+  const cleanStatus = clampString(rawStatus || "").toLowerCase();
   if (nextHarvestAtMs > 0) {
     return nowMs >= nextHarvestAtMs ? "ready" : "producing";
   }
@@ -9210,17 +9293,17 @@ function sanitizeCowState(rawEntry: any, worldName: any, x: any, y: any) {
 }
 
 function getCowStateAt(worldName: any, x: any, y: any, createIfMissing: any = false) {
-  const state: any = ensureWorldState(worldName);
-  const key: any = gridKey(x, y);
-  const existing: any = state.interactions.get(key);
+  const state = ensureWorldState(worldName);
+  const key = gridKey(x, y);
+  const existing = state.interactions.get(key);
 
   if (existing && existing.action === "cow_state") {
-    const cow: any = sanitizeCowState(existing, worldName, x, y);
+    const cow = sanitizeCowState(existing, worldName, x, y);
     state.interactions.set(key, cow);
     return cow;
   }
 
-  const empty: any = makeEmptyCowState(worldName, x, y);
+  const empty = makeEmptyCowState(worldName, x, y);
   if (createIfMissing) {
     state.interactions.set(key, empty);
   }
@@ -9228,16 +9311,16 @@ function getCowStateAt(worldName: any, x: any, y: any, createIfMissing: any = fa
 }
 
 function setCowStateAt(worldName: any, cow: any) {
-  const state: any = ensureWorldState(worldName);
-  const cleanCow: any = sanitizeCowState(cow, worldName, cow.x, cow.y);
+  const state = ensureWorldState(worldName);
+  const cleanCow = sanitizeCowState(cow, worldName, cow.x, cow.y);
   cleanCow.updated_at = new Date().toISOString();
   state.interactions.set(gridKey(cleanCow.x, cleanCow.y), cleanCow);
   return cleanCow;
 }
 
 function initializeCowOnPlace(worldName: any, update: any) {
-  const nowMs: any = Date.now();
-  const diesAtMs: any = nowMs + COW_HUNGER_MS;
+  const nowMs = Date.now();
+  const diesAtMs = nowMs + COW_HUNGER_MS;
   return setCowStateAt(worldName, {
     ...makeEmptyCowState(worldName, update.x, update.y),
     status: "hungry",
@@ -9251,8 +9334,8 @@ function initializeCowOnPlace(worldName: any, update: any) {
 }
 
 function serializeCowStateForClient(cow: any) {
-  const cleanCow: any = sanitizeCowState(cow, cow?.world || "", cow?.x || 0, cow?.y || 0);
-  const nowMs: any = Date.now();
+  const cleanCow = sanitizeCowState(cow, cow?.world || "", cow?.x || 0, cow?.y || 0);
+  const nowMs = Date.now();
   let status: any = cleanCow.status;
   if (cleanCow.next_harvest_at_ms > 0) {
     status = nowMs >= cleanCow.next_harvest_at_ms ? "ready" : "producing";
@@ -9306,13 +9389,13 @@ function makeCowStatePayload(worldName: any, x: any, y: any, blockType: any, cow
 }
 
 function isCowHungerExpired(cow: any, nowMs: any = Date.now()) {
-  const clientState: any = serializeCowStateForClient(cow);
+  const clientState = serializeCowStateForClient(cow);
   return clientState.status === "hungry" && Number(clientState.dies_at_ms || 0) > 0 && nowMs >= Number(clientState.dies_at_ms || 0);
 }
 
 async function handleCowStateUpdate(socket: any, player: any, worldName: any, update: any, requestId: any = "") {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isCowBlockType(block.block_type)) {
     sendActionRejected(socket, "world_interaction_update", "Cow missing.", {
       reason: "cow_missing",
@@ -9331,7 +9414,7 @@ async function handleCowStateUpdate(socket: any, player: any, worldName: any, up
     return false;
   }
 
-  const operation: any = clampString(update.operation || "harvest").toLowerCase();
+  const operation = clampString(update.operation || "harvest").toLowerCase();
   if (operation !== "feed" && operation !== "harvest") {
     sendActionRejected(socket, "world_interaction_update", "Unknown cow action.", {
       reason: "unknown_cow_action",
@@ -9339,8 +9422,8 @@ async function handleCowStateUpdate(socket: any, player: any, worldName: any, up
     return false;
   }
 
-  const cowActionKey: any = `${cleanWorld(worldName)}:${update.x}:${update.y}`;
-  const cowLock: any = await acquireLiveActionLock(worldCowActionLocks, "cow", cowActionKey, player.id);
+  const cowActionKey = `${cleanWorld(worldName)}:${update.x}:${update.y}`;
+  const cowLock = await acquireLiveActionLock(worldCowActionLocks, "cow", cowActionKey, player.id);
   if (!cowLock) {
     sendActionRejected(socket, "world_interaction_update", "That Cow is busy.", {
       reason: "cow_busy",
@@ -9348,16 +9431,16 @@ async function handleCowStateUpdate(socket: any, player: any, worldName: any, up
     return false;
   }
 
-  const previousWorldState: any = serializeWorldState(worldName);
-  const sourceId: any = makeAuditId("cow");
+  const previousWorldState = serializeWorldState(worldName);
+  const sourceId = makeAuditId("cow");
   try {
     const cowBeforeUpdate: any = {
       ...update,
       block_type: block.block_type,
     };
-    const objectBefore: any = getWorldObjectJournalData(worldName, cowBeforeUpdate);
-    const cow: any = getCowStateAt(worldName, update.x, update.y, true);
-    const clientState: any = serializeCowStateForClient(cow);
+    const objectBefore = getWorldObjectJournalData(worldName, cowBeforeUpdate);
+    const cow = getCowStateAt(worldName, update.x, update.y, true);
+    const clientState = serializeCowStateForClient(cow);
 
     if (operation === "feed") {
       if (isCowHungerExpired(cow)) {
@@ -9368,7 +9451,7 @@ async function handleCowStateUpdate(socket: any, player: any, worldName: any, up
         return false;
       }
       if (!clientState.can_feed) {
-        const statePayload: any = makeCowStatePayload(worldName, update.x, update.y, block.block_type, cow, clientState.status);
+        const statePayload = makeCowStatePayload(worldName, update.x, update.y, block.block_type, cow, clientState.status);
         sendJson(socket, sanitizeCowPayloadForClient(statePayload, worldName));
         sendActionRejected(socket, "world_interaction_update", "Cow does not need wheat yet.", {
           reason: "cow_not_hungry",
@@ -9377,7 +9460,7 @@ async function handleCowStateUpdate(socket: any, player: any, worldName: any, up
         return false;
       }
 
-      const playerState: any = ensureWritablePlayerState(player.account_username);
+      const playerState = ensureWritablePlayerState(player.account_username);
       if (!playerState) {
         sendActionRejected(socket, "world_interaction_update", "Could not load your server inventory.", {
           reason: "player_inventory_missing",
@@ -9393,8 +9476,8 @@ async function handleCowStateUpdate(socket: any, player: any, worldName: any, up
         return false;
       }
 
-      const beforePlayerState: any = cloneJson(playerState);
-      const stagedPlayerState: any = cloneJson(playerState);
+      const beforePlayerState = cloneJson(playerState);
+      const stagedPlayerState = cloneJson(playerState);
       if (!spendItemFromState(stagedPlayerState, COW_FEED_ITEM_ID, COW_FEED_ITEM_CATEGORY, 1)) {
         sendActionRejected(socket, "world_interaction_update", "Could not spend Wheat.", {
           reason: "inventory_spend_failed",
@@ -9402,9 +9485,9 @@ async function handleCowStateUpdate(socket: any, player: any, worldName: any, up
         return false;
       }
 
-      const nowMs: any = Date.now();
-      const nextMs: any = nowMs + COW_PRODUCTION_MS;
-      const savedCow: any = setCowStateAt(worldName, {
+      const nowMs = Date.now();
+      const nextMs = nowMs + COW_PRODUCTION_MS;
+      const savedCow = setCowStateAt(worldName, {
         ...cow,
         status: "producing",
         fed_at_ms: nowMs,
@@ -9418,14 +9501,14 @@ async function handleCowStateUpdate(socket: any, player: any, worldName: any, up
         production_ms: COW_PRODUCTION_MS,
         hunger_ms: COW_HUNGER_MS,
       });
-      const statePayload: any = makeCowStatePayload(worldName, update.x, update.y, block.block_type, savedCow, "feed");
-      const objectAfter: any = getWorldObjectJournalData(worldName, statePayload);
-      const objectChange: any = buildWorldObjectChangeEntry(socket, player, worldName, statePayload, objectBefore, objectAfter, sourceId, {
+      const statePayload = makeCowStatePayload(worldName, update.x, update.y, block.block_type, savedCow, "feed");
+      const objectAfter = getWorldObjectJournalData(worldName, statePayload);
+      const objectChange = buildWorldObjectChangeEntry(socket, player, worldName, statePayload, objectBefore, objectAfter, sourceId, {
         cow_action: "feed",
         next_harvest_at: savedCow.next_harvest_at,
       });
-      const serializedWorld: any = serializeWorldState(worldName);
-      const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforePlayerState, stagedPlayerState, {
+      const serializedWorld = serializeWorldState(worldName);
+      const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforePlayerState, stagedPlayerState, {
         source: "cow",
         action: "cow_feed",
         reason: "cow_feed",
@@ -9449,7 +9532,7 @@ async function handleCowStateUpdate(socket: any, player: any, worldName: any, up
         return false;
       }
 
-      const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, commit.state);
+      const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, commit.state);
       persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
       sendWorldUpdateToRequesterAndWorld(socket, player, worldName, statePayload);
       logWorldChange(socket, player, objectChange, { skipPostgres: commit.postgres_committed });
@@ -9470,7 +9553,7 @@ async function handleCowStateUpdate(socket: any, player: any, worldName: any, up
     }
 
     if (!clientState.ready) {
-      const statePayload: any = makeCowStatePayload(worldName, update.x, update.y, block.block_type, cow, clientState.status);
+      const statePayload = makeCowStatePayload(worldName, update.x, update.y, block.block_type, cow, clientState.status);
       sendJson(socket, sanitizeCowPayloadForClient(statePayload, worldName));
       sendActionRejected(socket, "world_interaction_update", "Cow is not ready yet.", {
         reason: "cow_not_ready",
@@ -9480,9 +9563,9 @@ async function handleCowStateUpdate(socket: any, player: any, worldName: any, up
       return false;
     }
 
-    const nowMs: any = Date.now();
-    const diesAtMs: any = nowMs + COW_HUNGER_MS;
-    const savedCow: any = setCowStateAt(worldName, {
+    const nowMs = Date.now();
+    const diesAtMs = nowMs + COW_HUNGER_MS;
+    const savedCow = setCowStateAt(worldName, {
       ...cow,
       status: "hungry",
       fed_at_ms: 0,
@@ -9498,8 +9581,8 @@ async function handleCowStateUpdate(socket: any, player: any, worldName: any, up
       production_ms: COW_PRODUCTION_MS,
       hunger_ms: COW_HUNGER_MS,
     });
-    const dropPosition: any = getGridCenterPixels(update.x, update.y);
-    const rewardDrop: any = createServerDrop(
+    const dropPosition = getGridCenterPixels(update.x, update.y);
+    const rewardDrop = createServerDrop(
       worldName,
       COW_MILK_ITEM_ID,
       COW_REWARD_ITEM_CATEGORY,
@@ -9517,9 +9600,9 @@ async function handleCowStateUpdate(socket: any, player: any, worldName: any, up
       });
       return false;
     }
-    const statePayload: any = makeCowStatePayload(worldName, update.x, update.y, block.block_type, savedCow, "harvest");
-    const objectAfter: any = getWorldObjectJournalData(worldName, statePayload);
-    const objectChange: any = buildWorldObjectChangeEntry(socket, player, worldName, statePayload, objectBefore, objectAfter, sourceId, {
+    const statePayload = makeCowStatePayload(worldName, update.x, update.y, block.block_type, savedCow, "harvest");
+    const objectAfter = getWorldObjectJournalData(worldName, statePayload);
+    const objectChange = buildWorldObjectChangeEntry(socket, player, worldName, statePayload, objectBefore, objectAfter, sourceId, {
       cow_action: "harvest",
       reward_item_id: COW_MILK_ITEM_ID,
       reward_drop_id: rewardDrop.drop_id,
@@ -9543,7 +9626,7 @@ async function handleCowStateUpdate(socket: any, player: any, worldName: any, up
         source_block: block.block_type,
       },
     };
-    const commit: any = await commitWorldStateWithBlockChanges(worldName, [objectChange, dropChange], {
+    const commit = await commitWorldStateWithBlockChanges(worldName, [objectChange, dropChange], {
       player,
       allow_dev_json_fallback: true,
     });
@@ -9592,7 +9675,7 @@ function makeEmptyDuckState(worldName: any, x: any, y: any) {
 }
 
 function normalizeDuckStatus(rawStatus: any, nextHarvestAtMs: any, diesAtMs: any, nowMs: any = Date.now()) {
-  const cleanStatus: any = clampString(rawStatus || "").toLowerCase();
+  const cleanStatus = clampString(rawStatus || "").toLowerCase();
   if (nextHarvestAtMs > 0) {
     return nowMs >= nextHarvestAtMs ? "ready" : "producing";
   }
@@ -9606,17 +9689,17 @@ function sanitizeDuckState(rawEntry: any, worldName: any, x: any, y: any) {
 }
 
 function getDuckStateAt(worldName: any, x: any, y: any, createIfMissing: any = false) {
-  const state: any = ensureWorldState(worldName);
-  const key: any = gridKey(x, y);
-  const existing: any = state.interactions.get(key);
+  const state = ensureWorldState(worldName);
+  const key = gridKey(x, y);
+  const existing = state.interactions.get(key);
 
   if (existing && existing.action === "duck_state") {
-    const duck: any = sanitizeDuckState(existing, worldName, x, y);
+    const duck = sanitizeDuckState(existing, worldName, x, y);
     state.interactions.set(key, duck);
     return duck;
   }
 
-  const empty: any = makeEmptyDuckState(worldName, x, y);
+  const empty = makeEmptyDuckState(worldName, x, y);
   if (createIfMissing) {
     state.interactions.set(key, empty);
   }
@@ -9624,16 +9707,16 @@ function getDuckStateAt(worldName: any, x: any, y: any, createIfMissing: any = f
 }
 
 function setDuckStateAt(worldName: any, duck: any) {
-  const state: any = ensureWorldState(worldName);
-  const cleanDuck: any = sanitizeDuckState(duck, worldName, duck.x, duck.y);
+  const state = ensureWorldState(worldName);
+  const cleanDuck = sanitizeDuckState(duck, worldName, duck.x, duck.y);
   cleanDuck.updated_at = new Date().toISOString();
   state.interactions.set(gridKey(cleanDuck.x, cleanDuck.y), cleanDuck);
   return cleanDuck;
 }
 
 function initializeDuckOnPlace(worldName: any, update: any) {
-  const nowMs: any = Date.now();
-  const diesAtMs: any = nowMs + DUCK_HUNGER_MS;
+  const nowMs = Date.now();
+  const diesAtMs = nowMs + DUCK_HUNGER_MS;
   return setDuckStateAt(worldName, {
     ...makeEmptyDuckState(worldName, update.x, update.y),
     status: "hungry",
@@ -9647,8 +9730,8 @@ function initializeDuckOnPlace(worldName: any, update: any) {
 }
 
 function serializeDuckStateForClient(duck: any) {
-  const cleanDuck: any = sanitizeDuckState(duck, duck?.world || "", duck?.x || 0, duck?.y || 0);
-  const nowMs: any = Date.now();
+  const cleanDuck = sanitizeDuckState(duck, duck?.world || "", duck?.x || 0, duck?.y || 0);
+  const nowMs = Date.now();
   let status: any = cleanDuck.status;
   if (cleanDuck.next_harvest_at_ms > 0) {
     status = nowMs >= cleanDuck.next_harvest_at_ms ? "ready" : "producing";
@@ -9702,30 +9785,30 @@ function makeDuckStatePayload(worldName: any, x: any, y: any, blockType: any, du
 }
 
 function isDuckHungerExpired(duck: any, nowMs: any = Date.now()) {
-  const clientState: any = serializeDuckStateForClient(duck);
+  const clientState = serializeDuckStateForClient(duck);
   return clientState.status === "hungry" && Number(clientState.dies_at_ms || 0) > 0 && nowMs >= Number(clientState.dies_at_ms || 0);
 }
 
 function rollDuckFishReward() {
-  const table: any = ItemDatabase.getFishingTable("default", {});
-  const fishOnlyTable: any = table.filter((entry) => {
-    const itemId: any = clampString(entry.item_id || entry.fish_id || "");
-    const category: any = resolveInventoryCategory(itemId, entry.item_category || entry.category || (entry.fish_id ? "fish" : ""));
+  const table = ItemDatabase.getFishingTable("default", {});
+  const fishOnlyTable = table.filter((entry: ServerPacketRecord) => {
+    const itemId = clampString(entry.item_id || entry.fish_id || "");
+    const category = resolveInventoryCategory(itemId, entry.item_category || entry.category || (entry.fish_id ? "fish" : ""));
     return itemId !== "" && category === DUCK_REWARD_ITEM_CATEGORY && ItemDatabase.hasItem(itemId) && ItemDatabase.canStoreItemInCategory(itemId, category);
   });
-  const reward: any = rollWeightedReward(fishOnlyTable.length > 0 ? fishOnlyTable : table);
+  const reward = rollWeightedReward(fishOnlyTable.length > 0 ? fishOnlyTable : table);
   if (!reward) return null;
 
-  const itemId: any = clampString(reward.item_id || reward.fish_id || "");
-  const itemCategory: any = resolveInventoryCategory(itemId, reward.item_category || reward.category || (reward.fish_id ? "fish" : ""));
+  const itemId = clampString(reward.item_id || reward.fish_id || "");
+  const itemCategory = resolveInventoryCategory(itemId, reward.item_category || reward.category || (reward.fish_id ? "fish" : ""));
   if (itemId === "" || itemCategory !== DUCK_REWARD_ITEM_CATEGORY) return null;
   if (!ItemDatabase.hasItem(itemId) || !ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) return null;
   return { item_id: itemId, item_category: itemCategory, amount: 1 };
 }
 
 async function handleDuckStateUpdate(socket: any, player: any, worldName: any, update: any, requestId: any = "") {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isDuckBlockType(block.block_type)) {
     sendActionRejected(socket, "world_interaction_update", "Duck missing.", {
       reason: "duck_missing",
@@ -9744,7 +9827,7 @@ async function handleDuckStateUpdate(socket: any, player: any, worldName: any, u
     return false;
   }
 
-  const operation: any = clampString(update.operation || "harvest").toLowerCase();
+  const operation = clampString(update.operation || "harvest").toLowerCase();
   if (operation !== "feed" && operation !== "harvest") {
     sendActionRejected(socket, "world_interaction_update", "Unknown duck action.", {
       reason: "unknown_duck_action",
@@ -9752,8 +9835,8 @@ async function handleDuckStateUpdate(socket: any, player: any, worldName: any, u
     return false;
   }
 
-  const duckActionKey: any = `${cleanWorld(worldName)}:${update.x}:${update.y}`;
-  const duckLock: any = await acquireLiveActionLock(worldDuckActionLocks, "duck", duckActionKey, player.id);
+  const duckActionKey = `${cleanWorld(worldName)}:${update.x}:${update.y}`;
+  const duckLock = await acquireLiveActionLock(worldDuckActionLocks, "duck", duckActionKey, player.id);
   if (!duckLock) {
     sendActionRejected(socket, "world_interaction_update", "That Duck is busy.", {
       reason: "duck_busy",
@@ -9761,16 +9844,16 @@ async function handleDuckStateUpdate(socket: any, player: any, worldName: any, u
     return false;
   }
 
-  const previousWorldState: any = serializeWorldState(worldName);
-  const sourceId: any = makeAuditId("duck");
+  const previousWorldState = serializeWorldState(worldName);
+  const sourceId = makeAuditId("duck");
   try {
     const duckBeforeUpdate: any = {
       ...update,
       block_type: block.block_type,
     };
-    const objectBefore: any = getWorldObjectJournalData(worldName, duckBeforeUpdate);
-    const duck: any = getDuckStateAt(worldName, update.x, update.y, true);
-    const clientState: any = serializeDuckStateForClient(duck);
+    const objectBefore = getWorldObjectJournalData(worldName, duckBeforeUpdate);
+    const duck = getDuckStateAt(worldName, update.x, update.y, true);
+    const clientState = serializeDuckStateForClient(duck);
 
     if (operation === "feed") {
       if (isDuckHungerExpired(duck)) {
@@ -9781,7 +9864,7 @@ async function handleDuckStateUpdate(socket: any, player: any, worldName: any, u
         return false;
       }
       if (!clientState.can_feed) {
-        const statePayload: any = makeDuckStatePayload(worldName, update.x, update.y, block.block_type, duck, clientState.status);
+        const statePayload = makeDuckStatePayload(worldName, update.x, update.y, block.block_type, duck, clientState.status);
         sendJson(socket, sanitizeDuckPayloadForClient(statePayload, worldName));
         sendActionRejected(socket, "world_interaction_update", "Duck does not need grain yet.", {
           reason: "duck_not_hungry",
@@ -9790,7 +9873,7 @@ async function handleDuckStateUpdate(socket: any, player: any, worldName: any, u
         return false;
       }
 
-      const playerState: any = ensureWritablePlayerState(player.account_username);
+      const playerState = ensureWritablePlayerState(player.account_username);
       if (!playerState) {
         sendActionRejected(socket, "world_interaction_update", "Could not load your server inventory.", {
           reason: "player_inventory_missing",
@@ -9806,8 +9889,8 @@ async function handleDuckStateUpdate(socket: any, player: any, worldName: any, u
         return false;
       }
 
-      const beforePlayerState: any = cloneJson(playerState);
-      const stagedPlayerState: any = cloneJson(playerState);
+      const beforePlayerState = cloneJson(playerState);
+      const stagedPlayerState = cloneJson(playerState);
       if (!spendItemFromState(stagedPlayerState, DUCK_FEED_ITEM_ID, DUCK_FEED_ITEM_CATEGORY, 1)) {
         sendActionRejected(socket, "world_interaction_update", "Could not spend Grain.", {
           reason: "inventory_spend_failed",
@@ -9815,9 +9898,9 @@ async function handleDuckStateUpdate(socket: any, player: any, worldName: any, u
         return false;
       }
 
-      const nowMs: any = Date.now();
-      const nextMs: any = nowMs + DUCK_PRODUCTION_MS;
-      const savedDuck: any = setDuckStateAt(worldName, {
+      const nowMs = Date.now();
+      const nextMs = nowMs + DUCK_PRODUCTION_MS;
+      const savedDuck = setDuckStateAt(worldName, {
         ...duck,
         status: "producing",
         fed_at_ms: nowMs,
@@ -9831,14 +9914,14 @@ async function handleDuckStateUpdate(socket: any, player: any, worldName: any, u
         production_ms: DUCK_PRODUCTION_MS,
         hunger_ms: DUCK_HUNGER_MS,
       });
-      const statePayload: any = makeDuckStatePayload(worldName, update.x, update.y, block.block_type, savedDuck, "feed");
-      const objectAfter: any = getWorldObjectJournalData(worldName, statePayload);
-      const objectChange: any = buildWorldObjectChangeEntry(socket, player, worldName, statePayload, objectBefore, objectAfter, sourceId, {
+      const statePayload = makeDuckStatePayload(worldName, update.x, update.y, block.block_type, savedDuck, "feed");
+      const objectAfter = getWorldObjectJournalData(worldName, statePayload);
+      const objectChange = buildWorldObjectChangeEntry(socket, player, worldName, statePayload, objectBefore, objectAfter, sourceId, {
         duck_action: "feed",
         next_harvest_at: savedDuck.next_harvest_at,
       });
-      const serializedWorld: any = serializeWorldState(worldName);
-      const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforePlayerState, stagedPlayerState, {
+      const serializedWorld = serializeWorldState(worldName);
+      const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforePlayerState, stagedPlayerState, {
         source: "duck",
         action: "duck_feed",
         reason: "duck_feed",
@@ -9862,7 +9945,7 @@ async function handleDuckStateUpdate(socket: any, player: any, worldName: any, u
         return false;
       }
 
-      const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, commit.state);
+      const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, commit.state);
       persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
       sendWorldUpdateToRequesterAndWorld(socket, player, worldName, statePayload);
       logWorldChange(socket, player, objectChange, { skipPostgres: commit.postgres_committed });
@@ -9883,7 +9966,7 @@ async function handleDuckStateUpdate(socket: any, player: any, worldName: any, u
     }
 
     if (!clientState.ready) {
-      const statePayload: any = makeDuckStatePayload(worldName, update.x, update.y, block.block_type, duck, clientState.status);
+      const statePayload = makeDuckStatePayload(worldName, update.x, update.y, block.block_type, duck, clientState.status);
       sendJson(socket, sanitizeDuckPayloadForClient(statePayload, worldName));
       sendActionRejected(socket, "world_interaction_update", "Duck is not ready yet.", {
         reason: "duck_not_ready",
@@ -9893,7 +9976,7 @@ async function handleDuckStateUpdate(socket: any, player: any, worldName: any, u
       return false;
     }
 
-    const reward: any = rollDuckFishReward();
+    const reward = rollDuckFishReward();
     if (!reward) {
       sendActionRejected(socket, "world_interaction_update", "Could not roll Duck reward.", {
         reason: "duck_reward_roll_failed",
@@ -9901,9 +9984,9 @@ async function handleDuckStateUpdate(socket: any, player: any, worldName: any, u
       return false;
     }
 
-    const nowMs: any = Date.now();
-    const diesAtMs: any = nowMs + DUCK_HUNGER_MS;
-    const savedDuck: any = setDuckStateAt(worldName, {
+    const nowMs = Date.now();
+    const diesAtMs = nowMs + DUCK_HUNGER_MS;
+    const savedDuck = setDuckStateAt(worldName, {
       ...duck,
       status: "hungry",
       fed_at_ms: 0,
@@ -9919,8 +10002,8 @@ async function handleDuckStateUpdate(socket: any, player: any, worldName: any, u
       production_ms: DUCK_PRODUCTION_MS,
       hunger_ms: DUCK_HUNGER_MS,
     });
-    const dropPosition: any = getGridCenterPixels(update.x, update.y);
-    const rewardDrop: any = createServerDrop(
+    const dropPosition = getGridCenterPixels(update.x, update.y);
+    const rewardDrop = createServerDrop(
       worldName,
       reward.item_id,
       reward.item_category,
@@ -9938,9 +10021,9 @@ async function handleDuckStateUpdate(socket: any, player: any, worldName: any, u
       });
       return false;
     }
-    const statePayload: any = makeDuckStatePayload(worldName, update.x, update.y, block.block_type, savedDuck, "harvest");
-    const objectAfter: any = getWorldObjectJournalData(worldName, statePayload);
-    const objectChange: any = buildWorldObjectChangeEntry(socket, player, worldName, statePayload, objectBefore, objectAfter, sourceId, {
+    const statePayload = makeDuckStatePayload(worldName, update.x, update.y, block.block_type, savedDuck, "harvest");
+    const objectAfter = getWorldObjectJournalData(worldName, statePayload);
+    const objectChange = buildWorldObjectChangeEntry(socket, player, worldName, statePayload, objectBefore, objectAfter, sourceId, {
       duck_action: "harvest",
       reward_item_id: reward.item_id,
       reward_drop_id: rewardDrop.drop_id,
@@ -9964,7 +10047,7 @@ async function handleDuckStateUpdate(socket: any, player: any, worldName: any, u
         source_block: block.block_type,
       },
     };
-    const commit: any = await commitWorldStateWithBlockChanges(worldName, [objectChange, dropChange], {
+    const commit = await commitWorldStateWithBlockChanges(worldName, [objectChange, dropChange], {
       player,
       allow_dev_json_fallback: true,
     });
@@ -9989,12 +10072,12 @@ async function handleDuckStateUpdate(socket: any, player: any, worldName: any, u
 }
 
 async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName: any, update: any, requestId: any = "") {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
-  const isWaterWell: any = Boolean(block && isWaterWellBlockType(block.block_type));
-  const isTackleBox: any = Boolean(block && isTackleBoxBlockType(block.block_type));
-  const providerName: any = isWaterWell ? "Water Well" : "Tackle Box";
-  const providerType: any = isWaterWell ? "water_well" : "tackle_box";
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
+  const isWaterWell = Boolean(block && isWaterWellBlockType(block.block_type));
+  const isTackleBox = Boolean(block && isTackleBoxBlockType(block.block_type));
+  const providerName = isWaterWell ? "Water Well" : "Tackle Box";
+  const providerType = isWaterWell ? "water_well" : "tackle_box";
   if (!block || (!isTackleBox && !isWaterWell)) {
     sendActionRejected(socket, "world_interaction_update", `${providerName} missing.`, {
       reason: isWaterWell ? "water_well_missing" : "tackle_box_missing",
@@ -10013,7 +10096,7 @@ async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName:
     return false;
   }
 
-  const operation: any = clampString(update.operation || "harvest").toLowerCase();
+  const operation = clampString(update.operation || "harvest").toLowerCase();
   if (operation !== "harvest") {
     sendActionRejected(socket, "world_interaction_update", `Unknown ${providerName} action.`, {
       reason: isWaterWell ? "unknown_water_well_action" : "unknown_tackle_box_action",
@@ -10021,8 +10104,8 @@ async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName:
     return false;
   }
 
-  const tackleActionKey: any = `${cleanWorld(worldName)}:${update.x}:${update.y}`;
-  const tackleLock: any = await acquireLiveActionLock(worldTackleBoxActionLocks, providerType, tackleActionKey, player.id);
+  const tackleActionKey = `${cleanWorld(worldName)}:${update.x}:${update.y}`;
+  const tackleLock = await acquireLiveActionLock(worldTackleBoxActionLocks, providerType, tackleActionKey, player.id);
   if (!tackleLock) {
     sendActionRejected(socket, "world_interaction_update", `That ${providerName} is busy.`, {
       reason: isWaterWell ? "water_well_busy" : "tackle_box_busy",
@@ -10030,20 +10113,20 @@ async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName:
     return false;
   }
 
-  const previousWorldState: any = serializeWorldState(worldName);
-  const sourceId: any = makeAuditId(providerType);
+  const previousWorldState = serializeWorldState(worldName);
+  const sourceId = makeAuditId(providerType);
   try {
     const tackleBeforeUpdate: any = {
       ...update,
       block_type: block.block_type,
     };
-    const objectBefore: any = getWorldObjectJournalData(worldName, tackleBeforeUpdate);
-    const cooldownMs: any = getTimedProviderCooldownMsForBlockType(block.block_type);
-    const tackle: any = getTackleBoxStateAt(worldName, update.x, update.y, true, cooldownMs);
-    const clientState: any = serializeTackleBoxStateForClient(tackle);
+    const objectBefore = getWorldObjectJournalData(worldName, tackleBeforeUpdate);
+    const cooldownMs = getTimedProviderCooldownMsForBlockType(block.block_type);
+    const tackle = getTackleBoxStateAt(worldName, update.x, update.y, true, cooldownMs);
+    const clientState = serializeTackleBoxStateForClient(tackle);
 
     if (!clientState.ready) {
-      const statePayload: any = makeTackleBoxStatePayload(worldName, update.x, update.y, block.block_type, tackle, "cooldown");
+      const statePayload = makeTackleBoxStatePayload(worldName, update.x, update.y, block.block_type, tackle, "cooldown");
       sendJson(socket, statePayload);
       sendActionRejected(socket, "world_interaction_update", `${providerName} is not ready yet.`, {
         reason: isWaterWell ? "water_well_cooldown" : "tackle_box_cooldown",
@@ -10053,9 +10136,9 @@ async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName:
       return false;
     }
 
-    const nowMs: any = Date.now();
-    const nextMs: any = nowMs + cooldownMs;
-    const savedTackle: any = setTackleBoxStateAt(worldName, {
+    const nowMs = Date.now();
+    const nextMs = nowMs + cooldownMs;
+    const savedTackle = setTackleBoxStateAt(worldName, {
       ...tackle,
       next_harvest_at_ms: nextMs,
       next_harvest_at: new Date(nextMs).toISOString(),
@@ -10064,21 +10147,21 @@ async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName:
       cooldown_ms: cooldownMs,
     }, cooldownMs);
 
-    const dropPosition: any = getGridCenterPixels(update.x, update.y);
+    const dropPosition = getGridCenterPixels(update.x, update.y);
     const emittedDrops: any = [];
     const rewards: any = [];
     if (isWaterWell) {
-      const definition: any = ItemDatabase.getItemDefinition(block.block_type) || {};
-      const rewardItemId: any = clampString(definition.water_well_reward_item_id || WATER_WELL_REWARD_ITEM_ID);
-      const rewardCategory: any = resolveInventoryCategory(rewardItemId, definition.water_well_reward_item_category || WATER_WELL_REWARD_ITEM_CATEGORY);
-      const amountRange: any = Array.isArray(definition.water_well_reward_amount_range)
+      const definition = ItemDatabase.getItemDefinition(block.block_type) || {};
+      const rewardItemId = clampString(definition.water_well_reward_item_id || WATER_WELL_REWARD_ITEM_ID);
+      const rewardCategory = resolveInventoryCategory(rewardItemId, definition.water_well_reward_item_category || WATER_WELL_REWARD_ITEM_CATEGORY);
+      const amountRange = Array.isArray(definition.water_well_reward_amount_range)
         ? definition.water_well_reward_amount_range
         : [WATER_WELL_REWARD_AMOUNT_MIN, WATER_WELL_REWARD_AMOUNT_MAX];
-      const minAmount: any = clampInteger(amountRange[0], WATER_WELL_REWARD_AMOUNT_MIN, MAX_DROP_TILE_AMOUNT);
-      const maxAmount: any = clampInteger(amountRange[1], minAmount, MAX_DROP_TILE_AMOUNT);
-      const amount: any = randomRangeInclusive(Math.min(minAmount, maxAmount), Math.max(minAmount, maxAmount));
+      const minAmount = clampInteger(amountRange[0], WATER_WELL_REWARD_AMOUNT_MIN, MAX_DROP_TILE_AMOUNT);
+      const maxAmount = clampInteger(amountRange[1], minAmount, MAX_DROP_TILE_AMOUNT);
+      const amount = randomRangeInclusive(Math.min(minAmount, maxAmount), Math.max(minAmount, maxAmount));
       if (ItemDatabase.hasItem(rewardItemId) && ItemDatabase.canStoreItemInCategory(rewardItemId, rewardCategory) && amount > 0) {
-        const drop: any = createServerDrop(
+        const drop = createServerDrop(
           worldName,
           rewardItemId,
           rewardCategory,
@@ -10094,9 +10177,9 @@ async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName:
       }
     } else {
       for (let i: any = 0; i < TACKLE_BOX_REWARD_COUNT; i += 1) {
-        const reward: any = rollWeightedReward(LURE_PACK_TABLE);
+        const reward = rollWeightedReward(LURE_PACK_TABLE);
         if (!reward || !ItemDatabase.hasItem(reward.item_id) || !ItemDatabase.canStoreItemInCategory(reward.item_id, reward.item_category)) continue;
-        const drop: any = createServerDrop(
+        const drop = createServerDrop(
           worldName,
           reward.item_id,
           reward.item_category,
@@ -10111,9 +10194,9 @@ async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName:
       }
     }
 
-    const statePayload: any = makeTackleBoxStatePayload(worldName, update.x, update.y, block.block_type, savedTackle, "harvest");
-    const objectAfter: any = getWorldObjectJournalData(worldName, statePayload);
-    const objectChange: any = buildWorldObjectChangeEntry(
+    const statePayload = makeTackleBoxStatePayload(worldName, update.x, update.y, block.block_type, savedTackle, "harvest");
+    const objectAfter = getWorldObjectJournalData(worldName, statePayload);
+    const objectChange = buildWorldObjectChangeEntry(
       socket,
       player,
       worldName,
@@ -10128,7 +10211,7 @@ async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName:
         next_harvest_at: savedTackle.next_harvest_at,
       }
     );
-    const dropChanges: any = emittedDrops.map((drop) => ({
+    const dropChanges = emittedDrops.map((drop: ServerPacketRecord) => ({
       ...getAuditActor(socket, player),
       source_type: isWaterWell ? "water_well_harvest" : "tackle_box_harvest",
       source_id: sourceId,
@@ -10147,7 +10230,7 @@ async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName:
       },
     }));
 
-    const commit: any = await commitWorldStateWithBlockChanges(worldName, [objectChange, ...dropChanges], {
+    const commit = await commitWorldStateWithBlockChanges(worldName, [objectChange, ...dropChanges], {
       player,
       allow_dev_json_fallback: true,
     });
@@ -10196,17 +10279,17 @@ function sanitizeDiceState(rawEntry: any, worldName: any, x: any, y: any) {
 }
 
 function getDiceStateAt(worldName: any, x: any, y: any, createIfMissing: any = false) {
-  const state: any = ensureWorldState(worldName);
-  const key: any = gridKey(x, y);
-  const existing: any = state.interactions.get(key);
+  const state = ensureWorldState(worldName);
+  const key = gridKey(x, y);
+  const existing = state.interactions.get(key);
 
   if (existing && existing.action === "dice_roll") {
-    const dice: any = sanitizeDiceState(existing, worldName, x, y);
+    const dice = sanitizeDiceState(existing, worldName, x, y);
     state.interactions.set(key, dice);
     return dice;
   }
 
-  const empty: any = makeEmptyDiceState(worldName, x, y);
+  const empty = makeEmptyDiceState(worldName, x, y);
   if (createIfMissing) {
     state.interactions.set(key, empty);
   }
@@ -10214,15 +10297,15 @@ function getDiceStateAt(worldName: any, x: any, y: any, createIfMissing: any = f
 }
 
 function setDiceStateAt(worldName: any, dice: any) {
-  const state: any = ensureWorldState(worldName);
-  const cleanDice: any = sanitizeDiceState(dice, worldName, dice.x, dice.y);
+  const state = ensureWorldState(worldName);
+  const cleanDice = sanitizeDiceState(dice, worldName, dice.x, dice.y);
   cleanDice.updated_at = new Date().toISOString();
   state.interactions.set(gridKey(cleanDice.x, cleanDice.y), cleanDice);
   return cleanDice;
 }
 
 function serializeDiceStateForClient(dice: any) {
-  const cleanDice: any = sanitizeDiceState(dice, dice?.world || "", dice?.x || 0, dice?.y || 0);
+  const cleanDice = sanitizeDiceState(dice, dice?.world || "", dice?.x || 0, dice?.y || 0);
   return {
     action: "dice_roll",
     world: cleanWorld(cleanDice.world || ""),
@@ -10249,8 +10332,8 @@ function makeDiceRollPayload(worldName: any, x: any, y: any, blockType: any, dic
 }
 
 async function handleDiceRollUpdate(socket: any, player: any, worldName: any, update: any, requestId: any = "") {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isDiceBlockType(block.block_type)) {
     sendActionRejected(socket, "world_interaction_update", "Dice missing.", {
       reason: "dice_missing",
@@ -10269,8 +10352,8 @@ async function handleDiceRollUpdate(socket: any, player: any, worldName: any, up
     return false;
   }
 
-  const diceActionKey: any = `${cleanWorld(worldName)}:${update.x}:${update.y}`;
-  const diceLock: any = await acquireLiveActionLock(worldDiceActionLocks, "dice", diceActionKey, player.id);
+  const diceActionKey = `${cleanWorld(worldName)}:${update.x}:${update.y}`;
+  const diceLock = await acquireLiveActionLock(worldDiceActionLocks, "dice", diceActionKey, player.id);
   if (!diceLock) {
     sendActionRejected(socket, "world_interaction_update", "That Dice Block is busy.", {
       reason: "dice_busy",
@@ -10278,19 +10361,19 @@ async function handleDiceRollUpdate(socket: any, player: any, worldName: any, up
     return false;
   }
 
-  const previousWorldState: any = serializeWorldState(worldName);
-  const sourceId: any = makeAuditId("dice_roll");
+  const previousWorldState = serializeWorldState(worldName);
+  const sourceId = makeAuditId("dice_roll");
   try {
     const diceBeforeUpdate: any = {
       ...update,
       block_type: block.block_type,
     };
-    const objectBefore: any = getWorldObjectJournalData(worldName, diceBeforeUpdate);
+    const objectBefore = getWorldObjectJournalData(worldName, diceBeforeUpdate);
     getDiceStateAt(worldName, update.x, update.y, true);
-    const rolledNumber: any = crypto.randomInt(1, 7);
-    const rolledAt: any = new Date().toISOString();
-    const actorName: any = cleanAccountName(player?.account_username || player?.name || "Player") || "Player";
-    const savedDice: any = setDiceStateAt(worldName, {
+    const rolledNumber = crypto.randomInt(1, 7);
+    const rolledAt = new Date().toISOString();
+    const actorName = cleanAccountName(player?.account_username || player?.name || "Player") || "Player";
+    const savedDice = setDiceStateAt(worldName, {
       ...makeEmptyDiceState(worldName, update.x, update.y),
       face: rolledNumber,
       rolled_number: rolledNumber,
@@ -10300,9 +10383,9 @@ async function handleDiceRollUpdate(socket: any, player: any, worldName: any, up
       updated_at: rolledAt,
     });
 
-    const statePayload: any = makeDiceRollPayload(worldName, update.x, update.y, block.block_type, savedDice);
-    const objectAfter: any = getWorldObjectJournalData(worldName, statePayload);
-    const objectChange: any = buildWorldObjectChangeEntry(
+    const statePayload = makeDiceRollPayload(worldName, update.x, update.y, block.block_type, savedDice);
+    const objectAfter = getWorldObjectJournalData(worldName, statePayload);
+    const objectChange = buildWorldObjectChangeEntry(
       socket,
       player,
       worldName,
@@ -10316,7 +10399,7 @@ async function handleDiceRollUpdate(socket: any, player: any, worldName: any, up
       }
     );
 
-    const commit: any = await commitWorldStateWithBlockChanges(worldName, [objectChange], {
+    const commit = await commitWorldStateWithBlockChanges(worldName, [objectChange], {
       player,
       allow_dev_json_fallback: true,
     });
@@ -10372,8 +10455,8 @@ function makeCheckpointActivatePayload(worldName: any, x: any, y: any, blockType
  * @returns {Promise<boolean>}
  */
 async function handleCheckpointActivateUpdate(socket: any, player: any, worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isCheckpointBlockType(block.block_type)) {
     sendActionRejected(socket, "world_interaction_update", "Checkpoint missing.", {
       reason: "checkpoint_missing",
@@ -10439,7 +10522,7 @@ function canPlayerToggleAntiPunch(player: any, worldName: any) {
   if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const lock: any = getEffectiveWorldLockStateInState(state);
   if (!lock.is_locked) return false;
   if (lockOwnerMatchesPlayer(lock, player)) return true;
@@ -10447,10 +10530,10 @@ function canPlayerToggleAntiPunch(player: any, worldName: any) {
 }
 
 function isWorldAntiPunchEnabled(worldName: any) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   for (const [key, interaction] of state.interactions.entries()) {
     if (!interaction || interaction.action !== "anti_punch_state" || !interaction.enabled) continue;
-    const block: any = state.foreground.get(key);
+    const block = state.foreground.get(key);
     if (block && isAntiPunchBlockType(block.block_type)) return true;
   }
   return false;
@@ -10464,8 +10547,8 @@ function isWorldAntiPunchEnabled(worldName: any) {
  * @returns {boolean}
  */
 function prepareAntiPunchStateUpdate(socket: any, player: any, worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isAntiPunchBlockType(block.block_type)) {
     sendActionRejected(socket, "world_interaction_update", "Anti-Punch missing.", {
       reason: "anti_punch_missing",
@@ -10537,7 +10620,7 @@ function canPlayerBypassAntiTalk(player: any, worldName: any) {
   if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const lock: any = getEffectiveWorldLockStateInState(state);
   if (!lock.is_locked) return true;
 
@@ -10546,10 +10629,10 @@ function canPlayerBypassAntiTalk(player: any, worldName: any) {
 }
 
 function isWorldAntiTalkEnabled(worldName: any) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   for (const [key, interaction] of state.interactions.entries()) {
     if (!interaction || interaction.action !== "anti_talk_state" || !interaction.enabled) continue;
-    const block: any = state.foreground.get(key);
+    const block = state.foreground.get(key);
     if (block && isAntiTalkBlockType(block.block_type)) return true;
   }
   return false;
@@ -10568,8 +10651,8 @@ function shouldBlockPlayerChatByAntiTalk(player: any, worldName: any) {
  * @returns {boolean}
  */
 function prepareAntiTalkStateUpdate(socket: any, player: any, worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isAntiTalkBlockType(block.block_type)) {
     sendActionRejected(socket, "world_interaction_update", "Anti-Talk missing.", {
       reason: "anti_talk_missing",
@@ -10638,10 +10721,10 @@ function canPlayerToggleAntiGravity(player: any, worldName: any) {
 }
 
 function isWorldAntiGravityEnabled(worldName: any) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   for (const [key, interaction] of state.interactions.entries()) {
     if (!interaction || interaction.action !== "anti_gravity_state" || !interaction.enabled) continue;
-    const block: any = state.foreground.get(key);
+    const block = state.foreground.get(key);
     if (block && isAntiGravityBlockType(block.block_type)) return true;
   }
   return false;
@@ -10655,8 +10738,8 @@ function isWorldAntiGravityEnabled(worldName: any) {
  * @returns {boolean}
  */
 function prepareAntiGravityStateUpdate(socket: any, player: any, worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isAntiGravityBlockType(block.block_type)) {
     sendActionRejected(socket, "world_interaction_update", "Anti-Gravity missing.", {
       reason: "anti_gravity_missing",
@@ -10698,20 +10781,20 @@ function getTransactionWorldName(player: any, data: any) {
 }
 
 function getTransactionGrid(data: any, xKey: any = "x", yKey: any = "y") {
-  const x: any = Number(data[xKey]);
-  const y: any = Number(data[yKey]);
+  const x = Number(data[xKey]);
+  const y = Number(data[yKey]);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
 
-  const gridX: any = Math.trunc(x);
-  const gridY: any = Math.trunc(y);
+  const gridX = Math.trunc(x);
+  const gridY = Math.trunc(y);
   if (!isGridInWorld(gridX, gridY)) return null;
 
   return { x: gridX, y: gridY };
 }
 
 function getStationIdForTransaction(data: any) {
-  const action: any = String(data.action || "").trim();
-  const stationId: any = String(data.station_id || data.station || "").trim();
+  const action = String(data.action || "").trim();
+  const stationId = String(data.station_id || data.station || "").trim();
   if (stationId !== "") return stationId;
   return action === "furnace_recipe" ? "furnace" : "crafting_station";
 }
@@ -10727,9 +10810,9 @@ function validateStationAccess(socket: any, player: any, worldName: any, station
     return false;
   }
 
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(grid.x, grid.y));
-  const blockType: any = block ? String(block.block_type || "") : "";
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(grid.x, grid.y));
+  const blockType = block ? String(block.block_type || "") : "";
 
   if (stationId === "crafting_station") {
     if (blockType === "crafting_station") return true;
@@ -10748,20 +10831,20 @@ function validateStationAccess(socket: any, player: any, worldName: any, station
 }
 
 async function handleStationRecipeTransaction(socket: any, player: any, data: any) {
-  const requestId: any = makeRequestId(data);
-  const worldName: any = getTransactionWorldName(player, data);
+  const requestId = makeRequestId(data);
+  const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "use that station")) return;
   if (await rejectIfWorldBanned(socket, player, worldName, "station_recipe")) return;
 
-  const stationId: any = getStationIdForTransaction(data);
-  const recipeId: any = clampString(data.recipe_id || data.id || "");
-  const recipe: any = ItemDatabase.getStationRecipe(stationId, recipeId);
+  const stationId = getStationIdForTransaction(data);
+  const recipeId = clampString(data.recipe_id || data.id || "");
+  const recipe = ItemDatabase.getStationRecipe(stationId, recipeId);
   if (!recipe) {
     sendInventoryTransactionRejected(socket, data, "Recipe is not configured on the server.");
     return;
   }
 
-  const stationGrid: any = getTransactionGrid(data, "station_x", "station_y") || getTransactionGrid(data);
+  const stationGrid = getTransactionGrid(data, "station_x", "station_y") || getTransactionGrid(data);
   if (!validateStationAccess(socket, player, worldName, stationId, stationGrid)) return;
 
   if (tradeByPlayerId.has(player.id)) {
@@ -10769,22 +10852,22 @@ async function handleStationRecipeTransaction(socket: any, player: any, data: an
     return;
   }
 
-  const costs: any = recipe.cost.map(normalizeInventoryAmountEntry);
-  const output: any = normalizeInventoryAmountEntry(recipe.output);
-  if (costs.some((entry) => entry === null) || !output) {
+  const costs = recipe.cost.map(normalizeInventoryAmountEntry);
+  const output = normalizeInventoryAmountEntry(recipe.output);
+  if (costs.some((entry: unknown) => entry === null) || !output) {
     sendInventoryTransactionRejected(socket, data, "Recipe has invalid server item data.");
     return;
   }
 
-  const username: any = player.account_username;
-  const state: any = ensureWritablePlayerState(username);
+  const username = player.account_username;
+  const state = ensureWritablePlayerState(username);
   if (!state) {
     sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
     return;
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
   for (const cost of costs) {
     if (getCraftingCostInventoryCount(stagedState, cost.item_id, cost.item_category) < cost.amount) {
       sendInventoryTransactionRejected(socket, data, `Not enough ${cost.item_id}.`);
@@ -10804,15 +10887,15 @@ async function handleStationRecipeTransaction(socket: any, player: any, data: an
     return;
   }
 
-  const action: any = stationId === "furnace" ? "furnace_recipe" : "craft_recipe";
-  const progression: any = grantExperienceToState(stagedState, getRecipeXp(stationId, output), action, {
+  const action = stationId === "furnace" ? "furnace_recipe" : "craft_recipe";
+  const progression = grantExperienceToState(stagedState, getRecipeXp(stationId, output), action, {
     world: worldName,
     station_id: stationId,
     recipe_id: recipe.id,
     output_item: output.item_id,
   });
-  const recipeTransactionId: any = makeAuditId(stationId === "furnace" ? "furnace" : "craft");
-  const commit: any = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
+  const recipeTransactionId = makeAuditId(stationId === "furnace" ? "furnace" : "craft");
+  const commit = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
     source: stationId === "furnace" ? "furnace" : "craft",
     action,
     reason: action,
@@ -10825,8 +10908,8 @@ async function handleStationRecipeTransaction(socket: any, player: any, data: an
     sendInventoryTransactionRejected(socket, data, commit.message);
     return;
   }
-  const committedState: any = commit.state;
-  const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
+  const committedState = commit.state;
+  const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
 
   sendInventoryTransactionResult(socket, {
     ok: true,
@@ -10857,8 +10940,8 @@ function validateFishingTarget(socket: any, player: any, worldName: any, grid: a
     return false;
   }
 
-  const worldState: any = ensureWorldState(worldName);
-  const serverBlock: any = worldState.foreground.get(gridKey(grid.x, grid.y));
+  const worldState = ensureWorldState(worldName);
+  const serverBlock = worldState.foreground.get(gridKey(grid.x, grid.y));
   if (!serverBlock || String(serverBlock.block_type || "") !== "water") {
     sendInventoryTransactionRejected(socket, data, "Cast the fishing rod on water.");
     return false;
@@ -10868,13 +10951,13 @@ function validateFishingTarget(socket: any, player: any, worldName: any, grid: a
 }
 
 function rollFishingReward(lureId: any, rodId: any = "") {
-  const entry: any = rollWeightedReward(ItemDatabase.getFishingTable(lureId, { rod_id: rodId }));
+  const entry = rollWeightedReward(ItemDatabase.getFishingTable(lureId, { rod_id: rodId }));
   if (!entry) return null;
 
-  const itemId: any = clampString(entry.item_id || entry.fish_id || "");
+  const itemId = clampString(entry.item_id || entry.fish_id || "");
   if (!ItemDatabase.hasItem(itemId)) return null;
 
-  const itemCategory: any = resolveInventoryCategory(itemId, entry.item_category || entry.category || (entry.fish_id ? "fish" : ""));
+  const itemCategory = resolveInventoryCategory(itemId, entry.item_category || entry.category || (entry.fish_id ? "fish" : ""));
   if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) return null;
 
   return {
@@ -10886,12 +10969,12 @@ function rollFishingReward(lureId: any, rodId: any = "") {
 }
 
 function getFishingServerCatchChance(difficulty: any) {
-  const safeDifficulty: any = clampInteger(difficulty || 1, 1, 10);
+  const safeDifficulty = clampInteger(difficulty || 1, 1, 10);
   return Math.max(0.7, Math.min(0.98, 1.02 - safeDifficulty * 0.035));
 }
 
 function getFishingRewardFxRarity(itemId: any) {
-  const definition: any = ItemDatabase.getItemDefinition(itemId);
+  const definition = ItemDatabase.getItemDefinition(itemId);
   return String(definition?.rarity || "common").trim().toLowerCase();
 }
 
@@ -10900,13 +10983,13 @@ function isFishingRewardConfettiRarity(rarity: any) {
 }
 
 function buildFishingRewardFxPayload(player: any, session: any, rewardItemId: any, rewardCategory: any) {
-  const rarity: any = getFishingRewardFxRarity(rewardItemId);
+  const rarity = getFishingRewardFxRarity(rewardItemId);
   if (!isFishingRewardConfettiRarity(rarity)) return null;
 
-  const playerX: any = Number(player?.x);
-  const playerY: any = Number(player?.y);
-  const targetX: any = Number(session?.target_x);
-  const targetY: any = Number(session?.target_y);
+  const playerX = Number(player?.x);
+  const playerY = Number(player?.y);
+  const targetX = Number(session?.target_x);
+  const targetY = Number(session?.target_y);
 
   return {
     type: "fishing_reward_fx",
@@ -10925,8 +11008,8 @@ function buildFishingRewardFxPayload(player: any, session: any, rewardItemId: an
 
 function resolveFishingRodForTransaction(player: any, state: any, data: any = {}) {
   const candidates: any = [];
-  const pushCandidate: any = (value) => {
-    const itemId: any = clampString(value || "");
+  const pushCandidate = (value: unknown) => {
+    const itemId = clampString(value || "");
     if (itemId !== "" && !candidates.includes(itemId)) {
       candidates.push(itemId);
     }
@@ -10952,8 +11035,8 @@ function resolveFishingRodForTransaction(player: any, state: any, data: any = {}
 }
 
 async function handleFishingStartTransaction(socket: any, player: any, data: any) {
-  const requestId: any = makeRequestId(data);
-  const worldName: any = getTransactionWorldName(player, data);
+  const requestId = makeRequestId(data);
+  const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "fish in that world")) return;
   if (await rejectIfWorldBanned(socket, player, worldName, "fishing_start")) return;
 
@@ -10965,41 +11048,41 @@ async function handleFishingStartTransaction(socket: any, player: any, data: any
   const grid: any = getFishingGrid(data);
   if (!validateFishingTarget(socket, player, worldName, grid, data)) return;
 
-  const lureId: any = clampString(data.lure_id || data.item_id || "");
-  const lureDefinition: any = ItemDatabase.getItemDefinition(lureId);
+  const lureId = clampString(data.lure_id || data.item_id || "");
+  const lureDefinition = ItemDatabase.getItemDefinition(lureId);
   if (!lureDefinition || lureDefinition.category !== "lure" || lureDefinition.shop_pack) {
     sendInventoryTransactionRejected(socket, data, "That item cannot be used as fishing bait.");
     return;
   }
 
-  const username: any = player.account_username;
-  const state: any = ensureWritablePlayerState(username);
+  const username = player.account_username;
+  const state = ensureWritablePlayerState(username);
   if (!state) {
     sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
     return;
   }
 
-  const rodId: any = resolveFishingRodForTransaction(player, state, data);
+  const rodId = resolveFishingRodForTransaction(player, state, data);
   if (rodId === "") {
     sendInventoryTransactionRejected(socket, data, "Equip a fishing rod first.");
     return;
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
   if (!spendItemFromState(stagedState, lureId, "lure", 1)) {
     sendInventoryTransactionRejected(socket, data, `Not enough ${lureId}.`);
     return;
   }
 
-  const reward: any = rollFishingReward(lureId, rodId);
+  const reward = rollFishingReward(lureId, rodId);
   if (!reward) {
     sendInventoryTransactionRejected(socket, data, "Fishing rewards are not configured.");
     return;
   }
 
-  const sessionId: any = crypto.randomUUID();
-  const commit: any = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
+  const sessionId = crypto.randomUUID();
+  const commit = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
     source: "fishing",
     action: "fishing_start",
     reason: "fishing_lure_cost",
@@ -11013,8 +11096,8 @@ async function handleFishingStartTransaction(socket: any, player: any, data: any
     sendInventoryTransactionRejected(socket, data, commit.message);
     return;
   }
-  const committedState: any = commit.state;
-  const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
+  const committedState = commit.state;
+  const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
   logItemLedgerForState(socket, player, username, committedState, lureId, "lure", -1, "fishing_start", sessionId, "fishing_lure_cost", worldName, {
     rod_id: rodId,
     target_x: grid.x,
@@ -11057,14 +11140,14 @@ async function handleFishingStartTransaction(socket: any, player: any, data: any
 }
 
 async function handleFishingCompleteTransaction(socket: any, player: any, data: any) {
-  const requestId: any = makeRequestId(data);
-  const session: any = activeFishingSessions.get(player.id);
+  const requestId = makeRequestId(data);
+  const session = activeFishingSessions.get(player.id);
   if (!session) {
     sendInventoryTransactionRejected(socket, data, "Fishing session expired.");
     return;
   }
 
-  const sessionId: any = String(data.session_id || "").trim();
+  const sessionId = String(data.session_id || "").trim();
   if (sessionId !== "" && sessionId !== session.session_id) {
     sendInventoryTransactionRejected(socket, data, "Fishing session changed.");
     return;
@@ -11081,7 +11164,7 @@ async function handleFishingCompleteTransaction(socket: any, player: any, data: 
 
   if (await rejectIfWorldBanned(socket, player, session.world, "fishing_complete")) return;
 
-  const success: any = Boolean(data.success) && randomChance(getFishingServerCatchChance(session.difficulty));
+  const success = Boolean(data.success) && randomChance(getFishingServerCatchChance(session.difficulty));
   if (!success) {
     sendInventoryTransactionResult(socket, {
       ok: true,
@@ -11096,22 +11179,22 @@ async function handleFishingCompleteTransaction(socket: any, player: any, data: 
     return;
   }
 
-  const state: any = ensureWritablePlayerState(player.account_username);
+  const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     sendInventoryTransactionRejected(socket, data, "Could not save caught fish.");
     return;
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
-  const rewardItemId: any = clampString(session.item_id || session.fish_id || "");
-  const rewardCategory: any = resolveInventoryCategory(rewardItemId, session.item_category || (session.fish_id ? "fish" : ""));
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  const rewardItemId = clampString(session.item_id || session.fish_id || "");
+  const rewardCategory = resolveInventoryCategory(rewardItemId, session.item_category || (session.fish_id ? "fish" : ""));
   if (!addItemToState(stagedState, rewardItemId, rewardCategory, 1)) {
     sendInventoryTransactionRejected(socket, data, "Could not save fishing reward.");
     return;
   }
 
-  const progression: any = grantExperienceToState(stagedState, getFishingXp(rewardItemId, session.difficulty), "fishing_complete", {
+  const progression = grantExperienceToState(stagedState, getFishingXp(rewardItemId, session.difficulty), "fishing_complete", {
     world: session.world,
     rod_id: session.rod_id || "",
     item_id: rewardItemId,
@@ -11120,7 +11203,7 @@ async function handleFishingCompleteTransaction(socket: any, player: any, data: 
     lure_id: session.lure_id,
     difficulty: session.difficulty,
   });
-  const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "fishing",
     action: "fishing_complete",
     reason: "fishing_reward",
@@ -11144,8 +11227,8 @@ async function handleFishingCompleteTransaction(socket: any, player: any, data: 
     sendInventoryTransactionRejected(socket, data, commit.message);
     return;
   }
-  const committedState: any = commit.state;
-  const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
+  const committedState = commit.state;
+  const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
   logItemLedgerForState(socket, player, player.account_username, committedState, rewardItemId, rewardCategory, 1, "fishing_complete", session.session_id, "fishing_reward", session.world, {
     rod_id: session.rod_id || "",
     lure_id: session.lure_id,
@@ -11155,8 +11238,8 @@ async function handleFishingCompleteTransaction(socket: any, player: any, data: 
     target_y: session.target_y,
   }, { skipPostgres: commit.postgres_committed });
 
-  const rewardFxPayload: any = buildFishingRewardFxPayload(player, session, rewardItemId, rewardCategory);
-  const rewardFxSent: any = Boolean(rewardFxPayload);
+  const rewardFxPayload = buildFishingRewardFxPayload(player, session, rewardItemId, rewardCategory);
+  const rewardFxSent = Boolean(rewardFxPayload);
 
   sendInventoryTransactionResult(socket, {
     ok: true,
@@ -11182,16 +11265,16 @@ async function handleFishingCompleteTransaction(socket: any, player: any, data: 
 }
 
 function isSellableFishItem(itemId: any) {
-  const definition: any = ItemDatabase.getItemDefinition(itemId);
+  const definition = ItemDatabase.getItemDefinition(itemId);
   return Boolean(definition && definition.category === "fish" && !definition.hidden);
 }
 
 function getFishSellValue(itemId: any) {
-  const definition: any = ItemDatabase.getItemDefinition(itemId);
+  const definition = ItemDatabase.getItemDefinition(itemId);
   if (!definition || definition.category !== "fish") return 0;
 
   for (const field of ["sell_value", "fish_sell_value", "sell_price"]) {
-    const configuredValue: any = Math.trunc(Number(definition[field]));
+    const configuredValue = Math.trunc(Number(definition[field]));
     if (Number.isFinite(configuredValue) && configuredValue > 0) {
       return configuredValue;
     }
@@ -11222,7 +11305,7 @@ function validateFishMongerAccess(socket: any, player: any, data: any, worldName
     return null;
   }
 
-  const anchor: any = getFishMongerAnchorAt(worldName, grid.x, grid.y);
+  const anchor = getFishMongerAnchorAt(worldName, grid.x, grid.y);
   if (!anchor) {
     sendInventoryTransactionRejected(socket, data, "That is not a Fish Monger.");
     return null;
@@ -11232,9 +11315,9 @@ function validateFishMongerAccess(socket: any, player: any, data: any, worldName
 }
 
 async function handleFishMongerTransaction(socket: any, player: any, data: any) {
-  const requestId: any = makeRequestId(data);
-  const action: any = String(data.action || "").trim();
-  const worldName: any = getTransactionWorldName(player, data);
+  const requestId = makeRequestId(data);
+  const action = String(data.action || "").trim();
+  const worldName = getTransactionWorldName(player, data);
   if (cleanWorld(player.world || "START") !== worldName) {
     sendInventoryTransactionRejected(socket, data, "Join that world before selling fish.");
     return;
@@ -11242,7 +11325,7 @@ async function handleFishMongerTransaction(socket: any, player: any, data: any) 
   if (await rejectIfWorldBanned(socket, player, worldName, "fish_monger")) return;
 
   const grid: any = getTransactionGrid(data);
-  const fishMongerGrid: any = validateFishMongerAccess(socket, player, data, worldName, grid);
+  const fishMongerGrid = validateFishMongerAccess(socket, player, data, worldName, grid);
   if (!fishMongerGrid) return;
 
   if (tradeByPlayerId.has(player.id)) {
@@ -11250,8 +11333,8 @@ async function handleFishMongerTransaction(socket: any, player: any, data: any) 
     return;
   }
 
-  const username: any = player.account_username;
-  const state: any = ensureWritablePlayerState(username);
+  const username = player.account_username;
+  const state = ensureWritablePlayerState(username);
   if (!state) {
     sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
     return;
@@ -11259,16 +11342,16 @@ async function handleFishMongerTransaction(socket: any, player: any, data: any) 
 
   const sales: any = [];
   if (action === "fish_monger_sell_all") {
-    const fishInventory: any = state.fish_inventory && typeof state.fish_inventory === "object" && !Array.isArray(state.fish_inventory)
+    const fishInventory = state.fish_inventory && typeof state.fish_inventory === "object" && !Array.isArray(state.fish_inventory)
       ? state.fish_inventory
       : {};
 
     for (const itemId of Object.keys(fishInventory)) {
-      const cleanItemId: any = clampString(itemId || "");
+      const cleanItemId = clampString(itemId || "");
       if (!isSellableFishItem(cleanItemId)) continue;
 
-      const amount: any = getInventoryCount(state, cleanItemId, "fish");
-      const sellValue: any = getFishSellValue(cleanItemId);
+      const amount = getInventoryCount(state, cleanItemId, "fish");
+      const sellValue = getFishSellValue(cleanItemId);
       if (amount <= 0 || sellValue <= 0) continue;
 
       sales.push({
@@ -11279,26 +11362,26 @@ async function handleFishMongerTransaction(socket: any, player: any, data: any) 
       });
     }
   } else {
-    const itemId: any = clampString(data.item_id || data.item_type || data.item || "");
+    const itemId = clampString(data.item_id || data.item_type || data.item || "");
     if (!isSellableFishItem(itemId)) {
       sendInventoryTransactionRejected(socket, data, "That item cannot be sold here.");
       return;
     }
 
-    const requestedAmount: any = Math.trunc(Number(data.amount) || 0);
+    const requestedAmount = Math.trunc(Number(data.amount) || 0);
     if (requestedAmount <= 0 || requestedAmount > ItemDatabase.getStackLimit(itemId)) {
       sendInventoryTransactionRejected(socket, data, "Choose a valid fish quantity.");
       return;
     }
 
-    const amount: any = requestedAmount;
-    const owned: any = getInventoryCount(state, itemId, "fish");
+    const amount = requestedAmount;
+    const owned = getInventoryCount(state, itemId, "fish");
     if (owned < amount) {
       sendInventoryTransactionRejected(socket, data, "You do not have that many fish.");
       return;
     }
 
-    const sellValue: any = getFishSellValue(itemId);
+    const sellValue = getFishSellValue(itemId);
     if (sellValue <= 0) {
       sendInventoryTransactionRejected(socket, data, "That fish has no sell value yet.");
       return;
@@ -11317,21 +11400,21 @@ async function handleFishMongerTransaction(socket: any, player: any, data: any) 
     return;
   }
 
-  const totalFish: any = sales.reduce((total, sale) => total + sale.amount, 0);
-  const totalGems: any = sales.reduce((total, sale) => total + sale.amount * sale.sell_value, 0);
+  const totalFish = sales.reduce((total: number, sale: ServerSaleRecord) => total + sale.amount, 0);
+  const totalGems = sales.reduce((total: number, sale: ServerSaleRecord) => total + sale.amount * sale.sell_value, 0);
   if (totalFish <= 0 || totalGems <= 0) {
     sendInventoryTransactionRejected(socket, data, "That fish has no sell value yet.");
     return;
   }
 
-  const gemCapacity: any = ItemDatabase.getStackLimit("gem") - getInventoryCount(state, "gem", "currency");
+  const gemCapacity = ItemDatabase.getStackLimit("gem") - getInventoryCount(state, "gem", "currency");
   if (totalGems > gemCapacity) {
     sendInventoryTransactionRejected(socket, data, "Your gem balance is full.");
     return;
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
   for (const sale of sales) {
     if (!spendItemFromState(stagedState, sale.item_id, sale.item_category, sale.amount)) {
       sendInventoryTransactionRejected(socket, data, "Server inventory changed. Try again.");
@@ -11344,8 +11427,8 @@ async function handleFishMongerTransaction(socket: any, player: any, data: any) 
     return;
   }
 
-  const saleId: any = makeAuditId("fish_monger");
-  const commit: any = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
+  const saleId = makeAuditId("fish_monger");
+  const commit = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
     source: "fish_monger",
     action,
     reason: "fish_monger_sell",
@@ -11358,8 +11441,8 @@ async function handleFishMongerTransaction(socket: any, player: any, data: any) 
     sendInventoryTransactionRejected(socket, data, commit.message);
     return;
   }
-  const committedState: any = commit.state;
-  const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
+  const committedState = commit.state;
+  const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
   for (const sale of sales) {
     logItemLedgerForState(socket, player, username, committedState, sale.item_id, sale.item_category, -sale.amount, "fish_monger_sell", saleId, "fish_sold", worldName, {
       x: fishMongerGrid.x,
@@ -11387,13 +11470,13 @@ async function handleFishMongerTransaction(socket: any, player: any, data: any) 
 }
 
 function getTransactionDropPosition(player: any, data: any) {
-  const x: any = Number(data.x);
-  const y: any = Number(data.y);
+  const x = Number(data.x);
+  const y = Number(data.y);
   if (isPositionInWorldBounds(x, y)) {
     return { x, y };
   }
 
-  const stackGrid: any = getTransactionGrid(data, "stack_grid_x", "stack_grid_y") || getTransactionGrid(data);
+  const stackGrid = getTransactionGrid(data, "stack_grid_x", "stack_grid_y") || getTransactionGrid(data);
   if (stackGrid && isGridInWorld(stackGrid.x, stackGrid.y)) {
     return getGridCenterPixels(stackGrid.x, stackGrid.y);
   }
@@ -11407,15 +11490,15 @@ function getTransactionDropPosition(player: any, data: any) {
 function getDropGridFromPosition(position: any) {
   if (!position) return null;
 
-  const gridX: any = Math.round(Number(position.x) / TILE_SIZE);
-  const gridY: any = Math.round(Number(position.y) / TILE_SIZE);
+  const gridX = Math.round(Number(position.x) / TILE_SIZE);
+  const gridY = Math.round(Number(position.y) / TILE_SIZE);
   if (!isGridInWorld(gridX, gridY)) return null;
 
   return { x: gridX, y: gridY };
 }
 
 function getTransactionDropGrid(data: any, position: any = null) {
-  const explicitGrid: any =
+  const explicitGrid =
     getTransactionGrid(data, "stack_grid_x", "stack_grid_y") ||
     getTransactionGrid(data, "grid_x", "grid_y") ||
     getTransactionGrid(data, "tile_x", "tile_y");
@@ -11427,13 +11510,13 @@ function getTransactionDropGrid(data: any, position: any = null) {
 function isDropGridBlockedByBlock(worldName: any, grid: any) {
   if (!grid) return false;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   return getCollisionAreaAnchorInState(state, grid.x, grid.y) !== null;
 }
 
 async function handleDropInventoryItemTransaction(socket: any, player: any, data: any) {
-  const requestId: any = makeRequestId(data);
-  const worldName: any = getTransactionWorldName(player, data);
+  const requestId = makeRequestId(data);
+  const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "drop items in that world")) return;
   if (await rejectIfWorldBanned(socket, player, worldName, "drop_inventory_item")) return;
 
@@ -11442,7 +11525,7 @@ async function handleDropInventoryItemTransaction(socket: any, player: any, data
     return;
   }
 
-  const itemId: any = clampString(data.item_type || data.item_id || data.item || "");
+  const itemId = clampString(data.item_type || data.item_id || data.item || "");
   if (!ItemDatabase.hasItem(itemId)) {
     sendInventoryTransactionRejected(socket, data, "That item does not exist on the server.");
     return;
@@ -11453,26 +11536,26 @@ async function handleDropInventoryItemTransaction(socket: any, player: any, data
     return;
   }
 
-  const itemCategory: any = resolveInventoryCategory(itemId, data.item_category || data.category || "");
+  const itemCategory = resolveInventoryCategory(itemId, data.item_category || data.category || "");
   if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) {
     sendInventoryTransactionRejected(socket, data, "That item category does not match the server.");
     return;
   }
 
-  const amount: any = clampInteger(data.amount || 1, 1, Math.min(MAX_DROP_TILE_AMOUNT, ItemDatabase.getStackLimit(itemId)));
-  const position: any = getTransactionDropPosition(player, data);
+  const amount = clampInteger(data.amount || 1, 1, Math.min(MAX_DROP_TILE_AMOUNT, ItemDatabase.getStackLimit(itemId)));
+  const position = getTransactionDropPosition(player, data);
   if (!isPositionInWorldBounds(position.x, position.y) || !isPlayerNearPoint(player, position.x, position.y, MAX_DROP_CREATE_DISTANCE_PIXELS)) {
     sendInventoryTransactionRejected(socket, data, "Drop closer to your player.");
     return;
   }
 
-  const dropGrid: any = getTransactionDropGrid(data, position);
+  const dropGrid = getTransactionDropGrid(data, position);
   if (isDropGridBlockedByBlock(worldName, dropGrid)) {
     sendInventoryTransactionRejected(socket, data, "Can't drop on a block.");
     return;
   }
 
-  const state: any = ensureWritablePlayerState(player.account_username);
+  const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
     return;
@@ -11483,21 +11566,21 @@ async function handleDropInventoryItemTransaction(socket: any, player: any, data
     return;
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
   if (!spendItemFromState(stagedState, itemId, itemCategory, amount)) {
     sendInventoryTransactionRejected(socket, data, "Server inventory changed. Try again.");
     return;
   }
 
-  const payload: any = createServerDrop(worldName, itemId, itemCategory, amount, position.x, position.y, SERVER_DROP_PICKUP_DELAY, dropGrid);
+  const payload = createServerDrop(worldName, itemId, itemCategory, amount, position.x, position.y, SERVER_DROP_PICKUP_DELAY, dropGrid);
   if (!payload) {
     sendInventoryTransactionRejected(socket, data, "Could not create that drop.");
     return;
   }
 
-  const dropTransactionId: any = makeAuditId("drop");
-  const serializedWorld: any = serializeWorldState(worldName);
+  const dropTransactionId = makeAuditId("drop");
+  const serializedWorld = serializeWorldState(worldName);
   const worldChangeEntry: any = {
     source_type: "drop_inventory_item",
     source_id: dropTransactionId,
@@ -11515,7 +11598,7 @@ async function handleDropInventoryItemTransaction(socket: any, player: any, data
       pickup_delay: payload.pickup_delay,
     },
   };
-  const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "drop_inventory",
     action: "drop_inventory_item",
     reason: "drop_from_inventory",
@@ -11538,8 +11621,8 @@ async function handleDropInventoryItemTransaction(socket: any, player: any, data
     sendInventoryTransactionRejected(socket, data, commit.message);
     return;
   }
-  const committedState: any = commit.state;
-  const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
+  const committedState = commit.state;
+  const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
   persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload);
 
@@ -11559,27 +11642,27 @@ async function handleDropInventoryItemTransaction(socket: any, player: any, data
 }
 
 async function handleTrashInventoryItemTransaction(socket: any, player: any, data: any) {
-  const requestId: any = makeRequestId(data);
+  const requestId = makeRequestId(data);
 
   if (tradeByPlayerId.has(player.id)) {
     sendInventoryTransactionRejected(socket, data, "Finish or cancel your trade before trashing items.");
     return;
   }
 
-  const itemId: any = clampString(data.item_type || data.item_id || data.item || "");
+  const itemId = clampString(data.item_type || data.item_id || data.item || "");
   if (!ItemDatabase.hasItem(itemId)) {
     sendInventoryTransactionRejected(socket, data, "That item does not exist on the server.");
     return;
   }
 
-  const itemCategory: any = resolveInventoryCategory(itemId, data.item_category || data.category || "");
+  const itemCategory = resolveInventoryCategory(itemId, data.item_category || data.category || "");
   if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) {
     sendInventoryTransactionRejected(socket, data, "That item category does not match the server.");
     return;
   }
 
-  const amount: any = clampInteger(data.amount || 1, 1, ItemDatabase.getStackLimit(itemId));
-  const state: any = ensureWritablePlayerState(player.account_username);
+  const amount = clampInteger(data.amount || 1, 1, ItemDatabase.getStackLimit(itemId));
+  const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
     return;
@@ -11590,18 +11673,18 @@ async function handleTrashInventoryItemTransaction(socket: any, player: any, dat
     return;
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
   if (!spendItemFromState(stagedState, itemId, itemCategory, amount)) {
     sendInventoryTransactionRejected(socket, data, "Server inventory changed. Try again.");
     return;
   }
 
-  const trashTransactionId: any = makeAuditId("trash");
-  const isWorldLockKeyTrash: any = itemId === WORLD_LOCK_KEY_ITEM_TYPE && itemCategory === WORLD_LOCK_KEY_ITEM_CATEGORY;
-  const trashSource: any = isWorldLockKeyTrash ? "world_lock_key" : "system";
-  const trashLedgerSource: any = isWorldLockKeyTrash ? "world_lock_key" : "trash_inventory_item";
-  const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+  const trashTransactionId = makeAuditId("trash");
+  const isWorldLockKeyTrash = itemId === WORLD_LOCK_KEY_ITEM_TYPE && itemCategory === WORLD_LOCK_KEY_ITEM_CATEGORY;
+  const trashSource = isWorldLockKeyTrash ? "world_lock_key" : "system";
+  const trashLedgerSource = isWorldLockKeyTrash ? "world_lock_key" : "trash_inventory_item";
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: trashSource,
     action: "trash_inventory_item",
     reason: isWorldLockKeyTrash ? "world_lock_key_trash" : "inventory_trash",
@@ -11617,8 +11700,8 @@ async function handleTrashInventoryItemTransaction(socket: any, player: any, dat
     sendInventoryTransactionRejected(socket, data, commit.message);
     return;
   }
-  const committedState: any = commit.state;
-  const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
+  const committedState = commit.state;
+  const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
   logItemLedgerForState(socket, player, player.account_username, committedState, itemId, itemCategory, -amount, trashLedgerSource, trashTransactionId, isWorldLockKeyTrash ? "world_lock_key_trash" : "inventory_trash", player.world, {
     world_lock_key_removed: isWorldLockKeyTrash,
   }, { skipPostgres: commit.postgres_committed });
@@ -11634,14 +11717,14 @@ async function handleTrashInventoryItemTransaction(socket: any, player: any, dat
 }
 
 async function removeWorldLockKeysFromPlayerInventory(socket: any, player: any, worldName: any = "", reason: any = "world_exit", options: any = {}) {
-  const username: any = cleanAccountName(player?.account_username || "");
+  const username = cleanAccountName(player?.account_username || "");
   if (username === "") {
     return { ok: true, removed: 0, reason: "missing_username" };
   }
 
-  const cleanWorldName: any = cleanWorld(worldName || player?.world || "START");
-  const cleanupReason: any = clampString(reason || "world_exit") || "world_exit";
-  const state: any = ensureWritablePlayerState(username);
+  const cleanWorldName = cleanWorld(worldName || player?.world || "START");
+  const cleanupReason = clampString(reason || "world_exit") || "world_exit";
+  const state = ensureWritablePlayerState(username);
   if (!state) {
     return {
       ok: false,
@@ -11651,13 +11734,13 @@ async function removeWorldLockKeysFromPlayerInventory(socket: any, player: any, 
     };
   }
 
-  const keyCount: any = getInventoryCount(state, WORLD_LOCK_KEY_ITEM_TYPE, WORLD_LOCK_KEY_ITEM_CATEGORY);
+  const keyCount = getInventoryCount(state, WORLD_LOCK_KEY_ITEM_TYPE, WORLD_LOCK_KEY_ITEM_CATEGORY);
   if (keyCount <= 0) {
     return { ok: true, removed: 0, reason: "no_key" };
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
   if (!spendItemFromState(stagedState, WORLD_LOCK_KEY_ITEM_TYPE, WORLD_LOCK_KEY_ITEM_CATEGORY, keyCount)) {
     return {
       ok: false,
@@ -11667,7 +11750,7 @@ async function removeWorldLockKeysFromPlayerInventory(socket: any, player: any, 
     };
   }
 
-  const cleanupTransactionId: any = makeAuditId("world_key_exit");
+  const cleanupTransactionId = makeAuditId("world_key_exit");
   traceWorldLockKeyFlow("auto_remove_request", {
     username,
     world: cleanWorldName,
@@ -11675,7 +11758,7 @@ async function removeWorldLockKeysFromPlayerInventory(socket: any, player: any, 
     key_count: keyCount,
   });
 
-  const commit: any = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
+  const commit = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
     source: "world_lock_key",
     action: "world_lock_key_auto_remove",
     reason: cleanupReason,
@@ -11705,9 +11788,9 @@ async function removeWorldLockKeysFromPlayerInventory(socket: any, player: any, 
     };
   }
 
-  const committedState: any = commit.state;
-  const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
-  const keyInventoryDelta: any = inventoryDeltas.find((entry) =>
+  const committedState = commit.state;
+  const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
+  const keyInventoryDelta = inventoryDeltas.find((entry: ServerInventoryDeltaRecord | null) =>
     entry &&
     entry.item_type === WORLD_LOCK_KEY_ITEM_TYPE &&
     entry.item_category === WORLD_LOCK_KEY_ITEM_CATEGORY
@@ -11761,14 +11844,14 @@ async function removeWorldLockKeysFromPlayerInventory(socket: any, player: any, 
  * @returns {Promise<void>}
  */
 async function handleWorldLockConversionTransaction(socket: any, player: any, data: any) {
-  const requestId: any = makeRequestId(data);
+  const requestId = makeRequestId(data);
 
   if (tradeByPlayerId.has(player.id)) {
     sendInventoryTransactionRejected(socket, data, "Finish or cancel your trade before converting locks.");
     return;
   }
 
-  const direction: any = clampString(data.direction || "").toLowerCase();
+  const direction = clampString(data.direction || "").toLowerCase();
   let spendItem: any = WORLD_LOCK_BLOCK_TYPE;
   let spendAmount: any = SUPER_WORLD_LOCK_EXCHANGE_RATE;
   let gainItem: any = SUPER_WORLD_LOCK_BLOCK_TYPE;
@@ -11791,7 +11874,7 @@ async function handleWorldLockConversionTransaction(socket: any, player: any, da
     return;
   }
 
-  const state: any = ensureWritablePlayerState(player.account_username);
+  const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
     return;
@@ -11802,8 +11885,8 @@ async function handleWorldLockConversionTransaction(socket: any, player: any, da
     return;
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
   if (!spendItemFromState(stagedState, spendItem, "block", spendAmount)) {
     sendInventoryTransactionRejected(socket, data, "Server inventory changed. Try again.");
     return;
@@ -11817,8 +11900,8 @@ async function handleWorldLockConversionTransaction(socket: any, player: any, da
     return;
   }
 
-  const conversionTransactionId: any = makeAuditId("lock_convert");
-  const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+  const conversionTransactionId = makeAuditId("lock_convert");
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "world_lock_conversion",
     action: "convert_world_lock",
     reason: "world_lock_conversion",
@@ -11832,8 +11915,8 @@ async function handleWorldLockConversionTransaction(socket: any, player: any, da
     return;
   }
 
-  const committedState: any = commit.state;
-  const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
+  const committedState = commit.state;
+  const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
   logItemLedgerForState(socket, player, player.account_username, committedState, spendItem, "block", -spendAmount, "convert_world_lock", conversionTransactionId, "world_lock_conversion", player.world, { direction }, { skipPostgres: commit.postgres_committed });
   logItemLedgerForState(socket, player, player.account_username, committedState, gainItem, "block", gainAmount, "convert_world_lock", conversionTransactionId, "world_lock_conversion", player.world, { direction }, { skipPostgres: commit.postgres_committed });
 
@@ -11854,8 +11937,8 @@ async function handleWorldLockConversionTransaction(socket: any, player: any, da
  * @returns {Promise<void>}
  */
 async function handleWorldLockGetKeyTransaction(socket: any, player: any, data: any) {
-  const requestId: any = makeRequestId(data);
-  const worldName: any = getTransactionWorldName(player, data);
+  const requestId = makeRequestId(data);
+  const worldName = getTransactionWorldName(player, data);
   const traceBase: any = {
     request_id: requestId,
     username: cleanAccountName(player?.account_username || player?.name || ""),
@@ -11865,7 +11948,7 @@ async function handleWorldLockGetKeyTransaction(socket: any, player: any, data: 
     x: Math.trunc(Number(data?.x) || 0),
     y: Math.trunc(Number(data?.y) || 0),
   };
-  const rejectWorldLockKey: any = (message, reason, extra = {}) => {
+  const rejectWorldLockKey = (message: string, reason: string, extra: ServerPacketRecord = {}) => {
     traceWorldLockKeyFlow("reject", {
       ...traceBase,
       reason,
@@ -11893,9 +11976,9 @@ async function handleWorldLockGetKeyTransaction(socket: any, player: any, data: 
     return;
   }
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const currentLock: any = getEffectiveWorldLockStateInState(state);
-  const lockBlock: any = getWorldLockBlockEntry(state);
+  const lockBlock = getWorldLockBlockEntry(state);
   if (!currentLock.is_locked || !lockBlock || !isWorldLockBlockType(lockBlock.block_type)) {
     rejectWorldLockKey("This world is not locked by a World Lock.", "world_lock_missing", {
       current_lock: sanitizeWorldLockState(currentLock || {}),
@@ -11914,13 +11997,13 @@ async function handleWorldLockGetKeyTransaction(socket: any, player: any, data: 
     return;
   }
 
-  const playerState: any = ensureWritablePlayerState(player.account_username);
+  const playerState = ensureWritablePlayerState(player.account_username);
   if (!playerState) {
     rejectWorldLockKey("Could not load your server inventory.", "player_state_missing");
     return;
   }
 
-  const requestedGrid: any = getTransactionGrid(data);
+  const requestedGrid = getTransactionGrid(data);
   if (!requestedGrid || requestedGrid.x !== lockBlock.x || requestedGrid.y !== lockBlock.y) {
     rejectWorldLockKey("Reopen the World Lock before getting its key.", "lock_grid_mismatch", {
       requested_grid: requestedGrid || null,
@@ -11929,14 +12012,14 @@ async function handleWorldLockGetKeyTransaction(socket: any, player: any, data: 
     return;
   }
 
-  const ownerName: any = cleanAccountName(player.account_username).toUpperCase();
-  const currentKeyHolder: any = accountKey(currentLock.trade_key_holder || "");
-  const hasCurrentKeyHolder: any =
+  const ownerName = cleanAccountName(player.account_username).toUpperCase();
+  const currentKeyHolder = accountKey(currentLock.trade_key_holder || "");
+  const hasCurrentKeyHolder =
     currentKeyHolder !== "" ||
     cleanStableIdentityId(currentLock.trade_key_holder_account_id || "") !== "" ||
     cleanStableIdentityId(currentLock.trade_key_holder_player_id || currentLock.trade_key_holder_profile_id || "") !== "";
-  const ownerKey: any = accountKey(ownerName);
-  const ownerKeyCount: any = getInventoryCount(playerState, WORLD_LOCK_KEY_ITEM_TYPE, WORLD_LOCK_KEY_ITEM_CATEGORY);
+  const ownerKey = accountKey(ownerName);
+  const ownerKeyCount = getInventoryCount(playerState, WORLD_LOCK_KEY_ITEM_TYPE, WORLD_LOCK_KEY_ITEM_CATEGORY);
   let recoveringMissingOwnerKey: any = false;
   if (hasCurrentKeyHolder) {
     if (!lockTradeKeyHolderMatchesPlayer(currentLock, player)) {
@@ -11958,7 +12041,7 @@ async function handleWorldLockGetKeyTransaction(socket: any, player: any, data: 
     recoveringMissingOwnerKey = true;
   }
 
-  const blockers: any = getWorldLockKeyStorageBlockers(worldName);
+  const blockers = getWorldLockKeyStorageBlockers(worldName);
   if (blockers.length > 0) {
     sendSystemChatToPlayer(socket, player, WORLD_LOCK_KEY_STORAGE_BLOCK_MESSAGE);
     rejectWorldLockKey(WORLD_LOCK_KEY_STORAGE_BLOCK_MESSAGE, "storage_blockers", {
@@ -11975,18 +12058,18 @@ async function handleWorldLockGetKeyTransaction(socket: any, player: any, data: 
     return;
   }
 
-  const beforeState: any = cloneJson(playerState);
-  const stagedState: any = cloneJson(playerState);
+  const beforeState = cloneJson(playerState);
+  const stagedState = cloneJson(playerState);
   if (!addItemToState(stagedState, WORLD_LOCK_KEY_ITEM_TYPE, WORLD_LOCK_KEY_ITEM_CATEGORY, 1)) {
     rejectWorldLockKey("Server inventory changed. Try again.", "add_item_failed");
     return;
   }
 
-  const keyTransactionId: any = makeAuditId("world_key");
-  const previousLockState: any = state.world_lock || {};
-  const beforeLock: any = cloneJson(currentLock);
-  const ownerIdentity: any = getPlayerLockIdentity(player);
-  const nextLock: any = sanitizeWorldLockState({
+  const keyTransactionId = makeAuditId("world_key");
+  const previousLockState = state.world_lock || {};
+  const beforeLock = cloneJson(currentLock);
+  const ownerIdentity = getPlayerLockIdentity(player);
+  const nextLock = sanitizeWorldLockState({
     ...currentLock,
     owner_account_id: ownerIdentity.owner_account_id || currentLock.owner_account_id || "",
     owner_player_id: ownerIdentity.owner_player_id || currentLock.owner_player_id || "",
@@ -12001,7 +12084,7 @@ async function handleWorldLockGetKeyTransaction(socket: any, player: any, data: 
   });
   state.world_lock = nextLock;
 
-  const worldChange: any = buildWorldObjectChangeEntry(socket, player, worldName, {
+  const worldChange = buildWorldObjectChangeEntry(socket, player, worldName, {
     action: "world_lock_key_issue",
     source_type: "world_lock_key",
     source_id: keyTransactionId,
@@ -12014,8 +12097,8 @@ async function handleWorldLockGetKeyTransaction(socket: any, player: any, data: 
     world_name: worldName,
     key_holder: ownerName,
   });
-  const serializedWorld: any = serializeWorldState(worldName);
-  const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "world_lock_key",
     action: "world_lock_get_key",
     reason: "world_lock_key_issue",
@@ -12042,9 +12125,9 @@ async function handleWorldLockGetKeyTransaction(socket: any, player: any, data: 
     return;
   }
 
-  const committedState: any = commit.state;
-  const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
-  const keyInventoryDelta: any = inventoryDeltas.find((entry) =>
+  const committedState = commit.state;
+  const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
+  const keyInventoryDelta = inventoryDeltas.find((entry: ServerInventoryDeltaRecord | null) =>
     entry &&
     entry.item_type === WORLD_LOCK_KEY_ITEM_TYPE &&
     entry.item_category === WORLD_LOCK_KEY_ITEM_CATEGORY
@@ -12088,19 +12171,19 @@ async function handleWorldLockGetKeyTransaction(socket: any, player: any, data: 
 
 function getSeedGrowthRemaining(seed: any) {
   if (!seed) return SERVER_SEED_GROW_TIME_SECONDS;
-  const maxGrowTime: any = Math.max(1, Number(seed.max_grow_time) || SERVER_SEED_GROW_TIME_SECONDS);
-  const plantedAt: any = Number(seed.planted_at || 0);
+  const maxGrowTime = Math.max(1, Number(seed.max_grow_time) || SERVER_SEED_GROW_TIME_SECONDS);
+  const plantedAt = Number(seed.planted_at || 0);
   if (!Number.isFinite(plantedAt) || plantedAt <= 0) {
     return Math.max(0, Math.min(maxGrowTime, Number(seed.grow_time) || maxGrowTime));
   }
 
-  const elapsed: any = Math.max(0, (Date.now() - plantedAt) / 1000);
+  const elapsed = Math.max(0, (Date.now() - plantedAt) / 1000);
   return Math.max(0, maxGrowTime - elapsed);
 }
 
 function getSeedConfiguredGrowTime(seedType: any) {
-  const definition: any = ItemDatabase.getItemDefinition(seedType);
-  const configured: any = Number(definition?.max_grow_time || definition?.grow_time || 0);
+  const definition = ItemDatabase.getItemDefinition(seedType);
+  const configured = Number(definition?.max_grow_time || definition?.grow_time || 0);
   if (Number.isFinite(configured) && configured > 0) {
     return Math.max(1, Math.min(86400, configured));
   }
@@ -12112,8 +12195,8 @@ function isSeedMature(seed: any) {
 }
 
 function serializeSeedForMessage(seed: any) {
-  const growTime: any = getSeedGrowthRemaining(seed);
-  const maxGrowTime: any = Math.max(1, Number(seed.max_grow_time) || SERVER_SEED_GROW_TIME_SECONDS);
+  const growTime = getSeedGrowthRemaining(seed);
+  const maxGrowTime = Math.max(1, Number(seed.max_grow_time) || SERVER_SEED_GROW_TIME_SECONDS);
   return {
     x: seed.x,
     y: seed.y,
@@ -12126,7 +12209,7 @@ function serializeSeedForMessage(seed: any) {
 }
 
 function makeServerSeedEntry(x: any, y: any, seedType: any) {
-  const maxGrowTime: any = getSeedConfiguredGrowTime(seedType);
+  const maxGrowTime = getSeedConfiguredGrowTime(seedType);
   return {
     x,
     y,
@@ -12139,8 +12222,8 @@ function makeServerSeedEntry(x: any, y: any, seedType: any) {
 }
 
 async function handleSeedPlaceTransaction(socket: any, player: any, data: any) {
-  const requestId: any = makeRequestId(data);
-  const worldName: any = getTransactionWorldName(player, data);
+  const requestId = makeRequestId(data);
+  const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "plant seeds in that world")) return;
   if (await rejectIfWorldBanned(socket, player, worldName, "seed_place")) return;
   if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) return;
@@ -12156,14 +12239,14 @@ async function handleSeedPlaceTransaction(socket: any, player: any, data: any) {
     return;
   }
 
-  const seedType: any = clampString(data.seed_type || data.item_id || "");
+  const seedType = clampString(data.seed_type || data.item_id || "");
   if (!ItemDatabase.hasItem(seedType) || resolveInventoryCategory(seedType) !== "seed") {
     sendInventoryTransactionRejected(socket, data, "Select a valid seed to plant.");
     return;
   }
 
-  const worldState: any = ensureWorldState(worldName);
-  const key: any = gridKey(grid.x, grid.y);
+  const worldState = ensureWorldState(worldName);
+  const key = gridKey(grid.x, grid.y);
   if (worldState.foreground.has(key)) {
     sendInventoryTransactionRejected(socket, data, "Need an empty tile.");
     return;
@@ -12174,20 +12257,20 @@ async function handleSeedPlaceTransaction(socket: any, player: any, data: any) {
     return;
   }
 
-  const state: any = ensureWritablePlayerState(player.account_username);
+  const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     sendInventoryTransactionRejected(socket, data, `Not enough ${seedType}.`);
     return;
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
   if (!spendItemFromState(stagedState, seedType, "seed", 1)) {
     sendInventoryTransactionRejected(socket, data, `Not enough ${seedType}.`);
     return;
   }
 
-  const seedGrowTime: any = getSeedConfiguredGrowTime(seedType);
+  const seedGrowTime = getSeedConfiguredGrowTime(seedType);
   const update: any = {
     type: "world_seed_update",
     action: "place",
@@ -12200,9 +12283,9 @@ async function handleSeedPlaceTransaction(socket: any, player: any, data: any) {
   };
 
   applySeedUpdateToWorldState(worldName, update);
-  const seedTransactionId: any = makeAuditId("seed");
-  const serializedWorld: any = serializeWorldState(worldName);
-  const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+  const seedTransactionId = makeAuditId("seed");
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "seed_place",
     action: "seed_place",
     reason: "seed_plant_cost",
@@ -12217,8 +12300,8 @@ async function handleSeedPlaceTransaction(socket: any, player: any, data: any) {
     sendInventoryTransactionRejected(socket, data, commit.message);
     return;
   }
-  const committedState: any = commit.state;
-  const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
+  const committedState = commit.state;
+  const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
   persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
 
@@ -12253,14 +12336,14 @@ async function handleSeedPlaceTransaction(socket: any, player: any, data: any) {
 }
 
 function getBlockTypeForSeed(seedType: any) {
-  const definition: any = ItemDatabase.getItemDefinition(seedType);
+  const definition = ItemDatabase.getItemDefinition(seedType);
   if (!definition || definition.category !== "seed") return "";
   return clampString(definition.grows_into || String(seedType || "").replace(/_seed$/, ""));
 }
 
 async function handleSeedSpliceTransaction(socket: any, player: any, data: any) {
-  const requestId: any = makeRequestId(data);
-  const worldName: any = getTransactionWorldName(player, data);
+  const requestId = makeRequestId(data);
+  const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "splice seeds in that world")) return;
   if (await rejectIfWorldBanned(socket, player, worldName, "seed_splice")) return;
   if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) return;
@@ -12276,15 +12359,15 @@ async function handleSeedSpliceTransaction(socket: any, player: any, data: any) 
     return;
   }
 
-  const secondSeed: any = clampString(data.seed_type || data.second_seed_type || data.item_id || "");
+  const secondSeed = clampString(data.seed_type || data.second_seed_type || data.item_id || "");
   if (!ItemDatabase.hasItem(secondSeed) || resolveInventoryCategory(secondSeed) !== "seed") {
     sendInventoryTransactionRejected(socket, data, "Select a valid seed to splice.");
     return;
   }
 
-  const worldState: any = ensureWorldState(worldName);
-  const key: any = gridKey(grid.x, grid.y);
-  const seed: any = worldState.seeds.get(key);
+  const worldState = ensureWorldState(worldName);
+  const key = gridKey(grid.x, grid.y);
+  const seed = worldState.seeds.get(key);
   if (!seed) {
     sendInventoryTransactionRejected(socket, data, "There is no seed-tree there.");
     return;
@@ -12295,26 +12378,26 @@ async function handleSeedSpliceTransaction(socket: any, player: any, data: any) 
     return;
   }
 
-  const resultSeed: any = ItemDatabase.getSpliceResult(seed.seed_type, secondSeed);
+  const resultSeed = ItemDatabase.getSpliceResult(seed.seed_type, secondSeed);
   if (resultSeed === "" || !ItemDatabase.hasItem(resultSeed)) {
     sendInventoryTransactionRejected(socket, data, "These seeds cannot be spliced.");
     return;
   }
 
-  const state: any = ensureWritablePlayerState(player.account_username);
+  const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     sendInventoryTransactionRejected(socket, data, `Not enough ${secondSeed}.`);
     return;
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
   if (!spendItemFromState(stagedState, secondSeed, "seed", 1)) {
     sendInventoryTransactionRejected(socket, data, `Not enough ${secondSeed}.`);
     return;
   }
 
-  const seedGrowTime: any = getSeedConfiguredGrowTime(resultSeed);
+  const seedGrowTime = getSeedConfiguredGrowTime(resultSeed);
   const update: any = {
     type: "world_seed_update",
     action: "splice",
@@ -12327,11 +12410,11 @@ async function handleSeedSpliceTransaction(socket: any, player: any, data: any) 
     world: worldName,
   };
 
-  const originalSeed: any = cloneJson(seed);
+  const originalSeed = cloneJson(seed);
   applySeedUpdateToWorldState(worldName, update);
-  const seedTransactionId: any = makeAuditId("seed");
-  const serializedWorld: any = serializeWorldState(worldName);
-  const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+  const seedTransactionId = makeAuditId("seed");
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "seed_splice",
     action: "seed_splice",
     reason: "seed_splice",
@@ -12346,8 +12429,8 @@ async function handleSeedSpliceTransaction(socket: any, player: any, data: any) 
     sendInventoryTransactionRejected(socket, data, commit.message);
     return;
   }
-  const committedState: any = commit.state;
-  const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
+  const committedState = commit.state;
+  const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
   persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
 
@@ -12364,8 +12447,8 @@ async function handleSeedSpliceTransaction(socket: any, player: any, data: any) 
 }
 
 async function handleSeedHarvestTransaction(socket: any, player: any, data: any) {
-  const requestId: any = makeRequestId(data);
-  const worldName: any = getTransactionWorldName(player, data);
+  const requestId = makeRequestId(data);
+  const worldName = getTransactionWorldName(player, data);
   if (!requireSameWorld(socket, player, worldName, "harvest seeds in that world")) return;
   if (await rejectIfWorldBanned(socket, player, worldName, "seed_harvest")) return;
   if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) return;
@@ -12381,25 +12464,25 @@ async function handleSeedHarvestTransaction(socket: any, player: any, data: any)
     return;
   }
 
-  const worldState: any = ensureWorldState(worldName);
-  const key: any = gridKey(grid.x, grid.y);
-  const seed: any = worldState.seeds.get(key);
+  const worldState = ensureWorldState(worldName);
+  const key = gridKey(grid.x, grid.y);
+  const seed = worldState.seeds.get(key);
   if (!seed) {
     sendInventoryTransactionRejected(socket, data, "There is no seed-tree there.");
     return;
   }
 
-  const dropPosition: any = getGridCenterPixels(grid.x, grid.y);
+  const dropPosition = getGridCenterPixels(grid.x, grid.y);
   const drops: any = [];
-  const maturedSeed: any = isSeedMature(seed);
+  const maturedSeed = isSeedMature(seed);
   if (maturedSeed) {
     if (Boolean(seed.mutated)) {
-      const validRewardTable: any = SEED_MUTATION_REWARD_TABLE.filter((entry) => ItemDatabase.hasItem(entry.item_id));
-      const reward: any = rollWeightedReward(validRewardTable);
+      const validRewardTable = SEED_MUTATION_REWARD_TABLE.filter((entry) => ItemDatabase.hasItem(entry.item_id));
+      const reward = rollWeightedReward(validRewardTable);
       if (reward) {
-        const minAmount: any = Math.max(1, Math.trunc(Number(reward.min_amount) || 1));
-        const maxAmount: any = Math.max(minAmount, Math.trunc(Number(reward.max_amount) || minAmount));
-        const amount: any = crypto.randomInt(minAmount, maxAmount + 1);
+        const minAmount = Math.max(1, Math.trunc(Number(reward.min_amount) || 1));
+        const maxAmount = Math.max(minAmount, Math.trunc(Number(reward.max_amount) || minAmount));
+        const amount = crypto.randomInt(minAmount, maxAmount + 1);
         drops.push({
           item_id: reward.item_id,
           item_category: reward.item_category,
@@ -12408,9 +12491,9 @@ async function handleSeedHarvestTransaction(socket: any, player: any, data: any)
         });
       }
     } else {
-      const blockType: any = getBlockTypeForSeed(seed.seed_type);
+      const blockType = getBlockTypeForSeed(seed.seed_type);
       if (blockType !== "") {
-        const configuredTreeDrops: any = getTreeHarvestDropsForBlock(blockType);
+        const configuredTreeDrops = getTreeHarvestDropsForBlock(blockType);
         if (Array.isArray(configuredTreeDrops)) {
           for (const drop of configuredTreeDrops) {
             drops.push({
@@ -12442,20 +12525,20 @@ async function handleSeedHarvestTransaction(socket: any, player: any, data: any)
     world: worldName,
   };
 
-  const state: any = ensureWritablePlayerState(player.account_username);
+  const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
     return;
   }
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
-  const originalSeed: any = cloneJson(seed);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  const originalSeed = cloneJson(seed);
   applySeedUpdateToWorldState(worldName, update);
 
   const rewards: any = [];
   const payloads: any = [];
   for (const drop of drops) {
-    const payload: any = createServerDrop(
+    const payload = createServerDrop(
       worldName,
       drop.item_id,
       drop.item_category,
@@ -12469,16 +12552,16 @@ async function handleSeedHarvestTransaction(socket: any, player: any, data: any)
     payloads.push(payload);
   }
 
-  const progression: any = grantExperienceToState(stagedState, getSeedHarvestXp(rewards, maturedSeed), "seed_harvest", {
+  const progression = grantExperienceToState(stagedState, getSeedHarvestXp(rewards, maturedSeed), "seed_harvest", {
     world: worldName,
     seed_type: seed.seed_type,
     mutated: Boolean(seed.mutated),
     x: grid.x,
     y: grid.y,
   });
-  const seedTransactionId: any = makeAuditId("seed");
-  const serializedWorld: any = serializeWorldState(worldName);
-  const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+  const seedTransactionId = makeAuditId("seed");
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "seed_harvest",
     action: "seed_harvest",
     reason: "seed_harvest",
@@ -12496,7 +12579,7 @@ async function handleSeedHarvestTransaction(socket: any, player: any, data: any)
     failure_message: "Server inventory changed. Try again.",
   });
   if (!commit.ok) {
-    const rollbackState: any = ensureWorldState(worldName);
+    const rollbackState = ensureWorldState(worldName);
     rollbackState.seeds.set(key, originalSeed);
     for (const payload of payloads) {
       rollbackState.drops.delete(payload.drop_id);
@@ -12504,8 +12587,8 @@ async function handleSeedHarvestTransaction(socket: any, player: any, data: any)
     sendInventoryTransactionRejected(socket, data, commit.message);
     return;
   }
-  const committedState: any = commit.state;
-  const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
+  const committedState = commit.state;
+  const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
   persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
   for (const payload of payloads) {
@@ -12525,7 +12608,10 @@ async function handleSeedHarvestTransaction(socket: any, player: any, data: any)
 }
 
 function rollWeightedReward(table: any) {
-  const totalWeight: any = table.reduce((total, entry) => total + Math.max(0, Number(entry.weight) || 0), 0);
+  const totalWeight = table.reduce(
+    (total: number, entry: ServerPacketRecord) => total + Math.max(0, Number(entry.weight) || 0),
+    0,
+  );
   if (totalWeight <= 0) return table[0];
 
   let roll: any = crypto.randomInt(1, totalWeight + 1);
@@ -12586,11 +12672,11 @@ function failedTransactionLedgerSourceForAction(action: any) {
 }
 
 function sanitizeRejectedActionMetadata(extra: any) {
-  const raw: any = extra && typeof extra === "object" && !Array.isArray(extra) ? extra : {};
+  const raw = extra && typeof extra === "object" && !Array.isArray(extra) ? extra : {};
   const metadata: any = {};
   for (const [key, value] of Object.entries<any>(raw)) {
     if (value === undefined) continue;
-    const cleanKey: any = cleanName(key);
+    const cleanKey = cleanName(key);
     if (cleanKey === "" || cleanKey === "player_data" || cleanKey === "account" || cleanKey === "session_token") continue;
     if (typeof value === "string" || typeof value === "number" || typeof value === "boolean" || value === null) {
       metadata[cleanKey] = value;
@@ -12615,17 +12701,17 @@ function queueFailedTransactionLedger(socket: any, action: any, message: any, ex
   if (!isPostgresAuthoritativeReady()) return;
   if (!shouldRecordFailedTransactionLedgerAction(action)) return;
 
-  const player: any = socket?.playerId ? players.get(socket.playerId) : null;
-  const username: any = cleanAccountName(player?.account_username || player?.name || "");
+  const player = socket?.playerId ? players.get(socket.playerId) : null;
+  const username = cleanAccountName(player?.account_username || player?.name || "");
   if (!player?.authenticated || username === "") return;
 
-  const metadata: any = sanitizeRejectedActionMetadata(extra);
-  const account: any = accounts.get(accountKey(username)) || null;
-  const worldName: any = cleanWorld(metadata.world || metadata.world_name || player.world || "START");
-  const itemType: any = cleanName(metadata.item_type || metadata.item_id || metadata.block_type || metadata.seed_type || "");
-  const itemCategory: any = cleanInventoryCategory(metadata.item_category || metadata.category || "");
-  const publicItemInstanceId: any = cleanName(metadata.public_item_instance_id || metadata.item_instance_public_id || metadata.item_instance_id || "");
-  const requestId: any = cleanName(metadata.request_id || metadata.requestId || "");
+  const metadata = sanitizeRejectedActionMetadata(extra);
+  const account = accounts.get(accountKey(username)) || null;
+  const worldName = cleanWorld(metadata.world || metadata.world_name || player.world || "START");
+  const itemType = cleanName(metadata.item_type || metadata.item_id || metadata.block_type || metadata.seed_type || "");
+  const itemCategory = cleanInventoryCategory(metadata.item_category || metadata.category || "");
+  const publicItemInstanceId = cleanName(metadata.public_item_instance_id || metadata.item_instance_public_id || metadata.item_instance_id || "");
+  const requestId = cleanName(metadata.request_id || metadata.requestId || "");
 
   postgresStore.runDetached("transaction ledger failed action", () => postgresStore.recordTransactionLedgerEvent({
     transaction_type: failedTransactionLedgerTypeForAction(action),
@@ -12677,8 +12763,8 @@ function sendActionRejected(socket: any, action: any, message: any, extra: any =
   }
 
   if (String(action || "") === "world_block_update") {
-    const context: any = socket?._phase7BlockActionContext || null;
-    const fallbackRequestId: any = clampString(payload.request_id || payload.action_id || socket?.activeActionRequestId || "", MAX_ITEM_ID_LENGTH);
+    const context = socket?._phase7BlockActionContext || null;
+    const fallbackRequestId = clampString(payload.request_id || payload.action_id || socket?.activeActionRequestId || "", MAX_ITEM_ID_LENGTH);
     if (fallbackRequestId !== "") {
       payload.request_id = fallbackRequestId;
       payload.action_id = fallbackRequestId;
@@ -12701,8 +12787,8 @@ function sendActionRejected(socket: any, action: any, message: any, extra: any =
 function requireSameWorld(socket: any, player: any, worldName: any, action: any) {
   if (!player) return false;
 
-  const currentWorld: any = cleanWorld(player.world || "START");
-  const targetWorld: any = cleanWorld(worldName || "START");
+  const currentWorld = cleanWorld(player.world || "START");
+  const targetWorld = cleanWorld(worldName || "START");
   if (currentWorld === targetWorld) return true;
 
   sendActionRejected(socket, action, "Join that world before sending actions for it.", {
@@ -12725,9 +12811,9 @@ function isGridInWorld(x: any, y: any) {
 }
 
 function isPositionInWorldBounds(x: any, y: any) {
-  const min: any = -POSITION_MARGIN_PIXELS;
-  const maxX: any = WORLD_WIDTH * TILE_SIZE + POSITION_MARGIN_PIXELS;
-  const maxY: any = WORLD_HEIGHT * TILE_SIZE + POSITION_MARGIN_PIXELS;
+  const min = -POSITION_MARGIN_PIXELS;
+  const maxX = WORLD_WIDTH * TILE_SIZE + POSITION_MARGIN_PIXELS;
+  const maxY = WORLD_HEIGHT * TILE_SIZE + POSITION_MARGIN_PIXELS;
   return Number.isFinite(x) && Number.isFinite(y) && x >= min && x <= maxX && y >= min && y <= maxY;
 }
 
@@ -12750,42 +12836,42 @@ function parseBlockVector2(value: any, fallbackX: any, fallbackY: any) {
 }
 
 function blockOccupiesCollisionArea(blockType: any) {
-  const definition: any = ItemDatabase.getItemDefinition(blockType);
+  const definition = ItemDatabase.getItemDefinition(blockType);
   return Boolean(definition?.occupies_collision_area);
 }
 
 function blockRequiresFullAreaClear(blockType: any) {
-  const definition: any = ItemDatabase.getItemDefinition(blockType);
+  const definition = ItemDatabase.getItemDefinition(blockType);
   return Boolean(definition?.requires_full_area_clear);
 }
 
 function blockRequiresWorldLock(blockType: any) {
-  const definition: any = ItemDatabase.getItemDefinition(blockType);
+  const definition = ItemDatabase.getItemDefinition(blockType);
   return Boolean(definition?.requires_world_lock);
 }
 
 function isEntranceBlockType(blockType: any) {
-  const definition: any = ItemDatabase.getItemDefinition(clampString(blockType || ""));
+  const definition = ItemDatabase.getItemDefinition(clampString(blockType || ""));
   return Boolean(definition && definition.category === "block" && definition.entrance_block);
 }
 
 function isDoorBlockType(blockType: any) {
-  const definition: any = ItemDatabase.getItemDefinition(clampString(blockType || ""));
+  const definition = ItemDatabase.getItemDefinition(clampString(blockType || ""));
   return Boolean(definition && definition.category === "block" && definition.door_block);
 }
 
 function isPasswordDoorBlockType(blockType: any) {
-  const definition: any = ItemDatabase.getItemDefinition(clampString(blockType || ""));
+  const definition = ItemDatabase.getItemDefinition(clampString(blockType || ""));
   return Boolean(definition && definition.category === "block" && definition.password_door);
 }
 
 function isSignBlockType(blockType: any) {
-  const definition: any = ItemDatabase.getItemDefinition(clampString(blockType || ""));
+  const definition = ItemDatabase.getItemDefinition(clampString(blockType || ""));
   return Boolean(definition && definition.category === "block" && definition.sign_block);
 }
 
 function isToggleBlockType(blockType: any) {
-  const definition: any = ItemDatabase.getItemDefinition(clampString(blockType || ""));
+  const definition = ItemDatabase.getItemDefinition(clampString(blockType || ""));
   return Boolean(definition && definition.category === "block" && definition.toggle_block);
 }
 
@@ -12814,11 +12900,11 @@ function isPersistentInteractionBlockType(blockType: any) {
 }
 
 function getBlockCollisionRectForGrid(x: any, y: any, blockType: any) {
-  const definition: any = ItemDatabase.getItemDefinition(blockType) || {};
-  const size: any = parseBlockVector2(definition.collision_size || definition.visual_size, TILE_SIZE, TILE_SIZE);
-  const offset: any = parseBlockVector2(definition.collision_offset || definition.visual_offset, 0, 0);
-  const centerX: any = (Number(x) || 0) * TILE_SIZE + offset.x;
-  const centerY: any = (Number(y) || 0) * TILE_SIZE + offset.y;
+  const definition = ItemDatabase.getItemDefinition(blockType) || {};
+  const size = parseBlockVector2(definition.collision_size || definition.visual_size, TILE_SIZE, TILE_SIZE);
+  const offset = parseBlockVector2(definition.collision_offset || definition.visual_offset, 0, 0);
+  const centerX = (Number(x) || 0) * TILE_SIZE + offset.x;
+  const centerY = (Number(y) || 0) * TILE_SIZE + offset.y;
 
   return {
     x: centerX - size.x * 0.5,
@@ -12830,12 +12916,12 @@ function getBlockCollisionRectForGrid(x: any, y: any, blockType: any) {
 
 function getGridPositionsOverlappingRect(rect: any) {
   const positions: any = [];
-  const halfTile: any = TILE_SIZE * 0.5;
-  const epsilon: any = 0.01;
-  const minX: any = Math.floor((rect.x + halfTile + epsilon) / TILE_SIZE);
-  const minY: any = Math.floor((rect.y + halfTile + epsilon) / TILE_SIZE);
-  const maxX: any = Math.floor((rect.x + rect.width - epsilon + halfTile) / TILE_SIZE);
-  const maxY: any = Math.floor((rect.y + rect.height - epsilon + halfTile) / TILE_SIZE);
+  const halfTile = TILE_SIZE * 0.5;
+  const epsilon = 0.01;
+  const minX = Math.floor((rect.x + halfTile + epsilon) / TILE_SIZE);
+  const minY = Math.floor((rect.y + halfTile + epsilon) / TILE_SIZE);
+  const maxX = Math.floor((rect.x + rect.width - epsilon + halfTile) / TILE_SIZE);
+  const maxY = Math.floor((rect.y + rect.height - epsilon + halfTile) / TILE_SIZE);
 
   for (let y: any = minY; y <= maxY; y += 1) {
     for (let x: any = minX; x <= maxX; x += 1) {
@@ -12859,12 +12945,12 @@ function rectsIntersect(a: any, b: any) {
 function doesPlacementOverlapReservedObject(state: any, x: any, y: any, blockType: any) {
   if (!state) return false;
 
-  const proposedRect: any = getBlockCollisionRectForGrid(x, y, blockType);
+  const proposedRect = getBlockCollisionRectForGrid(x, y, blockType);
   for (const block of state.foreground.values()) {
-    const existingType: any = clampString(block?.block_type || "");
+    const existingType = clampString(block?.block_type || "");
     if (!blockOccupiesCollisionArea(existingType)) continue;
 
-    const existingRect: any = getBlockCollisionRectForGrid(block.x, block.y, existingType);
+    const existingRect = getBlockCollisionRectForGrid(block.x, block.y, existingType);
     if (rectsIntersect(proposedRect, existingRect)) {
       return true;
     }
@@ -12876,15 +12962,15 @@ function doesPlacementOverlapReservedObject(state: any, x: any, y: any, blockTyp
 function doesPlacementOverlapReservedObjectExcept(state: any, x: any, y: any, blockType: any, ignoredGridKey: any = "") {
   if (!state) return false;
 
-  const proposedRect: any = getBlockCollisionRectForGrid(x, y, blockType);
+  const proposedRect = getBlockCollisionRectForGrid(x, y, blockType);
   for (const block of state.foreground.values()) {
-    const blockKey: any = gridKey(block.x, block.y);
+    const blockKey = gridKey(block.x, block.y);
     if (blockKey === ignoredGridKey) continue;
 
-    const existingType: any = clampString(block?.block_type || "");
+    const existingType = clampString(block?.block_type || "");
     if (!blockOccupiesCollisionArea(existingType)) continue;
 
-    const existingRect: any = getBlockCollisionRectForGrid(block.x, block.y, existingType);
+    const existingRect = getBlockCollisionRectForGrid(block.x, block.y, existingType);
     if (rectsIntersect(proposedRect, existingRect)) {
       return true;
     }
@@ -12894,8 +12980,8 @@ function doesPlacementOverlapReservedObjectExcept(state: any, x: any, y: any, bl
 }
 
 function validateFullCollisionAreaPlacement(socket: any, state: any, update: any) {
-  const collisionRect: any = getBlockCollisionRectForGrid(update.x, update.y, update.block_type);
-  const occupiedPositions: any = getGridPositionsOverlappingRect(collisionRect);
+  const collisionRect = getBlockCollisionRectForGrid(update.x, update.y, update.block_type);
+  const occupiedPositions = getGridPositionsOverlappingRect(collisionRect);
 
   for (const position of occupiedPositions) {
     if (!isGridInWorld(position.x, position.y)) {
@@ -12906,7 +12992,7 @@ function validateFullCollisionAreaPlacement(socket: any, state: any, update: any
       return false;
     }
 
-    const key: any = gridKey(position.x, position.y);
+    const key = gridKey(position.x, position.y);
     if (state.foreground.has(key) || state.seeds.has(key)) {
       sendActionRejected(socket, "world_block_update", "Need enough empty space.", {
         reason: "occupied",
@@ -12956,8 +13042,8 @@ function cleanDoorPassword(value: any) {
 }
 
 function parseDoorDestination(value: any, sourceWorld: any = "START") {
-  const destination: any = cleanDoorDestination(value);
-  const fallbackWorld: any = cleanWorld(sourceWorld || "START");
+  const destination = cleanDoorDestination(value);
+  const fallbackWorld = cleanWorld(sourceWorld || "START");
   if (destination === "") {
     return {
       destination,
@@ -12966,7 +13052,10 @@ function parseDoorDestination(value: any, sourceWorld: any = "START") {
     };
   }
 
-  const parts: any = destination.split(":").map((part) => String(part || "").trim()).filter((part) => part !== "");
+  const parts = destination
+    .split(":")
+    .map((part: unknown) => String(part || "").trim())
+    .filter((part: string) => part !== "");
   let targetWorld: any = fallbackWorld;
   let targetDoorId: any = "";
 
@@ -12995,7 +13084,7 @@ function canPlayerControlWorldLock(player: any, worldName: any) {
   if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const lock: any = getEffectiveWorldLockStateInState(state);
   if (!lock.is_locked) return false;
   return lockOwnerMatchesPlayer(lock, player);
@@ -13004,7 +13093,7 @@ function canPlayerControlWorldLock(player: any, worldName: any) {
 function isPlayerWorldOwner(player: any, worldName: any) {
   if (!player || !player.authenticated) return false;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const lock: any = getEffectiveWorldLockStateInState(state);
   if (!lock.is_locked) return false;
   return lockOwnerMatchesPlayer(lock, player);
@@ -13014,11 +13103,11 @@ function canPlayerBuildInWorld(player: any, worldName: any) {
   if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const lock: any = getEffectiveWorldLockStateInState(state);
   if (!lock.is_locked) return true;
 
-  const playerKey: any = accountKey(player.account_username);
+  const playerKey = accountKey(player.account_username);
   if (playerKey === "") return false;
   if (lockOwnerMatchesPlayer(lock, player)) return true;
   if (Boolean(lock.public_build)) return true;
@@ -13030,7 +13119,7 @@ function canPlayerConfigureDoor(player: any, worldName: any) {
   if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const lock: any = getEffectiveWorldLockStateInState(state);
   if (!lock.is_locked) return true;
 
@@ -13042,7 +13131,7 @@ function canPlayerEditPasswordDoor(player: any, worldName: any) {
   if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const lock: any = getEffectiveWorldLockStateInState(state);
   if (!lock.is_locked) return false;
   return lockOwnerMatchesPlayer(lock, player);
@@ -13052,7 +13141,7 @@ function canPlayerToggleDoorLock(player: any, worldName: any) {
   if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const lock: any = getEffectiveWorldLockStateInState(state);
   if (!lock.is_locked) return true;
 
@@ -13064,7 +13153,7 @@ function canPlayerPassDoor(player: any, worldName: any) {
   if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const lock: any = getEffectiveWorldLockStateInState(state);
   if (!lock.is_locked) return true;
 
@@ -13090,10 +13179,10 @@ function canPlayerUseThemeMachineAtGrid(player: any, worldName: any, x: any, y: 
   if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const lock: any = getEffectiveWorldLockStateInState(state);
-  const playerKey: any = accountKey(player.account_username);
-  const hasWorldAccess: any = Boolean(lock.is_locked)
+  const playerKey = accountKey(player.account_username);
+  const hasWorldAccess = Boolean(lock.is_locked)
     && playerKey !== ""
     && (
       lockOwnerMatchesPlayer(lock, player)
@@ -13101,8 +13190,8 @@ function canPlayerUseThemeMachineAtGrid(player: any, worldName: any, x: any, y: 
       || canWorldLockRoleBuild(getWorldLockRoleForPlayer(lock, player))
     );
 
-  const areaLock: any = getAreaLockCoveringGrid(state, x, y);
-  const hasAreaAccess: any = Boolean(areaLock) && canPlayerBuildInAreaLock(player, worldName, areaLock);
+  const areaLock = getAreaLockCoveringGrid(state, x, y);
+  const hasAreaAccess = Boolean(areaLock) && canPlayerBuildInAreaLock(player, worldName, areaLock);
   return hasWorldAccess || hasAreaAccess;
 }
 
@@ -13115,7 +13204,7 @@ function getGridCenterPixels(x: any, y: any) {
 
 function isPlayerNearPoint(player: any, x: any, y: any, maxDistance: any = MAX_GRID_ACTION_DISTANCE_PIXELS, options: any = {}) {
   if (!player) return false;
-  const position: any = getPlayerValidationPosition(player, {
+  const position = getPlayerValidationPosition(player, {
     action: options.action || "point_reach",
     world: options.world || getPlayerCurrentWorldName(player),
   });
@@ -13131,13 +13220,13 @@ function isPlayerNearPoint(player: any, x: any, y: any, maxDistance: any = MAX_G
     return false;
   }
 
-  const px: any = Number(position.x);
-  const py: any = Number(position.y);
-  const tx: any = Number(x);
-  const ty: any = Number(y);
+  const px = Number(position.x);
+  const py = Number(position.y);
+  const tx = Number(x);
+  const ty = Number(y);
   if (![px, py, tx, ty].every(Number.isFinite)) return false;
-  const distance: any = Math.hypot(px - tx, py - ty);
-  const ok: any = distance <= maxDistance;
+  const distance = Math.hypot(px - tx, py - ty);
+  const ok = distance <= maxDistance;
   debugNetfoxAction("reach point check", {
     player_id: String(player?.id || ""),
     action: options.action || "point_reach",
@@ -13155,7 +13244,7 @@ function isPlayerNearPoint(player: any, x: any, y: any, maxDistance: any = MAX_G
 }
 
 function isPlayerNearGrid(player: any, x: any, y: any, maxDistance: any = MAX_GRID_ACTION_DISTANCE_PIXELS, options: any = {}) {
-  const center: any = getGridCenterPixels(x, y);
+  const center = getGridCenterPixels(x, y);
   return isPlayerNearPoint(player, center.x, center.y, maxDistance, {
     action: options.action || "grid_reach",
     world: options.world || getPlayerCurrentWorldName(player),
@@ -13163,13 +13252,13 @@ function isPlayerNearGrid(player: any, x: any, y: any, maxDistance: any = MAX_GR
 }
 
 function getPlayerGridPosition(player: any) {
-  const position: any = getPlayerValidationPosition(player, {
+  const position = getPlayerValidationPosition(player, {
     action: "grid_position",
     world: getPlayerCurrentWorldName(player),
   });
   if (!position.ok) return null;
-  const px: any = Number(position.x);
-  const py: any = Number(position.y);
+  const px = Number(position.x);
+  const py = Number(position.y);
   if (!Number.isFinite(px) || !Number.isFinite(py)) return null;
   return {
     x: Math.round(px / TILE_SIZE),
@@ -13178,22 +13267,22 @@ function getPlayerGridPosition(player: any) {
 }
 
 function isPlayerStandingOnGrid(player: any, x: any, y: any) {
-  const playerGrid: any = getPlayerGridPosition(player);
+  const playerGrid = getPlayerGridPosition(player);
   if (!playerGrid) return false;
-  const deltaX: any = Math.abs(playerGrid.x - Math.trunc(Number(x) || 0));
-  const deltaY: any = Math.abs(playerGrid.y - Math.trunc(Number(y) || 0));
+  const deltaX = Math.abs(playerGrid.x - Math.trunc(Number(x) || 0));
+  const deltaY = Math.abs(playerGrid.y - Math.trunc(Number(y) || 0));
   return deltaX === 0 && deltaY === 0;
 }
 
 function getPlayerGridPositionInWorld(player: any, worldName: any, action: any = "grid_position") {
   if (!player) return null;
-  const position: any = getPlayerValidationPosition(player, {
+  const position = getPlayerValidationPosition(player, {
     action,
     world: cleanWorld(worldName || getPlayerCurrentWorldName(player)),
   });
   if (!position.ok) return null;
-  const px: any = Number(position.x);
-  const py: any = Number(position.y);
+  const px = Number(position.x);
+  const py = Number(position.y);
   if (!Number.isFinite(px) || !Number.isFinite(py)) return null;
   return {
     x: Math.round(px / TILE_SIZE),
@@ -13203,18 +13292,18 @@ function getPlayerGridPositionInWorld(player: any, worldName: any, action: any =
 
 function isPlayerOverlappingGridInWorld(player: any, worldName: any, gridX: any, gridY: any, blockType: any, action: any = "grid_overlap") {
   if (!player) return false;
-  const targetX: any = Math.trunc(Number(gridX) || 0);
-  const targetY: any = Math.trunc(Number(gridY) || 0);
-  const position: any = getPlayerValidationPosition(player, {
+  const targetX = Math.trunc(Number(gridX) || 0);
+  const targetY = Math.trunc(Number(gridY) || 0);
+  const position = getPlayerValidationPosition(player, {
     action,
     world: cleanWorld(worldName || getPlayerCurrentWorldName(player)),
   });
   if (position.ok) {
-    const px: any = Number(position.x);
-    const py: any = Number(position.y);
+    const px = Number(position.x);
+    const py = Number(position.y);
     if (Number.isFinite(px) && Number.isFinite(py)) {
-      const playerRect: any = getPlayerMovementCollisionRect({ x: px, y: py });
-      const blockRect: any = getBlockCollisionRectForGrid(targetX, targetY, blockType);
+      const playerRect = getPlayerMovementCollisionRect({ x: px, y: py });
+      const blockRect = getBlockCollisionRectForGrid(targetX, targetY, blockType);
       if (rectsIntersect(playerRect, blockRect)) return true;
     }
   }
@@ -13228,8 +13317,8 @@ function buildPunchToggleInstantDeathTargets(worldName: any, update: any, valida
   if (!update || update.action !== "place" || update.layer !== "foreground") return [];
   if (!isSolidMovementCollisionBlock(update.block_type)) return [];
 
-  const targetX: any = Math.trunc(Number(update.x) || 0);
-  const targetY: any = Math.trunc(Number(update.y) || 0);
+  const targetX = Math.trunc(Number(update.x) || 0);
+  const targetY = Math.trunc(Number(update.y) || 0);
   const killed: any = [];
   for (const { player: target, socket: client, playerId } of getWorldPlayerRecords(worldName, { includeSocket: true })) {
     if (!isPlayerOverlappingGridInWorld(target, worldName, targetX, targetY, update.block_type, "death_gate_crush")) continue;
@@ -13245,8 +13334,12 @@ function buildPunchToggleInstantDeathTargets(worldName: any, update: any, valida
     update.instant_death = true;
     update.kill_reason = "death_gate_crush";
     update.kill_block_type = update.block_type;
-    update.kill_player_ids = killed.map((entry) => entry.playerId).filter((id) => id !== "");
-    update.kill_usernames = killed.map((entry) => entry.username).filter((username) => username !== "");
+    update.kill_player_ids = killed
+      .map((entry: ServerKilledTargetRecord) => entry.playerId)
+      .filter((id: string) => id !== "");
+    update.kill_usernames = killed
+      .map((entry: ServerKilledTargetRecord) => entry.username)
+      .filter((username: string) => username !== "");
   }
 
   return killed;
@@ -13254,9 +13347,9 @@ function buildPunchToggleInstantDeathTargets(worldName: any, update: any, valida
 
 function applyPunchToggleInstantDeathPresence(killedTargets: any, worldName: any) {
   if (!Array.isArray(killedTargets) || killedTargets.length === 0) return;
-  const now: any = Date.now();
+  const now = Date.now();
   for (const target of killedTargets) {
-    const player: any = target?.player;
+    const player = target?.player;
     if (!player) continue;
     player.animation_state = "dead";
     player.velocity_x = 0;
@@ -13280,7 +13373,7 @@ function hasProgressionPayload(payload: any) {
 }
 
 function writePlayerStateJsonBackup(username: any, state: any) {
-  const clean: any = cleanAccountName(username);
+  const clean = cleanAccountName(username);
   if (clean === "" || !state) return;
 
   writeJsonFileAtomic(getPlayerSavePath(clean), {
@@ -13292,26 +13385,26 @@ function writePlayerStateJsonBackup(username: any, state: any) {
 }
 
 function writeWorldStateJsonBackup(worldName: any, serialized: any = null) {
-  const clean: any = cleanWorld(worldName);
+  const clean = cleanWorld(worldName);
   if (!WORLD_JSON_BACKUP_WHEN_PG_READY && isPostgresAuthoritativeReady()) {
     return;
   }
 
-  const worldState: any = serialized && typeof serialized === "object" && !Array.isArray(serialized)
+  const worldState = serialized && typeof serialized === "object" && !Array.isArray(serialized)
     ? serialized
     : serializeWorldState(clean);
   pendingWorldJsonBackups.set(clean, worldState);
 
-  const shouldDebounce: any = isPostgresAuthoritativeReady() && WORLD_JSON_BACKUP_DEBOUNCE_MS > 0;
+  const shouldDebounce = isPostgresAuthoritativeReady() && WORLD_JSON_BACKUP_DEBOUNCE_MS > 0;
   if (!shouldDebounce) {
     flushWorldStateJsonBackup(clean);
     return;
   }
 
-  const existingTimer: any = worldJsonBackupTimers.get(clean);
+  const existingTimer = worldJsonBackupTimers.get(clean);
   if (existingTimer) clearTimeout(existingTimer);
 
-  const timer: any = setTimeout(() => {
+  const timer = setTimeout(() => {
     flushWorldStateJsonBackup(clean);
   }, WORLD_JSON_BACKUP_DEBOUNCE_MS);
   if (typeof timer.unref === "function") timer.unref();
@@ -13319,14 +13412,14 @@ function writeWorldStateJsonBackup(worldName: any, serialized: any = null) {
 }
 
 function flushWorldStateJsonBackup(worldName: any, options: any = {}) {
-  const clean: any = cleanWorld(worldName);
-  const timer: any = worldJsonBackupTimers.get(clean);
+  const clean = cleanWorld(worldName);
+  const timer = worldJsonBackupTimers.get(clean);
   if (timer) {
     clearTimeout(timer);
     worldJsonBackupTimers.delete(clean);
   }
 
-  const worldState: any = pendingWorldJsonBackups.get(clean);
+  const worldState = pendingWorldJsonBackups.get(clean);
   if (!worldState) return;
   pendingWorldJsonBackups.delete(clean);
 
@@ -13364,15 +13457,15 @@ function persistWorldStateAfterInventoryCommit(worldName: any, postgresCommitted
  * @returns {Promise<PixelMania.WorldStateCommitResult>}
  */
 async function persistAuthoritativeWorldState(worldName: any, serialized: any = null, reason: any = "world_state_update") {
-  const clean: any = cleanWorld(worldName);
-  const worldState: any = serialized || serializeWorldState(clean);
+  const clean = cleanWorld(worldName);
+  const worldState = serialized || serializeWorldState(clean);
   writeWorldStateJsonBackup(clean, worldState);
   if (!isPostgresAuthoritativeReady()) {
     queueWorldSave(clean);
     return { ok: true, postgres_committed: false, queued: true };
   }
 
-  const saved: any = await postgresStore.saveWorldState(clean, worldState);
+  const saved = await postgresStore.saveWorldState(clean, worldState);
   if (!saved) {
     console.warn("[postgres] authoritative world state save failed", { world: clean, reason });
     return { ok: false, reason: "database_error" };
@@ -13387,12 +13480,12 @@ function countSerializedWorldCollection(value: any) {
 }
 
 function summarizeSerializedWorldStateForLog(state: any) {
-  const data: any = state && typeof state === "object" ? state : {};
-  const foreground: any = countSerializedWorldCollection(data.foreground);
-  const background: any = countSerializedWorldCollection(data.background);
-  const seeds: any = countSerializedWorldCollection(data.seeds);
-  const drops: any = countSerializedWorldCollection(data.drops || data.item_drops);
-  const doors: any = countSerializedWorldCollection(data.doors);
+  const data = state && typeof state === "object" ? state : {};
+  const foreground = countSerializedWorldCollection(data.foreground);
+  const background = countSerializedWorldCollection(data.background);
+  const seeds = countSerializedWorldCollection(data.seeds);
+  const drops = countSerializedWorldCollection(data.drops || data.item_drops);
+  const doors = countSerializedWorldCollection(data.doors);
   return {
     foreground,
     background,
@@ -13409,7 +13502,7 @@ function summarizeSerializedWorldStateForLog(state: any) {
  * @returns {Promise<PixelMania.RefreshWorldStateFromPostgresResult | Record<string, unknown>>}
  */
 async function refreshWorldStateFromPostgres(worldName: any, reason: any = "world_state_send") {
-  const clean: any = cleanWorld(worldName);
+  const clean = cleanWorld(worldName);
   if (!isPostgresAuthoritativeReady()) return { ok: true, skipped: true, reason: "postgres_unavailable" };
   if (typeof postgresStore.loadWorldState !== "function") {
     console.warn("[postgres] authoritative world refresh unavailable; postgresStore.loadWorldState is missing", {
@@ -13419,7 +13512,7 @@ async function refreshWorldStateFromPostgres(worldName: any, reason: any = "worl
     return { ok: false, reason: "unsupported" };
   }
 
-  const persistenceFlush: any = await flushPendingSessionPersistence("", clean, `before_${reason}_world_refresh`);
+  const persistenceFlush = await flushPendingSessionPersistence("", clean, `before_${reason}_world_refresh`);
   if (!persistenceFlush.ok) {
     return { ok: false, reason: persistenceFlush.reason || "world_persistence_flush_failed" };
   }
@@ -13436,7 +13529,7 @@ async function refreshWorldStateFromPostgres(worldName: any, reason: any = "worl
   }
 
   if (!result.found) {
-    const hadLocalState: any = worldStates.has(clean);
+    const hadLocalState = worldStates.has(clean);
     worldStates.set(clean, createEmptyWorldState());
     console.warn("[postgres] authoritative world row missing; using empty world state", {
       world: clean,
@@ -13446,11 +13539,11 @@ async function refreshWorldStateFromPostgres(worldName: any, reason: any = "worl
     return { ok: true, found: false, world: clean, had_local_state: hadLocalState };
   }
 
-  const state: any = deserializeWorldState(clean, result.state || {});
+  const state = deserializeWorldState(clean, result.state || {});
   worldStates.set(clean, state);
-  const summary: any = summarizeSerializedWorldStateForLog(result.state || {});
+  const summary = summarizeSerializedWorldStateForLog(result.state || {});
   if (WORLD_STATE_REFRESH_TRACE || summary.total_blocks === 0) {
-    const logMethod: any = summary.total_blocks === 0 ? "warn" : "log";
+    const logMethod = summary.total_blocks === 0 ? "warn" : "log";
     console[logMethod]("[postgres] refreshed authoritative world state", {
       world: clean,
       reason,
@@ -13463,7 +13556,7 @@ async function refreshWorldStateFromPostgres(worldName: any, reason: any = "worl
 }
 
 async function refreshPlayerStateFromPostgres(username: any, reason: any = "player_state_send") {
-  const clean: any = cleanAccountName(username);
+  const clean = cleanAccountName(username);
   if (clean === "") return { ok: false, found: false, reason: "invalid_username" };
   if (!isPostgresAuthoritativeReady()) return { ok: true, skipped: true, reason: "postgres_unavailable" };
   if (typeof postgresStore.loadPlayerState !== "function") {
@@ -13474,7 +13567,7 @@ async function refreshPlayerStateFromPostgres(username: any, reason: any = "play
     return { ok: false, found: false, reason: "unsupported" };
   }
 
-  const persistenceFlush: any = await flushPendingSessionPersistence(clean, "", `before_${reason}_player_refresh`);
+  const persistenceFlush = await flushPendingSessionPersistence(clean, "", `before_${reason}_player_refresh`);
   if (!persistenceFlush.ok) {
     return { ok: false, found: false, reason: persistenceFlush.reason || "player_persistence_flush_failed" };
   }
@@ -13493,7 +13586,7 @@ async function refreshPlayerStateFromPostgres(username: any, reason: any = "play
     return { ok: true, found: false, username: clean };
   }
 
-  const state: any = sanitizePlayerState(result.state || {}, result.username || clean);
+  const state = sanitizePlayerState(result.state || {}, result.username || clean);
   if (!state) {
     return { ok: false, found: true, reason: "invalid_player_state" };
   }
@@ -13507,7 +13600,7 @@ async function refreshPlayerStateFromPostgres(username: any, reason: any = "play
  * @returns {Promise<PixelMania.RefreshWorldDropsFromPostgresResult>}
  */
 async function refreshWorldDropsFromPostgres(worldName: any, reason: any = "world_state_send") {
-  const clean: any = cleanWorld(worldName);
+  const clean = cleanWorld(worldName);
   if (!isPostgresAuthoritativeReady()) return { ok: true, skipped: true, reason: "postgres_unavailable" };
   if (typeof postgresStore.loadActiveWorldDrops !== "function") return { ok: true, skipped: true, reason: "unsupported" };
 
@@ -13523,7 +13616,7 @@ async function refreshWorldDropsFromPostgres(worldName: any, reason: any = "worl
   }
   if (result.skipped) return { ok: true, skipped: true, reason: result.reason || "no_world_drop_rows" };
 
-  const state: any = ensureWorldState(clean);
+  const state = ensureWorldState(clean);
   state.drops.clear();
   loadDropsIntoMap(state.drops, result.drops || []);
   return { ok: true, drop_count: state.drops.size };
@@ -13547,7 +13640,7 @@ async function commitPlayerInventoryState(socket: any, player: any, username: an
     return InventoryContracts.buildInventoryCommitFailure({ message: "Could not load your server inventory." });
   }
 
-  const cleanUsername: any = cleanAccountName(username || afterState.account_username || player?.account_username || "");
+  const cleanUsername = cleanAccountName(username || afterState.account_username || player?.account_username || "");
   if (cleanUsername === "") {
     return InventoryContracts.buildInventoryCommitFailure({ message: "Could not load your server inventory." });
   }
@@ -13566,7 +13659,7 @@ async function commitPlayerInventoryState(socket: any, player: any, username: an
   try {
   clearUnavailableEquipmentInState(afterState);
   afterState.saved_at = new Date().toISOString();
-  const deltas: any = buildInventoryDeltasBetweenStates(beforeState || {}, afterState);
+  const deltas = buildInventoryDeltasBetweenStates(beforeState || {}, afterState);
 
   if (isPostgresAuthoritativeReady()) {
     const result: any = await postgresStore.applyInventoryDeltaTransaction(InventoryContracts.buildPostgresInventoryDeltaTransactionEntry({
@@ -13616,7 +13709,7 @@ async function commitPlayerInventoryState(socket: any, player: any, username: an
 
     setPlayerState(cleanUsername, afterState);
     writePlayerStateJsonBackup(cleanUsername, afterState);
-    const equipmentChanged: any = syncPlayerEquipmentSlotsFromState(player, afterState, cleanUsername);
+    const equipmentChanged = syncPlayerEquipmentSlotsFromState(player, afterState, cleanUsername);
     if (equipmentChanged && player) {
       publishPlayerPresenceUpdate(socket, player, options.world || player.world || "START", "player_position");
     }
@@ -13635,8 +13728,8 @@ async function commitPlayerInventoryState(socket: any, player: any, username: an
     });
   }
 
-  const persistedState: any = persistPlayerInventoryChange(cleanUsername, afterState);
-  const equipmentChanged: any = syncPlayerEquipmentSlotsFromState(player, persistedState, cleanUsername);
+  const persistedState = persistPlayerInventoryChange(cleanUsername, afterState);
+  const equipmentChanged = syncPlayerEquipmentSlotsFromState(player, persistedState, cleanUsername);
   if (equipmentChanged && player) {
     publishPlayerPresenceUpdate(socket, player, options.world || player.world || "START", "player_position");
   }
@@ -13672,7 +13765,7 @@ function persistPlayerInventoryChange(username: any, state: any, options: any = 
 async function spendServerInventoryCost(username: any, cost: any, options: any = {}) {
   if (!cost || Number(cost.amount) <= 0) return { ok: true, state: null };
 
-  const state: any = ensureWritablePlayerState(username);
+  const state = ensureWritablePlayerState(username);
   if (!state) {
     return { ok: false, reason: "inventory_unavailable", message: "Could not load your server inventory." };
   }
@@ -13685,8 +13778,8 @@ async function spendServerInventoryCost(username: any, cost: any, options: any =
     return { ok: false, reason: "insufficient_inventory", message: `Not enough ${cost.item_id}.` };
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
   if (!spendItemFromState(stagedState, cost.item_id, cost.item_category, cost.amount)) {
     return { ok: false, reason: "inventory_changed", message: "Server inventory changed. Try again." };
   }
@@ -13720,7 +13813,7 @@ async function spendServerInventoryCost(username: any, cost: any, options: any =
     };
   }
 
-  const commit: any = await commitPlayerInventoryState(options.socket || null, options.player || null, username, beforeState, stagedState, {
+  const commit = await commitPlayerInventoryState(options.socket || null, options.player || null, username, beforeState, stagedState, {
     source: options.source || "system",
     action: options.action || "spend_inventory_cost",
     reason: options.reason || "inventory_cost",
@@ -13748,8 +13841,8 @@ async function spendServerInventoryCost(username: any, cost: any, options: any =
  * @returns {Promise<PixelMania.WorldInventoryValidationResult>}
  */
 async function prepareWaterBucketScoopInventoryReturn(socket: any, player: any, worldName: any, update: any, requestId: any = "", options: any = {}) {
-  const username: any = cleanAccountName(player?.account_username || player?.name || "");
-  const state: any = ensureWritablePlayerState(username);
+  const username = cleanAccountName(player?.account_username || player?.name || "");
+  const state = ensureWritablePlayerState(username);
   if (!state) {
     sendActionRejected(socket, "world_block_update", "Could not load your server inventory.", {
       reason: "inventory_unavailable",
@@ -13775,9 +13868,9 @@ async function prepareWaterBucketScoopInventoryReturn(socket: any, player: any, 
     return { ok: false };
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
-  const addResult: any = addItemToState(stagedState, WATER_BUCKET_ITEM_TYPE, "block", 1);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  const addResult = addItemToState(stagedState, WATER_BUCKET_ITEM_TYPE, "block", 1);
   if (!addResult) {
     sendActionRejected(socket, "world_block_update", "Could not add water to your bucket stack.", {
       reason: "inventory_add_failed",
@@ -13822,7 +13915,7 @@ async function prepareWaterBucketScoopInventoryReturn(socket: any, player: any, 
     };
   }
 
-  const commit: any = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
+  const commit = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
     source: "world_block_break",
     action: "water_bucket_scoop",
     reason: "water_bucket_scoop",
@@ -13856,13 +13949,13 @@ async function prepareWaterBucketScoopInventoryReturn(socket: any, player: any, 
  * @returns {Promise<PixelMania.WorldInventoryValidationResult>}
  */
 async function prepareDirectBlockBreakInventoryReturn(socket: any, player: any, worldName: any, update: any, requestId: any = "", options: any = {}) {
-  const returnedItem: any = getDirectBreakInventoryReturn(update?.block_type);
+  const returnedItem = getDirectBreakInventoryReturn(update?.block_type);
   if (!returnedItem) {
     return { ok: true, playerState: null, inventoryDeltas: [], message: "" };
   }
 
-  const username: any = cleanAccountName(player?.account_username || player?.name || "");
-  const state: any = ensureWritablePlayerState(username);
+  const username = cleanAccountName(player?.account_username || player?.name || "");
+  const state = ensureWritablePlayerState(username);
   if (!state) {
     sendActionRejected(socket, "world_block_update", "Could not load your server inventory.", {
       reason: "inventory_unavailable",
@@ -13881,9 +13974,9 @@ async function prepareDirectBlockBreakInventoryReturn(socket: any, player: any, 
     return { ok: false };
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
-  const addResult: any = addItemToState(stagedState, returnedItem.item_id, returnedItem.item_category, returnedItem.amount);
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  const addResult = addItemToState(stagedState, returnedItem.item_id, returnedItem.item_category, returnedItem.amount);
   if (!addResult) {
     sendActionRejected(socket, "world_block_update", "Could not return that machine to your inventory.", {
       reason: "inventory_add_failed",
@@ -13893,9 +13986,9 @@ async function prepareDirectBlockBreakInventoryReturn(socket: any, player: any, 
     return { ok: false };
   }
 
-  const transactionId: any = makeAuditId("machine_break");
-  const definition: any = ItemDatabase.getItemDefinition(returnedItem.item_id);
-  const displayName: any = clampString(definition?.display_name || returnedItem.item_id, MAX_ITEM_ID_LENGTH);
+  const transactionId = makeAuditId("machine_break");
+  const definition = ItemDatabase.getItemDefinition(returnedItem.item_id);
+  const displayName = clampString(definition?.display_name || returnedItem.item_id, MAX_ITEM_ID_LENGTH);
   const metadata: any = {
     transaction_id: transactionId,
     x: update.x,
@@ -13948,7 +14041,7 @@ async function prepareDirectBlockBreakInventoryReturn(socket: any, player: any, 
     };
   }
 
-  const commit: any = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
+  const commit = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
     source: "world_block_break",
     action: "machine_break_return",
     reason: "machine_break_recovery",
@@ -13978,30 +14071,30 @@ async function prepareDirectBlockBreakInventoryReturn(socket: any, player: any, 
 }
 
 function makeServerDropId(worldName: any, itemType: any) {
-  const cleanWorldName: any = safeFileName(cleanWorld(worldName), "START");
-  const cleanItem: any = safeFileName(clampString(itemType || "drop"), "drop");
-  const suffix: any = `${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
-  const hash: any = crypto
+  const cleanWorldName = safeFileName(cleanWorld(worldName), "START");
+  const cleanItem = safeFileName(clampString(itemType || "drop"), "drop");
+  const suffix = `${Date.now()}_${crypto.randomBytes(4).toString("hex")}`;
+  const hash = crypto
     .createHash("sha1")
     .update(`${cleanWorldName}:${cleanItem}`)
     .digest("hex")
     .slice(0, 8);
-  const readableBudget: any = Math.max(1, MAX_DROP_ID_LENGTH - `server__${suffix}_${hash}`.length);
-  const readable: any = safeFileName(`${cleanWorldName}_${cleanItem}`, "drop");
-  const clippedReadable: any = clampString(readable, readableBudget).replace(/_+$/g, "") || "drop";
+  const readableBudget = Math.max(1, MAX_DROP_ID_LENGTH - `server__${suffix}_${hash}`.length);
+  const readable = safeFileName(`${cleanWorldName}_${cleanItem}`, "drop");
+  const clippedReadable = clampString(readable, readableBudget).replace(/_+$/g, "") || "drop";
   return clampString(`server_${clippedReadable}_${suffix}_${hash}`, MAX_DROP_ID_LENGTH);
 }
 
 function randomChance(chance: any) {
-  const safeChance: any = Math.max(0, Math.min(1, Number(chance) || 0));
+  const safeChance = Math.max(0, Math.min(1, Number(chance) || 0));
   if (safeChance <= 0) return false;
   if (safeChance >= 1) return true;
   return crypto.randomInt(0, 1000000) < Math.floor(safeChance * 1000000);
 }
 
 function randomRangeInclusive(min: any, max: any) {
-  const safeMin: any = Math.trunc(Number(min) || 0);
-  const safeMax: any = Math.trunc(Number(max) || safeMin);
+  const safeMin = Math.trunc(Number(min) || 0);
+  const safeMax = Math.trunc(Number(max) || safeMin);
   if (safeMax <= safeMin) return safeMin;
   return crypto.randomInt(safeMin, safeMax + 1);
 }
@@ -14009,8 +14102,8 @@ function randomRangeInclusive(min: any, max: any) {
 function validateBlockBreakPace(socket: any, player: any, update: any = null) {
   if (isAdmin(player)) return true;
 
-  const now: any = Date.now();
-  const lastBreakAt: any = Number(player.last_block_break_at || 0);
+  const now = Date.now();
+  const lastBreakAt = Number(player.last_block_break_at || 0);
   if (lastBreakAt > 0 && now - lastBreakAt < MIN_BLOCK_BREAK_INTERVAL_MS) {
     sendActionRejected(socket, "world_block_update", "Slow down a little.", {
       reason: "break_rate_limited",
@@ -14030,8 +14123,8 @@ function validateBlockBreakPace(socket: any, player: any, update: any = null) {
 function validateBlockPlacePace(socket: any, player: any, update: any = null) {
   if (isAdmin(player)) return true;
 
-  const now: any = Date.now();
-  const lastPlaceAt: any = Number(player.last_block_place_at || 0);
+  const now = Date.now();
+  const lastPlaceAt = Number(player.last_block_place_at || 0);
   if (lastPlaceAt > 0 && now - lastPlaceAt < MIN_BLOCK_PLACE_INTERVAL_MS) {
     sendActionRejected(socket, "world_block_update", "Slow down a little.", {
       reason: "place_rate_limited",
@@ -14049,9 +14142,9 @@ function validateBlockPlacePace(socket: any, player: any, update: any = null) {
 }
 
 function getPunchToggleBlockDefinition(blockType: any) {
-  const clean: any = clampString(blockType || "");
+  const clean = clampString(blockType || "");
   if (clean === "") return null;
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const definition = ItemDatabase.getItemDefinition(clean);
   if (!definition || definition.category !== "block" || definition.punch_toggle_block !== true) return null;
   return definition;
 }
@@ -14061,37 +14154,37 @@ function isPunchToggleBlockType(blockType: any) {
 }
 
 function getPunchToggleInactiveBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
-  const definition: any = getPunchToggleBlockDefinition(clean);
+  const clean = clampString(blockType || "");
+  const definition = getPunchToggleBlockDefinition(clean);
   if (!definition) return "";
   return clampString(definition.toggle_inactive_block || definition.toggle_drop_block || clean);
 }
 
 function getPunchToggleActiveBlockType(blockType: any) {
-  const definition: any = getPunchToggleBlockDefinition(blockType);
+  const definition = getPunchToggleBlockDefinition(blockType);
   if (!definition) return "";
   return clampString(definition.toggle_active_block || "");
 }
 
 function getPunchToggleNextBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
-  const inactive: any = getPunchToggleInactiveBlockType(clean);
-  const active: any = getPunchToggleActiveBlockType(clean);
+  const clean = clampString(blockType || "");
+  const inactive = getPunchToggleInactiveBlockType(clean);
+  const active = getPunchToggleActiveBlockType(clean);
   if (inactive === "" || active === "") return "";
   if (!ItemDatabase.hasItem(inactive) || !ItemDatabase.hasItem(active)) return "";
   return clean === active ? inactive : active;
 }
 
 function getBlockDamageIdentityBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
+  const clean = clampString(blockType || "");
   if (clean === "") return "";
   if (!isPunchToggleBlockType(clean)) return clean;
   return getPunchToggleInactiveBlockType(clean) || clean;
 }
 
 function arePunchToggleBlockVariants(leftBlockType: any, rightBlockType: any) {
-  const left: any = clampString(leftBlockType || "");
-  const right: any = clampString(rightBlockType || "");
+  const left = clampString(leftBlockType || "");
+  const right = clampString(rightBlockType || "");
   if (left === "" || right === "") return false;
   if (!isPunchToggleBlockType(left) || !isPunchToggleBlockType(right)) return false;
   return getBlockDamageIdentityBlockType(left) === getBlockDamageIdentityBlockType(right);
@@ -14102,13 +14195,13 @@ function makeBlockDamageKey(worldName: any, update: any) {
 }
 
 function getWorldBlockActionLockResource(worldName: any, update: any) {
-  const clean: any = cleanWorld(worldName || update?.world || "START");
-  const layer: any = clampString(update?.layer || "foreground") || "foreground";
+  const clean = cleanWorld(worldName || update?.world || "START");
+  const layer = clampString(update?.layer || "foreground") || "foreground";
   let x: any = Math.trunc(Number(update?.x) || 0);
   let y: any = Math.trunc(Number(update?.y) || 0);
 
   if ((update?.action === "break" || update?.action === "hit") && layer === "foreground") {
-    const anchorBlock: any = getCollisionAreaAnchorInState(ensureWorldState(clean), x, y);
+    const anchorBlock = getCollisionAreaAnchorInState(ensureWorldState(clean), x, y);
     if (anchorBlock) {
       x = Math.trunc(Number(anchorBlock.x) || x);
       y = Math.trunc(Number(anchorBlock.y) || y);
@@ -14124,20 +14217,20 @@ function clearServerBlockDamage(worldName: any, update: any) {
 }
 
 function getPlayerBreakPower(player: any, blockType: any) {
-  const handItem: any = clampString(player?.equipment_slots?.hand || "");
+  const handItem = clampString(player?.equipment_slots?.hand || "");
   return ItemDatabase.getBreakPower(handItem, blockType);
 }
 
 function applyServerBlockDamage(player: any, worldName: any, update: any) {
-  const key: any = makeBlockDamageKey(worldName, update);
-  const now: any = Date.now();
-  const requiredDamage: any = ItemDatabase.getBlockHealth(update.block_type);
-  const hitPower: any = getPlayerBreakPower(player, update.block_type);
-  const previous: any = blockDamage.get(key);
-  const currentDamage: any = previous && now - previous.updatedAt <= BLOCK_DAMAGE_RESET_MS
+  const key = makeBlockDamageKey(worldName, update);
+  const now = Date.now();
+  const requiredDamage = ItemDatabase.getBlockHealth(update.block_type);
+  const hitPower = getPlayerBreakPower(player, update.block_type);
+  const previous = blockDamage.get(key);
+  const currentDamage = previous && now - previous.updatedAt <= BLOCK_DAMAGE_RESET_MS
     ? Math.max(0, Math.trunc(Number(previous.damage) || 0))
     : 0;
-  const nextDamage: any = Math.min(requiredDamage, currentDamage + hitPower);
+  const nextDamage = Math.min(requiredDamage, currentDamage + hitPower);
 
   if (nextDamage < requiredDamage) {
     blockDamage.set(key, {
@@ -14213,7 +14306,7 @@ function getSeedDropChanceForRarity(rarity: any) {
 
 function shouldSuppressRarityGemDrop(rules: any) {
   if (!rules || typeof rules !== "object" || !Array.isArray(rules.gem_range)) return false;
-  const max: any = Math.trunc(Number(rules.gem_range[1]) || 0);
+  const max = Math.trunc(Number(rules.gem_range[1]) || 0);
   return max <= 0;
 }
 
@@ -14231,16 +14324,16 @@ function shouldAlwaysReturnBlockOnBreak(itemId: any, definition: any, rules: any
 }
 
 function getDirectBreakInventoryReturn(blockType: any) {
-  const itemId: any = clampString(blockType || "", MAX_ITEM_ID_LENGTH);
-  const definition: any = ItemDatabase.getItemDefinition(itemId);
+  const itemId = clampString(blockType || "", MAX_ITEM_ID_LENGTH);
+  const definition = ItemDatabase.getItemDefinition(itemId);
   if (!definition || definition.category !== "block" || definition.break_return_to_inventory !== true) {
     return null;
   }
 
-  const returnItemId: any = clampString(definition.break_return_item_id || itemId, MAX_ITEM_ID_LENGTH);
+  const returnItemId = clampString(definition.break_return_item_id || itemId, MAX_ITEM_ID_LENGTH);
   if (returnItemId === "" || !ItemDatabase.hasItem(returnItemId)) return null;
 
-  const itemCategory: any = resolveInventoryCategory(returnItemId, "block");
+  const itemCategory = resolveInventoryCategory(returnItemId, "block");
   if (!ItemDatabase.canStoreItemInCategory(returnItemId, itemCategory)) return null;
 
   return {
@@ -14251,22 +14344,22 @@ function getDirectBreakInventoryReturn(blockType: any) {
 }
 
 function isGemCurrencyDrop(itemType: any, itemCategory: any = "") {
-  const cleanItemId: any = clampString(itemType || "", MAX_ITEM_ID_LENGTH);
-  const resolvedCategory: any = String(resolveInventoryCategory(cleanItemId, itemCategory || "") || "").trim().toLowerCase();
+  const cleanItemId = clampString(itemType || "", MAX_ITEM_ID_LENGTH);
+  const resolvedCategory = String(resolveInventoryCategory(cleanItemId, itemCategory || "") || "").trim().toLowerCase();
   return cleanItemId === "gem" && resolvedCategory === "currency";
 }
 
 function getGemDropTotalAmountOnTile(worldName: any, stackGrid: any) {
   if (!stackGrid || !isGridInWorld(stackGrid.x, stackGrid.y)) return 0;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   let total: any = 0;
   for (const drop of state.drops.values()) {
-    const dropItemId: any = clampString(drop?.item_type || drop?.item_id || "", MAX_ITEM_ID_LENGTH);
-    const dropCategory: any = resolveInventoryCategory(dropItemId, drop?.item_category || drop?.category || "");
+    const dropItemId = clampString(drop?.item_type || drop?.item_id || "", MAX_ITEM_ID_LENGTH);
+    const dropCategory = resolveInventoryCategory(dropItemId, drop?.item_category || drop?.category || "");
     if (!isGemCurrencyDrop(dropItemId, dropCategory)) continue;
 
-    const dropGrid: any = getDropStackGridFromDrop(drop);
+    const dropGrid = getDropStackGridFromDrop(drop);
     if (!dropGrid || dropGrid.x !== stackGrid.x || dropGrid.y !== stackGrid.y) continue;
 
     total += clampInteger(drop?.amount || 0, 0, MAX_DROP_TILE_AMOUNT);
@@ -14288,21 +14381,21 @@ function getGemDropTotalAmountOnTile(worldName: any, stackGrid: any) {
  * @returns {PixelMania.SanitizedDropCreate | null}
  */
 function createServerDrop(worldName: any, itemType: any, itemCategory: any, amount: any, x: any, y: any, pickupDelay: any = SERVER_DROP_PICKUP_DELAY, stackGrid: any = null) {
-  const itemId: any = clampString(itemType || "");
+  const itemId = clampString(itemType || "");
   if (!ItemDatabase.hasItem(itemId)) return null;
 
-  const resolvedCategory: any = resolveInventoryCategory(itemId, itemCategory);
+  const resolvedCategory = resolveInventoryCategory(itemId, itemCategory);
   if (!ItemDatabase.canStoreItemInCategory(itemId, resolvedCategory)) return null;
 
   let safeAmount: any = clampInteger(amount || 1, 1, MAX_DROP_TILE_AMOUNT);
-  const dropX: any = Number(x) || 0;
-  const dropY: any = Number(y) || 0;
-  const explicitStackGrid: any = stackGrid && Number.isFinite(Number(stackGrid.x)) && Number.isFinite(Number(stackGrid.y))
+  const dropX = Number(x) || 0;
+  const dropY = Number(y) || 0;
+  const explicitStackGrid = stackGrid && Number.isFinite(Number(stackGrid.x)) && Number.isFinite(Number(stackGrid.y))
     ? { x: Math.trunc(Number(stackGrid.x)), y: Math.trunc(Number(stackGrid.y)) }
     : null;
-  const resolvedStackGrid: any = explicitStackGrid || getDropGridFromPosition({ x: dropX, y: dropY });
+  const resolvedStackGrid = explicitStackGrid || getDropGridFromPosition({ x: dropX, y: dropY });
   if (isGemCurrencyDrop(itemId, resolvedCategory) && resolvedStackGrid) {
-    const remainingTileCapacity: any = Math.max(0, MAX_DROP_TILE_AMOUNT - getGemDropTotalAmountOnTile(worldName, resolvedStackGrid));
+    const remainingTileCapacity = Math.max(0, MAX_DROP_TILE_AMOUNT - getGemDropTotalAmountOnTile(worldName, resolvedStackGrid));
     safeAmount = Math.min(safeAmount, remainingTileCapacity);
     if (safeAmount <= 0) return null;
   }
@@ -14330,12 +14423,12 @@ function createServerDrop(worldName: any, itemType: any, itemCategory: any, amou
 function getFixedBreakDropAmount(fixedDrop: any) {
   if (!fixedDrop || typeof fixedDrop !== "object") return 0;
 
-  const amountRange: any = Array.isArray(fixedDrop.amount_range)
+  const amountRange = Array.isArray(fixedDrop.amount_range)
     ? fixedDrop.amount_range
     : (Array.isArray(fixedDrop.amountRange) ? fixedDrop.amountRange : null);
   if (amountRange && amountRange.length >= 2) {
-    const minAmount: any = clampInteger(amountRange[0], 0, MAX_DROP_TILE_AMOUNT);
-    const maxAmount: any = clampInteger(amountRange[1], minAmount, MAX_DROP_TILE_AMOUNT);
+    const minAmount = clampInteger(amountRange[0], 0, MAX_DROP_TILE_AMOUNT);
+    const maxAmount = clampInteger(amountRange[1], minAmount, MAX_DROP_TILE_AMOUNT);
     return randomRangeInclusive(Math.min(minAmount, maxAmount), Math.max(minAmount, maxAmount));
   }
 
@@ -14345,13 +14438,13 @@ function getFixedBreakDropAmount(fixedDrop: any) {
 function getBreakDropFromRuleEntry(ruleEntry: any) {
   if (!ruleEntry || typeof ruleEntry !== "object") return null;
 
-  const dropItemId: any = clampString(ruleEntry.item_id || ruleEntry.item_type || "");
+  const dropItemId = clampString(ruleEntry.item_id || ruleEntry.item_type || "");
   if (dropItemId === "" || !ItemDatabase.hasItem(dropItemId)) return null;
 
-  const dropCategory: any = resolveInventoryCategory(dropItemId, ruleEntry.item_category || ruleEntry.category || "");
+  const dropCategory = resolveInventoryCategory(dropItemId, ruleEntry.item_category || ruleEntry.category || "");
   if (!ItemDatabase.canStoreItemInCategory(dropItemId, dropCategory)) return null;
 
-  const amount: any = getFixedBreakDropAmount(ruleEntry);
+  const amount = getFixedBreakDropAmount(ruleEntry);
   if (amount <= 0) return null;
 
   return {
@@ -14368,10 +14461,10 @@ function rollWeightedBreakDrop(lootTable: any) {
   let totalWeight: any = 0;
   for (const entry of lootTable) {
     if (!entry || typeof entry !== "object") continue;
-    const drop: any = getBreakDropFromRuleEntry(entry);
+    const drop = getBreakDropFromRuleEntry(entry);
     if (!drop) continue;
 
-    const weight: any = Math.max(0, Number(entry.weight) || 0);
+    const weight = Math.max(0, Number(entry.weight) || 0);
     if (weight <= 0) continue;
 
     totalWeight += weight;
@@ -14392,11 +14485,11 @@ function rollWeightedBreakDrop(lootTable: any) {
 function getConfiguredDropsFromRules(rules: any) {
   if (!rules || typeof rules !== "object") return null;
 
-  const lootTable: any = Array.isArray(rules.loot_table)
+  const lootTable = Array.isArray(rules.loot_table)
     ? rules.loot_table
     : (Array.isArray(rules.weighted_drops) ? rules.weighted_drops : null);
   if (lootTable) {
-    const weightedDrop: any = rollWeightedBreakDrop(lootTable);
+    const weightedDrop = rollWeightedBreakDrop(lootTable);
     return weightedDrop ? [weightedDrop] : [];
   }
 
@@ -14404,26 +14497,26 @@ function getConfiguredDropsFromRules(rules: any) {
 
   const drops: any = [];
   for (const fixedDrop of rules.fixed_drops) {
-    const chance: any = Object.prototype.hasOwnProperty.call(fixedDrop, "chance")
+    const chance = Object.prototype.hasOwnProperty.call(fixedDrop, "chance")
       ? Math.max(0, Math.min(1, Number(fixedDrop.chance) || 0))
       : 1;
     if (Math.random() > chance) continue;
 
-    const drop: any = getBreakDropFromRuleEntry(fixedDrop);
+    const drop = getBreakDropFromRuleEntry(fixedDrop);
     if (drop) drops.push(drop);
   }
   return drops;
 }
 
 function getBreakDropsForBlock(blockType: any, layer: any) {
-  const itemId: any = clampString(blockType || "");
-  const definition: any = ItemDatabase.getItemDefinition(itemId);
+  const itemId = clampString(blockType || "");
+  const definition = ItemDatabase.getItemDefinition(itemId);
   if (!definition || definition.category !== "block") return [];
   if (getDirectBreakInventoryReturn(itemId)) return [];
 
   const drops: any = [];
-  const rules: any = definition.drop_rules && typeof definition.drop_rules === "object" ? definition.drop_rules : {};
-  const configuredDrops: any = getConfiguredDropsFromRules(rules);
+  const rules = definition.drop_rules && typeof definition.drop_rules === "object" ? definition.drop_rules : {};
+  const configuredDrops = getConfiguredDropsFromRules(rules);
   if (configuredDrops) return configuredDrops;
 
   if (isVendBlockType(itemId)) {
@@ -14439,15 +14532,15 @@ function getBreakDropsForBlock(blockType: any, layer: any) {
     drops.push({ item_id: itemId, item_category: "block", amount: 1 });
   }
 
-  const seedId: any = clampString(definition.seed || "");
-  const seedChance: any = shouldSuppressRaritySeedDrop(rules) ? 0 : getSeedDropChanceForRarity(definition.rarity);
+  const seedId = clampString(definition.seed || "");
+  const seedChance = shouldSuppressRaritySeedDrop(rules) ? 0 : getSeedDropChanceForRarity(definition.rarity);
   if (seedId !== "" && ItemDatabase.hasItem(seedId) && randomChance(seedChance)) {
     drops.push({ item_id: seedId, item_category: "seed", amount: 1 });
   }
 
   if (layer === "foreground" && ItemDatabase.hasItem("gem")) {
-    const configuredRange: any = shouldSuppressRarityGemDrop(rules) ? [0, 0] : getGemDropRangeForRarity(definition.rarity);
-    const gemAmount: any = randomRangeInclusive(configuredRange[0], configuredRange[1]);
+    const configuredRange = shouldSuppressRarityGemDrop(rules) ? [0, 0] : getGemDropRangeForRarity(definition.rarity);
+    const gemAmount = randomRangeInclusive(configuredRange[0], configuredRange[1]);
     if (gemAmount > 0) {
       drops.push({ item_id: "gem", item_category: "currency", amount: gemAmount });
     }
@@ -14457,11 +14550,11 @@ function getBreakDropsForBlock(blockType: any, layer: any) {
 }
 
 function getTreeHarvestDropsForBlock(blockType: any) {
-  const itemId: any = clampString(blockType || "");
-  const definition: any = ItemDatabase.getItemDefinition(itemId);
+  const itemId = clampString(blockType || "");
+  const definition = ItemDatabase.getItemDefinition(itemId);
   if (!definition || definition.category !== "block") return null;
 
-  const rules: any = definition.tree_drop_rules && typeof definition.tree_drop_rules === "object"
+  const rules = definition.tree_drop_rules && typeof definition.tree_drop_rules === "object"
     ? definition.tree_drop_rules
     : (definition.harvest_drop_rules && typeof definition.harvest_drop_rules === "object" ? definition.harvest_drop_rules : null);
   return getConfiguredDropsFromRules(rules);
@@ -14478,11 +14571,11 @@ function createBreakDrops(worldName: any, update: any) {
   if (!update || update.action !== "break" || update.block_type === "") return [];
   if (isWaterBucketScoopBreak(update)) return [];
 
-  const position: any = getGridCenterPixels(update.x, update.y);
-  const drops: any = getBreakDropsForBlock(update.block_type, update.layer);
+  const position = getGridCenterPixels(update.x, update.y);
+  const drops = getBreakDropsForBlock(update.block_type, update.layer);
   const createdDrops: any = [];
   for (const drop of drops) {
-    const payload: any = createServerDrop(
+    const payload = createServerDrop(
       worldName,
       drop.item_id,
       drop.item_category,
@@ -14498,7 +14591,7 @@ function createBreakDrops(worldName: any, update: any) {
 }
 
 function emitBreakDrops(worldName: any, update: any, socket: any = null, player: any = null) {
-  const createdDrops: any = createBreakDrops(worldName, update);
+  const createdDrops = createBreakDrops(worldName, update);
   for (const payload of createdDrops) {
     if (socket && player) {
       sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload);
@@ -14513,10 +14606,10 @@ function emitBreakDrops(worldName: any, update: any, socket: any = null, player:
  * @returns {Promise<PixelMania.WorldInventoryValidationResult>}
  */
 async function prepareVendBreakInventoryReturn(socket: any, player: any, worldName: any, update: any) {
-  const vend: any = getVendStateAt(worldName, update.x, update.y, false);
-  const listing: any = vend.listing && Number(vend.listing.stock) > 0 ? vend.listing : null;
-  const pendingWls: any = clampInteger(vend.pending_wls || 0, 0, ItemDatabase.getStackLimit("world_lock"));
-  const machineReturn: any = getDirectBreakInventoryReturn(update.block_type);
+  const vend = getVendStateAt(worldName, update.x, update.y, false);
+  const listing = vend.listing && Number(vend.listing.stock) > 0 ? vend.listing : null;
+  const pendingWls = clampInteger(vend.pending_wls || 0, 0, ItemDatabase.getStackLimit("world_lock"));
+  const machineReturn = getDirectBreakInventoryReturn(update.block_type);
 
   if (!listing && pendingWls <= 0 && !machineReturn) {
     return { ok: true, playerState: null, message: "" };
@@ -14530,7 +14623,7 @@ async function prepareVendBreakInventoryReturn(socket: any, player: any, worldNa
     return { ok: false };
   }
 
-  const state: any = ensureWritablePlayerState(player.account_username);
+  const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     sendActionRejected(socket, "world_block_update", "Could not load your server inventory.", {
       reason: "inventory_unavailable",
@@ -14539,11 +14632,17 @@ async function prepareVendBreakInventoryReturn(socket: any, player: any, worldNa
     return { ok: false };
   }
 
-  const beforeState: any = cloneJson(state);
-  const stagedState: any = cloneJson(state);
-  const originalVend: any = cloneJson(vend);
-  const returned: any = [];
-  const returnedEntries: any = [];
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  const originalVend = cloneJson(vend);
+  const returned: string[] = [];
+  const returnedEntries: Array<{
+    item_id: string;
+    item_category: string;
+    amount: number;
+    reason: string;
+    listing_transaction_id?: string;
+  }> = [];
   if (machineReturn) {
     if (!canAddItemToState(stagedState, machineReturn.item_id, machineReturn.item_category, machineReturn.amount)) {
       sendActionRejected(socket, "world_block_update", "Your inventory cannot hold the vending machine.", {
@@ -14565,9 +14664,9 @@ async function prepareVendBreakInventoryReturn(socket: any, player: any, worldNa
   }
 
   if (listing) {
-    const itemId: any = clampString(listing.item_id || "");
-    const itemCategory: any = resolveInventoryCategory(itemId, listing.item_category || "");
-    const stock: any = clampInteger(listing.stock || 0, 1, ItemDatabase.getStackLimit(itemId));
+    const itemId = clampString(listing.item_id || "");
+    const itemCategory = resolveInventoryCategory(itemId, listing.item_category || "");
+    const stock = clampInteger(listing.stock || 0, 1, ItemDatabase.getStackLimit(itemId));
     if (!canAddItemToState(stagedState, itemId, itemCategory, stock)) {
       sendActionRejected(socket, "world_block_update", "Your inventory cannot hold the vending item.", {
         reason: "insufficient_capacity",
@@ -14615,10 +14714,10 @@ async function prepareVendBreakInventoryReturn(socket: any, player: any, worldNa
     vend.pending_wls = 0;
   }
 
-  const rollbackWorldState: any = serializeWorldState(worldName);
+  const rollbackWorldState = serializeWorldState(worldName);
   setVendStateAt(worldName, vend);
-  const vendBreakTransactionId: any = makeAuditId("vend_break");
-  const vendBreakWorldChange: any = buildWorldObjectChangeEntry(
+  const vendBreakTransactionId = makeAuditId("vend_break");
+  const vendBreakWorldChange = buildWorldObjectChangeEntry(
     socket,
     player,
     worldName,
@@ -14687,8 +14786,8 @@ async function prepareVendBreakInventoryReturn(socket: any, player: any, worldNa
     };
   }
 
-  const serializedWorld: any = serializeWorldState(worldName);
-  const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "vending",
     action: "vending_break_return",
     reason: "vending_break_return",
@@ -14706,7 +14805,7 @@ async function prepareVendBreakInventoryReturn(socket: any, player: any, worldNa
     });
     return { ok: false };
   }
-  const committedState: any = commit.state;
+  const committedState = commit.state;
   persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
   logVendingTransaction(socket, player, {
     transaction_id: vendBreakTransactionId,
@@ -14751,12 +14850,12 @@ async function prepareVendBreakInventoryReturn(socket: any, player: any, worldNa
  * @returns {Promise<PixelMania.WorldInventoryValidationResult>}
  */
 async function validateBlockUpdateAgainstServerState(socket: any, player: any, worldName: any, update: any, requestId: any = "", options: any = {}) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   let key: any = gridKey(update.x, update.y);
 
-  const reachPixels: any = getBlockActionReachPixels(update);
+  const reachPixels = getBlockActionReachPixels(update);
   if (!isPlayerNearGrid(player, update.x, update.y, reachPixels, { action: `world_block_${update.action}`, world: worldName })) {
-    const position: any = getPlayerValidationPosition(player, { action: `world_block_${update.action}`, world: worldName });
+    const position = getPlayerValidationPosition(player, { action: `world_block_${update.action}`, world: worldName });
     if (usesTrustedMovementPosition(player) && !position.ok) {
       rejectMissingTrustedPosition(socket, "world_block_update", player, position, {
         target_x: update.x,
@@ -14776,11 +14875,11 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
   }
 
   if (update.action === "break" || update.action === "hit") {
-    const targetLayer: any = getWorldLayerMap(state, update.layer);
-    const removedLayer: any = getWorldRemovedLayerMap(state, update.layer);
+    const targetLayer = getWorldLayerMap(state, update.layer);
+    const removedLayer = getWorldRemovedLayerMap(state, update.layer);
     let serverBlock: any = targetLayer.get(key);
     if (!serverBlock && update.layer === "foreground") {
-      const anchorBlock: any = getCollisionAreaAnchorInState(state, update.x, update.y);
+      const anchorBlock = getCollisionAreaAnchorInState(state, update.x, update.y);
       if (anchorBlock) {
         update.x = anchorBlock.x;
         update.y = anchorBlock.y;
@@ -14791,7 +14890,7 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
         serverBlock = getEffectiveGeneratedBottomForegroundBlockAt(worldName, state, update.x, update.y);
       }
     }
-    const blockType: any = serverBlock ? serverBlock.block_type : update.block_type;
+    const blockType = serverBlock ? serverBlock.block_type : update.block_type;
 
     if (removedLayer.has(key) && !serverBlock) {
       sendActionRejected(socket, "world_block_update", "That block is already broken.", {
@@ -14822,7 +14921,7 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
       }
     }
 
-    const expectedLayer: any = ItemDatabase.getPlaceLayer(blockType);
+    const expectedLayer = ItemDatabase.getPlaceLayer(blockType);
     if (expectedLayer !== "" && expectedLayer !== update.layer) {
       sendActionRejected(socket, "world_block_update", "That block is on a different layer.", {
         reason: "wrong_layer",
@@ -14868,7 +14967,7 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
     }
 
     if (update.layer === "foreground" && isAreaLockBlockType(update.block_type)) {
-      const areaLock: any = getAreaLockAtGrid(state, update.x, update.y);
+      const areaLock = getAreaLockAtGrid(state, update.x, update.y);
       if (!areaLock || !canPlayerManageAreaLock(player, worldName, areaLock)) {
         sendActionRejected(socket, "world_block_update", "Only the area lock owner can break this lock.", {
           reason: "area_lock_owner_required",
@@ -14884,10 +14983,10 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
       return { ok: false };
     }
 
-    const isVendBreak: any = isVendBlockType(update.block_type);
-    const isSafeBreak: any = isSafeBlockType(update.block_type);
-    const isDisplayBreak: any = isDisplayBlockType(update.block_type);
-    const isFishMongerBreak: any = isFishMongerBlockType(update.block_type);
+    const isVendBreak = isVendBlockType(update.block_type);
+    const isSafeBreak = isSafeBlockType(update.block_type);
+    const isDisplayBreak = isDisplayBlockType(update.block_type);
+    const isFishMongerBreak = isFishMongerBlockType(update.block_type);
 
     if (isFishMongerBreak && !canPlayerBreakFishMonger(player, worldName, update)) {
       sendActionRejected(socket, "world_block_update", "Only the world owner or players with access can break the Fish Monger.", {
@@ -14937,18 +15036,18 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
       });
     }
 
-    const damageResult: any = applyServerBlockDamage(player, worldName, update);
+    const damageResult = applyServerBlockDamage(player, worldName, update);
     if (!damageResult.ok) return { ok: false };
     update.hit_power = clampInteger(damageResult.hitPower || 1, 1, MAX_BLOCK_HIT_METRIC);
     update.hit_count = clampInteger(damageResult.damage || 0, 0, MAX_BLOCK_HIT_METRIC);
     update.max_hits = clampInteger(damageResult.required || 1, 1, MAX_BLOCK_HIT_METRIC);
     update.damage_reset_ms = BLOCK_DAMAGE_RESET_MS;
     if (!damageResult.shouldBreak) {
-      const nextToggleBlockType: any = update.layer === "foreground"
+      const nextToggleBlockType = update.layer === "foreground"
         ? getPunchToggleNextBlockType(update.block_type)
         : "";
       if (nextToggleBlockType !== "") {
-        const previousToggleBlockType: any = update.block_type;
+        const previousToggleBlockType = update.block_type;
         update.action = "place";
         update.block_type = nextToggleBlockType;
         update.item_id = ItemAtlasDB.getItemIdForKey(nextToggleBlockType) || update.item_id;
@@ -14974,7 +15073,7 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
     }
 
     if (isVendBreak) {
-      const vendReturn: any = await prepareVendBreakInventoryReturn(socket, player, worldName, update);
+      const vendReturn = await prepareVendBreakInventoryReturn(socket, player, worldName, update);
       if (!vendReturn.ok) return { ok: false };
       return {
         ok: true,
@@ -14990,7 +15089,7 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
     }
 
     if (isSafeBreak) {
-      const safeReturn: any = await prepareSafeBreakInventoryReturn(socket, player, worldName, update);
+      const safeReturn = await prepareSafeBreakInventoryReturn(socket, player, worldName, update);
       if (!safeReturn.ok) return { ok: false };
       return {
         ok: true,
@@ -15005,7 +15104,7 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
       };
     }
     if (isDisplayBreak) {
-      const displayReturn: any = await prepareDisplayBreakInventoryReturn(socket, player, worldName, update);
+      const displayReturn = await prepareDisplayBreakInventoryReturn(socket, player, worldName, update);
       if (!displayReturn.ok) return { ok: false };
       return {
         ok: true,
@@ -15086,7 +15185,9 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
       lock_grid_y: update.y,
       max_tiles: getAreaLockTileLimit(update.block_type),
     };
-    if (getAreaLockPositions(previewLock, state).some((pos) => getAreaLockCoveringGrid(state, pos.x, pos.y))) {
+    if (getAreaLockPositions(previewLock, state).some(
+      (pos: ServerGridPoint) => getAreaLockCoveringGrid(state, pos.x, pos.y),
+    )) {
       sendActionRejected(socket, "world_block_update", "That area is already protected by another lock.", {
         reason: "area_lock_overlap",
         block_type: update.block_type,
@@ -15136,7 +15237,7 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
   }
 
   if (isFishMongerBlockType(update.block_type) && blockRequiresWorldLock(update.block_type) && !canPlayerPlaceFishMonger(player, worldName)) {
-    const message: any = isWorldLocked(worldName) || hasWorldLockBlock(worldName)
+    const message = isWorldLocked(worldName) || hasWorldLockBlock(worldName)
       ? "This world is locked."
       : "You need a World Lock in this world before placing a Fish Monger.";
     sendActionRejected(socket, "world_block_update", message, {
@@ -15170,7 +15271,7 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
     return { ok: false };
   }
 
-  const requiredLayer: any = ItemDatabase.getPlaceLayer(update.block_type);
+  const requiredLayer = ItemDatabase.getPlaceLayer(update.block_type);
   if (requiredLayer !== update.layer) {
     sendActionRejected(socket, "world_block_update", `Place ${update.block_type} on the ${requiredLayer} layer.`, {
       reason: "wrong_layer",
@@ -15181,8 +15282,8 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
     return { ok: false };
   }
 
-  const targetLayer: any = getWorldLayerMap(state, update.layer);
-  const generatedBottomBlock: any = update.layer === "foreground"
+  const targetLayer = getWorldLayerMap(state, update.layer);
+  const generatedBottomBlock = update.layer === "foreground"
     ? getEffectiveGeneratedBottomForegroundBlockAt(worldName, state, update.x, update.y)
     : null;
   if (targetLayer.has(key) || generatedBottomBlock) {
@@ -15217,8 +15318,8 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
     return { ok: false };
   }
 
-  const cost: any = ItemDatabase.getPlacementCost(update.block_type);
-  const spendResult: any = await spendServerInventoryCost(player.account_username, cost, {
+  const cost = ItemDatabase.getPlacementCost(update.block_type);
+  const spendResult = await spendServerInventoryCost(player.account_username, cost, {
     socket,
     player,
     source: "world_block_place",
@@ -15283,14 +15384,14 @@ async function validateSeedUpdateAgainstServerState(socket: any, player: any, wo
     return { ok: false };
   }
 
-  const state: any = ensureWorldState(worldName);
-  const key: any = gridKey(update.x, update.y);
+  const state = ensureWorldState(worldName);
+  const key = gridKey(update.x, update.y);
   if (state.seeds.has(key)) {
     sendActionRejected(socket, "world_seed_update", "A seed is already planted there.");
     return { ok: false };
   }
 
-  const spendResult: any = await spendServerInventoryCost(player.account_username, {
+  const spendResult = await spendServerInventoryCost(player.account_username, {
     item_id: update.seed_type,
     item_category: "seed",
     amount: 1,
@@ -15332,7 +15433,7 @@ async function validateElectricalLayerUpdateAgainstServerState(socket: any, play
     return { ok: false };
   }
 
-  const reachPixels: any = update.action === "place" ? MAX_PLACE_REACH_PIXELS : MAX_BREAK_REACH_PIXELS;
+  const reachPixels = update.action === "place" ? MAX_PLACE_REACH_PIXELS : MAX_BREAK_REACH_PIXELS;
   if (!isPlayerNearGrid(player, update.x, update.y, reachPixels, { action: `electrical_layer_${update.action}`, world: worldName })) {
     sendActionRejected(socket, "electrical_layer_update", "Too far away.", {
       reason: "too_far",
@@ -15350,9 +15451,9 @@ async function validateElectricalLayerUpdateAgainstServerState(socket: any, play
     return { ok: false };
   }
 
-  const state: any = ensureWorldState(worldName);
-  const key: any = gridKey(update.x, update.y);
-  const existingEntry: any = state.electrical.get(key) || null;
+  const state = ensureWorldState(worldName);
+  const key = gridKey(update.x, update.y);
+  const existingEntry = state.electrical.get(key) || null;
 
   if (update.action === "place") {
     if (!isElectricalLayerItem(update.block_type)) {
@@ -15371,7 +15472,7 @@ async function validateElectricalLayerUpdateAgainstServerState(socket: any, play
       return { ok: false };
     }
 
-    const spendResult: any = await spendServerInventoryCost(player.account_username, {
+    const spendResult = await spendServerInventoryCost(player.account_username, {
       item_id: update.block_type,
       item_category: "block",
       amount: 1,
@@ -15419,9 +15520,9 @@ async function validateElectricalLayerUpdateAgainstServerState(socket: any, play
 }
 
 function prepareWorldLockStateUpdate(socket: any, player: any, worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const currentLock: any = state.world_lock || {};
-  const nextLock: any = update.state || {};
+  const nextLock = update.state || {};
 
   if (currentLock.is_locked && !canPlayerControlWorldLock(player, worldName)) {
     sendActionRejected(socket, "world_lock_state", "Only the world lock owner can change this lock.");
@@ -15444,7 +15545,7 @@ function prepareWorldLockStateUpdate(socket: any, player: any, worldName: any, u
       return false;
     }
 
-    const lockBlock: any = state.foreground.get(gridKey(nextLock.lock_grid_x, nextLock.lock_grid_y));
+    const lockBlock = state.foreground.get(gridKey(nextLock.lock_grid_x, nextLock.lock_grid_y));
     if (!lockBlock || !isWorldLockBlockType(lockBlock.block_type)) {
       sendActionRejected(socket, "world_lock_state", "Place a world lock block first.");
       return false;
@@ -15463,14 +15564,14 @@ function prepareWorldLockStateUpdate(socket: any, player: any, worldName: any, u
 }
 
 function normalizeWorldLockAccessRole(value: any, fallback: any = "builder") {
-  const role: any = String(value || "").trim().toLowerCase();
+  const role = String(value || "").trim().toLowerCase();
   if (role === "access") return "builder";
   if (WORLD_LOCK_ACCESS_ROLES.has(role)) return role;
   return fallback;
 }
 
 function canWorldLockRoleBuild(role: any) {
-  const cleanRole: any = normalizeWorldLockAccessRole(role, "");
+  const cleanRole = normalizeWorldLockAccessRole(role, "");
   return cleanRole === "admin" || cleanRole === "builder";
 }
 
@@ -15479,10 +15580,10 @@ function canWorldLockRoleToggleWoodenEntrance(role: any) {
 }
 
 function getWorldLockRoleForAccount(lock: any, username: any) {
-  const playerKey: any = accountKey(username);
+  const playerKey = accountKey(username);
   if (playerKey === "") return "";
 
-  const roles: any = lock && typeof lock.player_roles === "object" && !Array.isArray(lock.player_roles)
+  const roles = lock && typeof lock.player_roles === "object" && !Array.isArray(lock.player_roles)
     ? lock.player_roles
     : {};
   for (const [name, role] of Object.entries<any>(roles)) {
@@ -15491,8 +15592,8 @@ function getWorldLockRoleForAccount(lock: any, username: any) {
     }
   }
 
-  const allowedPlayers: any = Array.isArray(lock?.allowed_players) ? lock.allowed_players : [];
-  if (allowedPlayers.some((name) => accountKey(name) === playerKey)) {
+  const allowedPlayers = Array.isArray(lock?.allowed_players) ? lock.allowed_players : [];
+  if (allowedPlayers.some((name: unknown) => accountKey(name) === playerKey)) {
     return "builder";
   }
 
@@ -15503,11 +15604,11 @@ function getWorldLockRoleForPlayer(lock: any, player: any) {
   if (!player || !lock) return "";
   if (lockOwnerMatchesPlayer(lock, player)) return "owner";
 
-  const identity: any = getPlayerLockIdentity(player);
-  const rolesByAccountId: any = lock && typeof lock.player_roles_by_account_id === "object" && !Array.isArray(lock.player_roles_by_account_id)
+  const identity = getPlayerLockIdentity(player);
+  const rolesByAccountId = lock && typeof lock.player_roles_by_account_id === "object" && !Array.isArray(lock.player_roles_by_account_id)
     ? lock.player_roles_by_account_id
     : {};
-  const rolesByPlayerId: any = lock && typeof lock.player_roles_by_player_id === "object" && !Array.isArray(lock.player_roles_by_player_id)
+  const rolesByPlayerId = lock && typeof lock.player_roles_by_player_id === "object" && !Array.isArray(lock.player_roles_by_player_id)
     ? lock.player_roles_by_player_id
     : {};
   if (identity.account_id !== "" && Object.prototype.hasOwnProperty.call(rolesByAccountId, identity.account_id)) {
@@ -15517,12 +15618,12 @@ function getWorldLockRoleForPlayer(lock: any, player: any) {
     return normalizeWorldLockAccessRole(rolesByPlayerId[identity.player_id], "builder");
   }
 
-  const allowedAccountIds: any = Array.isArray(lock?.allowed_account_ids) ? lock.allowed_account_ids : [];
-  if (identity.account_id !== "" && allowedAccountIds.some((id) => stableIdentityEquals(id, identity.account_id))) {
+  const allowedAccountIds = Array.isArray(lock?.allowed_account_ids) ? lock.allowed_account_ids : [];
+  if (identity.account_id !== "" && allowedAccountIds.some((id: unknown) => stableIdentityEquals(id, identity.account_id))) {
     return "builder";
   }
-  const allowedPlayerIds: any = Array.isArray(lock?.allowed_player_ids) ? lock.allowed_player_ids : [];
-  if (identity.player_id !== "" && allowedPlayerIds.some((id) => stableIdentityEquals(id, identity.player_id))) {
+  const allowedPlayerIds = Array.isArray(lock?.allowed_player_ids) ? lock.allowed_player_ids : [];
+  if (identity.player_id !== "" && allowedPlayerIds.some((id: unknown) => stableIdentityEquals(id, identity.player_id))) {
     return "builder";
   }
 
@@ -15530,7 +15631,7 @@ function getWorldLockRoleForPlayer(lock: any, player: any) {
 }
 
 function isWorldLockOwnerAccount(lock: any, username: any) {
-  const ownerKey: any = accountKey(lock?.owner_name || lock?.owner_username || "");
+  const ownerKey = accountKey(lock?.owner_name || lock?.owner_username || "");
   if (ownerKey === "") return false;
   return ownerKey === accountKey(username);
 }
@@ -15538,7 +15639,7 @@ function isWorldLockOwnerAccount(lock: any, username: any) {
 function getWorldLockPullPermission(player: any, worldName: any) {
   if (!player || !player.authenticated) return { ok: false, role: "", lock: {} };
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const lock: any = getEffectiveWorldLockStateInState(state);
   if (!lock.is_locked) return { ok: false, role: "", lock };
 
@@ -15546,7 +15647,7 @@ function getWorldLockPullPermission(player: any, worldName: any) {
     return { ok: true, role: "owner", lock };
   }
 
-  const role: any = normalizeWorldLockAccessRole(getWorldLockRoleForPlayer(lock, player), "");
+  const role = normalizeWorldLockAccessRole(getWorldLockRoleForPlayer(lock, player), "");
   if (role === "admin") {
     return { ok: true, role, lock };
   }
@@ -15558,11 +15659,11 @@ function canPlayerToggleWoodenEntrance(player: any, worldName: any) {
   if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const lock: any = getEffectiveWorldLockStateInState(state);
   if (!lock.is_locked) return true;
 
-  const playerKey: any = accountKey(player.account_username);
+  const playerKey = accountKey(player.account_username);
   if (playerKey === "") return false;
   if (lockOwnerMatchesPlayer(lock, player)) return true;
 
@@ -15573,11 +15674,11 @@ function canPlayerPassWoodenEntrance(player: any, worldName: any) {
   if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const lock: any = getEffectiveWorldLockStateInState(state);
   if (!lock.is_locked) return true;
 
-  const playerKey: any = accountKey(player.account_username);
+  const playerKey = accountKey(player.account_username);
   if (playerKey === "") return false;
   if (lockOwnerMatchesPlayer(lock, player)) return true;
 
@@ -15585,15 +15686,15 @@ function canPlayerPassWoodenEntrance(player: any, worldName: any) {
 }
 
 function isSpringboardBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
+  const clean = clampString(blockType || "");
   if (clean === "mushroom" || clean === "mushroom_1" || clean === "mushroom_2") return true;
-  const definition: any = ItemDatabase.getItemDefinition(clean) || {};
+  const definition = ItemDatabase.getItemDefinition(clean) || {};
   return Boolean(definition.springboard || definition.pinball_block || (Array.isArray(definition.springboard_animation_frames) && definition.springboard_animation_frames.length > 1));
 }
 
 function prepareSpringboardAnimationUpdate(socket: any, player: any, worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isSpringboardBlockType(block.block_type)) {
     sendActionRejected(socket, "world_interaction_update", "Springboard missing.");
     return false;
@@ -15609,8 +15710,8 @@ function prepareSpringboardAnimationUpdate(socket: any, player: any, worldName: 
 }
 
 function prepareEntrancePassUpdate(socket: any, player: any, worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isEntranceBlockType(block.block_type)) {
     sendActionRejected(socket, "world_interaction_update", "Entrance missing.");
     return false;
@@ -15621,8 +15722,8 @@ function prepareEntrancePassUpdate(socket: any, player: any, worldName: any, upd
     return false;
   }
 
-  const existing: any = state.interactions.get(gridKey(update.x, update.y)) || {};
-  const locked: any = Boolean(existing.locked || block.entrance_locked);
+  const existing = state.interactions.get(gridKey(update.x, update.y)) || {};
+  const locked = Boolean(existing.locked || block.entrance_locked);
   if (locked && !canPlayerPassWoodenEntrance(player, worldName)) {
     sendActionRejected(socket, "world_interaction_update", "Entrance locked.");
     return false;
@@ -15634,8 +15735,8 @@ function prepareEntrancePassUpdate(socket: any, player: any, worldName: any, upd
 }
 
 function prepareWoodenEntranceStateUpdate(socket: any, player: any, worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isEntranceBlockType(block.block_type)) {
     sendActionRejected(socket, "world_interaction_update", "Entrance missing.");
     return false;
@@ -15657,8 +15758,8 @@ function prepareWoodenEntranceStateUpdate(socket: any, player: any, worldName: a
 }
 
 function prepareDoorStateUpdate(socket: any, player: any, worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isDoorBlockType(block.block_type)) {
     sendActionRejected(socket, "world_interaction_update", "Door missing.");
     return false;
@@ -15674,15 +15775,15 @@ function prepareDoorStateUpdate(socket: any, player: any, worldName: any, update
     return false;
   }
 
-  const existing: any = state.interactions.get(gridKey(update.x, update.y)) || {};
-  const existingLocked: any = Boolean(existing.locked || block.entrance_locked);
+  const existing = state.interactions.get(gridKey(update.x, update.y)) || {};
+  const existingLocked = Boolean(existing.locked || block.entrance_locked);
   if (Boolean(update.locked) !== existingLocked && !canPlayerToggleDoorLock(player, worldName)) {
     sendActionRejected(socket, "world_interaction_update", "Only the world owner or world admins can lock this door.");
     return false;
   }
 
-  const passwordDoor: any = isPasswordDoorBlockType(block.block_type);
-  const existingPassword: any = cleanDoorPassword(existing.password || existing.door_password || block.door_password || "");
+  const passwordDoor = isPasswordDoorBlockType(block.block_type);
+  const existingPassword = cleanDoorPassword(existing.password || existing.door_password || block.door_password || "");
   update.password_changed = passwordDoor && Boolean(update.password_changed);
   if (update.password_changed) {
     if (!canPlayerEditPasswordDoor(player, worldName)) {
@@ -15705,11 +15806,11 @@ function prepareDoorStateUpdate(socket: any, player: any, worldName: any, update
 }
 
 function sanitizeDoorEnterRequest(data: any, worldName: any) {
-  const x: any = Number(data.x);
-  const y: any = Number(data.y);
+  const x = Number(data.x);
+  const y = Number(data.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  const gridX: any = Math.trunc(x);
-  const gridY: any = Math.trunc(y);
+  const gridX = Math.trunc(x);
+  const gridY = Math.trunc(y);
   if (!isGridInWorld(gridX, gridY)) return null;
 
   return {
@@ -15723,10 +15824,10 @@ function sanitizeDoorEnterRequest(data: any, worldName: any) {
 
 function getDoorStateForBlock(state: any, block: any, worldName: any) {
   if (!state || !block) return null;
-  const key: any = gridKey(block.x, block.y);
-  const interaction: any = state.interactions.get(key) || {};
-  const destination: any = cleanDoorDestination(interaction.destination || interaction.door_destination || block.door_destination || block.destination || "");
-  const parsedDestination: any = parseDoorDestination(destination, worldName);
+  const key = gridKey(block.x, block.y);
+  const interaction = state.interactions.get(key) || {};
+  const destination = cleanDoorDestination(interaction.destination || interaction.door_destination || block.door_destination || block.destination || "");
+  const parsedDestination = parseDoorDestination(destination, worldName);
 
   return {
     block,
@@ -15742,8 +15843,8 @@ function getDoorStateForBlock(state: any, block: any, worldName: any) {
 }
 
 function getDoorAtGrid(worldName: any, x: any, y: any) {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(x, y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(x, y));
   if (!block || !isDoorBlockType(block.block_type)) return null;
   return {
     state,
@@ -15752,13 +15853,13 @@ function getDoorAtGrid(worldName: any, x: any, y: any) {
 }
 
 function findDoorById(worldName: any, doorId: any) {
-  const cleanId: any = cleanDoorId(doorId);
+  const cleanId = cleanDoorId(doorId);
   if (cleanId === "") return null;
 
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   for (const block of state.foreground.values()) {
     if (!isDoorBlockType(block?.block_type || "")) continue;
-    const doorState: any = getDoorStateForBlock(state, block, worldName);
+    const doorState = getDoorStateForBlock(state, block, worldName);
     if (!doorState || doorState.door_id !== cleanId) continue;
     return {
       state,
@@ -15777,15 +15878,15 @@ function rejectDoorEnter(socket: any, message: any, extra: any = {}) {
 async function handleDoorEnterRequest(socket: any, player: any, data: any) {
   if (!requireAuthenticated(socket, player, "enter doors")) return false;
 
-  const sourceWorld: any = getPlayerCurrentWorldName(player);
-  const requestWorld: any = cleanWorld(data.world || sourceWorld);
+  const sourceWorld = getPlayerCurrentWorldName(player);
+  const requestWorld = cleanWorld(data.world || sourceWorld);
   if (!requireSameWorld(socket, player, requestWorld, "enter that door")) return false;
   if (await rejectIfWorldBanned(socket, player, sourceWorld, "door_enter")) return false;
 
-  const request: any = sanitizeDoorEnterRequest(data, sourceWorld);
+  const request = sanitizeDoorEnterRequest(data, sourceWorld);
   if (!request) return rejectDoorEnter(socket, "Door missing.");
 
-  const sourceDoor: any = getDoorAtGrid(sourceWorld, request.x, request.y);
+  const sourceDoor = getDoorAtGrid(sourceWorld, request.x, request.y);
   if (!sourceDoor) return rejectDoorEnter(socket, "Door missing.");
 
   if (!isPlayerNearGrid(player, request.x, request.y)) {
@@ -15797,7 +15898,7 @@ async function handleDoorEnterRequest(socket: any, player: any, data: any) {
   }
 
   if (isPasswordDoorBlockType(sourceDoor.block.block_type)) {
-    const configuredPassword: any = cleanDoorPassword(sourceDoor.password || "");
+    const configuredPassword = cleanDoorPassword(sourceDoor.password || "");
     if (configuredPassword !== "" && cleanDoorPassword(request.password || "") !== configuredPassword) {
       return rejectDoorEnter(socket, "Password incorrect.", {
         reason: "wrong_password",
@@ -15812,18 +15913,18 @@ async function handleDoorEnterRequest(socket: any, player: any, data: any) {
     return rejectDoorEnter(socket, "Door is not linked.");
   }
 
-  const targetWorld: any = cleanWorld(sourceDoor.target_world || sourceWorld);
-  const targetDoorId: any = cleanDoorId(sourceDoor.target_door_id || "");
-  const worldOnlyDestination: any = targetDoorId === "";
+  const targetWorld = cleanWorld(sourceDoor.target_world || sourceWorld);
+  const targetDoorId = cleanDoorId(sourceDoor.target_door_id || "");
+  const worldOnlyDestination = targetDoorId === "";
   if (await rejectIfWorldBanned(socket, player, targetWorld, "door_enter")) return false;
 
-  const oldWorld: any = sourceWorld;
-  const changedWorld: any = oldWorld !== targetWorld;
+  const oldWorld = sourceWorld;
+  const changedWorld = oldWorld !== targetWorld;
   if (changedWorld) {
-    const routeCheck: any = await ensureWorldRouteForAction(socket, player, targetWorld, "door_enter");
+    const routeCheck = await ensureWorldRouteForAction(socket, player, targetWorld, "door_enter");
     if (!routeCheck.ok) return false;
 
-    const worldRefresh: any = await refreshWorldStateFromPostgres(targetWorld, "door_enter");
+    const worldRefresh = await refreshWorldStateFromPostgres(targetWorld, "door_enter");
     if (!worldRefresh.ok) {
       rejectDoorEnter(socket, "World data is still loading. Try again.", {
         reason: worldRefresh.reason || "world_state_refresh_failed",
@@ -15864,16 +15965,16 @@ async function handleDoorEnterRequest(socket: any, player: any, data: any) {
     }
   }
 
-  const useEntranceSpawn: any = changedWorld || worldOnlyDestination;
-  const targetDoorPosition: any = targetDoor ? getGridCenterPixels(targetDoor.block.x, targetDoor.block.y) : null;
-  const targetPosition: any = useEntranceSpawn
+  const useEntranceSpawn = changedWorld || worldOnlyDestination;
+  const targetDoorPosition = targetDoor ? getGridCenterPixels(targetDoor.block.x, targetDoor.block.y) : null;
+  const targetPosition = useEntranceSpawn
     ? getJoinWorldSpawnForWorld(targetWorld)
     : {
         ...targetDoorPosition,
         grid_x: targetDoor.block.x,
         grid_y: targetDoor.block.y,
       };
-  const spawnAtEntranceGate: any = useEntranceSpawn;
+  const spawnAtEntranceGate = useEntranceSpawn;
   const admission: any = changedWorld ? await reserveWorldAdmission(player, targetWorld, "door_enter") : null;
   if (changedWorld && !admission.ok) {
     if (admission.reason === "world_route_admission_mismatch") {
@@ -15888,7 +15989,7 @@ async function handleDoorEnterRequest(socket: any, player: any, data: any) {
       cancelActiveTradeForPlayer(player.id, "Trade canceled because a player changed worlds.");
       activeFishingSessions.delete(player.id);
       clearPlayerFishingPresence(player);
-      const keyCleanup: any = await removeWorldLockKeysFromPlayerInventory(socket, player, oldWorld, "door_world_change");
+      const keyCleanup = await removeWorldLockKeysFromPlayerInventory(socket, player, oldWorld, "door_world_change");
       if (!keyCleanup.ok) {
         rejectDoorEnter(socket, keyCleanup.message || "Could not remove your World Lock Key. Try again.", {
           reason: keyCleanup.reason || "world_lock_key_cleanup_failed",
@@ -15949,7 +16050,7 @@ async function handleDoorEnterRequest(socket: any, player: any, data: any) {
     sendJson(socket, response);
 
     if (changedWorld) {
-      const existingPlayers: any = getPlayersInWorld(targetWorld, player.id, player);
+      const existingPlayers = getPlayersInWorld(targetWorld, player.id, player);
       const joinWorldPayload: any = {
         type: "join_world_ok",
         world: targetWorld,
@@ -16032,9 +16133,9 @@ async function handleDoorEnterRequest(socket: any, player: any, data: any) {
 }
 
 function buildDoorDestinationText(targetWorld: any, targetDoorId: any, sourceWorld: any) {
-  const cleanTargetWorld: any = cleanWorld(targetWorld || sourceWorld);
-  const cleanSourceWorld: any = cleanWorld(sourceWorld || "");
-  const cleanTargetDoorId: any = cleanDoorId(targetDoorId);
+  const cleanTargetWorld = cleanWorld(targetWorld || sourceWorld);
+  const cleanSourceWorld = cleanWorld(sourceWorld || "");
+  const cleanTargetDoorId = cleanDoorId(targetDoorId);
   if (cleanTargetDoorId === "") return "";
   if (cleanTargetWorld === cleanSourceWorld) {
     return `door:${cleanTargetDoorId}`;
@@ -16045,28 +16146,28 @@ function buildDoorDestinationText(targetWorld: any, targetDoorId: any, sourceWor
 async function maybeApplyReciprocalDoorLink(socket: any, player: any, sourceWorld: any, update: any) {
   if (!update || update.action !== "door_state") return null;
 
-  const sourceDoorId: any = cleanDoorId(update.door_id || "");
-  const targetDoorId: any = cleanDoorId(update.target_door_id || "");
+  const sourceDoorId = cleanDoorId(update.door_id || "");
+  const targetDoorId = cleanDoorId(update.target_door_id || "");
   if (sourceDoorId === "" || targetDoorId === "") return null;
 
-  const cleanSourceWorld: any = cleanWorld(sourceWorld);
-  const targetWorld: any = cleanWorld(update.target_world || cleanSourceWorld);
+  const cleanSourceWorld = cleanWorld(sourceWorld);
+  const targetWorld = cleanWorld(update.target_world || cleanSourceWorld);
   if (cleanSourceWorld === "" || targetWorld === "") return null;
   if (!canPlayerBuildInWorld(player, targetWorld)) return null;
 
-  const targetDoor: any = findDoorById(targetWorld, targetDoorId);
+  const targetDoor = findDoorById(targetWorld, targetDoorId);
   if (!targetDoor || !targetDoor.block) return null;
   if (targetWorld === cleanSourceWorld && Number(targetDoor.block.x) === Number(update.x) && Number(targetDoor.block.y) === Number(update.y)) {
     return null;
   }
 
-  const targetState: any = getDoorStateForBlock(targetDoor.state, targetDoor.block, targetWorld);
+  const targetState = getDoorStateForBlock(targetDoor.state, targetDoor.block, targetWorld);
   if (!targetState) return null;
-  const existingDestination: any = cleanDoorDestination(targetState.destination || "");
-  const existingTargetDoorId: any = cleanDoorId(targetState.target_door_id || "");
+  const existingDestination = cleanDoorDestination(targetState.destination || "");
+  const existingTargetDoorId = cleanDoorId(targetState.target_door_id || "");
   if (existingDestination !== "" || existingTargetDoorId !== "") return null;
 
-  const reverseDestination: any = buildDoorDestinationText(cleanSourceWorld, sourceDoorId, targetWorld);
+  const reverseDestination = buildDoorDestinationText(cleanSourceWorld, sourceDoorId, targetWorld);
   const reverseUpdate: any = {
     type: "world_interaction_update",
     world: targetWorld,
@@ -16081,12 +16182,12 @@ async function maybeApplyReciprocalDoorLink(socket: any, player: any, sourceWorl
     block_type: targetDoor.block.block_type,
   };
 
-  const reciprocalSourceId: any = makeAuditId("interact");
-  const previousTargetWorldState: any = serializeWorldState(targetWorld);
-  const objectBefore: any = getWorldObjectJournalData(targetWorld, reverseUpdate);
+  const reciprocalSourceId = makeAuditId("interact");
+  const previousTargetWorldState = serializeWorldState(targetWorld);
+  const objectBefore = getWorldObjectJournalData(targetWorld, reverseUpdate);
   applyInteractionUpdateToWorldState(targetWorld, reverseUpdate);
-  const objectAfter: any = getWorldObjectJournalData(targetWorld, reverseUpdate);
-  const commit: any = await commitWorldStateWithBlockChanges(targetWorld, [
+  const objectAfter = getWorldObjectJournalData(targetWorld, reverseUpdate);
+  const commit = await commitWorldStateWithBlockChanges(targetWorld, [
     buildWorldObjectChangeEntry(
       socket,
       player,
@@ -16116,15 +16217,15 @@ async function maybeApplyReciprocalDoorLink(socket: any, player: any, sourceWorl
 }
 
 function prepareToggleBlockStateUpdate(socket: any, player: any, worldName: any, update: any, expectedAction: any) {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isToggleBlockType(block.block_type)) {
     sendActionRejected(socket, "world_interaction_update", "Toggle block missing.");
     return false;
   }
 
-  const definition: any = ItemDatabase.getItemDefinition(block.block_type) || {};
-  const toggleAction: any = clampString(definition.toggle_action || `${block.block_type}_state`);
+  const definition = ItemDatabase.getItemDefinition(block.block_type) || {};
+  const toggleAction = clampString(definition.toggle_action || `${block.block_type}_state`);
   if (toggleAction !== expectedAction) {
     sendActionRejected(socket, "world_interaction_update", "Toggle block missing.");
     return false;
@@ -16141,8 +16242,8 @@ function prepareToggleBlockStateUpdate(socket: any, player: any, worldName: any,
 }
 
 function prepareThemeMachineStateUpdate(socket: any, player: any, worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const block: any = state.foreground.get(gridKey(update.x, update.y));
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
   if (!block || !isThemeMachineBlockType(block.block_type)) {
     sendActionRejected(socket, "world_interaction_update", "Theme Machine missing.");
     return false;
@@ -16158,7 +16259,7 @@ function prepareThemeMachineStateUpdate(socket: any, player: any, worldName: any
     return false;
   }
 
-  const definition: any = ItemDatabase.getItemDefinition(block.block_type) || {};
+  const definition = ItemDatabase.getItemDefinition(block.block_type) || {};
   update.enabled = Boolean(update.enabled);
   update.theme = sanitizeWorldBackgroundTheme(update.theme || definition.theme_machine_theme || "night") || "night";
   update.block_type = block.block_type;
@@ -16198,30 +16299,30 @@ function checkPlayerWorldEntrySpawnGuard(player: any, position: any, now: any = 
 }
 
 function getMovementCollisionRevision(worldName: any) {
-  const clean: any = cleanWorld(worldName || "START");
+  const clean = cleanWorld(worldName || "START");
   return Math.max(0, Math.trunc(Number(movementCollisionWorldRevision.get(clean)) || 0));
 }
 
 function invalidateMovementCollisionCache(worldName: any) {
-  const clean: any = cleanWorld(worldName || "START");
-  const nextRevision: any = getMovementCollisionRevision(clean) + 1;
+  const clean = cleanWorld(worldName || "START");
+  const nextRevision = getMovementCollisionRevision(clean) + 1;
   movementCollisionWorldRevision.set(clean, nextRevision);
   movementCollisionCacheByWorld.delete(clean);
 }
 
 function getMovementCollisionMap(worldName: any) {
-  const clean: any = cleanWorld(worldName || "START");
-  const revision: any = getMovementCollisionRevision(clean);
-  const cached: any = movementCollisionCacheByWorld.get(clean);
+  const clean = cleanWorld(worldName || "START");
+  const revision = getMovementCollisionRevision(clean);
+  const cached = movementCollisionCacheByWorld.get(clean);
   if (cached && cached.revision === revision && cached.map instanceof Map) {
     return cached.map;
   }
 
-  const state: any = ensureWorldState(clean);
-  const map: any = buildEffectiveForegroundMap(clean, state);
+  const state = ensureWorldState(clean);
+  const map = buildEffectiveForegroundMap(clean, state);
   movementCollisionCacheByWorld.set(clean, { revision, map });
   while (movementCollisionCacheByWorld.size > MOVEMENT_COLLISION_CACHE_MAX_WORLDS) {
-    const oldestKey: any = movementCollisionCacheByWorld.keys().next().value;
+    const oldestKey = movementCollisionCacheByWorld.keys().next().value;
     if (!oldestKey) break;
     movementCollisionCacheByWorld.delete(oldestKey);
   }
@@ -16229,22 +16330,22 @@ function getMovementCollisionMap(worldName: any) {
 }
 
 function isSolidMovementCollisionBlock(blockType: any) {
-  const clean: any = clampString(blockType || "");
+  const clean = clampString(blockType || "");
   if (clean === "") return false;
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const definition = ItemDatabase.getItemDefinition(clean);
   if (!definition || definition.category !== "block") return false;
   if (definition.no_collision === true || definition.collidable === false) return false;
   if (definition.platform_collision === true) return false;
-  const collisionType: any = clampString(definition.collision_type || "full").toLowerCase();
+  const collisionType = clampString(definition.collision_type || "full").toLowerCase();
   return collisionType === "" || collisionType === "full" || collisionType === "custom";
 }
 
 function getPlayerMovementCollisionRect(position: any) {
-  const shrink: any = PLAYER_COLLISION_SHRINK_PIXELS;
-  const halfWidth: any = Math.max(0.5, PLAYER_COLLISION_HALF_WIDTH - shrink);
-  const halfHeight: any = Math.max(0.5, PLAYER_COLLISION_HALF_HEIGHT - shrink);
-  const centerX: any = Number(position?.x) + PLAYER_COLLISION_OFFSET_X;
-  const centerY: any = Number(position?.y) + PLAYER_COLLISION_OFFSET_Y;
+  const shrink = PLAYER_COLLISION_SHRINK_PIXELS;
+  const halfWidth = Math.max(0.5, PLAYER_COLLISION_HALF_WIDTH - shrink);
+  const halfHeight = Math.max(0.5, PLAYER_COLLISION_HALF_HEIGHT - shrink);
+  const centerX = Number(position?.x) + PLAYER_COLLISION_OFFSET_X;
+  const centerY = Number(position?.y) + PLAYER_COLLISION_OFFSET_Y;
   return {
     x: centerX - halfWidth,
     y: centerY - halfHeight,
@@ -16257,15 +16358,15 @@ function getMovementCollisionAtPosition(worldName: any, position: any) {
   if (!MOVEMENT_COLLISION_GUARD_ENABLED) return null;
   if (!position || !isPositionInWorldBounds(Number(position.x), Number(position.y))) return null;
 
-  const collisionMap: any = getMovementCollisionMap(worldName);
-  const playerRect: any = getPlayerMovementCollisionRect(position);
-  const occupiedPositions: any = getGridPositionsOverlappingRect(playerRect);
+  const collisionMap = getMovementCollisionMap(worldName);
+  const playerRect = getPlayerMovementCollisionRect(position);
+  const occupiedPositions = getGridPositionsOverlappingRect(playerRect);
   for (const grid of occupiedPositions) {
     if (!isGridInWorld(grid.x, grid.y)) continue;
-    const block: any = collisionMap.get(gridKey(grid.x, grid.y));
-    const blockType: any = clampString(block?.block_type || "");
+    const block = collisionMap.get(gridKey(grid.x, grid.y));
+    const blockType = clampString(block?.block_type || "");
     if (!isSolidMovementCollisionBlock(blockType)) continue;
-    const blockRect: any = getBlockCollisionRectForGrid(grid.x, grid.y, blockType);
+    const blockRect = getBlockCollisionRectForGrid(grid.x, grid.y, blockType);
     if (rectsIntersect(playerRect, blockRect)) {
       return {
         grid_x: grid.x,
@@ -16295,18 +16396,18 @@ function sanitizePlayerPosition(data: any, player: any) {
 function sanitizeActionPositionPayload(data: any, player: any, fallbackWorld: any = "") {
   if (!data || typeof data !== "object" || Array.isArray(data)) return null;
 
-  const hasActorPosition: any = Object.prototype.hasOwnProperty.call(data, "actor_x") && Object.prototype.hasOwnProperty.call(data, "actor_y");
-  const hasPlayerPosition: any = Object.prototype.hasOwnProperty.call(data, "player_x") && Object.prototype.hasOwnProperty.call(data, "player_y");
+  const hasActorPosition = Object.prototype.hasOwnProperty.call(data, "actor_x") && Object.prototype.hasOwnProperty.call(data, "actor_y");
+  const hasPlayerPosition = Object.prototype.hasOwnProperty.call(data, "player_x") && Object.prototype.hasOwnProperty.call(data, "player_y");
   if (!hasActorPosition && !hasPlayerPosition) return null;
 
-  const rawX: any = hasActorPosition ? data.actor_x : data.player_x;
-  const rawY: any = hasActorPosition ? data.actor_y : data.player_y;
-  const rawFacing: any = Object.prototype.hasOwnProperty.call(data, "actor_facing")
+  const rawX = hasActorPosition ? data.actor_x : data.player_x;
+  const rawY = hasActorPosition ? data.actor_y : data.player_y;
+  const rawFacing = Object.prototype.hasOwnProperty.call(data, "actor_facing")
     ? data.actor_facing
     : (Object.prototype.hasOwnProperty.call(data, "player_facing") ? data.player_facing : data.facing);
-  const rawWorld: any = data.actor_world || data.player_world || data.world || fallbackWorld || getPlayerCurrentWorldName(player);
+  const rawWorld = data.actor_world || data.player_world || data.world || fallbackWorld || getPlayerCurrentWorldName(player);
 
-  const position: any = sanitizePlayerPosition({
+  const position = sanitizePlayerPosition({
     x: rawX,
     y: rawY,
     facing: rawFacing,
@@ -16331,7 +16432,7 @@ function applyActionPositionFromPayload(socket: any, player: any, data: any, fal
   }
   if (!enforceStandardMovementForSocket(socket, player, "action_position")) return false;
 
-  const position: any = sanitizeActionPositionPayload(data, player, fallbackWorld);
+  const position = sanitizeActionPositionPayload(data, player, fallbackWorld);
   if (!position) return false;
   if (!acceptPlayerMovement(socket, player, position, { silent: true })) return false;
 
@@ -16385,24 +16486,24 @@ function acceptPlayerMovement(socket: any, player: any, position: any, options: 
 }
 
 function sanitizePlayerPunchFacing(data: any, player: any) {
-  const requestedFacing: any = Number(data?.facing);
+  const requestedFacing = Number(data?.facing);
   if (requestedFacing < 0) return -1;
   if (requestedFacing > 0) return 1;
-  const position: any = getPlayerValidationPosition(player, { action: "player_punch", world: getPlayerCurrentWorldName(player) });
+  const position = getPlayerValidationPosition(player, { action: "player_punch", world: getPlayerCurrentWorldName(player) });
   if (position.ok) return Number(position.facing) < 0 ? -1 : 1;
   return Number(player?.facing) < 0 ? -1 : 1;
 }
 
 function resolvePlayerPunchTarget(player: any, data: any) {
-  const targetPlayerId: any = String(data?.target_player_id || data?.target_id || "").trim();
+  const targetPlayerId = String(data?.target_player_id || data?.target_id || "").trim();
   if (targetPlayerId !== "" && targetPlayerId !== player.id) {
-    const byId: any = findOnlinePlayerByPlayerId(targetPlayerId);
+    const byId = findOnlinePlayerByPlayerId(targetPlayerId);
     if (byId) return byId;
   }
 
-  const targetUsername: any = cleanAccountName(data?.target_username || data?.username || "");
+  const targetUsername = cleanAccountName(data?.target_username || data?.username || "");
   if (targetUsername !== "" && accountKey(targetUsername) !== accountKey(player.account_username)) {
-    const byUsername: any = findOnlinePlayerByUsername(targetUsername);
+    const byUsername = findOnlinePlayerByUsername(targetUsername);
     if (byUsername) return byUsername;
   }
 
@@ -16414,9 +16515,9 @@ function isPlayerPunchTargetReachable(player: any, target: any, facing: any) {
   if (player.id === target.id) return false;
   if (cleanWorld(player.world || "START") !== cleanWorld(target.world || "START")) return false;
 
-  const actionWorld: any = getPlayerCurrentWorldName(player);
-  const attackerPosition: any = getPlayerValidationPosition(player, { action: "player_punch", world: actionWorld });
-  const targetPosition: any = getPlayerValidationPosition(target, { action: "player_punch_target", world: actionWorld });
+  const actionWorld = getPlayerCurrentWorldName(player);
+  const attackerPosition = getPlayerValidationPosition(player, { action: "player_punch", world: actionWorld });
+  const targetPosition = getPlayerValidationPosition(target, { action: "player_punch_target", world: actionWorld });
   if (!attackerPosition.ok || !targetPosition.ok) {
     debugNetfoxAction("punch rejected before distance check", {
       attacker_id: String(player?.id || ""),
@@ -16429,15 +16530,15 @@ function isPlayerPunchTargetReachable(player: any, target: any, facing: any) {
     return false;
   }
 
-  const ax: any = Number(attackerPosition.x);
-  const ay: any = Number(attackerPosition.y);
-  const tx: any = Number(targetPosition.x);
-  const ty: any = Number(targetPosition.y);
+  const ax = Number(attackerPosition.x);
+  const ay = Number(attackerPosition.y);
+  const tx = Number(targetPosition.x);
+  const ty = Number(targetPosition.y);
   if (![ax, ay, tx, ty].every(Number.isFinite)) return false;
 
-  const dx: any = tx - ax;
-  const dy: any = ty - ay;
-  const forwardDistance: any = dx * facing;
+  const dx = tx - ax;
+  const dy = ty - ay;
+  const forwardDistance = dx * facing;
   if (forwardDistance < -PLAYER_PUNCH_BACKSIDE_TOLERANCE_PIXELS) return false;
   if (Math.abs(dx) > Math.min(PLAYER_PUNCH_RANGE_PIXELS, MAX_PUNCH_REACH_PIXELS)) return false;
   if (Math.abs(dy) > PLAYER_PUNCH_VERTICAL_TOLERANCE_PIXELS) return false;
@@ -16447,7 +16548,7 @@ function isPlayerPunchTargetReachable(player: any, target: any, facing: any) {
 function handlePlayerPunch(socket: any, player: any, data: any) {
   if (!requireAuthenticated(socket, player, "punch players")) return;
 
-  const worldName: any = cleanWorld(data?.world || player.world || "START");
+  const worldName = cleanWorld(data?.world || player.world || "START");
   if (!requireSameWorld(socket, player, worldName, "player_punch")) return;
   if (!validateNetfoxActionCooldown(socket, player, "player_punch", data)) return;
 
@@ -16459,27 +16560,27 @@ function handlePlayerPunch(socket: any, player: any, data: any) {
     return;
   }
 
-  const now: any = Date.now();
-  const lastPunchAt: any = Number(player.last_player_punch_at || 0);
+  const now = Date.now();
+  const lastPunchAt = Number(player.last_player_punch_at || 0);
   if (lastPunchAt > 0 && now - lastPunchAt < PLAYER_PUNCH_COOLDOWN_MS) {
     return;
   }
 
-  const targetRecord: any = resolvePlayerPunchTarget(player, data);
+  const targetRecord = resolvePlayerPunchTarget(player, data);
   if (!targetRecord || !targetRecord.player) {
     sendActionRejected(socket, "player_punch", "Could not find that player.");
     return;
   }
 
-  const target: any = targetRecord.player;
+  const target = targetRecord.player;
   if (cleanWorld(target.world || "START") !== worldName) {
     sendActionRejected(socket, "player_punch", "That player is not in this world.");
     return;
   }
 
-  const facing: any = sanitizePlayerPunchFacing(data, player);
-  const attackerPosition: any = getPlayerValidationPosition(player, { action: "player_punch", world: worldName });
-  const targetPosition: any = getPlayerValidationPosition(target, { action: "player_punch_target", world: worldName });
+  const facing = sanitizePlayerPunchFacing(data, player);
+  const attackerPosition = getPlayerValidationPosition(player, { action: "player_punch", world: worldName });
+  const targetPosition = getPlayerValidationPosition(target, { action: "player_punch_target", world: worldName });
   if (usesTrustedMovementPosition(player) && !attackerPosition.ok) {
     rejectMissingTrustedPosition(socket, "player_punch", player, attackerPosition, {
       target_player_id: String(target.id || ""),
@@ -16488,8 +16589,8 @@ function handlePlayerPunch(socket: any, player: any, data: any) {
     return;
   }
   if (usesTrustedMovementPosition(target) && !targetPosition.ok) {
-    const targetMode: any = getTrustedMovementModeLabel(target);
-    const targetLabel: any = targetMode === MOVEMENT_MODE_CUSTOM_AUTHORITATIVE ? "custom movement" : "Netfox";
+    const targetMode = getTrustedMovementModeLabel(target);
+    const targetLabel = targetMode === MOVEMENT_MODE_CUSTOM_AUTHORITATIVE ? "custom movement" : "Netfox";
     sendActionRejected(socket, "player_punch", `That player's ${targetLabel} position is not ready yet.`, {
       reason: `${targetMode === MOVEMENT_MODE_CUSTOM_AUTHORITATIVE ? "custom" : "netfox"}_target_position_${targetPosition.reason || "missing"}`,
       target_player_id: String(target.id || ""),
@@ -16502,14 +16603,14 @@ function handlePlayerPunch(socket: any, player: any, data: any) {
     return;
   }
 
-  const sourceX: any = attackerPosition.ok ? attackerPosition.x : Number(player.x);
-  const sourceY: any = attackerPosition.ok ? attackerPosition.y : Number(player.y);
-  const targetX: any = targetPosition.ok ? targetPosition.x : Number(target.x);
-  const targetY: any = targetPosition.ok ? targetPosition.y : Number(target.y);
-  const dx: any = targetX - sourceX;
-  const knockbackDirection: any = Math.abs(dx) > 4 ? (dx < 0 ? -1 : 1) : facing;
-  const knockbackX: any = knockbackDirection * PLAYER_PUNCH_KNOCKBACK_X;
-  const knockbackY: any = PLAYER_PUNCH_KNOCKBACK_Y;
+  const sourceX = attackerPosition.ok ? attackerPosition.x : Number(player.x);
+  const sourceY = attackerPosition.ok ? attackerPosition.y : Number(player.y);
+  const targetX = targetPosition.ok ? targetPosition.x : Number(target.x);
+  const targetY = targetPosition.ok ? targetPosition.y : Number(target.y);
+  const dx = targetX - sourceX;
+  const knockbackDirection = Math.abs(dx) > 4 ? (dx < 0 ? -1 : 1) : facing;
+  const knockbackX = knockbackDirection * PLAYER_PUNCH_KNOCKBACK_X;
+  const knockbackY = PLAYER_PUNCH_KNOCKBACK_Y;
 
   player.last_player_punch_at = now;
   player.facing = facing;
@@ -16540,7 +16641,7 @@ function handlePlayerPunch(socket: any, player: any, data: any) {
 }
 
 function isMovementNearLavaRebound(player: any, position: any) {
-  const worldName: any = cleanWorld(position?.world || player?.world || "");
+  const worldName = cleanWorld(position?.world || player?.world || "");
   if (worldName === "") return false;
 
   return (
@@ -16550,17 +16651,17 @@ function isMovementNearLavaRebound(player: any, position: any) {
 }
 
 function isPositionNearLavaReboundBlock(worldName: any, x: any, y: any) {
-  const px: any = Number(x);
-  const py: any = Number(y);
+  const px = Number(x);
+  const py = Number(y);
   if (!Number.isFinite(px) || !Number.isFinite(py)) return false;
 
-  const state: any = ensureWorldState(worldName);
-  const gridX: any = Math.round(px / TILE_SIZE);
-  const gridY: any = Math.round(py / TILE_SIZE);
+  const state = ensureWorldState(worldName);
+  const gridX = Math.round(px / TILE_SIZE);
+  const gridY = Math.round(py / TILE_SIZE);
 
   for (let dy: any = -LAVA_REBOUND_MOVE_RADIUS_TILES; dy <= LAVA_REBOUND_MOVE_RADIUS_TILES; dy += 1) {
     for (let dx: any = -LAVA_REBOUND_MOVE_RADIUS_TILES; dx <= LAVA_REBOUND_MOVE_RADIUS_TILES; dx += 1) {
-      const block: any = state.foreground.get(gridKey(gridX + dx, gridY + dy));
+      const block = state.foreground.get(gridKey(gridX + dx, gridY + dy));
       if (isLavaReboundBlockType(block?.block_type)) return true;
     }
   }
@@ -16569,10 +16670,10 @@ function isPositionNearLavaReboundBlock(worldName: any, x: any, y: any) {
 }
 
 function isLavaReboundBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
+  const clean = clampString(blockType || "");
   if (clean === "lava") return true;
 
-  const definition: any = ItemDatabase.getItemDefinition(clean);
+  const definition = ItemDatabase.getItemDefinition(clean);
   return Boolean(definition?.lava_rebound);
 }
 
@@ -16585,7 +16686,7 @@ function getSocketUserAgent(socket: any, data: any = {}) {
 }
 
 function getSocketDeviceInfo(socket: any, data: any = {}) {
-  const rawDevice: any = data && typeof data.device_info === "object" && !Array.isArray(data.device_info)
+  const rawDevice = data && typeof data.device_info === "object" && !Array.isArray(data.device_info)
     ? data.device_info
     : {};
   return {
@@ -16618,28 +16719,28 @@ function parseAdminTwoFactorSecrets() {
   const map: any = new Map();
   for (const pair of ADMIN_2FA_SECRETS.split(",")) {
     const [rawUsername, ...secretParts] = String(pair || "").split(":");
-    const username: any = accountKey(rawUsername || "");
-    const secret: any = secretParts.join(":").trim();
+    const username = accountKey(rawUsername || "");
+    const secret = secretParts.join(":").trim();
     if (username !== "" && secret !== "") map.set(username, secret);
   }
   return map;
 }
 
-const adminTwoFactorSecretMap: any = parseAdminTwoFactorSecrets();
+const adminTwoFactorSecretMap = parseAdminTwoFactorSecrets();
 
 function getAdminTwoFactorSecret(username: any) {
-  const key: any = accountKey(username || "");
+  const key = accountKey(username || "");
   return adminTwoFactorSecretMap.get(key) || ADMIN_2FA_SECRET;
 }
 
 function base32ToBuffer(value: any) {
-  const alphabet: any = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-  const clean: any = String(value || "").toUpperCase().replace(/[^A-Z2-7]/g, "");
+  const alphabet = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+  const clean = String(value || "").toUpperCase().replace(/[^A-Z2-7]/g, "");
   let bits: any = "";
   const bytes: any = [];
 
   for (const char of clean) {
-    const index: any = alphabet.indexOf(char);
+    const index = alphabet.indexOf(char);
     if (index < 0) continue;
     bits += index.toString(2).padStart(5, "0");
     while (bits.length >= 8) {
@@ -16652,14 +16753,14 @@ function base32ToBuffer(value: any) {
 }
 
 function makeTotpCode(secret: any, timeStep: any = Math.floor(Date.now() / 30000)) {
-  const secretBytes: any = base32ToBuffer(secret);
+  const secretBytes = base32ToBuffer(secret);
   if (secretBytes.length === 0) return "";
-  const counter: any = Buffer.alloc(8);
+  const counter = Buffer.alloc(8);
   counter.writeUInt32BE(Math.floor(timeStep / 0x100000000), 0);
   counter.writeUInt32BE(timeStep >>> 0, 4);
-  const digest: any = crypto.createHmac("sha1", secretBytes).update(counter).digest();
-  const offset: any = digest[digest.length - 1] & 0x0f;
-  const binary: any = ((digest[offset] & 0x7f) << 24)
+  const digest = crypto.createHmac("sha1", secretBytes).update(counter).digest();
+  const offset = digest[digest.length - 1] & 0x0f;
+  const binary = ((digest[offset] & 0x7f) << 24)
     | ((digest[offset + 1] & 0xff) << 16)
     | ((digest[offset + 2] & 0xff) << 8)
     | (digest[offset + 3] & 0xff);
@@ -16667,8 +16768,8 @@ function makeTotpCode(secret: any, timeStep: any = Math.floor(Date.now() / 30000
 }
 
 function timingSafeCodeEqual(left: any, right: any) {
-  const cleanLeft: any = String(left || "").replace(/\s+/g, "");
-  const cleanRight: any = String(right || "").replace(/\s+/g, "");
+  const cleanLeft = String(left || "").replace(/\s+/g, "");
+  const cleanRight = String(right || "").replace(/\s+/g, "");
   if (cleanLeft.length !== cleanRight.length) return false;
   return crypto.timingSafeEqual(Buffer.from(cleanLeft), Buffer.from(cleanRight));
 }
@@ -16680,12 +16781,12 @@ function timingSafeCodeEqual(left: any, right: any) {
  */
 function verifyAdminTwoFactorCode(username: any, code: any) {
   if (!ADMIN_2FA_REQUIRED) return { ok: true, required: false };
-  const secret: any = getAdminTwoFactorSecret(username);
+  const secret = getAdminTwoFactorSecret(username);
   if (!secret) return { ok: false, required: true, reason: "admin_2fa_not_configured" };
-  const cleanCode: any = String(code || "").replace(/\s+/g, "");
+  const cleanCode = String(code || "").replace(/\s+/g, "");
   if (!/^\d{6}$/.test(cleanCode)) return { ok: false, required: true, reason: "missing_or_invalid_code" };
 
-  const currentStep: any = Math.floor(Date.now() / 30000);
+  const currentStep = Math.floor(Date.now() / 30000);
   for (let offset: any = -ADMIN_2FA_WINDOW_STEPS; offset <= ADMIN_2FA_WINDOW_STEPS; offset += 1) {
     if (timingSafeCodeEqual(cleanCode, makeTotpCode(secret, currentStep + offset))) {
       return { ok: true, required: true };
@@ -16737,9 +16838,9 @@ function getDeveloperSecurityRequirement(player: any) {
 function consumeAdminCommandCooldown(player: any, commandName: any) {
   if (!player || ADMIN_COMMAND_COOLDOWN_MS <= 0) return { ok: true };
   if (!player.developer_command_cooldowns) player.developer_command_cooldowns = new Map();
-  const key: any = String(commandName || "command").trim().toLowerCase() || "command";
-  const now: any = Date.now();
-  const nextAllowedAt: any = Number(player.developer_command_cooldowns.get(key) || 0);
+  const key = String(commandName || "command").trim().toLowerCase() || "command";
+  const now = Date.now();
+  const nextAllowedAt = Number(player.developer_command_cooldowns.get(key) || 0);
   if (nextAllowedAt > now) {
     return {
       ok: false,
@@ -16752,7 +16853,7 @@ function consumeAdminCommandCooldown(player: any, commandName: any) {
 
 function commandNeedsAdminConfirmation(commandName: any) {
   if (!ADMIN_COMMAND_CONFIRMATION_REQUIRED) return false;
-  const clean: any = String(commandName || "").trim().toLowerCase();
+  const clean = String(commandName || "").trim().toLowerCase();
   return clean !== "" && ADMIN_COMMAND_CONFIRMATION_ACTIONS.has(clean);
 }
 
@@ -16768,16 +16869,16 @@ function validateAdminCommandConfirmation(socket: any, player: any, data: any, c
   if (!commandNeedsAdminConfirmation(commandName)) return true;
   if (!player.pending_admin_confirmations) player.pending_admin_confirmations = new Map();
 
-  const confirmationKey: any = makeAdminConfirmationKey(player, commandName, command);
-  const providedToken: any = String(data.confirmation_token || data.admin_confirmation_token || "").trim();
-  const pending: any = player.pending_admin_confirmations.get(confirmationKey);
+  const confirmationKey = makeAdminConfirmationKey(player, commandName, command);
+  const providedToken = String(data.confirmation_token || data.admin_confirmation_token || "").trim();
+  const pending = player.pending_admin_confirmations.get(confirmationKey);
   if (pending && pending.expires_at_ms > Date.now() && providedToken !== "" && makeTokenHash(providedToken) === pending.token_hash) {
     player.pending_admin_confirmations.delete(confirmationKey);
     return true;
   }
 
-  const token: any = makeSecureToken(18);
-  const expiresAtMs: any = Date.now() + ADMIN_COMMAND_CONFIRMATION_TTL_MS;
+  const token = makeSecureToken(18);
+  const expiresAtMs = Date.now() + ADMIN_COMMAND_CONFIRMATION_TTL_MS;
   player.pending_admin_confirmations.set(confirmationKey, {
     token_hash: makeTokenHash(token),
     expires_at_ms: expiresAtMs,
@@ -16797,23 +16898,23 @@ function validateAdminCommandConfirmation(socket: any, player: any, data: any, c
 }
 
 function makeAuditId(prefix: any = "audit") {
-  const cleanPrefix: any = safeFileName(prefix, "audit");
+  const cleanPrefix = safeFileName(prefix, "audit");
   return `${cleanPrefix}_${Date.now()}_${crypto.randomBytes(6).toString("hex")}`;
 }
 
 function appendJsonLine(filePath: any, entry: any, label: any = "audit") {
   try {
     fs.mkdirSync(path.dirname(filePath), { recursive: true });
-    fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, (error) => {
+    fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, (error: NodeJS.ErrnoException | null) => {
       if (error) console.warn(`Could not write ${label} log:`, error.message);
     });
   } catch (error) {
-    console.warn(`Could not queue ${label} log:`, error.message);
+    console.warn(`Could not queue ${label} log:`, getErrorMessage(error));
   }
 }
 
 function getAuditActor(socket: any, player: any, usernameOverride: any = "") {
-  const username: any = cleanAccountName(usernameOverride || player?.account_username || player?.name || "");
+  const username = cleanAccountName(usernameOverride || player?.account_username || player?.name || "");
   return {
     actor_username: username,
     actor_role: username !== "" ? getAccountRole(username) : "unknown",
@@ -16837,8 +16938,8 @@ function logSecurityEvent(socket: any, player: any, event: any, details: any = {
 }
 
 function logGemLedger(socket: any, player: any, entry: any = {}) {
-  const actor: any = getAuditActor(socket, player);
-  const username: any = cleanAccountName(entry.account_username || actor.actor_username);
+  const actor = getAuditActor(socket, player);
+  const username = cleanAccountName(entry.account_username || actor.actor_username);
   const ledgerEntry: any = {
     ledger_id: entry.ledger_id || makeAuditId("gem"),
     at: new Date().toISOString(),
@@ -16859,13 +16960,13 @@ function logGemLedger(socket: any, player: any, entry: any = {}) {
 }
 
 function logItemLedger(socket: any, player: any, entry: any = {}) {
-  const itemId: any = clampString(entry.item_id || "");
+  const itemId = clampString(entry.item_id || "");
   if (itemId === "") return;
 
-  const actor: any = getAuditActor(socket, player);
-  const username: any = cleanAccountName(entry.account_username || actor.actor_username);
-  const itemCategory: any = resolveInventoryCategory(itemId, entry.item_category || "");
-  const ledgerId: any = entry.ledger_id || makeAuditId("item");
+  const actor = getAuditActor(socket, player);
+  const username = cleanAccountName(entry.account_username || actor.actor_username);
+  const itemCategory = resolveInventoryCategory(itemId, entry.item_category || "");
+  const ledgerId = entry.ledger_id || makeAuditId("item");
   const ledgerEntry: any = {
     ledger_id: ledgerId,
     at: new Date().toISOString(),
@@ -17024,18 +17125,18 @@ function worldSnapshotStorageIsSpaces() {
 }
 
 function parseS3Uri(uri: any) {
-  const raw: any = String(uri || "").trim().replace(/\/+$/, "");
+  const raw = String(uri || "").trim().replace(/\/+$/, "");
   if (!raw.startsWith("s3://")) return null;
-  const withoutScheme: any = raw.slice("s3://".length);
-  const slashIndex: any = withoutScheme.indexOf("/");
-  const bucket: any = slashIndex >= 0 ? withoutScheme.slice(0, slashIndex) : withoutScheme;
-  const prefix: any = slashIndex >= 0 ? withoutScheme.slice(slashIndex + 1).replace(/^\/+|\/+$/g, "") : "";
+  const withoutScheme = raw.slice("s3://".length);
+  const slashIndex = withoutScheme.indexOf("/");
+  const bucket = slashIndex >= 0 ? withoutScheme.slice(0, slashIndex) : withoutScheme;
+  const prefix = slashIndex >= 0 ? withoutScheme.slice(slashIndex + 1).replace(/^\/+|\/+$/g, "") : "";
   if (!bucket) return null;
   return { bucket, prefix };
 }
 
 function buildS3Key(prefix: any, ...parts: any[]) {
-  const cleanParts: any = parts
+  const cleanParts = parts
     .map((part) => String(part || "").replace(/^\/+|\/+$/g, ""))
     .filter(Boolean);
   if (prefix) cleanParts.unshift(String(prefix).replace(/^\/+|\/+$/g, ""));
@@ -17044,21 +17145,26 @@ function buildS3Key(prefix: any, ...parts: any[]) {
 
 function execFileAsync(command: any, args: any, options: any = {}) {
   return new Promise((resolve, reject) => {
-    childProcess.execFile(command, args, { maxBuffer: 1024 * 1024, ...options }, (error, stdout, stderr) => {
+    childProcess.execFile(
+      command,
+      args,
+      { maxBuffer: 1024 * 1024, ...options },
+      (error: Error | null, stdout: string | Buffer, stderr: string | Buffer) => {
       if (error) {
-        const message: any = String(stderr || error.message || "").trim() || error.message;
+        const message = String(stderr || error.message || "").trim() || error.message;
         reject(new Error(message));
         return;
       }
       resolve({ stdout, stderr });
-    });
+      },
+    );
   });
 }
 
 async function uploadWorldSnapshotToObjectStorage(snapshotPath: any, cleanWorld: any, snapshotFileName: any) {
   if (!worldSnapshotStorageIsSpaces()) return null;
 
-  const target: any = parseS3Uri(WORLD_SNAPSHOT_SPACES_TARGET);
+  const target = parseS3Uri(WORLD_SNAPSHOT_SPACES_TARGET);
   if (!target) {
     warnWorldSnapshotStorageOnce(
       "missing-spaces-target",
@@ -17074,8 +17180,8 @@ async function uploadWorldSnapshotToObjectStorage(snapshotPath: any, cleanWorld:
     return null;
   }
 
-  const worldKey: any = safeFileName(cleanWorld, "START");
-  const objectKey: any = buildS3Key(target.prefix, worldKey, snapshotFileName);
+  const worldKey = safeFileName(cleanWorld, "START");
+  const objectKey = buildS3Key(target.prefix, worldKey, snapshotFileName);
   const awsArgs: any = [];
   if (WORLD_SNAPSHOT_SPACES_ENDPOINT) {
     awsArgs.push("--endpoint-url", WORLD_SNAPSHOT_SPACES_ENDPOINT);
@@ -17093,23 +17199,23 @@ async function uploadWorldSnapshotToObjectStorage(snapshotPath: any, cleanWorld:
         AWS_EC2_METADATA_DISABLED: process.env.AWS_EC2_METADATA_DISABLED || "true",
       },
     });
-    const storageUri: any = `s3://${target.bucket}/${objectKey}`;
+    const storageUri = `s3://${target.bucket}/${objectKey}`;
     console.log(`[snapshots] uploaded world snapshot ${cleanWorld} to ${storageUri}`);
     return storageUri;
   } catch (error) {
-    console.warn(`[snapshots] Spaces upload failed for ${cleanWorld}:`, error.message);
+    console.warn(`[snapshots] Spaces upload failed for ${cleanWorld}:`, getErrorMessage(error));
     return null;
   }
 }
 
 function createWorldSnapshot(worldName: any, reason: any, socket: any = null, player: any = null, details: any = {}) {
   try {
-    const clean: any = cleanWorld(worldName);
-    const snapshotId: any = makeAuditId("snapshot");
-    const stamp: any = new Date().toISOString().replace(/[:.]/g, "-");
-    const snapshotDir: any = path.join(WORLD_SNAPSHOT_FOLDER, safeFileName(clean, "START"));
-    const snapshotFileName: any = `${stamp}_${safeFileName(reason, "snapshot")}.json`;
-    const snapshotPath: any = path.join(snapshotDir, snapshotFileName);
+    const clean = cleanWorld(worldName);
+    const snapshotId = makeAuditId("snapshot");
+    const stamp = new Date().toISOString().replace(/[:.]/g, "-");
+    const snapshotDir = path.join(WORLD_SNAPSHOT_FOLDER, safeFileName(clean, "START"));
+    const snapshotFileName = `${stamp}_${safeFileName(reason, "snapshot")}.json`;
+    const snapshotPath = path.join(snapshotDir, snapshotFileName);
 
     const snapshotPayload: any = {
       snapshot_id: snapshotId,
@@ -17120,19 +17226,19 @@ function createWorldSnapshot(worldName: any, reason: any, socket: any = null, pl
       world_state: serializeWorldState(clean),
     };
 
-    const snapshotFileWrite: any = writeJsonFileAtomicAsync(snapshotPath, snapshotPayload)
+    const snapshotFileWrite = writeJsonFileAtomicAsync(snapshotPath, snapshotPayload)
       .then(() => true)
-      .catch((error) => {
-        console.warn(`[snapshots] local snapshot write failed for ${clean}:`, error.message);
+      .catch((error: unknown) => {
+        console.warn(`[snapshots] local snapshot write failed for ${clean}:`, getErrorMessage(error));
         return false;
       });
-    const objectStorageWrite: any = snapshotFileWrite.then((fileSaved) => (
+    const objectStorageWrite = snapshotFileWrite.then((fileSaved) => (
       fileSaved ? uploadWorldSnapshotToObjectStorage(snapshotPath, clean, snapshotFileName) : null
     ));
     if (postgresStore.isReady()) {
       trackPersistenceWrite((async () => {
-        const fileSaved: any = await snapshotFileWrite;
-        const objectStorageUri: any = await objectStorageWrite;
+        const fileSaved = await snapshotFileWrite;
+        const objectStorageUri = await objectStorageWrite;
         return postgresStore.saveWorldSnapshot(clean, snapshotPayload.world_state, {
           reason: String(reason || "snapshot"),
           storageUri: objectStorageUri || (fileSaved ? snapshotPath : ""),
@@ -17154,16 +17260,16 @@ function createWorldSnapshot(worldName: any, reason: any, socket: any = null, pl
     });
     return { snapshotId, snapshotPath };
   } catch (error) {
-    console.warn("Could not create world snapshot:", error.message);
+    console.warn("Could not create world snapshot:", getErrorMessage(error));
     return null;
   }
 }
 
 function logAdminAction(socket: any, player: any, action: any, details: any = {}, ok: any = true, message: any = "") {
-  const username: any = cleanAccountName(player?.account_username || player?.name || "");
-  const detailObject: any = details && typeof details === "object" && !Array.isArray(details) ? details : {};
-  const socketAudit: any = getSocketAuditContext(socket, player);
-  const targetAudit: any = inferAdminActionTarget(detailObject);
+  const username = cleanAccountName(player?.account_username || player?.name || "");
+  const detailObject = details && typeof details === "object" && !Array.isArray(details) ? details : {};
+  const socketAudit = getSocketAuditContext(socket, player);
+  const targetAudit = inferAdminActionTarget(detailObject);
   const entry: any = {
     admin_action_event_id: makeAuditId("admin_action"),
     at: new Date().toISOString(),
@@ -17200,14 +17306,14 @@ function logAdminAction(socket: any, player: any, action: any, details: any = {}
 }
 
 function safeTimingEqualString(a: any, b: any) {
-  const left: any = Buffer.from(String(a || ""));
-  const right: any = Buffer.from(String(b || ""));
+  const left = Buffer.from(String(a || ""));
+  const right = Buffer.from(String(b || ""));
   if (left.length !== right.length) return false;
   return crypto.timingSafeEqual(left, right);
 }
 
 function verifyDeveloperPin(pin: any) {
-  const cleanPin: any = String(pin || "").trim();
+  const cleanPin = String(pin || "").trim();
   if (cleanPin === "") return false;
   if (DEV_PIN !== "" && safeTimingEqualString(cleanPin, DEV_PIN)) return true;
   if (DEV_PIN_HASH !== "" && safeTimingEqualString(makeTokenHash(cleanPin), DEV_PIN_HASH)) return true;
@@ -17240,16 +17346,16 @@ function sendDeveloperApproved(socket: any, requestId: any, command: any, messag
 }
 
 function splitCommand(command: any) {
-  const clean: any = String(command || "").trim().replace(/^\//, "");
+  const clean = String(command || "").trim().replace(/^\//, "");
   if (clean === "") return [];
   return clean.split(/\s+/);
 }
 
 function parseForceEventName(command: any) {
-  const clean: any = String(command || "").trim().replace(/^\//, "");
-  const match: any = clean.match(/^forceevent\s+(?:"([^"]+)"|'([^']+)'|(.+?))(?:\s+in\s+([A-Za-z0-9_ -]+))?$/i);
-  const rawEventName: any = match ? (match[1] || match[2] || match[3] || "") : "";
-  const eventName: any = rawEventName
+  const clean = String(command || "").trim().replace(/^\//, "");
+  const match = clean.match(/^forceevent\s+(?:"([^"]+)"|'([^']+)'|(.+?))(?:\s+in\s+([A-Za-z0-9_ -]+))?$/i);
+  const rawEventName = match ? (match[1] || match[2] || match[3] || "") : "";
+  const eventName = rawEventName
     .trim()
     .toLowerCase()
     .replace(/[\s-]+/g, "_");
@@ -17257,20 +17363,20 @@ function parseForceEventName(command: any) {
 }
 
 function parseTargetedGiveCommand(command: any) {
-  const parts: any = splitCommand(command);
+  const parts = splitCommand(command);
   if (parts.length < 4) return null;
   if (String(parts[0] || "").toLowerCase() !== "give") return null;
 
-  const targetUsername: any = cleanAccountName(parts[1]);
-  const itemId: any = clampString(parts[2] || "");
-  const amount: any = clampInteger(parts[3] || 1, 1, getDeveloperItemAmountLimit(itemId));
+  const targetUsername = cleanAccountName(parts[1]);
+  const itemId = clampString(parts[2] || "");
+  const amount = clampInteger(parts[3] || 1, 1, getDeveloperItemAmountLimit(itemId));
   if (targetUsername === "" || itemId === "") return null;
 
   return { targetUsername, itemId, amount };
 }
 
 function getDeveloperItemAmountLimit(itemId: any) {
-  const cleanItemId: any = clampString(itemId || "");
+  const cleanItemId = clampString(itemId || "");
   if (cleanItemId !== "" && ItemDatabase.hasItem(cleanItemId)) {
     return ItemDatabase.getStackLimit(cleanItemId);
   }
@@ -17278,16 +17384,16 @@ function getDeveloperItemAmountLimit(itemId: any) {
 }
 
 function getDeveloperCommandName(command: any) {
-  const parts: any = splitCommand(command);
+  const parts = splitCommand(command);
   if (parts.length === 0) return "";
   return String(parts[0] || "").toLowerCase();
 }
 
 function getDeveloperCommandWorldArgument(command: any) {
-  const parts: any = splitCommand(command);
+  const parts = splitCommand(command);
   if (parts.length < 2) return "";
 
-  const commandName: any = String(parts[0] || "").toLowerCase();
+  const commandName = String(parts[0] || "").toLowerCase();
   if (
     commandName !== "clear" &&
     commandName !== "resetworld" &&
@@ -17320,17 +17426,17 @@ function isProducerSpeedupCommandName(commandName: any) {
 }
 
 function parseProducerSpeedupDurationSeconds(value: any) {
-  const clean: any = String(value ?? "").trim().toLowerCase();
+  const clean = String(value ?? "").trim().toLowerCase();
   if (clean === "") return null;
   if (["ready", "now", "instant", "done", "finish", "finished"].includes(clean)) return 0;
 
-  const match: any = clean.match(/^(\d+(?:\.\d+)?)(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)?$/i);
+  const match = clean.match(/^(\d+(?:\.\d+)?)(seconds?|secs?|s|minutes?|mins?|m|hours?|hrs?|h)?$/i);
   if (!match) return null;
 
-  const amount: any = Number(match[1]);
+  const amount = Number(match[1]);
   if (!Number.isFinite(amount) || amount < 0) return null;
 
-  const unit: any = String(match[2] || "s").toLowerCase();
+  const unit = String(match[2] || "s").toLowerCase();
   let multiplier: any = 1;
   if (unit === "m" || unit.startsWith("min")) multiplier = 60;
   if (unit === "h" || unit.startsWith("hr") || unit.startsWith("hour")) multiplier = 3600;
@@ -17338,21 +17444,21 @@ function parseProducerSpeedupDurationSeconds(value: any) {
 }
 
 function parseProducerSpeedupCommand(player: any, data: any = {}, command: any = "") {
-  const parts: any = splitCommand(command);
+  const parts = splitCommand(command);
   const worldParts: any = [];
   let remainingSeconds: any = null;
 
   for (const rawPart of parts.slice(1)) {
-    const part: any = String(rawPart || "").trim();
+    const part = String(rawPart || "").trim();
     if (part === "") continue;
 
-    const worldMatch: any = part.match(/^world=(.+)$/i);
+    const worldMatch = part.match(/^world=(.+)$/i);
     if (worldMatch) {
       worldParts.push(worldMatch[1]);
       continue;
     }
 
-    const parsedSeconds: any = parseProducerSpeedupDurationSeconds(part);
+    const parsedSeconds = parseProducerSpeedupDurationSeconds(part);
     if (parsedSeconds !== null && remainingSeconds === null) {
       remainingSeconds = parsedSeconds;
       continue;
@@ -17361,12 +17467,12 @@ function parseProducerSpeedupCommand(player: any, data: any = {}, command: any =
     worldParts.push(part);
   }
 
-  const dataSeconds: any = parseProducerSpeedupDurationSeconds(data.remaining_seconds ?? data.seconds ?? data.remaining ?? "");
+  const dataSeconds = parseProducerSpeedupDurationSeconds(data.remaining_seconds ?? data.seconds ?? data.remaining ?? "");
   if (dataSeconds !== null) remainingSeconds = dataSeconds;
   if (remainingSeconds === null) remainingSeconds = 0;
 
-  const parsedWorld: any = cleanWorld(worldParts.join("_"));
-  const targetWorld: any = cleanWorld(data.target_world || data.world_name || parsedWorld || data.world || player?.world || "START");
+  const parsedWorld = cleanWorld(worldParts.join("_"));
+  const targetWorld = cleanWorld(data.target_world || data.world_name || parsedWorld || data.world || player?.world || "START");
 
   return {
     target_world: targetWorld,
@@ -17380,13 +17486,13 @@ function shouldShortenMs(currentRemainingMs: any, targetRemainingMs: any) {
 }
 
 function setProducerNextHarvestAt(entry: any, nowMs: any, targetRemainingMs: any) {
-  const nextMs: any = Math.max(0, Math.trunc(Number(entry.next_harvest_at_ms || entry.next_ready_at_ms || 0)));
+  const nextMs = Math.max(0, Math.trunc(Number(entry.next_harvest_at_ms || entry.next_ready_at_ms || 0)));
   if (nextMs <= 0) return false;
 
-  const currentRemainingMs: any = Math.max(0, nextMs - nowMs);
+  const currentRemainingMs = Math.max(0, nextMs - nowMs);
   if (!shouldShortenMs(currentRemainingMs, targetRemainingMs)) return false;
 
-  const updatedNextMs: any = nowMs + targetRemainingMs;
+  const updatedNextMs = nowMs + targetRemainingMs;
   entry.next_harvest_at_ms = updatedNextMs;
   entry.next_harvest_at = new Date(updatedNextMs).toISOString();
   entry.updated_at = new Date(nowMs).toISOString();
@@ -17405,11 +17511,11 @@ function speedupAnimalProductionState(entry: any, nowMs: any, targetRemainingMs:
 }
 
 function speedupSeedGrowthState(seed: any, nowMs: any, targetRemainingSeconds: any) {
-  const currentRemainingSeconds: any = getSeedGrowthRemaining(seed);
+  const currentRemainingSeconds = getSeedGrowthRemaining(seed);
   if (currentRemainingSeconds <= targetRemainingSeconds + 0.001) return false;
 
-  const maxGrowTime: any = Math.max(1, Number(seed.max_grow_time) || getSeedConfiguredGrowTime(seed.seed_type));
-  const nextRemainingSeconds: any = Math.max(0, Math.min(maxGrowTime, targetRemainingSeconds));
+  const maxGrowTime = Math.max(1, Number(seed.max_grow_time) || getSeedConfiguredGrowTime(seed.seed_type));
+  const nextRemainingSeconds = Math.max(0, Math.min(maxGrowTime, targetRemainingSeconds));
   seed.grow_time = nextRemainingSeconds;
   seed.max_grow_time = maxGrowTime;
   seed.planted_at = nowMs - Math.max(0, maxGrowTime - nextRemainingSeconds) * 1000;
@@ -17420,7 +17526,7 @@ function speedupSeedGrowthState(seed: any, nowMs: any, targetRemainingSeconds: a
 function speedupOilRefineryState(oilState: any, nowMs: any, targetRemainingSeconds: any) {
   if (!oilState || oilState.output_count >= OIL_REFINERY_OUTPUT_CAPACITY) return false;
 
-  const isActive: any = Boolean(oilState.enabled || oilState.running || oilState.direct_power || Number(oilState.crude_progress || 0) > 0);
+  const isActive = Boolean(oilState.enabled || oilState.running || oilState.direct_power || Number(oilState.crude_progress || 0) > 0);
   if (!isActive) return false;
 
   if (targetRemainingSeconds <= 0) {
@@ -17437,7 +17543,7 @@ function speedupOilRefineryState(oilState: any, nowMs: any, targetRemainingSecon
       oilState.shutdown_reason = "output_full";
     }
   } else {
-    const progressTarget: any = Math.max(0, Math.min(0.999999, 1 - (targetRemainingSeconds / 3600)));
+    const progressTarget = Math.max(0, Math.min(0.999999, 1 - (targetRemainingSeconds / 3600)));
     if (Number(oilState.crude_progress || 0) >= progressTarget) return false;
     oilState.crude_progress = progressTarget;
   }
@@ -17453,7 +17559,7 @@ function speedupOilRefineryState(oilState: any, nowMs: any, targetRemainingSecon
 function speedupBatteryChargerState(chargerState: any, nowMs: any, targetRemainingSeconds: any) {
   if (!chargerState || chargerState.output_count >= BATTERY_CHARGER_OUTPUT_CAPACITY) return false;
 
-  const isActive: any = Boolean(chargerState.enabled || chargerState.running || chargerState.direct_power || Number(chargerState.battery_progress || 0) > 0);
+  const isActive = Boolean(chargerState.enabled || chargerState.running || chargerState.direct_power || Number(chargerState.battery_progress || 0) > 0);
   if (!isActive) return false;
 
   if (targetRemainingSeconds <= 0) {
@@ -17470,8 +17576,8 @@ function speedupBatteryChargerState(chargerState: any, nowMs: any, targetRemaini
       chargerState.shutdown_reason = "output_full";
     }
   } else {
-    const secondsPerOutput: any = 3600 / Math.max(1, BATTERY_CHARGER_OUTPUT_PER_HOUR);
-    const progressTarget: any = Math.max(0, Math.min(0.999999, 1 - (targetRemainingSeconds / secondsPerOutput)));
+    const secondsPerOutput = 3600 / Math.max(1, BATTERY_CHARGER_OUTPUT_PER_HOUR);
+    const progressTarget = Math.max(0, Math.min(0.999999, 1 - (targetRemainingSeconds / secondsPerOutput)));
     if (Number(chargerState.battery_progress || 0) >= progressTarget) return false;
     chargerState.battery_progress = progressTarget;
     chargerState.production_progress = progressTarget;
@@ -17491,7 +17597,7 @@ function incrementProducerSpeedupStat(stats: any, key: any) {
 }
 
 function broadcastFreshWorldStateToCurrentPlayers(worldName: any, extraMessageData: any = {}) {
-  const clean: any = cleanWorld(worldName || "START");
+  const clean = cleanWorld(worldName || "START");
   for (const { player: receiver, socket: client } of getWorldPlayerRecords(clean, { includeSocket: true })) {
     sendJson(client, buildWorldStateMessage(clean, {
       ...extraMessageData,
@@ -17501,11 +17607,11 @@ function broadcastFreshWorldStateToCurrentPlayers(worldName: any, extraMessageDa
 }
 
 function applyProducerSpeedupToWorld(worldName: any, options: any = {}) {
-  const clean: any = cleanWorld(worldName || "START");
-  const state: any = ensureWorldState(clean);
-  const nowMs: any = Date.now();
-  const targetRemainingSeconds: any = clampInteger(options.remaining_seconds || 0, 0, 30 * 24 * 60 * 60);
-  const targetRemainingMs: any = targetRemainingSeconds * 1000;
+  const clean = cleanWorld(worldName || "START");
+  const state = ensureWorldState(clean);
+  const nowMs = Date.now();
+  const targetRemainingSeconds = clampInteger(options.remaining_seconds || 0, 0, 30 * 24 * 60 * 60);
+  const targetRemainingMs = targetRemainingSeconds * 1000;
   const stats: any = {
     total: 0,
     seeds: 0,
@@ -17532,48 +17638,48 @@ function applyProducerSpeedupToWorld(worldName: any, options: any = {}) {
     for (const [key, entry] of Array.from<any>(state.interactions.entries())) {
       if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
       const grid: any = parseGridKey(key) || { x: Math.trunc(Number(entry.x) || 0), y: Math.trunc(Number(entry.y) || 0) };
-      const block: any = state.foreground instanceof Map ? state.foreground.get(key) : null;
-      const blockType: any = clampString(block?.block_type || entry.block_type || "");
+      const block = state.foreground instanceof Map ? state.foreground.get(key) : null;
+      const blockType = clampString(block?.block_type || entry.block_type || "");
       let changed: any = false;
 
       if (entry.action === "tackle_box_state" && (isTackleBoxBlockType(blockType) || isWaterWellBlockType(blockType))) {
-        const cooldownMs: any = getTimedProviderCooldownMsForBlockType(blockType);
-        const tackle: any = sanitizeTackleBoxState(entry, clean, grid.x, grid.y, cooldownMs);
+        const cooldownMs = getTimedProviderCooldownMsForBlockType(blockType);
+        const tackle = sanitizeTackleBoxState(entry, clean, grid.x, grid.y, cooldownMs);
         changed = setProducerNextHarvestAt(tackle, nowMs, targetRemainingMs);
         if (changed) {
           state.interactions.set(key, tackle);
           incrementProducerSpeedupStat(stats, isWaterWellBlockType(blockType) ? "water_wells" : "tackle_boxes");
         }
       } else if (entry.action === "chicken_state" && isChickenBlockType(blockType)) {
-        const chicken: any = sanitizeChickenState(entry, clean, grid.x, grid.y);
+        const chicken = sanitizeChickenState(entry, clean, grid.x, grid.y);
         changed = speedupAnimalProductionState(chicken, nowMs, targetRemainingMs);
         if (changed) {
           state.interactions.set(key, chicken);
           incrementProducerSpeedupStat(stats, "chickens");
         }
       } else if (entry.action === "cow_state" && isCowBlockType(blockType)) {
-        const cow: any = sanitizeCowState(entry, clean, grid.x, grid.y);
+        const cow = sanitizeCowState(entry, clean, grid.x, grid.y);
         changed = speedupAnimalProductionState(cow, nowMs, targetRemainingMs);
         if (changed) {
           state.interactions.set(key, cow);
           incrementProducerSpeedupStat(stats, "cows");
         }
       } else if (entry.action === "duck_state" && isDuckBlockType(blockType)) {
-        const duck: any = sanitizeDuckState(entry, clean, grid.x, grid.y);
+        const duck = sanitizeDuckState(entry, clean, grid.x, grid.y);
         changed = speedupAnimalProductionState(duck, nowMs, targetRemainingMs);
         if (changed) {
           state.interactions.set(key, duck);
           incrementProducerSpeedupStat(stats, "ducks");
         }
       } else if (entry.action === "oil_refinery_state" && isOilRefineryBlockType(blockType)) {
-        const oilState: any = sanitizeOilRefineryState(entry, clean, grid.x, grid.y);
+        const oilState = sanitizeOilRefineryState(entry, clean, grid.x, grid.y);
         changed = speedupOilRefineryState(oilState, nowMs, targetRemainingSeconds);
         if (changed) {
           setOilRefineryState(state, clean, oilState);
           incrementProducerSpeedupStat(stats, "oil_refineries");
         }
       } else if (entry.action === "battery_charger_state" && isBatteryChargerBlockType(blockType)) {
-        const chargerState: any = sanitizeBatteryChargerState(entry, clean, grid.x, grid.y);
+        const chargerState = sanitizeBatteryChargerState(entry, clean, grid.x, grid.y);
         changed = speedupBatteryChargerState(chargerState, nowMs, targetRemainingSeconds);
         if (changed) {
           setBatteryChargerState(state, clean, chargerState);
@@ -17615,25 +17721,25 @@ function formatProducerSpeedupStats(stats: any = {}) {
   ];
   const parts: any = [];
   for (const [key, label] of labels) {
-    const count: any = clampInteger(stats[key] || 0, 0, 1000000);
+    const count = clampInteger(stats[key] || 0, 0, 1000000);
     if (count > 0) parts.push(`${count} ${label}`);
   }
   return parts.join(", ");
 }
 
 function isClearProtectedBlockType(blockType: any) {
-  const clean: any = clampString(blockType || "");
+  const clean = clampString(blockType || "");
   return isWorldLockBlockType(clean) || clean === ENTRANCE_GATE_TYPE || clean === "bedrock";
 }
 
 function sanitizeProtectedForegroundEntry(rawEntry: any) {
   if (!rawEntry || typeof rawEntry !== "object" || Array.isArray(rawEntry)) return null;
 
-  const x: any = Math.trunc(Number(rawEntry.x));
-  const y: any = Math.trunc(Number(rawEntry.y));
+  const x = Math.trunc(Number(rawEntry.x));
+  const y = Math.trunc(Number(rawEntry.y));
   if (!isGridInWorld(x, y)) return null;
 
-  const blockType: any = clampString(rawEntry.block_type || rawEntry.type || "");
+  const blockType = clampString(rawEntry.block_type || rawEntry.type || "");
   if (!isClearProtectedBlockType(blockType)) return null;
   if (!ItemDatabase.hasItem(blockType) || resolveInventoryCategory(blockType) !== "block") return null;
 
@@ -17646,7 +17752,7 @@ function putProtectedEntry(target: any, entry: any) {
 }
 
 function summarizeWorldAuditState(state: any) {
-  const safeState: any = state || {};
+  const safeState = state || {};
   return {
     cleared: Boolean(safeState.cleared),
     foreground_count: safeState.foreground instanceof Map ? safeState.foreground.size : 0,
@@ -17658,8 +17764,8 @@ function summarizeWorldAuditState(state: any) {
 }
 
 function buildInventoryAdminAuditContext(beforeState: any, afterState: any, itemId: any, itemCategory: any) {
-  const cleanItemId: any = clampString(itemId || "");
-  const cleanCategory: any = resolveInventoryCategory(cleanItemId, itemCategory || "");
+  const cleanItemId = clampString(itemId || "");
+  const cleanCategory = resolveInventoryCategory(cleanItemId, itemCategory || "");
   return {
     inventory_before_hash: makeAuditHash(beforeState || {}),
     inventory_after_hash: makeAuditHash(afterState || {}),
@@ -17672,8 +17778,8 @@ function getActiveWorldLockKeyForState(state: any) {
   const lock: any = getEffectiveWorldLockStateInState(state);
   if (!lock.is_locked) return "";
 
-  const lockGridX: any = Math.trunc(Number(lock.lock_grid_x));
-  const lockGridY: any = Math.trunc(Number(lock.lock_grid_y));
+  const lockGridX = Math.trunc(Number(lock.lock_grid_x));
+  const lockGridY = Math.trunc(Number(lock.lock_grid_y));
   if (!isGridInWorld(lockGridX, lockGridY)) return "";
 
   return gridKey(lockGridX, lockGridY);
@@ -17681,17 +17787,17 @@ function getActiveWorldLockKeyForState(state: any) {
 
 function getProtectedClearEntries(state: any, data: any) {
   const protectedEntries: any = new Map();
-  const activeWorldLockKey: any = getActiveWorldLockKeyForState(state);
+  const activeWorldLockKey = getActiveWorldLockKeyForState(state);
   const lock: any = getEffectiveWorldLockStateInState(state);
   let keptLegacyWorldLock: any = false;
 
-  const tryPutProtectedEntry: any = (entry) => {
+  const tryPutProtectedEntry = (entry: ServerPacketRecord | null | undefined) => {
     if (!entry) return;
 
     if (isWorldLockBlockType(entry.block_type)) {
       if (!lock.is_locked) return;
 
-      const key: any = gridKey(entry.x, entry.y);
+      const key = gridKey(entry.x, entry.y);
       if (activeWorldLockKey !== "") {
         if (key !== activeWorldLockKey) return;
       } else if (keptLegacyWorldLock) {
@@ -17705,22 +17811,22 @@ function getProtectedClearEntries(state: any, data: any) {
   };
 
   for (const block of state.foreground.values()) {
-    const entry: any = sanitizeProtectedForegroundEntry(block);
+    const entry = sanitizeProtectedForegroundEntry(block);
     tryPutProtectedEntry(entry);
   }
 
-  const rawProtected: any = Array.isArray(data.protected_foreground)
+  const rawProtected = Array.isArray(data.protected_foreground)
     ? data.protected_foreground
     : (Array.isArray(data.protected_blocks) ? data.protected_blocks : []);
 
   for (const rawEntry of rawProtected) {
-    const entry: any = sanitizeProtectedForegroundEntry(rawEntry);
+    const entry = sanitizeProtectedForegroundEntry(rawEntry);
     tryPutProtectedEntry(entry);
   }
 
   if (lock.is_locked && activeWorldLockKey !== "") {
-    const lockGridX: any = Math.trunc(Number(lock.lock_grid_x));
-    const lockGridY: any = Math.trunc(Number(lock.lock_grid_y));
+    const lockGridX = Math.trunc(Number(lock.lock_grid_x));
+    const lockGridY = Math.trunc(Number(lock.lock_grid_y));
     putProtectedEntry(protectedEntries, { x: lockGridX, y: lockGridY, block_type: normalizeWorldLockBlockType(lock.lock_block_type || lock.lock_type || WORLD_LOCK_BLOCK_TYPE) });
   }
 
@@ -17732,8 +17838,8 @@ function addBedrockFloorEntries(target: any) {
 }
 
 function replaceWorldStateAndBroadcast(worldName: any, state: any, extraMessageData: any = {}) {
-  const clean: any = cleanWorld(worldName);
-  const existingTimer: any = worldSaveTimers.get(clean);
+  const clean = cleanWorld(worldName);
+  const existingTimer = worldSaveTimers.get(clean);
   if (existingTimer) {
     clearTimeout(existingTimer);
     worldSaveTimers.delete(clean);
@@ -17746,20 +17852,20 @@ function replaceWorldStateAndBroadcast(worldName: any, state: any, extraMessageD
 }
 
 function clearWorldByAdmin(worldName: any, data: any, socket: any = null, player: any = null) {
-  const clean: any = cleanWorld(worldName);
-  const currentState: any = ensureWorldState(clean);
-  const beforeSummary: any = summarizeWorldAuditState(currentState);
-  const nextState: any = createEmptyWorldState();
+  const clean = cleanWorld(worldName);
+  const currentState = ensureWorldState(clean);
+  const beforeSummary = summarizeWorldAuditState(currentState);
+  const nextState = createEmptyWorldState();
   nextState.cleared = true;
 
-  const protectedEntries: any = getProtectedClearEntries(currentState, data);
-  const removedCount: any =
+  const protectedEntries = getProtectedClearEntries(currentState, data);
+  const removedCount =
     Math.max(0, currentState.foreground.size - protectedEntries.size) +
     currentState.background.size +
     currentState.seeds.size +
     currentState.drops.size;
 
-  const snapshot: any = createWorldSnapshot(clean, "before_clear_world", socket, player, {
+  const snapshot = createWorldSnapshot(clean, "before_clear_world", socket, player, {
     removed_count: removedCount,
     protected_count: protectedEntries.size,
   });
@@ -17787,11 +17893,11 @@ function clearWorldByAdmin(worldName: any, data: any, socket: any = null, player
 }
 
 function resetWorldByAdmin(worldName: any, socket: any = null, player: any = null) {
-  const clean: any = cleanWorld(worldName);
-  const currentState: any = ensureWorldState(clean);
-  const beforeSummary: any = summarizeWorldAuditState(currentState);
-  const snapshot: any = createWorldSnapshot(clean, "before_reset_world", socket, player);
-  const nextState: any = createEmptyWorldState();
+  const clean = cleanWorld(worldName);
+  const currentState = ensureWorldState(clean);
+  const beforeSummary = summarizeWorldAuditState(currentState);
+  const snapshot = createWorldSnapshot(clean, "before_reset_world", socket, player);
+  const nextState = createEmptyWorldState();
   replaceWorldStateAndBroadcast(clean, nextState, {
     respawn_player: true,
     force_respawn: true,
@@ -17810,13 +17916,13 @@ function resetWorldByAdmin(worldName: any, socket: any = null, player: any = nul
  * @returns {PixelMania.DeveloperInventoryCommand | null}
  */
 function parseGiveCommand(data: any, command: any) {
-  const parts: any = splitCommand(command);
+  const parts = splitCommand(command);
   if (parts.length === 0 || String(parts[0] || "").toLowerCase() !== "give") return null;
 
-  const metadataTarget: any = cleanAccountName(data.target_username || data.target || "");
-  const metadataItemId: any = clampString(data.item_id || data.item_type || data.item || "");
+  const metadataTarget = cleanAccountName(data.target_username || data.target || "");
+  const metadataItemId = clampString(data.item_id || data.item_type || data.item || "");
   if (metadataTarget !== "" && metadataItemId !== "") {
-    const metadataItemCategory: any = resolveInventoryCategory(metadataItemId, data.item_category || data.category || "");
+    const metadataItemCategory = resolveInventoryCategory(metadataItemId, data.item_category || data.category || "");
     return {
       targetUsername: metadataTarget,
       itemId: metadataItemId,
@@ -17825,7 +17931,7 @@ function parseGiveCommand(data: any, command: any) {
     };
   }
 
-  const targetedGive: any = parseTargetedGiveCommand(command);
+  const targetedGive = parseTargetedGiveCommand(command);
   if (!targetedGive) return null;
 
   return {
@@ -17840,13 +17946,13 @@ function parseGiveCommand(data: any, command: any) {
  * @returns {PixelMania.DeveloperInventoryCommand | null}
  */
 function parseRemoveCommand(data: any, command: any) {
-  const parts: any = splitCommand(command);
+  const parts = splitCommand(command);
   if (parts.length === 0 || String(parts[0] || "").toLowerCase() !== "remove") return null;
 
-  const metadataTarget: any = cleanAccountName(data.target_username || data.target || "");
-  const metadataItemId: any = clampString(data.item_id || data.item_type || data.item || "");
+  const metadataTarget = cleanAccountName(data.target_username || data.target || "");
+  const metadataItemId = clampString(data.item_id || data.item_type || data.item || "");
   if (metadataTarget !== "" && metadataItemId !== "") {
-    const metadataItemCategory: any = resolveInventoryCategory(metadataItemId, data.item_category || data.category || "");
+    const metadataItemCategory = resolveInventoryCategory(metadataItemId, data.item_category || data.category || "");
     return {
       targetUsername: metadataTarget,
       itemId: metadataItemId,
@@ -17866,9 +17972,9 @@ function parseRemoveCommand(data: any, command: any) {
 }
 
 function getSocketAuditContext(socket: any, player: any) {
-  const username: any = cleanAccountName(player?.account_username || player?.name || "");
-  const account: any = username !== "" ? accounts.get(accountKey(username)) : null;
-  const userAgent: any = String(socket?.userAgent || "");
+  const username = cleanAccountName(player?.account_username || player?.name || "");
+  const account = username !== "" ? accounts.get(accountKey(username)) : null;
+  const userAgent = String(socket?.userAgent || "");
   return {
     ip: getSocketAddress(socket),
     session_token_hash: cleanAccountName(account?.session_token_hash || ""),
@@ -17885,13 +17991,13 @@ function getSocketAuditContext(socket: any, player: any) {
  * @returns {PixelMania.AdminActionTarget}
  */
 function inferAdminActionTarget(details: any = {}) {
-  const d: any = details && typeof details === "object" && !Array.isArray(details) ? details : {};
-  const targetUsername: any = cleanAccountName(d.target_username || d.username || d.target_player || "");
-  const targetWorld: any = cleanWorld(d.target_world || d.world_name || "");
-  const worldName: any = cleanWorld(d.world || "");
-  const targetItem: any = cleanAccountName(d.public_item_instance_id || d.item_instance_id || "");
+  const d = details && typeof details === "object" && !Array.isArray(details) ? details : {};
+  const targetUsername = cleanAccountName(d.target_username || d.username || d.target_player || "");
+  const targetWorld = cleanWorld(d.target_world || d.world_name || "");
+  const worldName = cleanWorld(d.world || "");
+  const targetItem = cleanAccountName(d.public_item_instance_id || d.item_instance_id || "");
 
-  const targetType: any = cleanAccountName(d.target_type || (
+  const targetType = cleanAccountName(d.target_type || (
     targetUsername !== "" ? "player" :
     targetWorld !== "" ? "world" :
     targetItem !== "" ? "item_instance" :
@@ -17899,7 +18005,7 @@ function inferAdminActionTarget(details: any = {}) {
     "server"
   ));
 
-  const targetId: any = cleanAccountName(d.target_id || targetUsername || targetWorld || targetItem || worldName || "");
+  const targetId = cleanAccountName(d.target_id || targetUsername || targetWorld || targetItem || worldName || "");
   return {
     target_type: targetType || "server",
     target_id: targetId,
@@ -17909,7 +18015,7 @@ function inferAdminActionTarget(details: any = {}) {
 }
 
 function getAccountRoleRank(username: any) {
-  const role: any = getAccountRole(username);
+  const role = getAccountRole(username);
   if (role === "developer" || role === "admin") return 100;
   if (role === "designer") return 75;
   if (role === "moderator") return 50;
@@ -17917,15 +18023,15 @@ function getAccountRoleRank(username: any) {
 }
 
 function canPunishTarget(actorUsername: any, targetUsername: any) {
-  const actorKey: any = accountKey(actorUsername);
-  const targetKey: any = accountKey(targetUsername);
+  const actorKey = accountKey(actorUsername);
+  const targetKey = accountKey(targetUsername);
   if (actorKey === "" || targetKey === "") return false;
   if (actorKey === targetKey) return false;
   return getAccountRoleRank(actorUsername) > getAccountRoleRank(targetUsername);
 }
 
 function getPunishmentStoreMessage(result: any, fallback: any = "Could not update punishment.") {
-  const reason: any = String(result?.reason || "").trim();
+  const reason = String(result?.reason || "").trim();
   switch (reason) {
     case "postgres_unavailable":
       return "PostgreSQL is not ready.";
@@ -17951,10 +18057,10 @@ function getPunishmentStoreMessage(result: any, fallback: any = "Could not updat
  * @returns {PixelMania.ParsedPunishmentCommand | null}
  */
 function parsePunishmentCommand(data: any, command: any, player: any) {
-  const parts: any = splitCommand(command);
+  const parts = splitCommand(command);
   if (parts.length === 0) return null;
 
-  const commandName: any = String(parts[0] || "").toLowerCase().replace(/-/g, "_");
+  const commandName = String(parts[0] || "").toLowerCase().replace(/-/g, "_");
   const issueCommands: any = {
     ban: "ban",
     mute: "mute",
@@ -17972,8 +18078,8 @@ function parsePunishmentCommand(data: any, command: any, player: any) {
     unworld_ban: "world_ban",
   };
   const listCommands: any = new Set(["punishments", "punishment", "punish"]);
-  const metadataTarget: any = cleanAccountName(data.target_username || data.target || data.username || "");
-  const targetUsername: any = cleanAccountName(parts[1] || metadataTarget);
+  const metadataTarget = cleanAccountName(data.target_username || data.target || data.username || "");
+  const targetUsername = cleanAccountName(parts[1] || metadataTarget);
 
   if (listCommands.has(commandName)) {
     return {
@@ -17983,7 +18089,7 @@ function parsePunishmentCommand(data: any, command: any, player: any) {
     };
   }
 
-  const issueType: any = normalizeServerPunishmentType(issueCommands[commandName] || "");
+  const issueType = normalizeServerPunishmentType(issueCommands[commandName] || "");
   if (issueType !== "") {
     let scope: any = PUNISHMENT_SCOPE_GLOBAL;
     let worldName: any = "";
@@ -17992,17 +18098,17 @@ function parsePunishmentCommand(data: any, command: any, player: any) {
     if (issueType === "world_ban") {
       scope = PUNISHMENT_SCOPE_WORLD;
       worldName = cleanWorldNameForPunishment(data.world_name || data.target_world || data.world || player?.world || "START");
-      const worldOrDuration: any = String(parts[2] || "").trim();
-      const durationProbe: any = parsePunishmentDurationToken(worldOrDuration);
+      const worldOrDuration = String(parts[2] || "").trim();
+      const durationProbe = parsePunishmentDurationToken(worldOrDuration);
       if (worldOrDuration !== "" && !durationProbe.consumed) {
         worldName = cleanWorldNameForPunishment(worldOrDuration);
         durationIndex = 3;
       }
     }
 
-    const duration: any = parsePunishmentDurationToken(parts[durationIndex] || "");
-    const reasonIndex: any = duration.consumed ? durationIndex + 1 : durationIndex;
-    const reason: any = cleanPunishmentReason(parts.slice(reasonIndex).join(" ") || data.reason || "");
+    const duration = parsePunishmentDurationToken(parts[durationIndex] || "");
+    const reasonIndex = duration.consumed ? durationIndex + 1 : durationIndex;
+    const reason = cleanPunishmentReason(parts.slice(reasonIndex).join(" ") || data.reason || "");
     return {
       mode: "issue",
       targetUsername,
@@ -18015,7 +18121,7 @@ function parsePunishmentCommand(data: any, command: any, player: any) {
     };
   }
 
-  const revokeType: any = normalizeServerPunishmentType(revokeCommands[commandName] || "");
+  const revokeType = normalizeServerPunishmentType(revokeCommands[commandName] || "");
   if (revokeType !== "") {
     let scope: any = PUNISHMENT_SCOPE_GLOBAL;
     let worldName: any = "";
@@ -18030,7 +18136,7 @@ function parsePunishmentCommand(data: any, command: any, player: any) {
       }
     }
 
-    const reason: any = cleanPunishmentReason(parts.slice(reasonIndex).join(" ") || data.reason || "revoked");
+    const reason = cleanPunishmentReason(parts.slice(reasonIndex).join(" ") || data.reason || "revoked");
     return {
       mode: "revoke",
       targetUsername,
@@ -18050,10 +18156,10 @@ function parsePunishmentCommand(data: any, command: any, player: any) {
  * @returns {PixelMania.ParsedItemInstanceAdminCommand | null}
  */
 function parseItemInstanceAdminCommand(data: any, command: any) {
-  const parts: any = splitCommand(command);
+  const parts = splitCommand(command);
   if (parts.length === 0) return null;
 
-  const commandName: any = String(parts[0] || "").toLowerCase().replace(/-/g, "_");
+  const commandName = String(parts[0] || "").toLowerCase().replace(/-/g, "_");
   const auditCommands: any = new Set(["itemaudit", "audititems", "item_audit", "audit_items"]);
   if (auditCommands.has(commandName)) {
     return {
@@ -18064,7 +18170,7 @@ function parseItemInstanceAdminCommand(data: any, command: any) {
 
   const copiesCommands: any = new Set(["itemcopies", "itemowners", "item_copies", "item_owners", "itemcopy", "item_owner"]);
   if (copiesCommands.has(commandName)) {
-    const metadataIdentifier: any = clampString(
+    const metadataIdentifier = clampString(
       data.public_item_instance_id || data.item_instance_public_id || data.item_instance_id || data.instance_id || data.item_type || data.item_id || data.id || "",
       96
     );
@@ -18095,14 +18201,14 @@ function parseItemInstanceAdminCommand(data: any, command: any) {
     flagitem: "flag",
     item_flag: "flag",
   };
-  const action: any = actionCommands[commandName] || "";
+  const action = actionCommands[commandName] || "";
   if (action === "") return null;
 
-  const metadataIdentifier: any = clampString(
+  const metadataIdentifier = clampString(
     data.public_item_instance_id || data.item_instance_public_id || data.item_instance_id || data.instance_id || data.id || "",
     96
   );
-  const itemInstanceId: any = clampString(metadataIdentifier || parts[1] || "", 96);
+  const itemInstanceId = clampString(metadataIdentifier || parts[1] || "", 96);
   let targetUsername: any = cleanAccountName(data.target_username || data.target || data.to_username || "");
   let reasonIndex: any = 2;
 
@@ -18111,7 +18217,7 @@ function parseItemInstanceAdminCommand(data: any, command: any) {
     reasonIndex = 3;
   }
 
-  const reason: any = String(parts.slice(reasonIndex).join(" ") || data.reason || "").trim().slice(0, 500);
+  const reason = String(parts.slice(reasonIndex).join(" ") || data.reason || "").trim().slice(0, 500);
   return {
     mode: "moderate",
     action,
@@ -18122,7 +18228,7 @@ function parseItemInstanceAdminCommand(data: any, command: any) {
 }
 
 function getItemInstanceStoreMessage(result: any, fallback: any = "Could not update item instance.") {
-  const reason: any = String(result?.reason || "").trim();
+  const reason = String(result?.reason || "").trim();
   switch (reason) {
     case "postgres_unavailable":
       return "PostgreSQL is not ready.";
@@ -18148,45 +18254,45 @@ function getItemInstanceStoreMessage(result: any, fallback: any = "Could not upd
 }
 
 function formatItemAuditSummary(result: any) {
-  const summary: any = result?.summary || {};
-  const issueCount: any = clampInteger(summary.total_issues || 0, 0, ANTI_DUPE_AUDIT_LIMIT);
+  const summary = result?.summary || {};
+  const issueCount = clampInteger(summary.total_issues || 0, 0, ANTI_DUPE_AUDIT_LIMIT);
   if (issueCount <= 0) return "Item audit clean: no duplicate or mismatched tracked items found.";
 
-  const sample: any = Array.isArray(result.issues) ? result.issues.slice(0, 3) : [];
-  const sampleText: any = sample.map((issue) => {
+  const sample = Array.isArray(result.issues) ? result.issues.slice(0, 3) : [];
+  const sampleText = sample.map((issue: ServerPacketRecord) => {
     if (issue.type === "inventory_count_mismatch") {
       return `${issue.username || issue.player_id} ${issue.item_type}: inventory ${issue.inventory_amount}, instances ${issue.active_instance_count}`;
     }
     return `${issue.type}: ${issue.public_item_instance_id || issue.item_instance_id || issue.item_type || "unknown"}`;
   }).join(" | ");
-  const suffix: any = sampleText !== "" ? ` Sample: ${sampleText}` : "";
+  const suffix = sampleText !== "" ? ` Sample: ${sampleText}` : "";
   return `Item audit found ${issueCount} issue(s): duplicates=${summary.duplicate_public_ids || 0}, impossible=${summary.impossible_states || 0}, count_mismatches=${summary.inventory_mismatches || 0}.${suffix}`;
 }
 
 function formatItemInstanceModerationMessage(result: any) {
-  const item: any = result?.item_instance || {};
-  const publicId: any = item.public_item_instance_id || item.item_instance_id || "item";
-  const itemType: any = item.item_type || "unknown_item";
-  const owner: any = item.current_owner_username ? ` owner=${item.current_owner_username}` : "";
+  const item = result?.item_instance || {};
+  const publicId = item.public_item_instance_id || item.item_instance_id || "item";
+  const itemType = item.item_type || "unknown_item";
+  const owner = item.current_owner_username ? ` owner=${item.current_owner_username}` : "";
   return `Item ${result.action} ok: ${publicId} (${itemType}) state=${item.state || "unknown"} location=${item.current_location || "unknown"}${owner}.`;
 }
 
 function formatItemInstanceCopiesSummary(result: any) {
-  const query: any = result?.query || {};
-  const summary: any = result?.summary || {};
-  const itemType: any = query.item_type || query.identifier || "item";
-  const total: any = clampInteger(summary.total || 0, 0, 500);
+  const query = result?.query || {};
+  const summary = result?.summary || {};
+  const itemType = query.item_type || query.identifier || "item";
+  const total = clampInteger(summary.total || 0, 0, 500);
   if (total <= 0) return `No tracked copies found for ${itemType}.`;
 
-  const sample: any = Array.isArray(result.copies) ? result.copies.slice(0, 4) : [];
-  const sampleText: any = sample.map((copy) => {
-    const id: any = copy.public_item_instance_id || copy.item_instance_id || "item";
-    const owner: any = copy.current_owner_username || "no-owner";
-    const source: any = copy.created_by_source || "unknown";
-    const duplicate: any = copy.possible_duplicate ? " DUPLICATE?" : "";
+  const sample = Array.isArray(result.copies) ? result.copies.slice(0, 4) : [];
+  const sampleText = sample.map((copy: ServerPacketRecord) => {
+    const id = copy.public_item_instance_id || copy.item_instance_id || "item";
+    const owner = copy.current_owner_username || "no-owner";
+    const source = copy.created_by_source || "unknown";
+    const duplicate = copy.possible_duplicate ? " DUPLICATE?" : "";
     return `${id} owner=${owner} ${copy.state || "unknown"}/${copy.current_location || "unknown"} source=${source}${duplicate}`;
   }).join(" | ");
-  const suffix: any = sampleText !== "" ? ` Sample: ${sampleText}` : "";
+  const suffix = sampleText !== "" ? ` Sample: ${sampleText}` : "";
   return `Tracked copies for ${itemType}: total=${total}, active=${summary.active || 0}, frozen=${summary.frozen || 0}, retired=${summary.retired || 0}, duplicate_flags=${summary.duplicate_public_ids || 0}.${suffix}`;
 }
 
@@ -18195,17 +18301,17 @@ function formatPunishmentList(targetUsername: any, rows: any = []) {
     return `No active punishments for ${targetUsername}.`;
   }
 
-  const rendered: any = rows.slice(0, 8).map((row) => {
-    const payload: any = publicPunishmentPayload(row);
-    const worldText: any = payload.scope === PUNISHMENT_SCOPE_WORLD && payload.world ? ` ${payload.world}` : "";
+  const rendered = rows.slice(0, 8).map((row) => {
+    const payload = publicPunishmentPayload(row);
+    const worldText = payload.scope === PUNISHMENT_SCOPE_WORLD && payload.world ? ` ${payload.world}` : "";
     return `${getPunishmentTypeLabel(payload.punishment_type)}${worldText} ${formatPunishmentExpires(payload)}: ${payload.reason}`;
   });
-  const suffix: any = rows.length > rendered.length ? ` (+${rows.length - rendered.length} more)` : "";
+  const suffix = rows.length > rendered.length ? ` (+${rows.length - rendered.length} more)` : "";
   return `Active punishments for ${targetUsername}: ${rendered.join(" | ")}${suffix}`;
 }
 
 function notifyPunishmentTarget(targetUsername: any, message: any, punishment: any = null, closeConnection: any = false) {
-  const target: any = findOnlinePlayerByUsername(targetUsername);
+  const target = findOnlinePlayerByUsername(targetUsername);
   if (!target) return;
 
   cancelActiveTradeForPlayer(target.player.id, "Trade canceled by moderation action.");
@@ -18225,7 +18331,7 @@ function notifyPunishmentTarget(targetUsername: any, message: any, punishment: a
 async function handleDeveloperPunishmentCommand(socket: any, player: any, data: any, command: any, parsed: any, approve: any, deny: any) {
   if (!parsed) return false;
 
-  const targetUsername: any = cleanAccountName(parsed.targetUsername || "");
+  const targetUsername = cleanAccountName(parsed.targetUsername || "");
   if (targetUsername === "") {
     deny("Target username is required.", { command_type: "punishment" });
     return true;
@@ -18241,12 +18347,12 @@ async function handleDeveloperPunishmentCommand(socket: any, player: any, data: 
     return true;
   }
 
-  const account: any = accounts.get(accountKey(targetUsername)) || null;
-  const displayUsername: any = account?.username || targetUsername;
-  const actorUsername: any = cleanAccountName(player.account_username || player.name || "");
+  const account = accounts.get(accountKey(targetUsername)) || null;
+  const displayUsername = account?.username || targetUsername;
+  const actorUsername = cleanAccountName(player.account_username || player.name || "");
 
   if (parsed.mode === "list") {
-    const rows: any = await postgresStore.getActivePunishments(displayUsername, {
+    const rows = await postgresStore.getActivePunishments(displayUsername, {
       punishment_type: parsed.punishmentType || "",
     });
     approve(
@@ -18276,17 +18382,17 @@ async function handleDeveloperPunishmentCommand(socket: any, player: any, data: 
     return true;
   }
 
-  const punishmentType: any = normalizeServerPunishmentType(parsed.punishmentType || "");
+  const punishmentType = normalizeServerPunishmentType(parsed.punishmentType || "");
   if (punishmentType === "") {
     deny("Invalid punishment type.", { target_username: displayUsername });
     return true;
   }
 
-  const scope: any = parsed.scope === PUNISHMENT_SCOPE_WORLD ? PUNISHMENT_SCOPE_WORLD : PUNISHMENT_SCOPE_GLOBAL;
-  const worldName: any = scope === PUNISHMENT_SCOPE_WORLD ? cleanWorldNameForPunishment(parsed.world || player.world || "START") : "";
+  const scope = parsed.scope === PUNISHMENT_SCOPE_WORLD ? PUNISHMENT_SCOPE_WORLD : PUNISHMENT_SCOPE_GLOBAL;
+  const worldName = scope === PUNISHMENT_SCOPE_WORLD ? cleanWorldNameForPunishment(parsed.world || player.world || "START") : "";
 
   if (parsed.mode === "issue") {
-    const existing: any = await getBlockingPunishment(displayUsername, [punishmentType], {
+    const existing = await getBlockingPunishment(displayUsername, [punishmentType], {
       scope,
       world: worldName,
     });
@@ -18328,7 +18434,7 @@ async function handleDeveloperPunishmentCommand(socket: any, player: any, data: 
     }
 
     clearPunishmentCache(displayUsername);
-    const punishmentPayload: any = publicPunishmentPayload({
+    const punishmentPayload = publicPunishmentPayload({
       punishment_id: result.punishment_id,
       punishment_type: punishmentType,
       scope,
@@ -18337,8 +18443,8 @@ async function handleDeveloperPunishmentCommand(socket: any, player: any, data: 
       ends_at: result.ends_at,
       issued_by: actorUsername,
     });
-    const targetMessage: any = `Moderation: active ${getPunishmentTypeLabel(punishmentType)} ${formatPunishmentExpires(punishmentPayload)}. Reason: ${parsed.reason}`;
-    const shouldClose: any = punishmentType === "ban" || punishmentType === "lockout";
+    const targetMessage = `Moderation: active ${getPunishmentTypeLabel(punishmentType)} ${formatPunishmentExpires(punishmentPayload)}. Reason: ${parsed.reason}`;
+    const shouldClose = punishmentType === "ban" || punishmentType === "lockout";
     if (shouldClose) {
       await postgresStore.revokeSessionsForUsername(displayUsername);
     }
@@ -18368,7 +18474,7 @@ async function handleDeveloperPunishmentCommand(socket: any, player: any, data: 
   }
 
   if (parsed.mode === "revoke") {
-    const activeBefore: any = await postgresStore.getActivePunishments(displayUsername, {
+    const activeBefore = await postgresStore.getActivePunishments(displayUsername, {
       punishment_type: punishmentType,
       scope,
       world: worldName,
@@ -18412,7 +18518,9 @@ async function handleDeveloperPunishmentCommand(socket: any, player: any, data: 
         scope,
         world: worldName,
         revoked_count: result.revoked_count,
-        before_active_punishment_ids: activeBefore.map((row) => row.punishment_id).filter((id) => Number(id) > 0),
+        before_active_punishment_ids: activeBefore
+          .map((row: ServerPacketRecord) => row.punishment_id)
+          .filter((id: unknown) => Number(id) > 0),
         after_active: false,
         reason: parsed.reason,
       },
@@ -18439,8 +18547,8 @@ async function handleDeveloperItemInstanceAdminCommand(socket: any, player: any,
     return true;
   }
 
-  const actorUsername: any = cleanAccountName(player.account_username || player.name || "");
-  const requestId: any = makeRequestId(data);
+  const actorUsername = cleanAccountName(player.account_username || player.name || "");
+  const requestId = makeRequestId(data);
 
   if (parsed.mode === "audit") {
     const result: any = await postgresStore.auditItemInstances({ limit: parsed.limit || ANTI_DUPE_AUDIT_LIMIT });
@@ -18452,7 +18560,7 @@ async function handleDeveloperItemInstanceAdminCommand(socket: any, player: any,
       return true;
     }
 
-    const issueCount: any = clampInteger(result.summary?.total_issues || 0, 0, ANTI_DUPE_AUDIT_LIMIT);
+    const issueCount = clampInteger(result.summary?.total_issues || 0, 0, ANTI_DUPE_AUDIT_LIMIT);
     if (issueCount > 0) {
       logSecurityEvent(socket, player, "item_instance_audit_issues", {
         request_id: requestId,
@@ -18477,7 +18585,7 @@ async function handleDeveloperItemInstanceAdminCommand(socket: any, player: any,
   }
 
   if (parsed.mode === "copies") {
-    const itemInstanceId: any = clampString(parsed.itemInstanceId || "", 96);
+    const itemInstanceId = clampString(parsed.itemInstanceId || "", 96);
     if (itemInstanceId === "") {
       deny("Item instance ID or item type is required.", { command_type: "item_instance_copies" });
       return true;
@@ -18492,7 +18600,7 @@ async function handleDeveloperItemInstanceAdminCommand(socket: any, player: any,
       return true;
     }
 
-    const duplicateCount: any = clampInteger(result.summary?.duplicate_public_ids || 0, 0, 500);
+    const duplicateCount = clampInteger(result.summary?.duplicate_public_ids || 0, 0, 500);
     if (duplicateCount > 0) {
       logSecurityEvent(socket, player, "item_instance_duplicate_copies_lookup", {
         request_id: requestId,
@@ -18517,14 +18625,14 @@ async function handleDeveloperItemInstanceAdminCommand(socket: any, player: any,
     return true;
   }
 
-  const itemInstanceId: any = clampString(parsed.itemInstanceId || "", 96);
+  const itemInstanceId = clampString(parsed.itemInstanceId || "", 96);
   if (itemInstanceId === "") {
     deny("Item instance ID is required.", { command_type: "item_instance_admin", action: parsed.action || "" });
     return true;
   }
 
   if (parsed.action === "transfer") {
-    const targetUsername: any = cleanAccountName(parsed.targetUsername || "");
+    const targetUsername = cleanAccountName(parsed.targetUsername || "");
     if (targetUsername === "") {
       deny("Target username is required.", { command_type: "item_instance_transfer", item_instance_id: itemInstanceId });
       return true;
@@ -18552,7 +18660,7 @@ async function handleDeveloperItemInstanceAdminCommand(socket: any, player: any,
     return true;
   }
 
-  const localUpdates: any = applyItemInstanceInventoryEffectsToPlayerStates(result.inventory_effects);
+  const localUpdates = applyItemInstanceInventoryEffectsToPlayerStates(result.inventory_effects);
   logSecurityEvent(socket, player, "item_instance_admin_action", {
     request_id: requestId,
     action: result.action,
@@ -18560,8 +18668,8 @@ async function handleDeveloperItemInstanceAdminCommand(socket: any, player: any,
     inventory_effects: localUpdates,
   }, result.action === "flag" ? "warning" : "medium");
 
-  const targetUsername: any = cleanAccountName(result.item_instance?.current_owner_username || "");
-  const target: any = targetUsername !== "" ? findOnlinePlayerByUsername(targetUsername) : null;
+  const targetUsername = cleanAccountName(result.item_instance?.current_owner_username || "");
+  const target = targetUsername !== "" ? findOnlinePlayerByUsername(targetUsername) : null;
   if (target && accountKey(target.player.account_username) !== accountKey(actorUsername)) {
     sendJson(target.socket, {
       type: "chat",
@@ -18632,7 +18740,7 @@ function applyProgressionFieldsToState(state: any, progression: any) {
 }
 
 function getRarityXpBonus(itemId: any) {
-  const definition: any = ItemDatabase.getItemDefinition(clampString(itemId || ""));
+  const definition = ItemDatabase.getItemDefinition(clampString(itemId || ""));
   switch (String(definition?.rarity || "common").toLowerCase()) {
     case "legendary":
       return 80;
@@ -18648,16 +18756,16 @@ function getRarityXpBonus(itemId: any) {
 }
 
 function getBlockBreakXp(blockType: any, layer: any) {
-  const definition: any = ItemDatabase.getItemDefinition(clampString(blockType || ""));
+  const definition = ItemDatabase.getItemDefinition(clampString(blockType || ""));
   if (!definition || definition.category !== "block") return 0;
 
   return 3;
 }
 
 function getRecipeXp(stationId: any, output: any) {
-  const reward: any = output && typeof output === "object" && !Array.isArray(output) ? output : {};
-  const amount: any = clampInteger(reward.amount || 1, 1, MAX_ITEM_STACK);
-  const stationBonus: any = stationId === "furnace" ? 7 : 10;
+  const reward = output && typeof output === "object" && !Array.isArray(output) ? output : {};
+  const amount = clampInteger(reward.amount || 1, 1, MAX_ITEM_STACK);
+  const stationBonus = stationId === "furnace" ? 7 : 10;
   return stationBonus + Math.min(120, amount * 4) + getRarityXpBonus(reward.item_id || reward.item_type || "");
 }
 
@@ -18676,8 +18784,8 @@ function grantExperienceToState(state: any, amount: any, source: any = "system",
     return { xp_gained: 0, levels_gained: 0, state: null };
   }
 
-  const xpGained: any = clampInteger(amount || 0, 0, 1000000);
-  const before: any = normalizeProgressionState(state);
+  const xpGained = clampInteger(amount || 0, 0, 1000000);
+  const before = normalizeProgressionState(state);
   applyProgressionFieldsToState(state, before);
 
   if (xpGained <= 0 || before.player_level >= PLAYER_LEVEL_MAX) {
@@ -18701,7 +18809,7 @@ function grantExperienceToState(state: any, amount: any, source: any = "system",
   let xp: any = before.player_xp + xpGained;
   let levelsGained: any = 0;
   while (level < PLAYER_LEVEL_MAX) {
-    const needed: any = getXpNeededForLevel(level);
+    const needed = getXpNeededForLevel(level);
     if (needed <= 0 || xp < needed) break;
     xp -= needed;
     level += 1;
@@ -18742,11 +18850,11 @@ function grantExperienceToState(state: any, amount: any, source: any = "system",
 }
 
 function awardPlayerExperience(username: any, amount: any, source: any = "system", details: any = {}, existingState: any = null) {
-  const clean: any = cleanAccountName(username);
+  const clean = cleanAccountName(username);
   if (clean === "") return { xp_gained: 0, levels_gained: 0, state: existingState || null };
 
-  const state: any = existingState || ensureWritablePlayerState(clean);
-  const progression: any = grantExperienceToState(state, amount, source, details);
+  const state = existingState || ensureWritablePlayerState(clean);
+  const progression = grantExperienceToState(state, amount, source, details);
   if (progression.xp_gained > 0 && progression.state) {
     persistPlayerInventoryChange(clean, progression.state);
     postgresStore.mirrorPlayerProgression(clean, progression.state, progression);
@@ -18778,9 +18886,9 @@ function getProgressionMessage(progression: any, fallback: any = "") {
 
 function getProgressionXpMessage(progression: any) {
   if (!progression || Number(progression.xp_gained || 0) <= 0) return "";
-  const xpGained: any = Math.max(0, Math.trunc(Number(progression.xp_gained) || 0));
-  const xpAfter: any = Math.max(0, Math.trunc(Number(progression.xp_after) || 0));
-  const xpNeeded: any = Math.max(0, Math.trunc(Number(progression.xp_needed) || 0));
+  const xpGained = Math.max(0, Math.trunc(Number(progression.xp_gained) || 0));
+  const xpAfter = Math.max(0, Math.trunc(Number(progression.xp_after) || 0));
+  const xpNeeded = Math.max(0, Math.trunc(Number(progression.xp_needed) || 0));
   if (xpNeeded <= 0) return `+${xpGained} XP`;
   return `+${xpGained} XP (${xpAfter}/${xpNeeded})`;
 }
@@ -18813,8 +18921,8 @@ function isServerHotbarItemAllowed(state: any, itemId: any, itemCategory: any, o
 
 function appendServerHotbarItem(state: any, items: any, categories: any, itemId: any, itemCategory: any, options: any = {}) {
   if (!Array.isArray(items) || !Array.isArray(categories)) return;
-  const beforeLength: any = items.length;
-  const normalized: any = PlayerStateHelpers.normalizePlayerHotbarState({
+  const beforeLength = items.length;
+  const normalized = PlayerStateHelpers.normalizePlayerHotbarState({
     ...state,
     hotbar_items: ["punch", ...items.slice(1), itemId],
     hotbar_item_categories: ["tool", ...categories.slice(1), itemCategory],
@@ -18842,7 +18950,7 @@ function createDefaultPlayerState(username: any) {
 }
 
 function mergeClientPlayerStateIntoServerState(username: any, incomingState: any, options: any = {}) {
-  const serverState: any = ensureWritablePlayerState(username) || createDefaultPlayerState(username);
+  const serverState = ensureWritablePlayerState(username) || createDefaultPlayerState(username);
   if (!serverState || !incomingState) return null;
 
   const merged: any = {
@@ -18887,9 +18995,9 @@ function mergeClientPlayerStateIntoServerState(username: any, incomingState: any
     ? clampString(incomingState.equipped_ride_item || "")
     : "";
 
-  const requestedLegacyImportRevision: any = clampInteger(options.legacyImportRevision || 0, 0, 1000);
-  const currentLegacyImportRevision: any = clampInteger(serverState.legacy_client_inventory_import_revision || 0, 0, 1000);
-  const didLegacyImport: any = (
+  const requestedLegacyImportRevision = clampInteger(options.legacyImportRevision || 0, 0, 1000);
+  const currentLegacyImportRevision = clampInteger(serverState.legacy_client_inventory_import_revision || 0, 0, 1000);
+  const didLegacyImport = (
     ALLOW_LEGACY_PLAYER_STATE_IMPORT &&
     Boolean(options.legacyImportRequested) &&
     requestedLegacyImportRevision > currentLegacyImportRevision
@@ -18944,21 +19052,21 @@ function mergeClientPlayerStateIntoServerState(username: any, incomingState: any
 
 function mergeLegacyClientInventoriesIntoServerState(serverState: any, incomingState: any) {
   for (const field of Object.values<any>(ItemDatabase.CATEGORY_TO_FIELD)) {
-    const serverInventory: any = serverState[field] && typeof serverState[field] === "object" && !Array.isArray(serverState[field])
+    const serverInventory = serverState[field] && typeof serverState[field] === "object" && !Array.isArray(serverState[field])
       ? serverState[field]
       : {};
-    const incomingInventory: any = incomingState[field] && typeof incomingState[field] === "object" && !Array.isArray(incomingState[field])
+    const incomingInventory = incomingState[field] && typeof incomingState[field] === "object" && !Array.isArray(incomingState[field])
       ? incomingState[field]
       : {};
 
     for (const [itemId, incomingCountRaw] of Object.entries<any>(incomingInventory)) {
       if (!ItemDatabase.hasItem(itemId)) continue;
 
-      const category: any = ItemDatabase.FIELD_TO_CATEGORY[field] || resolveInventoryCategory(itemId);
+      const category = ItemDatabase.FIELD_TO_CATEGORY[field] || resolveInventoryCategory(itemId);
       if (!ItemDatabase.canStoreItemInCategory(itemId, category)) continue;
 
-      const incomingCount: any = clampInteger(incomingCountRaw || 0, 0, ItemDatabase.getStackLimit(itemId));
-      const serverCount: any = clampInteger(serverInventory[itemId] || 0, 0, ItemDatabase.getStackLimit(itemId));
+      const incomingCount = clampInteger(incomingCountRaw || 0, 0, ItemDatabase.getStackLimit(itemId));
+      const serverCount = clampInteger(serverInventory[itemId] || 0, 0, ItemDatabase.getStackLimit(itemId));
       serverInventory[itemId] = Math.max(serverCount, incomingCount);
     }
 
@@ -18972,35 +19080,35 @@ function getInventoryCount(state: any, itemId: any, itemCategory: any) {
 
 function canAddItemToState(state: any, itemId: any, itemCategory: any, amount: any) {
   if (!state) return false;
-  const cleanItemId: any = clampString(itemId || "");
+  const cleanItemId = clampString(itemId || "");
   if (cleanItemId === "" || !ItemDatabase.hasItem(cleanItemId)) return false;
 
-  const resolvedCategory: any = resolveInventoryCategory(cleanItemId, itemCategory);
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
   if (!ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory)) return false;
 
-  const stackLimit: any = ItemDatabase.getStackLimit(cleanItemId);
-  const safeAmount: any = clampInteger(amount || 0, 0, stackLimit);
+  const stackLimit = ItemDatabase.getStackLimit(cleanItemId);
+  const safeAmount = clampInteger(amount || 0, 0, stackLimit);
   return getInventoryCount(state, cleanItemId, resolvedCategory) + safeAmount <= stackLimit;
 }
 
 function addItemToState(state: any, itemId: any, itemCategory: any, amount: any) {
   if (!state) return null;
 
-  const cleanItemId: any = clampString(itemId || "");
+  const cleanItemId = clampString(itemId || "");
   if (cleanItemId === "") return null;
   if (!ItemDatabase.hasItem(cleanItemId)) return null;
 
-  const resolvedCategory: any = resolveInventoryCategory(cleanItemId, itemCategory);
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
   if (!ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory)) return null;
 
-  const inventoryField: any = getInventoryFieldForCategory(resolvedCategory, cleanItemId);
+  const inventoryField = getInventoryFieldForCategory(resolvedCategory, cleanItemId);
   if (!state[inventoryField] || typeof state[inventoryField] !== "object" || Array.isArray(state[inventoryField])) {
     state[inventoryField] = {};
   }
 
-  const stackLimit: any = ItemDatabase.getStackLimit(cleanItemId);
-  const currentCount: any = clampInteger(state[inventoryField][cleanItemId] || 0, 0, stackLimit);
-  const safeAmount: any = clampInteger(amount || 0, 0, stackLimit);
+  const stackLimit = ItemDatabase.getStackLimit(cleanItemId);
+  const currentCount = clampInteger(state[inventoryField][cleanItemId] || 0, 0, stackLimit);
+  const safeAmount = clampInteger(amount || 0, 0, stackLimit);
   state[inventoryField][cleanItemId] = clampInteger(currentCount + safeAmount, 0, stackLimit);
 
   return {
@@ -19013,20 +19121,20 @@ function addItemToState(state: any, itemId: any, itemCategory: any, amount: any)
 function spendItemFromState(state: any, itemId: any, itemCategory: any, amount: any) {
   if (!state) return false;
 
-  const cleanItemId: any = clampString(itemId || "");
+  const cleanItemId = clampString(itemId || "");
   if (cleanItemId === "") return false;
   if (!ItemDatabase.hasItem(cleanItemId)) return false;
 
-  const resolvedCategory: any = resolveInventoryCategory(cleanItemId, itemCategory);
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
   if (!ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory)) return false;
 
-  const inventoryField: any = getInventoryFieldForCategory(resolvedCategory, cleanItemId);
+  const inventoryField = getInventoryFieldForCategory(resolvedCategory, cleanItemId);
   if (!state[inventoryField] || typeof state[inventoryField] !== "object" || Array.isArray(state[inventoryField])) {
     state[inventoryField] = {};
   }
 
-  const currentCount: any = getInventoryCount(state, cleanItemId, resolvedCategory);
-  const safeAmount: any = clampInteger(amount || 0, 0, ItemDatabase.getStackLimit(cleanItemId));
+  const currentCount = getInventoryCount(state, cleanItemId, resolvedCategory);
+  const safeAmount = clampInteger(amount || 0, 0, ItemDatabase.getStackLimit(cleanItemId));
   if (currentCount < safeAmount) return false;
 
   state[inventoryField][cleanItemId] = currentCount - safeAmount;
@@ -19034,14 +19142,14 @@ function spendItemFromState(state: any, itemId: any, itemCategory: any, amount: 
 }
 
 function getCraftingCostItemIds(itemId: any, itemCategory: any) {
-  const cleanItemId: any = clampString(itemId || "");
-  const cleanCategory: any = cleanInventoryCategory(itemCategory || "");
+  const cleanItemId = clampString(itemId || "");
+  const cleanCategory = cleanInventoryCategory(itemCategory || "");
   const ids: any = [cleanItemId];
   if (cleanCategory !== "tool") return ids;
 
   if (cleanItemId === "bamboo_rod") ids.push("fishing_rod");
   if (cleanItemId === "pristine_tungsten_rod") ids.push("platinum_prestige_rod");
-  return ids.filter((id, index) => id !== "" && ids.indexOf(id) === index);
+  return ids.filter((id: string, index: number) => id !== "" && ids.indexOf(id) === index);
 }
 
 function getCraftingCostInventoryCount(state: any, itemId: any, itemCategory: any) {
@@ -19057,10 +19165,10 @@ function spendCraftingCostFromState(state: any, itemId: any, itemCategory: any, 
   if (remaining <= 0) return true;
 
   for (const candidateId of getCraftingCostItemIds(itemId, itemCategory)) {
-    const available: any = getInventoryCount(state, candidateId, itemCategory);
+    const available = getInventoryCount(state, candidateId, itemCategory);
     if (available <= 0) continue;
 
-    const spendAmount: any = Math.min(available, remaining);
+    const spendAmount = Math.min(available, remaining);
     if (!spendItemFromState(state, candidateId, itemCategory, spendAmount)) return false;
     remaining -= spendAmount;
     if (remaining <= 0) return true;
@@ -19072,22 +19180,22 @@ function spendCraftingCostFromState(state: any, itemId: any, itemCategory: any, 
 function setInventoryCountInState(state: any, itemId: any, itemCategory: any, amount: any) {
   if (!state) return false;
 
-  const cleanItemId: any = clampString(itemId || "");
+  const cleanItemId = clampString(itemId || "");
   if (cleanItemId === "" || !ItemDatabase.hasItem(cleanItemId)) return false;
 
-  const resolvedCategory: any = resolveInventoryCategory(cleanItemId, itemCategory || "block");
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory || "block");
   if (!ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory)) return false;
 
-  const inventoryField: any = getInventoryFieldForCategory(resolvedCategory, cleanItemId);
+  const inventoryField = getInventoryFieldForCategory(resolvedCategory, cleanItemId);
   if (!state[inventoryField] || typeof state[inventoryField] !== "object" || Array.isArray(state[inventoryField])) {
     state[inventoryField] = {};
   }
 
-  const stackLimit: any = ItemDatabase.getStackLimit(cleanItemId);
-  const requestedRaw: any = Number(amount);
+  const stackLimit = ItemDatabase.getStackLimit(cleanItemId);
+  const requestedRaw = Number(amount);
   if (!Number.isFinite(requestedRaw)) return false;
   if (!Number.isInteger(requestedRaw)) return false;
-  const requestedAmount: any = Math.trunc(requestedRaw);
+  const requestedAmount = Math.trunc(requestedRaw);
   if (requestedAmount < 0 || requestedAmount > stackLimit) return false;
 
   state[inventoryField][cleanItemId] = requestedAmount;
@@ -19103,15 +19211,15 @@ function applyInventoryLedgerToState(state: any, ledgerEntries: any) {
   if (!state) return false;
   if (!Array.isArray(ledgerEntries) || ledgerEntries.length === 0) return true;
 
-  const stagedState: any = cloneJson(state);
+  const stagedState = cloneJson(state);
   if (!stagedState || typeof stagedState !== "object" || Array.isArray(stagedState)) return false;
 
   for (const entry of ledgerEntries) {
-    const cleanItemId: any = clampString(entry?.item_type || "");
+    const cleanItemId = clampString(entry?.item_type || "");
     if (cleanItemId === "" || !ItemDatabase.hasItem(cleanItemId)) return false;
 
-    const itemCategory: any = entry?.item_category || "block";
-    const afterAmount: any = Number(entry?.after_amount);
+    const itemCategory = entry?.item_category || "block";
+    const afterAmount = Number(entry?.after_amount);
     if (!Number.isFinite(afterAmount) || !Number.isInteger(afterAmount)) return false;
 
     if (!setInventoryCountInState(stagedState, cleanItemId, itemCategory, afterAmount)) {
@@ -19131,13 +19239,13 @@ function buildInventoryBaselineForItems(state: any, items: any) {
   for (const item of items) {
     if (!item || typeof item !== "object" || Array.isArray(item)) continue;
 
-    const itemId: any = clampString(item.item_id || item.item_type || "");
+    const itemId = clampString(item.item_id || item.item_type || "");
     if (itemId === "" || !ItemDatabase.hasItem(itemId)) continue;
 
-    const itemCategory: any = resolveInventoryCategory(itemId, item.item_category || item.category || "");
+    const itemCategory = resolveInventoryCategory(itemId, item.item_category || item.category || "");
     if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) continue;
 
-    const key: any = `${itemId}\u0000${itemCategory}`;
+    const key = `${itemId}\u0000${itemCategory}`;
     if (baseline.has(key)) continue;
 
     baseline.set(key, {
@@ -19152,7 +19260,7 @@ function buildInventoryBaselineForItems(state: any, items: any) {
 }
 
 function ensureWritablePlayerState(username: any) {
-  const clean: any = cleanAccountName(username);
+  const clean = cleanAccountName(username);
   if (clean === "") return null;
 
   let state: any = ensurePlayerState(clean);
@@ -19168,24 +19276,24 @@ function ensureWritablePlayerState(username: any) {
 }
 
 function applyItemInstanceInventoryEffectsToPlayerStates(effects: any) {
-  const rows: any = Array.isArray(effects) ? effects : [];
+  const rows = Array.isArray(effects) ? effects : [];
   const updated: any = [];
 
   for (const effect of rows) {
     if (!effect || effect.ok === false) continue;
-    const username: any = cleanAccountName(effect.username || "");
-    const itemType: any = clampString(effect.item_type || "");
-    const itemCategory: any = resolveInventoryCategory(itemType, effect.item_category || "");
+    const username = cleanAccountName(effect.username || "");
+    const itemType = clampString(effect.item_type || "");
+    const itemCategory = resolveInventoryCategory(itemType, effect.item_category || "");
     if (username === "" || itemType === "") continue;
 
-    const state: any = ensureWritablePlayerState(username);
+    const state = ensureWritablePlayerState(username);
     if (!state) continue;
 
-    const applied: any = setInventoryCountInState(state, itemType, itemCategory, clampInteger(effect.after_amount || 0, 0, ItemDatabase.getStackLimit(itemType)));
+    const applied = setInventoryCountInState(state, itemType, itemCategory, clampInteger(effect.after_amount || 0, 0, ItemDatabase.getStackLimit(itemType)));
     if (!applied) continue;
 
     persistPlayerInventoryChange(username, state, { postgresCommitted: true });
-    const target: any = findOnlinePlayerByUsername(username);
+    const target = findOnlinePlayerByUsername(username);
     if (target) {
       sendPlayerState(target.socket, target.player.account_username);
     }
@@ -19205,16 +19313,16 @@ function applyItemInstanceInventoryEffectsToPlayerStates(effects: any) {
 }
 
 function doesAccountExist(username: any) {
-  const clean: any = cleanAccountName(username);
+  const clean = cleanAccountName(username);
   if (clean === "") return false;
   return accounts.has(accountKey(clean)) || (!isPostgresAuthoritativeReady() && fs.existsSync(getPlayerSavePath(clean)));
 }
 
 function markAccountSeen(username: any) {
-  const clean: any = cleanAccountName(username);
+  const clean = cleanAccountName(username);
   if (clean === "") return;
 
-  const account: any = accounts.get(accountKey(clean));
+  const account = accounts.get(accountKey(clean));
   if (!account) return;
 
   account.last_seen_at = new Date().toISOString();
@@ -19278,7 +19386,7 @@ async function handleAdminMonitoringDashboardRequest(socket: any, player: any, d
 
 function buildPublicPlayerData(state: any) {
   if (!state || typeof state !== "object" || Array.isArray(state)) return {};
-  const progression: any = normalizeProgressionState(state);
+  const progression = normalizeProgressionState(state);
 
   return {
     player_data_version: Math.max(1, Math.trunc(Number(state.player_data_version) || 1)),
@@ -19292,15 +19400,15 @@ function buildPublicPlayerData(state: any) {
 }
 
 function buildPublicPlayerProfilePayload(username: any, requestId: any = "", purpose: any = "") {
-  const clean: any = cleanAccountName(username);
-  const key: any = accountKey(clean);
-  const account: any = accounts.get(key) || null;
-  const state: any = ensurePlayerState(clean);
-  const found: any = clean !== "" && (Boolean(account) || Boolean(state) || (!isPostgresAuthoritativeReady() && fs.existsSync(getPlayerSavePath(clean))));
-  const onlineEntry: any = findOnlinePlayerByUsername(clean);
-  const onlinePlayer: any = onlineEntry ? onlineEntry.player : null;
-  const publicData: any = buildPublicPlayerData(state);
-  const displayUsername: any = account?.username || publicData.account_username || clean;
+  const clean = cleanAccountName(username);
+  const key = accountKey(clean);
+  const account = accounts.get(key) || null;
+  const state = ensurePlayerState(clean);
+  const found = clean !== "" && (Boolean(account) || Boolean(state) || (!isPostgresAuthoritativeReady() && fs.existsSync(getPlayerSavePath(clean))));
+  const onlineEntry = findOnlinePlayerByUsername(clean);
+  const onlinePlayer = onlineEntry ? onlineEntry.player : null;
+  const publicData = buildPublicPlayerData(state);
+  const displayUsername = account?.username || publicData.account_username || clean;
 
   return {
     type: "player_state",
@@ -19328,10 +19436,10 @@ function buildPublicPlayerProfilePayload(username: any, requestId: any = "", pur
 }
 
 function grantItemToPlayerState(username: any, itemId: any, itemCategory: any, amount: any) {
-  const state: any = ensureWritablePlayerState(username);
+  const state = ensureWritablePlayerState(username);
   if (!state) return null;
 
-  const grant: any = addItemToState(state, itemId, itemCategory, amount);
+  const grant = addItemToState(state, itemId, itemCategory, amount);
   if (!grant) return null;
 
   state.saved_at = new Date().toISOString();
@@ -19342,15 +19450,15 @@ function grantItemToPlayerState(username: any, itemId: any, itemCategory: any, a
 }
 
 function removeItemFromPlayerState(username: any, itemId: any, itemCategory: any, amount: any) {
-  const state: any = ensureWritablePlayerState(username);
+  const state = ensureWritablePlayerState(username);
   if (!state) return null;
 
-  const cleanItemId: any = clampString(itemId || "");
-  const resolvedCategory: any = resolveInventoryCategory(cleanItemId, itemCategory);
-  const available: any = getInventoryCount(state, cleanItemId, resolvedCategory);
-  const requested: any = clampInteger(amount || 0, 1, MAX_ITEM_STACK);
-  const removeAmount: any = Math.min(available, requested);
-  const inventoryField: any = getInventoryFieldForCategory(resolvedCategory, cleanItemId);
+  const cleanItemId = clampString(itemId || "");
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
+  const available = getInventoryCount(state, cleanItemId, resolvedCategory);
+  const requested = clampInteger(amount || 0, 1, MAX_ITEM_STACK);
+  const removeAmount = Math.min(available, requested);
+  const inventoryField = getInventoryFieldForCategory(resolvedCategory, cleanItemId);
 
   if (removeAmount <= 0) {
     return {
@@ -19382,20 +19490,20 @@ function removeItemFromPlayerState(username: any, itemId: any, itemCategory: any
 }
 
 function getSocketByPlayerId(playerId: any) {
-  const socket: any = socketByPlayerId.get(String(playerId || "").trim());
+  const socket = socketByPlayerId.get(String(playerId || "").trim());
   if (!socket || socket.readyState !== WebSocket.OPEN) return null;
   return socket;
 }
 
 function findOnlinePlayerByUsername(username: any) {
-  const key: any = accountKey(username);
+  const key = accountKey(username);
   if (key === "") return null;
 
   for (const player of players.values()) {
     if (!player.authenticated) continue;
     if (accountKey(player.account_username) !== key) continue;
 
-    const socket: any = getSocketByPlayerId(player.id);
+    const socket = getSocketByPlayerId(player.id);
     if (!socket) continue;
 
     return { player, socket };
@@ -19407,18 +19515,18 @@ function findOnlinePlayerByUsername(username: any) {
 function handlePullPlayerRequest(socket: any, player: any, data: any) {
   if (!requireAuthenticated(socket, player, "pull players")) return;
 
-  const requestId: any = makeRequestId(data);
-  const worldName: any = getPlayerCurrentWorldName(player);
-  const requestedWorldName: any = cleanWorld(data.world || worldName);
+  const requestId = makeRequestId(data);
+  const worldName = getPlayerCurrentWorldName(player);
+  const requestedWorldName = cleanWorld(data.world || worldName);
   if (!requireSameWorld(socket, player, requestedWorldName, "pull_player_request")) return;
 
-  const targetUsername: any = cleanAccountName(data.target_username || data.username || data.name || "").slice(0, MAX_USERNAME_LENGTH);
+  const targetUsername = cleanAccountName(data.target_username || data.username || data.name || "").slice(0, MAX_USERNAME_LENGTH);
   if (targetUsername === "") {
     sendActionRejected(socket, "pull_player_request", "Use: /pull username", { request_id: requestId });
     return;
   }
 
-  const permission: any = getWorldLockPullPermission(player, worldName);
+  const permission = getWorldLockPullPermission(player, worldName);
   if (!permission.ok) {
     sendActionRejected(socket, "pull_player_request", "Only the world owner or world admins can use /pull.", {
       request_id: requestId,
@@ -19427,7 +19535,7 @@ function handlePullPlayerRequest(socket: any, player: any, data: any) {
     return;
   }
 
-  const target: any = findOnlinePlayerByUsername(targetUsername);
+  const target = findOnlinePlayerByUsername(targetUsername);
   if (!target || !target.player.joined_world || getPlayerCurrentWorldName(target.player) !== worldName) {
     sendActionRejected(socket, "pull_player_request", `${targetUsername} is not in this world.`, {
       request_id: requestId,
@@ -19444,8 +19552,8 @@ function handlePullPlayerRequest(socket: any, player: any, data: any) {
     return;
   }
 
-  const pullX: any = Number(player.x);
-  const pullY: any = Number(player.y);
+  const pullX = Number(player.x);
+  const pullY = Number(player.y);
   if (!isPositionInWorldBounds(pullX, pullY)) {
     sendActionRejected(socket, "pull_player_request", "Your position is not ready yet.", {
       request_id: requestId,
@@ -19460,8 +19568,8 @@ function handlePullPlayerRequest(socket: any, player: any, data: any) {
   clearNetfoxTrustedPlayerState(target.player);
   clearTrustedMovementBaseline(target.player);
 
-  const targetName: any = cleanAccountName(target.player.account_username || target.player.name || targetUsername);
-  const pullerName: any = cleanAccountName(player.account_username || player.name || "Player");
+  const targetName = cleanAccountName(target.player.account_username || target.player.name || targetUsername);
+  const pullerName = cleanAccountName(player.account_username || player.name || "Player");
 
   sendJson(target.socket, {
     type: "player_pulled",
@@ -19496,7 +19604,7 @@ function handlePullPlayerRequest(socket: any, player: any, data: any) {
 function handleDeveloperPinUnlock(socket: any, player: any, data: any) {
   if (!requireAuthenticated(socket, player, "unlock developer tools")) return;
 
-  const requestId: any = makeRequestId(data);
+  const requestId = makeRequestId(data);
   if (!isAdmin(player)) {
     logAdminAction(socket, player, "developer_pin_unlock", { request_id: requestId }, false, "Developer PIN is only for admins.");
     sendJson(socket, {
@@ -19529,7 +19637,7 @@ function handleDeveloperPinUnlock(socket: any, player: any, data: any) {
     player.developer_pin_unlocked_until = Date.now() + DEV_PIN_UNLOCK_TTL_MS;
   }
 
-  const twoFactor: any = verifyAdminTwoFactorCode(player.account_username, data.totp_code || data.two_factor_code || data.admin_2fa_code || data.code || "");
+  const twoFactor = verifyAdminTwoFactorCode(player.account_username, data.totp_code || data.two_factor_code || data.admin_2fa_code || data.code || "");
   if (!twoFactor.ok) {
     player.admin_2fa_verified_until = 0;
     logAdminAction(socket, player, "admin_2fa_unlock", {
@@ -19589,10 +19697,10 @@ async function handleDeveloperCommandRequest(socket: any, player: any, data: any
   try {
     await handleDeveloperCommandRequestUnsafe(socket, player, data);
   } catch (error) {
-    const safeData: any = data && typeof data === "object" ? data : {};
-    const requestId: any = makeRequestId(safeData);
-    const command: any = String(safeData.command || "").trim();
-    const commandName: any = getDeveloperCommandName(command);
+    const safeData = data && typeof data === "object" ? data : {};
+    const requestId = makeRequestId(safeData);
+    const command = String(safeData.command || "").trim();
+    const commandName = getDeveloperCommandName(command);
     const details: any = {
       request_id: requestId,
       command,
@@ -19602,16 +19710,16 @@ async function handleDeveloperCommandRequest(socket: any, player: any, data: any
       runtime: getCrashRuntimeState(),
     };
     writeCrashReport("developer_command_exception", details);
-    console.warn("[developer_command_exception]", error && error.stack ? error.stack : error);
+    console.warn("[developer_command_exception]", getErrorStack(error));
     try {
       logSecurityEvent(socket, player, "developer_command_exception", {
         request_id: requestId,
         command,
         command_name: commandName,
-        message: String(error?.message || error || "unknown"),
+        message: getErrorMessage(error),
       }, "error");
     } catch (logError) {
-      console.warn("[developer_command_exception_log_failed]", logError && logError.message ? logError.message : logError);
+      console.warn("[developer_command_exception_log_failed]", getErrorMessage(logError));
     }
     sendDeveloperDenied(socket, requestId, command, "Developer command failed safely. Check crash_reports.log for details.", {
       reason: "exception",
@@ -19623,11 +19731,11 @@ async function handleDeveloperCommandRequest(socket: any, player: any, data: any
 async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, data: any) {
   if (!requireAuthenticated(socket, player, "use admin commands")) return;
 
-  const requestId: any = makeRequestId(data);
-  const command: any = String(data.command || "").trim();
+  const requestId = makeRequestId(data);
+  const command = String(data.command || "").trim();
   if (command === "") return;
 
-  const commandName: any = getDeveloperCommandName(command);
+  const commandName = getDeveloperCommandName(command);
   const commandLogBase: any = {
     request_id: requestId,
     command,
@@ -19635,13 +19743,13 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
     world: cleanWorld(data.world || player.world || "START"),
   };
 
-  const deny: any = (message, details = {}, extra = {}) => {
+  const deny = (message: string, details: ServerPacketRecord = {}, extra: ServerPacketRecord = {}) => {
     logAdminAction(socket, player, "developer_command_denied", { ...commandLogBase, ...details }, false, message);
     logSecurityEvent(socket, player, "developer_command_denied", { ...commandLogBase, ...details, message }, "warning");
     sendDeveloperDenied(socket, requestId, command, message, extra);
   };
 
-  const approve: any = (message, details = {}, extra = {}) => {
+  const approve = (message: string, details: ServerPacketRecord = {}, extra: ServerPacketRecord = {}) => {
     logAdminAction(socket, player, `developer_${commandName || "command"}`, { ...commandLogBase, ...details }, true, message);
     sendDeveloperApproved(socket, requestId, command, message, extra);
   };
@@ -19652,9 +19760,13 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
   }
 
   if (isAdmin(player)) {
-    const securityRequirement: any = getDeveloperSecurityRequirement(player);
+    const securityRequirement = getDeveloperSecurityRequirement(player);
     if (!securityRequirement.ok) {
-      deny(securityRequirement.message, { reason: securityRequirement.reason }, securityRequirement.extra);
+      deny(
+        securityRequirement.message || "Developer security requirements were not met.",
+        { reason: securityRequirement.reason },
+        securityRequirement.extra,
+      );
       return;
     }
   }
@@ -19676,7 +19788,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
   }
 
   if (commandName === "clear") {
-    const commandWorld: any = getDeveloperCommandWorldName(player, data);
+    const commandWorld = getDeveloperCommandWorldName(player, data);
     const result: any = clearWorldByAdmin(commandWorld, data, socket, player);
     approve(
       `Server cleared ${commandWorld}. Removed ${result.removedCount} saved objects and preserved ${result.protectedCount} protected blocks.`,
@@ -19696,7 +19808,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
   }
 
   if (commandName === "resetworld" || commandName === "reset_world" || commandName === "reworld") {
-    const commandWorld: any = getDeveloperCommandWorldName(player, data);
+    const commandWorld = getDeveloperCommandWorldName(player, data);
     const result: any = resetWorldByAdmin(commandWorld, socket, player);
     approve(`Server reset ${commandWorld}.`, {
       target_world: commandWorld,
@@ -19710,8 +19822,8 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
   }
 
   if (commandName === "snapshot" || commandName === "snapshot_world") {
-    const commandWorld: any = getDeveloperCommandWorldName(player, data);
-    const snapshot: any = createWorldSnapshot(commandWorld, "manual_admin_snapshot", socket, player, {
+    const commandWorld = getDeveloperCommandWorldName(player, data);
+    const snapshot = createWorldSnapshot(commandWorld, "manual_admin_snapshot", socket, player, {
       command,
       request_id: requestId,
     });
@@ -19733,21 +19845,21 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
     return;
   }
 
-  const punishmentCommand: any = parsePunishmentCommand(data, command, player);
+  const punishmentCommand = parsePunishmentCommand(data, command, player);
   if (punishmentCommand) {
     await handleDeveloperPunishmentCommand(socket, player, data, command, punishmentCommand, approve, deny);
     return;
   }
 
-  const itemInstanceAdminCommand: any = parseItemInstanceAdminCommand(data, command);
+  const itemInstanceAdminCommand = parseItemInstanceAdminCommand(data, command);
   if (itemInstanceAdminCommand) {
     await handleDeveloperItemInstanceAdminCommand(socket, player, data, command, itemInstanceAdminCommand, approve, deny);
     return;
   }
 
-  const giveCommand: any = parseGiveCommand(data, command);
+  const giveCommand = parseGiveCommand(data, command);
   if (giveCommand) {
-    const targetUsername: any = cleanAccountName(giveCommand.targetUsername);
+    const targetUsername = cleanAccountName(giveCommand.targetUsername);
     if (!ItemDatabase.hasItem(giveCommand.itemId)) {
       deny("That item does not exist on the server.", { target_username: giveCommand.targetUsername, item_id: giveCommand.itemId, amount: giveCommand.amount });
       return;
@@ -19768,14 +19880,14 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
       return;
     }
 
-    const targetBeforeState: any = ensureWritablePlayerState(targetUsername);
+    const targetBeforeState = ensureWritablePlayerState(targetUsername);
     if (!targetBeforeState) {
       deny("Could not load target inventory.", { target_username: targetUsername, item_id: giveCommand.itemId, item_category: giveCommand.itemCategory, amount: giveCommand.amount });
       return;
     }
 
-    const targetStagedState: any = cloneJson(targetBeforeState);
-    const grant: any = addItemToState(
+    const targetStagedState = cloneJson(targetBeforeState);
+    const grant = addItemToState(
       targetStagedState,
       giveCommand.itemId,
       giveCommand.itemCategory,
@@ -19786,7 +19898,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
       return;
     }
 
-    const commit: any = await commitPlayerInventoryState(socket, player, targetUsername, targetBeforeState, targetStagedState, {
+    const commit = await commitPlayerInventoryState(socket, player, targetUsername, targetBeforeState, targetStagedState, {
       source: "admin",
       action: "admin_give",
       reason: "developer_command",
@@ -19813,14 +19925,14 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
       return;
     }
 
-    const target: any = findOnlinePlayerByUsername(targetUsername);
-    const targetState: any = commit.state || ensurePlayerState(targetUsername) || {};
-    const targetClientState: any = buildPlayerStateForClient(targetState);
-    const targetInventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, targetState);
-    const isSelfGive: any = accountKey(targetUsername) === accountKey(player.account_username);
-    const inventoryAudit: any = buildInventoryAdminAuditContext(targetBeforeState, targetState, giveCommand.itemId, giveCommand.itemCategory);
+    const target = findOnlinePlayerByUsername(targetUsername);
+    const targetState = commit.state || ensurePlayerState(targetUsername) || {};
+    const targetClientState = buildPlayerStateForClient(targetState);
+    const targetInventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, targetState);
+    const isSelfGive = accountKey(targetUsername) === accountKey(player.account_username);
+    const inventoryAudit = buildInventoryAdminAuditContext(targetBeforeState, targetState, giveCommand.itemId, giveCommand.itemCategory);
     if (target) {
-      const recipientUsername: any = cleanAccountName(target.player.account_username || targetUsername);
+      const recipientUsername = cleanAccountName(target.player.account_username || targetUsername);
       sendInventoryTransactionResult(target.socket, {
         ok: true,
         request_id: requestId,
@@ -19879,7 +19991,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
     return;
   }
 
-  const removeCommand: any = parseRemoveCommand(data, command);
+  const removeCommand = parseRemoveCommand(data, command);
   if (removeCommand) {
     if (!ItemDatabase.hasItem(removeCommand.itemId)) {
       deny("That item does not exist on the server.", { target_username: removeCommand.targetUsername, item_id: removeCommand.itemId, amount: removeCommand.amount });
@@ -19896,18 +20008,18 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
       return;
     }
 
-    const targetBeforeState: any = ensureWritablePlayerState(removeCommand.targetUsername);
+    const targetBeforeState = ensureWritablePlayerState(removeCommand.targetUsername);
     if (!targetBeforeState) {
       deny("Could not load target inventory.", { target_username: removeCommand.targetUsername, item_id: removeCommand.itemId, item_category: removeCommand.itemCategory, amount: removeCommand.amount });
       return;
     }
 
-    const cleanRemoveItemId: any = clampString(removeCommand.itemId || "");
-    const resolvedRemoveCategory: any = resolveInventoryCategory(cleanRemoveItemId, removeCommand.itemCategory);
-    const available: any = getInventoryCount(targetBeforeState, cleanRemoveItemId, resolvedRemoveCategory);
-    const requested: any = clampInteger(removeCommand.amount || 0, 1, MAX_ITEM_STACK);
-    const removeAmount: any = Math.min(available, requested);
-    const inventoryField: any = getInventoryFieldForCategory(resolvedRemoveCategory, cleanRemoveItemId);
+    const cleanRemoveItemId = clampString(removeCommand.itemId || "");
+    const resolvedRemoveCategory = resolveInventoryCategory(cleanRemoveItemId, removeCommand.itemCategory);
+    const available = getInventoryCount(targetBeforeState, cleanRemoveItemId, resolvedRemoveCategory);
+    const requested = clampInteger(removeCommand.amount || 0, 1, MAX_ITEM_STACK);
+    const removeAmount = Math.min(available, requested);
+    const inventoryField = getInventoryFieldForCategory(resolvedRemoveCategory, cleanRemoveItemId);
     const removal: any = {
       removed: removeAmount,
       requested,
@@ -19922,13 +20034,13 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
       return;
     }
 
-    const targetStagedState: any = cloneJson(targetBeforeState);
+    const targetStagedState = cloneJson(targetBeforeState);
     if (!spendItemFromState(targetStagedState, cleanRemoveItemId, resolvedRemoveCategory, removal.removed)) {
       deny("Could not stage target inventory.", { target_username: removeCommand.targetUsername, item_id: removeCommand.itemId, item_category: removeCommand.itemCategory, amount: removeCommand.amount });
       return;
     }
 
-    const commit: any = await commitPlayerInventoryState(socket, player, removeCommand.targetUsername, targetBeforeState, targetStagedState, {
+    const commit = await commitPlayerInventoryState(socket, player, removeCommand.targetUsername, targetBeforeState, targetStagedState, {
       source: "admin",
       action: "admin_remove",
       reason: "developer_command",
@@ -19957,9 +20069,9 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
       return;
     }
     removal.count = getInventoryCount(commit.state, cleanRemoveItemId, removal.itemCategory);
-    const inventoryAudit: any = buildInventoryAdminAuditContext(targetBeforeState, commit.state, cleanRemoveItemId, removal.itemCategory);
+    const inventoryAudit = buildInventoryAdminAuditContext(targetBeforeState, commit.state, cleanRemoveItemId, removal.itemCategory);
 
-    const target: any = findOnlinePlayerByUsername(removeCommand.targetUsername);
+    const target = findOnlinePlayerByUsername(removeCommand.targetUsername);
     if (target) {
       sendPlayerState(target.socket, target.player.account_username);
       if (accountKey(target.player.account_username) !== accountKey(player.account_username)) {
@@ -19971,7 +20083,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
       }
     }
 
-    const partialMessage: any = removal.removed < removal.requested
+    const partialMessage = removal.removed < removal.requested
       ? ` Removed ${removal.removed}/${removal.requested} because that was all the target had.`
       : ` Removed ${removal.removed}.`;
 
@@ -20007,11 +20119,11 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
     return;
   }
 
-  const parts: any = splitCommand(command);
+  const parts = splitCommand(command);
 
   if (commandName === "heal" || commandName === "health") {
-    const targetUsername: any = cleanAccountName(data.target_username || data.target || player.account_username);
-    const requestedHealth: any = commandName === "health"
+    const targetUsername = cleanAccountName(data.target_username || data.target || player.account_username);
+    const requestedHealth = commandName === "health"
       ? clampInteger(data.amount || parts[1] || 3, 1, 100)
       : clampInteger(data.amount || 3, 1, 100);
 
@@ -20020,18 +20132,18 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
       return;
     }
 
-    const state: any = ensureWritablePlayerState(targetUsername);
+    const state = ensureWritablePlayerState(targetUsername);
     if (!state) {
       deny("Could not load target player state.", { target_username: targetUsername, amount: requestedHealth });
       return;
     }
 
-    const beforeHealth: any = clampInteger(state.player_health || 0, 0, 100);
-    const beforeHash: any = makeAuditHash(state);
+    const beforeHealth = clampInteger(state.player_health || 0, 0, 100);
+    const beforeHash = makeAuditHash(state);
     state.player_health = requestedHealth;
     persistPlayerInventoryChange(targetUsername, state);
 
-    const target: any = findOnlinePlayerByUsername(targetUsername);
+    const target = findOnlinePlayerByUsername(targetUsername);
     if (target) {
       sendPlayerState(target.socket, target.player.account_username);
     }
@@ -20060,15 +20172,15 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
       return;
     }
 
-    const gridX: any = Math.trunc(Number(data.grid_x ?? data.x ?? parts[1]));
-    const gridY: any = Math.trunc(Number(data.grid_y ?? data.y ?? parts[2]));
+    const gridX = Math.trunc(Number(data.grid_x ?? data.x ?? parts[1]));
+    const gridY = Math.trunc(Number(data.grid_y ?? data.y ?? parts[2]));
     if (!isGridInWorld(gridX, gridY)) {
       deny("Outside world bounds.", { grid_x: gridX, grid_y: gridY });
       return;
     }
 
     const beforePosition: any = { x: player.x, y: player.y, world: player.world };
-    const pos: any = getGridCenterPixels(gridX, gridY);
+    const pos = getGridCenterPixels(gridX, gridY);
     player.x = pos.x;
     player.y = pos.y;
     resetPlayerMovementTracking(player);
@@ -20096,7 +20208,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
   }
 
   if (commandName === "noc" || commandName === "noclip") {
-    const beforeNoclip: any = Boolean(player.noclip_enabled);
+    const beforeNoclip = Boolean(player.noclip_enabled);
     player.noclip_enabled = data.enabled === undefined ? !player.noclip_enabled : Boolean(data.enabled);
     approve(
       player.noclip_enabled ? "Noclip enabled by server." : "Noclip disabled by server.",
@@ -20114,9 +20226,9 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
   }
 
   if (commandName === "clear_drops") {
-    const commandWorld: any = getDeveloperCommandWorldName(player, data);
-    const state: any = ensureWorldState(commandWorld);
-    const removedCount: any = state.drops.size;
+    const commandWorld = getDeveloperCommandWorldName(player, data);
+    const state = ensureWorldState(commandWorld);
+    const removedCount = state.drops.size;
     state.drops.clear();
     replaceWorldStateAndBroadcast(commandWorld, state);
     approve(
@@ -20135,12 +20247,12 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
   }
 
   if (isProducerSpeedupCommandName(commandName)) {
-    const speedupCommand: any = parseProducerSpeedupCommand(player, data, command);
+    const speedupCommand = parseProducerSpeedupCommand(player, data, command);
     const result: any = applyProducerSpeedupToWorld(speedupCommand.target_world, {
       remaining_seconds: speedupCommand.remaining_seconds,
     });
-    const statsText: any = formatProducerSpeedupStats(result.stats);
-    const remainingText: any = result.remaining_seconds <= 0
+    const statsText = formatProducerSpeedupStats(result.stats);
+    const remainingText = result.remaining_seconds <= 0
       ? "ready now"
       : `${result.remaining_seconds}s remaining`;
     approve(
@@ -20167,15 +20279,15 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
   }
 
   if (commandName === "forceevent") {
-    const eventType: any = String(data.event_type || parseForceEventName(command) || "").trim().toLowerCase();
-    const commandWorld: any = getDeveloperCommandWorldName(player, data);
+    const eventType = String(data.event_type || parseForceEventName(command) || "").trim().toLowerCase();
+    const commandWorld = getDeveloperCommandWorldName(player, data);
 
     if (eventType !== SNOW_STORM_EVENT_TYPE) {
       deny("Use: /forceevent snow_storm", { target_world: commandWorld, event_type: eventType });
       return;
     }
 
-    const cooldown: any = consumeSnowStormCommandCooldown(commandWorld);
+    const cooldown = consumeSnowStormCommandCooldown(commandWorld);
     if (!cooldown.ok) {
       deny(`Snow Storm command is cooling down. Try again in ${Math.ceil(cooldown.retry_ms / 1000)}s.`, {
         target_world: commandWorld,
@@ -20196,7 +20308,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
 
     let result: any = await startSnowStormEvent(commandWorld, { reason: "developer_forceevent" });
     if (!result.ok && result.reason === "already_active") {
-      const endResult: any = await endSnowStormEvent(commandWorld, { reason: "developer_forceevent_restart" });
+      const endResult = await endSnowStormEvent(commandWorld, { reason: "developer_forceevent_restart" });
       if (!endResult.ok && endResult.reason !== "not_active") {
         deny(`Snow Storm force restart failed: ${endResult.reason || "unknown"}.`, {
           target_world: commandWorld,
@@ -20238,17 +20350,17 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
 
   if (commandName === "event" || commandName === "world_event") {
     try {
-      const parts: any = splitCommand(command);
-      const eventType: any = String(data.event_type || parts[1] || "").trim().toLowerCase();
-      const action: any = String(data.event_action || data.action || parts[2] || "start").trim().toLowerCase();
-      const commandWorld: any = getDeveloperCommandWorldName(player, data);
+      const parts = splitCommand(command);
+      const eventType = String(data.event_type || parts[1] || "").trim().toLowerCase();
+      const action = String(data.event_action || data.action || parts[2] || "start").trim().toLowerCase();
+      const commandWorld = getDeveloperCommandWorldName(player, data);
 
       if (eventType !== SNOW_STORM_EVENT_TYPE) {
         deny("Use: /event snow_storm start|end", { target_world: commandWorld, event_type: eventType });
         return;
       }
 
-      const cooldown: any = consumeSnowStormCommandCooldown(commandWorld);
+      const cooldown = consumeSnowStormCommandCooldown(commandWorld);
       if (!cooldown.ok) {
         deny(`Snow Storm command is cooling down. Try again in ${Math.ceil(cooldown.retry_ms / 1000)}s.`, {
           target_world: commandWorld,
@@ -20303,14 +20415,14 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
       deny("Snow Storm command failed safely. Check crash_reports.log for details.", {
         event_type: SNOW_STORM_EVENT_TYPE,
         reason: "exception",
-        message: String(error?.message || error || "unknown"),
+        message: getErrorMessage(error),
       });
       return;
     }
   }
 
   if (commandName === "save") {
-    const commandWorld: any = getDeveloperCommandWorldName(player, data);
+    const commandWorld = getDeveloperCommandWorldName(player, data);
     saveWorldState(commandWorld);
     savePlayerState(player.account_username);
     flushPendingSaves();
@@ -20319,7 +20431,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
   }
 
   if (commandName === "load" || commandName === "reload") {
-    const commandWorld: any = getDeveloperCommandWorldName(player, data);
+    const commandWorld = getDeveloperCommandWorldName(player, data);
     worldStates.delete(commandWorld);
     ensureWorldState(commandWorld);
     broadcastToWorld(commandWorld, buildWorldStateMessage(commandWorld, {
@@ -20337,12 +20449,12 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
       return;
     }
 
-    const itemId: any = clampString(data.item_id || data.block_type || parts[1]);
-    const gridX: any = Math.trunc(Number(data.grid_x ?? data.x ?? parts[2]));
-    const gridY: any = Math.trunc(Number(data.grid_y ?? data.y ?? parts[3]));
-    const commandWorld: any = getDeveloperCommandWorldName(player, data);
-    const state: any = ensureWorldState(commandWorld);
-    const key: any = gridKey(gridX, gridY);
+    const itemId = clampString(data.item_id || data.block_type || parts[1]);
+    const gridX = Math.trunc(Number(data.grid_x ?? data.x ?? parts[2]));
+    const gridY = Math.trunc(Number(data.grid_y ?? data.y ?? parts[3]));
+    const commandWorld = getDeveloperCommandWorldName(player, data);
+    const state = ensureWorldState(commandWorld);
+    const key = gridKey(gridX, gridY);
 
     if (!ItemDatabase.hasItem(itemId) || resolveInventoryCategory(itemId) !== "block") {
       deny("That block does not exist on the server.", { item_id: itemId, target_world: commandWorld, grid_x: gridX, grid_y: gridY });
@@ -20397,7 +20509,7 @@ function gridKey(x: any, y: any) {
 }
 
 function ensureWorldState(worldName: any) {
-  const clean: any = cleanWorld(worldName);
+  const clean = cleanWorld(worldName);
   if (!worldStates.has(clean)) {
     worldStates.set(clean, loadWorldState(clean));
   }
@@ -20459,7 +20571,7 @@ function makeEmptyElectricalNetworkCache() {
 
 function getElectricalNetworkCache(state: any) {
   if (!state || typeof state !== "object") return makeEmptyElectricalNetworkCache();
-  const cache: any = state.electrical_networks;
+  const cache = state.electrical_networks;
   if (
     !cache ||
     !(cache.by_tile instanceof Map) ||
@@ -20469,7 +20581,7 @@ function getElectricalNetworkCache(state: any) {
     !(cache.linked_pole_to_generator instanceof Map) ||
     !(cache.linked_pole_to_generators instanceof Map)
   ) {
-    const replacement: any = makeEmptyElectricalNetworkCache();
+    const replacement = makeEmptyElectricalNetworkCache();
     replacement.version = -1;
     state.electrical_networks = replacement;
   }
@@ -20488,7 +20600,7 @@ function markElectricalNetworksDirty(state: any) {
 
 function getFreshElectricalNetworkCache(state: any) {
   if (!state || typeof state !== "object") return makeEmptyElectricalNetworkCache();
-  const cache: any = getElectricalNetworkCache(state);
+  const cache = getElectricalNetworkCache(state);
   if (Math.trunc(Number(cache.version) || 0) !== getElectricalNetworkVersion(state)) {
     return rebuildElectricalNetworksForState(state);
   }
@@ -20496,13 +20608,13 @@ function getFreshElectricalNetworkCache(state: any) {
 }
 
 function cleanElectricalSignalMode(value: any) {
-  const clean: any = clampString(value || "").toLowerCase();
+  const clean = clampString(value || "").toLowerCase();
   return ELECTRICAL_SIGNAL_MODES.has(clean) ? clean : "on_off";
 }
 
 function getElectricalDeviceTypeForItem(itemId: any, rawDeviceType: any = "") {
-  const cleanItem: any = clampString(itemId || "").toLowerCase();
-  const cleanDeviceType: any = clampString(rawDeviceType || "").toLowerCase();
+  const cleanItem = clampString(itemId || "").toLowerCase();
+  const cleanDeviceType = clampString(rawDeviceType || "").toLowerCase();
   if (ELECTRICAL_VALID_DEVICE_TYPES.has(cleanDeviceType)) return cleanDeviceType;
   if (cleanItem === ELECTRICAL_WIRE_ITEM) return ELECTRICAL_DEVICE_WIRE;
   if (cleanItem === ELECTRICAL_METAL_PAD_ITEM) return ELECTRICAL_DEVICE_METAL_PAD;
@@ -20512,7 +20624,7 @@ function getElectricalDeviceTypeForItem(itemId: any, rawDeviceType: any = "") {
 }
 
 function normalizeElectricalLinkedGridKeys(rawValue: any, maxCount: any) {
-  const source: any = Array.isArray(rawValue) ? rawValue : [];
+  const source = Array.isArray(rawValue) ? rawValue : [];
   const linkedKeys: any = [];
   const seen: any = new Set();
 
@@ -20528,7 +20640,7 @@ function normalizeElectricalLinkedGridKeys(rawValue: any, maxCount: any) {
     }
     if (!grid || !Number.isFinite(grid.x) || !Number.isFinite(grid.y)) continue;
     if (!isGridInWorld(grid.x, grid.y)) continue;
-    const key: any = gridKey(grid.x, grid.y);
+    const key = gridKey(grid.x, grid.y);
     if (seen.has(key)) continue;
     seen.add(key);
     linkedKeys.push(key);
@@ -20539,25 +20651,25 @@ function normalizeElectricalLinkedGridKeys(rawValue: any, maxCount: any) {
 }
 
 function normalizeElectricalLinkedPadKeys(rawValue: any) {
-  const source: any = Array.isArray(rawValue)
+  const source = Array.isArray(rawValue)
     ? rawValue
     : (Array.isArray(rawValue?.linked_pad_keys) ? rawValue.linked_pad_keys : []);
   return normalizeElectricalLinkedGridKeys(source, ELECTRICAL_MAX_PADS_PER_GENERATOR);
 }
 
 function normalizeElectricalLinkedPoleKeys(rawValue: any) {
-  const source: any = Array.isArray(rawValue)
+  const source = Array.isArray(rawValue)
     ? rawValue
     : (Array.isArray(rawValue?.linked_pole_keys) ? rawValue.linked_pole_keys : []);
   return normalizeElectricalLinkedGridKeys(source, ELECTRICAL_MAX_POLES_PER_GENERATOR);
 }
 
 function normalizeElectricPoleLinkedPoleKeys(rawValue: any, selfKey: any = "") {
-  const source: any = Array.isArray(rawValue)
+  const source = Array.isArray(rawValue)
     ? rawValue
     : (Array.isArray(rawValue?.linked_pole_keys) ? rawValue.linked_pole_keys : []);
   return normalizeElectricalLinkedGridKeys(source, ELECTRICAL_MAX_POLE_LINKS_PER_POLE)
-    .filter((key) => key !== selfKey);
+    .filter((key: unknown) => key !== selfKey);
 }
 
 function getGeneratorLinkedPadKeys(generatorEntry: any) {
@@ -20572,14 +20684,14 @@ function getGeneratorLinkedPoleKeys(generatorEntry: any) {
 
 function setGeneratorLinkedPadKeys(generatorEntry: any, linkedPadKeys: any) {
   if (!generatorEntry || generatorEntry.device_type !== ELECTRICAL_DEVICE_GENERATOR) return [];
-  const normalized: any = normalizeElectricalLinkedPadKeys(linkedPadKeys);
+  const normalized = normalizeElectricalLinkedPadKeys(linkedPadKeys);
   generatorEntry.linked_pad_keys = normalized;
   return normalized;
 }
 
 function setGeneratorLinkedPoleKeys(generatorEntry: any, linkedPoleKeys: any) {
   if (!generatorEntry || generatorEntry.device_type !== ELECTRICAL_DEVICE_GENERATOR) return [];
-  const normalized: any = normalizeElectricalLinkedPoleKeys(linkedPoleKeys);
+  const normalized = normalizeElectricalLinkedPoleKeys(linkedPoleKeys);
   generatorEntry.linked_pole_keys = normalized;
   return normalized;
 }
@@ -20594,23 +20706,23 @@ function getPoleLinkedPoleKeys(poleEntry: any) {
 
 function setPoleLinkedPoleKeys(poleEntry: any, linkedPoleKeys: any) {
   if (!poleEntry || poleEntry.device_type !== ELECTRICAL_DEVICE_POLE) return [];
-  const normalized: any = normalizeElectricPoleLinkedPoleKeys(linkedPoleKeys, gridKey(poleEntry.x, poleEntry.y));
+  const normalized = normalizeElectricPoleLinkedPoleKeys(linkedPoleKeys, gridKey(poleEntry.x, poleEntry.y));
   poleEntry.linked_pole_keys = normalized;
   return normalized;
 }
 
 function makePoleCouplingKey(poleAKey: any, poleBKey: any) {
-  const a: any = clampString(poleAKey || "");
-  const b: any = clampString(poleBKey || "");
+  const a = clampString(poleAKey || "");
+  const b = clampString(poleBKey || "");
   if (a === "" || b === "") return "";
   return a < b ? `${a}|${b}` : `${b}|${a}`;
 }
 
 function makeGeneratorCircuitRows(linkedPadCount: any) {
-  const safeCount: any = clampInteger(linkedPadCount || 0, 0, ELECTRICAL_MAX_PADS_PER_GENERATOR);
+  const safeCount = clampInteger(linkedPadCount || 0, 0, ELECTRICAL_MAX_PADS_PER_GENERATOR);
   const rows: any = [];
   for (let index: any = 0; index < ELECTRICAL_GENERATOR_CIRCUIT_COUNT; index += 1) {
-    const used: any = clampInteger(safeCount - (index * ELECTRICAL_GENERATOR_CIRCUIT_CAPACITY), 0, ELECTRICAL_GENERATOR_CIRCUIT_CAPACITY);
+    const used = clampInteger(safeCount - (index * ELECTRICAL_GENERATOR_CIRCUIT_CAPACITY), 0, ELECTRICAL_GENERATOR_CIRCUIT_CAPACITY);
     rows.push({
       label: `Circuit ${String.fromCharCode(65 + index)}`,
       used,
@@ -20621,10 +20733,10 @@ function makeGeneratorCircuitRows(linkedPadCount: any) {
 }
 
 function makeGeneratorOutputRows(linkedPoleCount: any) {
-  const safeCount: any = clampInteger(linkedPoleCount || 0, 0, ELECTRICAL_MAX_POLES_PER_GENERATOR);
+  const safeCount = clampInteger(linkedPoleCount || 0, 0, ELECTRICAL_MAX_POLES_PER_GENERATOR);
   const rows: any = [];
   for (let index: any = 0; index < ELECTRICAL_GENERATOR_OUTPUT_COUNT; index += 1) {
-    const used: any = clampInteger(safeCount - (index * ELECTRICAL_GENERATOR_OUTPUT_CAPACITY), 0, ELECTRICAL_GENERATOR_OUTPUT_CAPACITY);
+    const used = clampInteger(safeCount - (index * ELECTRICAL_GENERATOR_OUTPUT_CAPACITY), 0, ELECTRICAL_GENERATOR_OUTPUT_CAPACITY);
     rows.push({
       label: `Output ${String.fromCharCode(65 + index)}`,
       used,
@@ -20635,18 +20747,18 @@ function makeGeneratorOutputRows(linkedPoleCount: any) {
 }
 
 function makeGeneratorLinkSummary(generatorEntry: any) {
-  const linkedPadKeys: any = getGeneratorLinkedPadKeys(generatorEntry);
-  const linkedPadCount: any = linkedPadKeys.length;
-  const linkedPoleKeys: any = getGeneratorLinkedPoleKeys(generatorEntry);
-  const linkedPoleCount: any = linkedPoleKeys.length;
-  const linkedPads: any = linkedPadKeys
-    .map((key) => parseGridKey(key))
-    .filter((grid) => grid && isGridInWorld(grid.x, grid.y))
-    .map((grid) => ({ x: grid.x, y: grid.y }));
-  const linkedPoles: any = linkedPoleKeys
-    .map((key) => parseGridKey(key))
-    .filter((grid) => grid && isGridInWorld(grid.x, grid.y))
-    .map((grid) => ({ x: grid.x, y: grid.y }));
+  const linkedPadKeys = getGeneratorLinkedPadKeys(generatorEntry);
+  const linkedPadCount = linkedPadKeys.length;
+  const linkedPoleKeys = getGeneratorLinkedPoleKeys(generatorEntry);
+  const linkedPoleCount = linkedPoleKeys.length;
+  const linkedPads = linkedPadKeys
+    .map((key: unknown) => parseGridKey(key) as ServerGridPoint | null)
+    .filter((grid: ServerGridPoint | null): grid is ServerGridPoint => Boolean(grid && isGridInWorld(grid.x, grid.y)))
+    .map((grid: ServerGridPoint) => ({ x: grid.x, y: grid.y }));
+  const linkedPoles = linkedPoleKeys
+    .map((key: unknown) => parseGridKey(key) as ServerGridPoint | null)
+    .filter((grid: ServerGridPoint | null): grid is ServerGridPoint => Boolean(grid && isGridInWorld(grid.x, grid.y)))
+    .map((grid: ServerGridPoint) => ({ x: grid.x, y: grid.y }));
   return {
     linked_pad_count: linkedPadCount,
     linked_pad_capacity: ELECTRICAL_MAX_PADS_PER_GENERATOR,
@@ -20660,21 +20772,21 @@ function makeGeneratorLinkSummary(generatorEntry: any) {
 }
 
 function isElectricalLayerItem(itemId: any) {
-  const cleanItem: any = clampString(itemId || "").toLowerCase();
+  const cleanItem = clampString(itemId || "").toLowerCase();
   if (!ELECTRICAL_ITEM_TYPES.has(cleanItem)) return false;
-  const definition: any = ItemDatabase.getItemDefinition(cleanItem);
+  const definition = ItemDatabase.getItemDefinition(cleanItem);
   return Boolean(definition && definition.category === "block" && definition.electrical_layer === true);
 }
 
 function isElectricalDeviceBlockItem(itemId: any) {
-  const cleanItem: any = clampString(itemId || "").toLowerCase();
+  const cleanItem = clampString(itemId || "").toLowerCase();
   if (cleanItem !== ELECTRICAL_METAL_PAD_ITEM && cleanItem !== ELECTRICAL_GENERATOR_ITEM && cleanItem !== ELECTRICAL_POLE_ITEM) return false;
-  const definition: any = ItemDatabase.getItemDefinition(cleanItem);
+  const definition = ItemDatabase.getItemDefinition(cleanItem);
   return Boolean(definition && definition.category === "block");
 }
 
 function getElectricalDeviceBlockLayer(itemId: any) {
-  const cleanItem: any = clampString(itemId || "").toLowerCase();
+  const cleanItem = clampString(itemId || "").toLowerCase();
   if (cleanItem === ELECTRICAL_METAL_PAD_ITEM) return "background";
   if (cleanItem === ELECTRICAL_GENERATOR_ITEM) return "foreground";
   if (cleanItem === ELECTRICAL_POLE_ITEM) return "foreground";
@@ -20682,14 +20794,14 @@ function getElectricalDeviceBlockLayer(itemId: any) {
 }
 
 function isElectricalDeviceBlockOnLayer(itemId: any, layer: any) {
-  const expectedLayer: any = getElectricalDeviceBlockLayer(itemId);
+  const expectedLayer = getElectricalDeviceBlockLayer(itemId);
   return expectedLayer !== "" && expectedLayer === clampString(layer || "").toLowerCase();
 }
 
 function canReplaceElectricalTile(existingEntry: any, nextItemId: any) {
   if (!existingEntry) return true;
-  const existingDeviceType: any = clampString(existingEntry.device_type || "").toLowerCase();
-  const cleanNextItemId: any = clampString(nextItemId || "").toLowerCase();
+  const existingDeviceType = clampString(existingEntry.device_type || "").toLowerCase();
+  const cleanNextItemId = clampString(nextItemId || "").toLowerCase();
   return existingDeviceType === ELECTRICAL_DEVICE_WIRE &&
     (cleanNextItemId === ELECTRICAL_METAL_PAD_ITEM || cleanNextItemId === ELECTRICAL_GENERATOR_ITEM);
 }
@@ -20719,10 +20831,10 @@ function makeElectricalEntryForPlace(update: any) {
 }
 
 function parseGridKey(key: any) {
-  const parts: any = String(key || "").split(",");
+  const parts = String(key || "").split(",");
   if (parts.length !== 2) return null;
-  const x: any = Number(parts[0]);
-  const y: any = Number(parts[1]);
+  const x = Number(parts[0]);
+  const y = Number(parts[1]);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
   return { x: Math.trunc(x), y: Math.trunc(y) };
 }
@@ -20731,10 +20843,10 @@ function ensureElectricalDeviceStateForBlock(state: any, block: any) {
   if (!state || !block) return null;
   if (!(state.electrical_devices instanceof Map)) state.electrical_devices = new Map();
 
-  const itemId: any = clampString(block.block_type || block.item_id || "").toLowerCase();
+  const itemId = clampString(block.block_type || block.item_id || "").toLowerCase();
   if (!isElectricalDeviceBlockItem(itemId)) return null;
 
-  const key: any = gridKey(block.x, block.y);
+  const key = gridKey(block.x, block.y);
   let existing: any = state.electrical_devices.get(key) || null;
   if (!existing || clampString(existing.item_id || existing.block_type || "").toLowerCase() !== itemId) {
     existing = normalizeElectricalDeviceStateEntry({
@@ -20750,9 +20862,9 @@ function ensureElectricalDeviceStateForBlock(state: any, block: any) {
 }
 
 function makeElectricalNetworkEntryForForegroundBlock(state: any, block: any) {
-  const deviceState: any = ensureElectricalDeviceStateForBlock(state, block);
+  const deviceState = ensureElectricalDeviceStateForBlock(state, block);
   if (!deviceState) return null;
-  const itemId: any = clampString(block.block_type || deviceState.item_id || "").toLowerCase();
+  const itemId = clampString(block.block_type || deviceState.item_id || "").toLowerCase();
   const entry: any = {
     ...deviceState,
     x: Math.trunc(Number(block.x) || 0),
@@ -20763,7 +20875,7 @@ function makeElectricalNetworkEntryForForegroundBlock(state: any, block: any) {
     signal_mode: cleanElectricalSignalMode(deviceState.signal_mode || "power_storage"),
   };
   if (entry.device_type === ELECTRICAL_DEVICE_GENERATOR) {
-    const maxWatts: any = clampInteger(deviceState.max_watts || ELECTRICAL_GENERATOR_MAX_WATTS, 1, ELECTRICAL_GENERATOR_MAX_WATTS);
+    const maxWatts = clampInteger(deviceState.max_watts || ELECTRICAL_GENERATOR_MAX_WATTS, 1, ELECTRICAL_GENERATOR_MAX_WATTS);
     entry.max_watts = maxWatts;
     entry.watts = clampInteger(deviceState.watts || 0, 0, maxWatts);
   }
@@ -20785,16 +20897,16 @@ function getElectricalNetworkEntries(state: any) {
   if (state.background instanceof Map) {
     for (const [key, block] of state.background.entries()) {
       if (clampString(block?.block_type || "").toLowerCase() !== ELECTRICAL_METAL_PAD_ITEM) continue;
-      const entry: any = makeElectricalNetworkEntryForForegroundBlock(state, block);
+      const entry = makeElectricalNetworkEntryForForegroundBlock(state, block);
       if (entry) entries.set(key, entry);
     }
   }
 
   if (state.foreground instanceof Map) {
     for (const [key, block] of state.foreground.entries()) {
-      const blockType: any = clampString(block?.block_type || "").toLowerCase();
+      const blockType = clampString(block?.block_type || "").toLowerCase();
       if (blockType !== ELECTRICAL_GENERATOR_ITEM && blockType !== ELECTRICAL_POLE_ITEM) continue;
-      const entry: any = makeElectricalNetworkEntryForForegroundBlock(state, block);
+      const entry = makeElectricalNetworkEntryForForegroundBlock(state, block);
       if (entry) entries.set(key, entry);
     }
   }
@@ -20804,21 +20916,21 @@ function getElectricalNetworkEntries(state: any) {
 
 function getElectricalNetworkEntryAt(state: any, x: any, y: any) {
   if (!state || typeof state !== "object") return null;
-  const key: any = gridKey(x, y);
+  const key = gridKey(x, y);
 
-  const electricalEntry: any = state.electrical instanceof Map ? state.electrical.get(key) : null;
+  const electricalEntry = state.electrical instanceof Map ? state.electrical.get(key) : null;
   if (electricalEntry && electricalEntry.device_type === ELECTRICAL_DEVICE_WIRE) {
     return electricalEntry;
   }
 
-  const backgroundBlock: any = state.background instanceof Map ? state.background.get(key) : null;
+  const backgroundBlock = state.background instanceof Map ? state.background.get(key) : null;
   if (backgroundBlock && clampString(backgroundBlock.block_type || "").toLowerCase() === ELECTRICAL_METAL_PAD_ITEM) {
     return makeElectricalNetworkEntryForForegroundBlock(state, backgroundBlock);
   }
 
-  const foregroundBlock: any = state.foreground instanceof Map ? state.foreground.get(key) : null;
+  const foregroundBlock = state.foreground instanceof Map ? state.foreground.get(key) : null;
   if (foregroundBlock) {
-    const foregroundType: any = clampString(foregroundBlock.block_type || "").toLowerCase();
+    const foregroundType = clampString(foregroundBlock.block_type || "").toLowerCase();
     if (foregroundType === ELECTRICAL_GENERATOR_ITEM || foregroundType === ELECTRICAL_POLE_ITEM) {
       return makeElectricalNetworkEntryForForegroundBlock(state, foregroundBlock);
     }
@@ -20829,8 +20941,8 @@ function getElectricalNetworkEntryAt(state: any, x: any, y: any) {
 
 function getMutableElectricalDeviceStateAt(state: any, x: any, y: any) {
   if (!state || !(state.foreground instanceof Map)) return null;
-  const key: any = gridKey(x, y);
-  const block: any = state.foreground.get(key);
+  const key = gridKey(x, y);
+  const block = state.foreground.get(key);
   if (!block || !isElectricalDeviceBlockItem(block.block_type || "")) return null;
   return ensureElectricalDeviceStateForBlock(state, block);
 }
@@ -20846,12 +20958,12 @@ function buildPoleCouplingAdjacency(state: any) {
 
   for (const entry of state.electrical_devices.values()) {
     if (!entry || entry.device_type !== ELECTRICAL_DEVICE_POLE) continue;
-    const poleKey: any = gridKey(entry.x, entry.y);
-    const linkedPoleKeys: any = setPoleLinkedPoleKeys(entry, entry.linked_pole_keys || []);
+    const poleKey = gridKey(entry.x, entry.y);
+    const linkedPoleKeys = setPoleLinkedPoleKeys(entry, entry.linked_pole_keys || []);
     for (const linkedPoleKey of linkedPoleKeys) {
-      const linkedGrid: any = parseGridKey(linkedPoleKey);
+      const linkedGrid = parseGridKey(linkedPoleKey);
       if (!linkedGrid || !isGridInWorld(linkedGrid.x, linkedGrid.y)) continue;
-      const linkedEntry: any = getElectricPoleDeviceStateAt(state, linkedGrid.x, linkedGrid.y);
+      const linkedEntry = getElectricPoleDeviceStateAt(state, linkedGrid.x, linkedGrid.y);
       if (!linkedEntry || linkedEntry.device_type !== ELECTRICAL_DEVICE_POLE) continue;
       if (!adjacency.has(poleKey)) adjacency.set(poleKey, new Set());
       if (!adjacency.has(linkedPoleKey)) adjacency.set(linkedPoleKey, new Set());
@@ -20864,13 +20976,13 @@ function buildPoleCouplingAdjacency(state: any) {
 }
 
 function rebuildElectricalNetworksForState(state: any) {
-  const cache: any = makeEmptyElectricalNetworkCache();
+  const cache = makeEmptyElectricalNetworkCache();
   if (!state || typeof state !== "object") {
     if (state) state.electrical_networks = cache;
     return cache;
   }
 
-  const electricalEntries: any = getElectricalNetworkEntries(state);
+  const electricalEntries = getElectricalNetworkEntries(state);
   const visited: any = new Set();
   const directions: any = [
     [1, 0],
@@ -20889,26 +21001,26 @@ function rebuildElectricalNetworksForState(state: any) {
     visited.add(startKey);
 
     while (queue.length > 0) {
-      const entry: any = queue.shift();
+      const entry = queue.shift();
       component.push(entry);
 
       for (const [dx, dy] of directions) {
-        const nextKey: any = gridKey(entry.x + dx, entry.y + dy);
+        const nextKey = gridKey(entry.x + dx, entry.y + dy);
         if (visited.has(nextKey)) continue;
-        const nextEntry: any = electricalEntries.get(nextKey);
+        const nextEntry = electricalEntries.get(nextKey);
         if (!nextEntry || !canElectricalTilesConnect(entry, nextEntry)) continue;
         visited.add(nextKey);
         queue.push(nextEntry);
       }
     }
 
-    const networkId: any = `electrical_${networkIndex}`;
+    const networkId = `electrical_${networkIndex}`;
     const wireKeys: any = [];
     const padKeys: any = [];
     const poleKeys: any = [];
     const generatorKeys: any = [];
     for (const entry of component) {
-      const key: any = gridKey(entry.x, entry.y);
+      const key = gridKey(entry.x, entry.y);
       if (entry.device_type === ELECTRICAL_DEVICE_WIRE) wireKeys.push(key);
       else if (entry.device_type === ELECTRICAL_DEVICE_METAL_PAD) padKeys.push(key);
       else if (entry.device_type === ELECTRICAL_DEVICE_POLE) poleKeys.push(key);
@@ -20927,8 +21039,8 @@ function rebuildElectricalNetworksForState(state: any) {
       status = padKeys.length > 0 ? "valid" : "idle";
     }
 
-    const generatorKey: any = generatorKeys.length === 1 ? generatorKeys[0] : "";
-    const generatorEntry: any = generatorKey !== "" ? electricalEntries.get(generatorKey) : null;
+    const generatorKey = generatorKeys.length === 1 ? generatorKeys[0] : "";
+    const generatorEntry = generatorKey !== "" ? electricalEntries.get(generatorKey) : null;
     const network: any = {
       network_id: networkId,
       status,
@@ -20964,27 +21076,27 @@ function rebuildElectricalNetworksForState(state: any) {
   }
 
   if (state.electrical_devices instanceof Map) {
-    const poleCouplings: any = buildPoleCouplingAdjacency(state);
+    const poleCouplings = buildPoleCouplingAdjacency(state);
     for (const entry of state.electrical_devices.values()) {
       if (!entry || entry.device_type !== ELECTRICAL_DEVICE_GENERATOR) continue;
-      const generatorKey: any = gridKey(entry.x, entry.y);
-      const linkedPadKeys: any = setGeneratorLinkedPadKeys(entry, entry.linked_pad_keys || []);
+      const generatorKey = gridKey(entry.x, entry.y);
+      const linkedPadKeys = setGeneratorLinkedPadKeys(entry, entry.linked_pad_keys || []);
       for (const padKey of linkedPadKeys) {
         if (!cache.linked_pad_to_generator.has(padKey)) {
           cache.linked_pad_to_generator.set(padKey, generatorKey);
         }
       }
-      const linkedPoleKeys: any = setGeneratorLinkedPoleKeys(entry, entry.linked_pole_keys || []);
+      const linkedPoleKeys = setGeneratorLinkedPoleKeys(entry, entry.linked_pole_keys || []);
       for (const poleKey of linkedPoleKeys) {
         const queue: any = [poleKey];
         const visitedPoles: any = new Set();
         while (queue.length > 0) {
-          const currentPoleKey: any = queue.shift();
+          const currentPoleKey = queue.shift();
           if (visitedPoles.has(currentPoleKey)) continue;
           visitedPoles.add(currentPoleKey);
-          const currentGrid: any = parseGridKey(currentPoleKey);
+          const currentGrid = parseGridKey(currentPoleKey);
           if (!currentGrid || !isGridInWorld(currentGrid.x, currentGrid.y)) continue;
-          const currentPole: any = getElectricPoleDeviceStateAt(state, currentGrid.x, currentGrid.y);
+          const currentPole = getElectricPoleDeviceStateAt(state, currentGrid.x, currentGrid.y);
           if (!currentPole || currentPole.device_type !== ELECTRICAL_DEVICE_POLE) continue;
           if (!cache.linked_pole_to_generator.has(currentPoleKey)) {
             cache.linked_pole_to_generator.set(currentPoleKey, generatorKey);
@@ -20993,7 +21105,7 @@ function rebuildElectricalNetworksForState(state: any) {
             cache.linked_pole_to_generators.set(currentPoleKey, new Set());
           }
           cache.linked_pole_to_generators.get(currentPoleKey).add(generatorKey);
-          const neighbors: any = poleCouplings.get(currentPoleKey);
+          const neighbors = poleCouplings.get(currentPoleKey);
           if (!neighbors) continue;
           for (const neighborKey of neighbors) {
             if (!visitedPoles.has(neighborKey)) queue.push(neighborKey);
@@ -21067,8 +21179,8 @@ function getElectricalDevicesForSave(state: any) {
 
 function serializeElectricalEntryForClient(state: any, entry: any) {
   if (!entry) return null;
-  const cache: any = getFreshElectricalNetworkCache(state);
-  const network: any = cache.by_tile.get(gridKey(entry.x, entry.y)) || {};
+  const cache = getFreshElectricalNetworkCache(state);
+  const network = cache.by_tile.get(gridKey(entry.x, entry.y)) || {};
   const safe: any = {
     x: entry.x,
     y: entry.y,
@@ -21091,7 +21203,7 @@ function serializeElectricalEntryForClient(state: any, entry: any) {
   }
 
   if (entry.device_type === ELECTRICAL_DEVICE_GENERATOR) {
-    const maxWatts: any = clampInteger(entry.max_watts || ELECTRICAL_GENERATOR_MAX_WATTS, 1, ELECTRICAL_GENERATOR_MAX_WATTS);
+    const maxWatts = clampInteger(entry.max_watts || ELECTRICAL_GENERATOR_MAX_WATTS, 1, ELECTRICAL_GENERATOR_MAX_WATTS);
     safe.watts = clampInteger(entry.watts || 0, 0, maxWatts);
     safe.max_watts = maxWatts;
   }
@@ -21113,17 +21225,17 @@ function getGeneratorLinksForClient(state: any, worldName: any, receiverPlayer: 
   const seen: any = new Set();
   for (const entry of state.electrical_devices.values()) {
     if (!entry || entry.device_type !== ELECTRICAL_DEVICE_GENERATOR) continue;
-    const generatorX: any = Math.trunc(Number(entry.x));
-    const generatorY: any = Math.trunc(Number(entry.y));
+    const generatorX = Math.trunc(Number(entry.x));
+    const generatorY = Math.trunc(Number(entry.y));
     if (!isGridInWorld(generatorX, generatorY)) continue;
 
     for (const padKey of getGeneratorLinkedPadKeys(entry)) {
-      const padGrid: any = parseGridKey(padKey);
+      const padGrid = parseGridKey(padKey);
       if (!padGrid || !isGridInWorld(padGrid.x, padGrid.y)) continue;
-      const padEntry: any = getMetalPadDeviceStateAt(state, padGrid.x, padGrid.y);
+      const padEntry = getMetalPadDeviceStateAt(state, padGrid.x, padGrid.y);
       if (!padEntry || padEntry.device_type !== ELECTRICAL_DEVICE_METAL_PAD) continue;
 
-      const linkKey: any = `${generatorX},${generatorY}|${padGrid.x},${padGrid.y}`;
+      const linkKey = `${generatorX},${generatorY}|${padGrid.x},${padGrid.y}`;
       if (seen.has(linkKey)) continue;
       seen.add(linkKey);
       links.push({
@@ -21137,12 +21249,12 @@ function getGeneratorLinksForClient(state: any, worldName: any, receiverPlayer: 
     }
 
     for (const poleKey of getGeneratorLinkedPoleKeys(entry)) {
-      const poleGrid: any = parseGridKey(poleKey);
+      const poleGrid = parseGridKey(poleKey);
       if (!poleGrid || !isGridInWorld(poleGrid.x, poleGrid.y)) continue;
-      const poleEntry: any = getElectricPoleDeviceStateAt(state, poleGrid.x, poleGrid.y);
+      const poleEntry = getElectricPoleDeviceStateAt(state, poleGrid.x, poleGrid.y);
       if (!poleEntry || poleEntry.device_type !== ELECTRICAL_DEVICE_POLE) continue;
 
-      const linkKey: any = `${generatorX},${generatorY}|${poleGrid.x},${poleGrid.y}|output`;
+      const linkKey = `${generatorX},${generatorY}|${poleGrid.x},${poleGrid.y}|output`;
       if (seen.has(linkKey)) continue;
       seen.add(linkKey);
       links.push({
@@ -21168,17 +21280,17 @@ function getPoleLinksForClient(state: any, worldName: any, receiverPlayer: any =
   const seen: any = new Set();
   for (const entry of state.electrical_devices.values()) {
     if (!entry || entry.device_type !== ELECTRICAL_DEVICE_POLE) continue;
-    const poleAX: any = Math.trunc(Number(entry.x));
-    const poleAY: any = Math.trunc(Number(entry.y));
+    const poleAX = Math.trunc(Number(entry.x));
+    const poleAY = Math.trunc(Number(entry.y));
     if (!isGridInWorld(poleAX, poleAY)) continue;
-    const poleAKey: any = gridKey(poleAX, poleAY);
+    const poleAKey = gridKey(poleAX, poleAY);
 
     for (const poleBKey of getPoleLinkedPoleKeys(entry)) {
-      const poleBGrid: any = parseGridKey(poleBKey);
+      const poleBGrid = parseGridKey(poleBKey);
       if (!poleBGrid || !isGridInWorld(poleBGrid.x, poleBGrid.y)) continue;
-      const poleBEntry: any = getElectricPoleDeviceStateAt(state, poleBGrid.x, poleBGrid.y);
+      const poleBEntry = getElectricPoleDeviceStateAt(state, poleBGrid.x, poleBGrid.y);
       if (!poleBEntry || poleBEntry.device_type !== ELECTRICAL_DEVICE_POLE) continue;
-      const linkKey: any = makePoleCouplingKey(poleAKey, poleBKey);
+      const linkKey = makePoleCouplingKey(poleAKey, poleBKey);
       if (linkKey === "" || seen.has(linkKey)) continue;
       seen.add(linkKey);
       links.push({
@@ -21196,7 +21308,7 @@ function getPoleLinksForClient(state: any, worldName: any, receiverPlayer: any =
 }
 
 function playerHasElectricToolEquipped(player: any) {
-  const slots: any = player && player.equipment_slots && typeof player.equipment_slots === "object"
+  const slots = player && player.equipment_slots && typeof player.equipment_slots === "object"
     ? player.equipment_slots
     : {};
   return clampString(slots.hand || "").toLowerCase() === ELECTRICAL_TOOL_ITEM;
@@ -21205,7 +21317,7 @@ function playerHasElectricToolEquipped(player: any) {
 function canPlayerViewElectricalLayer(player: any, worldName: any) {
   if (isAdmin(player)) return true;
   if (!player || !player.authenticated) return false;
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const lock: any = getEffectiveWorldLockStateInState(state);
   if (!lock.is_locked) return canPlayerBuildInWorld(player, worldName);
   if (lockOwnerMatchesPlayer(lock, player)) return true;
@@ -21217,9 +21329,9 @@ function canPlayerSeeElectricalLayer(player: any, worldName: any) {
 }
 
 function buildElectricalVisibilityPayload(worldName: any, player: any) {
-  const clean: any = cleanWorld(worldName || player?.world || "START");
-  const state: any = ensureWorldState(clean);
-  const visible: any = canPlayerSeeElectricalLayer(player, clean);
+  const clean = cleanWorld(worldName || player?.world || "START");
+  const state = ensureWorldState(clean);
+  const visible = canPlayerSeeElectricalLayer(player, clean);
   return {
     type: "refresh_wire_visibility",
     world: clean,
@@ -21247,9 +21359,9 @@ function getElectricalVisibilityPayloadSignature(payload: any = {}) {
 
 function sendElectricalVisibilityRefresh(socket: any, player: any, worldName: any = "", options: any = {}) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
-  const clean: any = cleanWorld(worldName || player?.world || "START");
-  const payload: any = buildElectricalVisibilityPayload(clean, player);
-  const signature: any = getElectricalVisibilityPayloadSignature(payload);
+  const clean = cleanWorld(worldName || player?.world || "START");
+  const payload = buildElectricalVisibilityPayload(clean, player);
+  const signature = getElectricalVisibilityPayloadSignature(payload);
   if (!player.electrical_visibility_signatures || typeof player.electrical_visibility_signatures !== "object") {
     player.electrical_visibility_signatures = Object.create(null);
   }
@@ -21259,14 +21371,14 @@ function sendElectricalVisibilityRefresh(socket: any, player: any, worldName: an
 }
 
 function refreshElectricalVisibilityForWorld(worldName: any) {
-  const clean: any = cleanWorld(worldName || "START");
+  const clean = cleanWorld(worldName || "START");
   for (const { player: receiver, socket: client } of getWorldPlayerRecords(clean, { includeSocket: true })) {
     sendElectricalVisibilityRefresh(client, receiver, clean);
   }
 }
 
 function sendElectricalPayloadToVisiblePlayers(worldName: any, payload: any) {
-  const clean: any = cleanWorld(worldName || payload?.world || "START");
+  const clean = cleanWorld(worldName || payload?.world || "START");
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
   for (const { player: receiver, socket: client } of getWorldPlayerRecords(clean, { includeSocket: true })) {
     if (!canPlayerSeeElectricalLayer(receiver, clean)) continue;
@@ -21275,7 +21387,7 @@ function sendElectricalPayloadToVisiblePlayers(worldName: any, payload: any) {
 }
 
 function sendGeneratorPowerPayloadToWorld(worldName: any, payload: any) {
-  const clean: any = cleanWorld(worldName || payload?.world || "START");
+  const clean = cleanWorld(worldName || payload?.world || "START");
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
   queueWorldUpdateBroadcast(clean, { ...payload, world: clean });
 }
@@ -21288,36 +21400,36 @@ function getGeneratorActiveLoadSummary(state: any, worldName: any, generatorKey:
   };
   if (!state || !(state.interactions instanceof Map) || generatorKey === "") return summary;
 
-  const clean: any = cleanWorld(worldName || "START");
+  const clean = cleanWorld(worldName || "START");
   for (const entry of state.interactions.values()) {
     if (!entry || typeof entry !== "object" || Array.isArray(entry)) continue;
 
     if (entry.action === "oil_refinery_state") {
-      const oilState: any = sanitizeOilRefineryState(entry, clean, entry.x, entry.y);
-      const source: any = resolveOilRefineryPowerSource(clean, state, oilState);
-      const generatorSources: any = Array.isArray(source.generator_sources) ? source.generator_sources : [];
-      const availableGeneratorSources: any = getAvailableGeneratorSources(generatorSources);
+      const oilState = sanitizeOilRefineryState(entry, clean, entry.x, entry.y);
+      const source = resolveOilRefineryPowerSource(clean, state, oilState);
+      const generatorSources = Array.isArray(source.generator_sources) ? source.generator_sources : [];
+      const availableGeneratorSources = getAvailableGeneratorSources(generatorSources);
       if (!generatorSourcesIncludeKey(availableGeneratorSources, generatorKey)) continue;
-      const sourceCount: any = Math.max(1, availableGeneratorSources.length);
+      const sourceCount = Math.max(1, availableGeneratorSources.length);
 
-		const pending: any = Math.max(0, Number(oilState.pending_consumption_watts) || 0);
+		const pending = Math.max(0, Number(oilState.pending_consumption_watts) || 0);
 		summary.pending_consumption_watts += pending / sourceCount;
-		const availableWatts: any = getTotalGeneratorSourceWatts(availableGeneratorSources);
+		const availableWatts = getTotalGeneratorSourceWatts(availableGeneratorSources);
 		if (oilState.enabled && oilState.output_count < OIL_REFINERY_OUTPUT_CAPACITY && availableWatts > 0) {
 			summary.active_consumption_watts_per_hour += OIL_REFINERY_CONSUMPTION_WATTS_PER_HOUR / sourceCount;
 			summary.active_consumer_count += 1;
 		}
     } else if (entry.action === "battery_charger_state") {
-      const chargerState: any = sanitizeBatteryChargerState(entry, clean, entry.x, entry.y);
-      const source: any = resolveBatteryChargerPowerSource(clean, state, chargerState);
-      const generatorSources: any = Array.isArray(source.generator_sources) ? source.generator_sources : [];
-      const availableGeneratorSources: any = getAvailableGeneratorSources(generatorSources);
+      const chargerState = sanitizeBatteryChargerState(entry, clean, entry.x, entry.y);
+      const source = resolveBatteryChargerPowerSource(clean, state, chargerState);
+      const generatorSources = Array.isArray(source.generator_sources) ? source.generator_sources : [];
+      const availableGeneratorSources = getAvailableGeneratorSources(generatorSources);
       if (!generatorSourcesIncludeKey(availableGeneratorSources, generatorKey)) continue;
-      const sourceCount: any = Math.max(1, availableGeneratorSources.length);
+      const sourceCount = Math.max(1, availableGeneratorSources.length);
 
-      const pending: any = Math.max(0, Number(chargerState.pending_consumption_watts) || 0);
+      const pending = Math.max(0, Number(chargerState.pending_consumption_watts) || 0);
       summary.pending_consumption_watts += pending / sourceCount;
-      const availableWatts: any = getTotalGeneratorSourceWatts(availableGeneratorSources);
+      const availableWatts = getTotalGeneratorSourceWatts(availableGeneratorSources);
       if (chargerState.enabled && chargerState.output_count < BATTERY_CHARGER_OUTPUT_CAPACITY && (availableWatts > 0 || chargerState.running || chargerState.direct_power)) {
         summary.active_consumption_watts_per_hour += BATTERY_CHARGER_CONSUMPTION_WATTS_PER_HOUR / sourceCount;
         summary.active_consumer_count += 1;
@@ -21331,9 +21443,9 @@ function getGeneratorActiveLoadSummary(state: any, worldName: any, generatorKey:
 }
 
 function makeElectricalTilePayload(worldName: any, action: any, entry: any, extra: any = {}) {
-  const clean: any = cleanWorld(worldName || "START");
-  const state: any = ensureWorldState(clean);
-  const serialized: any = entry ? serializeElectricalEntryForClient(state, entry) : null;
+  const clean = cleanWorld(worldName || "START");
+  const state = ensureWorldState(clean);
+  const serialized = entry ? serializeElectricalEntryForClient(state, entry) : null;
   return {
     type: "electrical_layer_update",
     world: clean,
@@ -21349,13 +21461,13 @@ function makeElectricalTilePayload(worldName: any, action: any, entry: any, extr
 
 function makeGeneratorDataPayload(worldName: any, generatorEntry: any, extra: any = {}) {
   if (!generatorEntry || generatorEntry.device_type !== ELECTRICAL_DEVICE_GENERATOR) return null;
-  const clean: any = cleanWorld(worldName || "START");
-  const state: any = ensureWorldState(clean);
-  const network: any = getFreshElectricalNetworkCache(state).by_generator.get(gridKey(generatorEntry.x, generatorEntry.y)) || {};
-  const maxWatts: any = clampInteger(generatorEntry.max_watts || ELECTRICAL_GENERATOR_MAX_WATTS, 1, ELECTRICAL_GENERATOR_MAX_WATTS);
-  const watts: any = clampInteger(generatorEntry.watts || 0, 0, maxWatts);
-  const loadSummary: any = getGeneratorActiveLoadSummary(state, clean, gridKey(generatorEntry.x, generatorEntry.y));
-  const displayWatts: any = Math.max(0, Math.min(maxWatts, watts - loadSummary.pending_consumption_watts));
+  const clean = cleanWorld(worldName || "START");
+  const state = ensureWorldState(clean);
+  const network = getFreshElectricalNetworkCache(state).by_generator.get(gridKey(generatorEntry.x, generatorEntry.y)) || {};
+  const maxWatts = clampInteger(generatorEntry.max_watts || ELECTRICAL_GENERATOR_MAX_WATTS, 1, ELECTRICAL_GENERATOR_MAX_WATTS);
+  const watts = clampInteger(generatorEntry.watts || 0, 0, maxWatts);
+  const loadSummary = getGeneratorActiveLoadSummary(state, clean, gridKey(generatorEntry.x, generatorEntry.y));
+  const displayWatts = Math.max(0, Math.min(maxWatts, watts - loadSummary.pending_consumption_watts));
   return {
     type: "generator_data_update",
     world: clean,
@@ -21389,35 +21501,35 @@ function getGeneratorStatesForClient(state: any, worldName: any) {
 
 function getOilRefineryBlockAt(state: any, x: any, y: any) {
   if (!state || !(state.foreground instanceof Map)) return null;
-  const block: any = state.foreground.get(gridKey(x, y));
+  const block = state.foreground.get(gridKey(x, y));
   if (!block || !isOilRefineryBlockType(block.block_type || "")) return null;
   return block;
 }
 
 function getLinkedPoleKeyFromOilRefineryState(rawState: any = {}) {
-	const rawKey: any = clampString(rawState.linked_pole_key || rawState.pole_key || "", 64);
-	const parsedKeyGrid: any = rawKey !== "" ? parseGridKey(rawKey) : null;
+	const rawKey = clampString(rawState.linked_pole_key || rawState.pole_key || "", 64);
+	const parsedKeyGrid = rawKey !== "" ? parseGridKey(rawKey) : null;
 	if (parsedKeyGrid && isGridInWorld(parsedKeyGrid.x, parsedKeyGrid.y)) {
 		return gridKey(parsedKeyGrid.x, parsedKeyGrid.y);
   }
 
-  const rawX: any = Number(rawState.linked_pole_x ?? rawState.pole_x);
-  const rawY: any = Number(rawState.linked_pole_y ?? rawState.pole_y);
+  const rawX = Number(rawState.linked_pole_x ?? rawState.pole_x);
+  const rawY = Number(rawState.linked_pole_y ?? rawState.pole_y);
   if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) return "";
-  const poleX: any = Math.trunc(rawX);
-  const poleY: any = Math.trunc(rawY);
+  const poleX = Math.trunc(rawX);
+  const poleY = Math.trunc(rawY);
   if (!isGridInWorld(poleX, poleY)) return "";
 	return gridKey(poleX, poleY);
 }
 
 function getOilRefineryBatteryCountFromWatts(watts: any = 0) {
-	const cleanWatts: any = clampInteger(watts || 0, 0, OIL_REFINERY_BATTERY_WATT_CAPACITY);
+	const cleanWatts = clampInteger(watts || 0, 0, OIL_REFINERY_BATTERY_WATT_CAPACITY);
 	if (cleanWatts <= 0) return 0;
 	return Math.max(1, Math.min(OIL_REFINERY_BATTERY_INPUT_CAPACITY, Math.ceil(cleanWatts / OIL_REFINERY_BATTERY_WATTS)));
 }
 
 function getOilRefineryBatteryWattsFromRaw(rawState: any = {}) {
-	const rawWatts: any = Number(
+	const rawWatts = Number(
 		rawState.battery_watts
 		?? rawState.input_battery_watts
 		?? rawState.stored_battery_watts
@@ -21427,7 +21539,7 @@ function getOilRefineryBatteryWattsFromRaw(rawState: any = {}) {
 		return clampInteger(rawWatts, 0, OIL_REFINERY_BATTERY_WATT_CAPACITY);
 	}
 
-	const rawCount: any = Number(
+	const rawCount = Number(
 		rawState.battery_count
 		?? rawState.input_battery_count
 		?? rawState.batteries
@@ -21458,28 +21570,28 @@ function getOilRefineryChangeSignature(oilState: any = {}) {
 
 function getOilRefineryStateAt(state: any, worldName: any, x: any, y: any, create: any = false) {
   if (!state || !(state.interactions instanceof Map)) return null;
-  const key: any = gridKey(x, y);
-  const existing: any = state.interactions.get(key);
+  const key = gridKey(x, y);
+  const existing = state.interactions.get(key);
   if (!existing || existing.action !== "oil_refinery_state") {
     if (!create) return null;
-    const created: any = sanitizeOilRefineryState({ x, y, world: worldName }, worldName, x, y);
+    const created = sanitizeOilRefineryState({ x, y, world: worldName }, worldName, x, y);
     state.interactions.set(key, created);
     return created;
   }
-  const clean: any = sanitizeOilRefineryState(existing, worldName, x, y);
+  const clean = sanitizeOilRefineryState(existing, worldName, x, y);
   state.interactions.set(key, clean);
   return clean;
 }
 
 function setOilRefineryState(state: any, worldName: any, oilState: any) {
   if (!state || !(state.interactions instanceof Map) || !oilState) return null;
-  const clean: any = sanitizeOilRefineryState(oilState, worldName, oilState.x, oilState.y);
+  const clean = sanitizeOilRefineryState(oilState, worldName, oilState.x, oilState.y);
   state.interactions.set(gridKey(clean.x, clean.y), clean);
   return clean;
 }
 
 function resolveOilRefineryPowerSource(worldName: any, state: any, oilState: any) {
-  const clean: any = cleanWorld(worldName || oilState?.world || "START");
+  const clean = cleanWorld(worldName || oilState?.world || "START");
   const result: any = {
     pole_grid: null,
     pole_entry: null,
@@ -21490,18 +21602,18 @@ function resolveOilRefineryPowerSource(worldName: any, state: any, oilState: any
   };
   if (!state || !oilState || oilState.linked_pole_key === "") return result;
 
-  const poleGrid: any = parseGridKey(oilState.linked_pole_key);
+  const poleGrid = parseGridKey(oilState.linked_pole_key);
   if (!poleGrid || !isGridInWorld(poleGrid.x, poleGrid.y)) return result;
   result.pole_grid = poleGrid;
   result.pole_entry = getElectricPoleDeviceStateAt(state, poleGrid.x, poleGrid.y);
   if (!result.pole_entry || result.pole_entry.device_type !== ELECTRICAL_DEVICE_POLE) return result;
 
-  const generatorSources: any = getGeneratorSourcesLinkedToPoleThroughCouplings(state, oilState.linked_pole_key);
+  const generatorSources = getGeneratorSourcesLinkedToPoleThroughCouplings(state, oilState.linked_pole_key);
   if (generatorSources.length <= 0) return result;
-  const primarySource: any = generatorSources[0];
-  const generatorKey: any = primarySource.generator_key;
-  const generatorGrid: any = primarySource.generator_grid;
-  const generatorEntry: any = primarySource.generator_entry;
+  const primarySource = generatorSources[0];
+  const generatorKey = primarySource.generator_key;
+  const generatorGrid = primarySource.generator_grid;
+  const generatorEntry = primarySource.generator_entry;
   if (!generatorEntry || generatorEntry.device_type !== ELECTRICAL_DEVICE_GENERATOR) return result;
 
   result.generator_key = generatorKey;
@@ -21512,22 +21624,22 @@ function resolveOilRefineryPowerSource(worldName: any, state: any, oilState: any
 }
 
 function makeOilRefineryStatePayload(worldName: any, oilState: any, extra: any = {}) {
-  const clean: any = cleanWorld(worldName || oilState?.world || "START");
-  const state: any = ensureWorldState(clean);
-  const safeState: any = sanitizeOilRefineryState(oilState || {}, clean, oilState?.x || 0, oilState?.y || 0);
-  const source: any = resolveOilRefineryPowerSource(clean, state, safeState);
-  const poleGrid: any = source.pole_grid;
-  const generatorGrid: any = source.generator_grid;
-  const generatorEntry: any = source.generator_entry;
-  const generatorSources: any = Array.isArray(source.generator_sources) ? source.generator_sources : [];
-  const maxWatts: any = generatorSources.length > 0
+  const clean = cleanWorld(worldName || oilState?.world || "START");
+  const state = ensureWorldState(clean);
+  const safeState = sanitizeOilRefineryState(oilState || {}, clean, oilState?.x || 0, oilState?.y || 0);
+  const source = resolveOilRefineryPowerSource(clean, state, safeState);
+  const poleGrid = source.pole_grid;
+  const generatorGrid = source.generator_grid;
+  const generatorEntry = source.generator_entry;
+  const generatorSources = Array.isArray(source.generator_sources) ? source.generator_sources : [];
+  const maxWatts = generatorSources.length > 0
     ? getTotalGeneratorSourceMaxWatts(generatorSources)
     : ELECTRICAL_GENERATOR_MAX_WATTS;
-	const transformerWatts: any = getTotalGeneratorSourceWatts(generatorSources);
-	const batteryWatts: any = clampInteger(safeState.battery_watts || 0, 0, OIL_REFINERY_BATTERY_WATT_CAPACITY);
-	const batteryCount: any = getOilRefineryBatteryCountFromWatts(batteryWatts);
-	const transformerOnline: any = Boolean(generatorEntry && transformerWatts > 0);
-	const batteryOnline: any = Boolean((safeState.battery_powered || !transformerOnline) && batteryWatts > 0 && (safeState.running || safeState.direct_power));
+	const transformerWatts = getTotalGeneratorSourceWatts(generatorSources);
+	const batteryWatts = clampInteger(safeState.battery_watts || 0, 0, OIL_REFINERY_BATTERY_WATT_CAPACITY);
+	const batteryCount = getOilRefineryBatteryCountFromWatts(batteryWatts);
+	const transformerOnline = Boolean(generatorEntry && transformerWatts > 0);
+	const batteryOnline = Boolean((safeState.battery_powered || !transformerOnline) && batteryWatts > 0 && (safeState.running || safeState.direct_power));
 	let powerSource: any = "none";
 	if (transformerOnline && batteryOnline) {
 		powerSource = "hybrid";
@@ -21593,11 +21705,11 @@ function getOilRefineryLinksForClient(state: any, worldName: any, receiverPlayer
   const seen: any = new Set();
   for (const entry of state.interactions.values()) {
     if (!entry || entry.action !== "oil_refinery_state") continue;
-    const oilState: any = sanitizeOilRefineryState(entry, worldName, entry.x, entry.y);
+    const oilState = sanitizeOilRefineryState(entry, worldName, entry.x, entry.y);
     if (!getOilRefineryBlockAt(state, oilState.x, oilState.y)) continue;
-    const source: any = resolveOilRefineryPowerSource(worldName, state, oilState);
+    const source = resolveOilRefineryPowerSource(worldName, state, oilState);
     if (!source.pole_grid || !source.pole_entry) continue;
-    const linkKey: any = `${oilState.x},${oilState.y}|${source.pole_grid.x},${source.pole_grid.y}|refinery`;
+    const linkKey = `${oilState.x},${oilState.y}|${source.pole_grid.x},${source.pole_grid.y}|refinery`;
     if (seen.has(linkKey)) continue;
     seen.add(linkKey);
     links.push({
@@ -21617,23 +21729,23 @@ function getOilRefineryLinksForClient(state: any, worldName: any, receiverPlayer
 
 function getBatteryChargerBlockAt(state: any, x: any, y: any) {
   if (!state || !(state.foreground instanceof Map)) return null;
-  const block: any = state.foreground.get(gridKey(x, y));
+  const block = state.foreground.get(gridKey(x, y));
   if (!block || !isBatteryChargerBlockType(block.block_type || "")) return null;
   return block;
 }
 
 function getLinkedPoleKeyFromBatteryChargerState(rawState: any = {}) {
-  const rawKey: any = clampString(rawState.linked_pole_key || rawState.pole_key || "", 64);
-  const parsedKeyGrid: any = rawKey !== "" ? parseGridKey(rawKey) : null;
+  const rawKey = clampString(rawState.linked_pole_key || rawState.pole_key || "", 64);
+  const parsedKeyGrid = rawKey !== "" ? parseGridKey(rawKey) : null;
   if (parsedKeyGrid && isGridInWorld(parsedKeyGrid.x, parsedKeyGrid.y)) {
     return gridKey(parsedKeyGrid.x, parsedKeyGrid.y);
   }
 
-  const rawX: any = Number(rawState.linked_pole_x ?? rawState.pole_x);
-  const rawY: any = Number(rawState.linked_pole_y ?? rawState.pole_y);
+  const rawX = Number(rawState.linked_pole_x ?? rawState.pole_x);
+  const rawY = Number(rawState.linked_pole_y ?? rawState.pole_y);
   if (!Number.isFinite(rawX) || !Number.isFinite(rawY)) return "";
-  const poleX: any = Math.trunc(rawX);
-  const poleY: any = Math.trunc(rawY);
+  const poleX = Math.trunc(rawX);
+  const poleY = Math.trunc(rawY);
   if (!isGridInWorld(poleX, poleY)) return "";
   return gridKey(poleX, poleY);
 }
@@ -21657,28 +21769,28 @@ function getBatteryChargerChangeSignature(chargerState: any = {}) {
 
 function getBatteryChargerStateAt(state: any, worldName: any, x: any, y: any, create: any = false) {
   if (!state || !(state.interactions instanceof Map)) return null;
-  const key: any = gridKey(x, y);
-  const existing: any = state.interactions.get(key);
+  const key = gridKey(x, y);
+  const existing = state.interactions.get(key);
   if (!existing || existing.action !== "battery_charger_state") {
     if (!create) return null;
-    const created: any = sanitizeBatteryChargerState({ x, y, world: worldName }, worldName, x, y);
+    const created = sanitizeBatteryChargerState({ x, y, world: worldName }, worldName, x, y);
     state.interactions.set(key, created);
     return created;
   }
-  const clean: any = sanitizeBatteryChargerState(existing, worldName, x, y);
+  const clean = sanitizeBatteryChargerState(existing, worldName, x, y);
   state.interactions.set(key, clean);
   return clean;
 }
 
 function setBatteryChargerState(state: any, worldName: any, chargerState: any) {
   if (!state || !(state.interactions instanceof Map) || !chargerState) return null;
-  const clean: any = sanitizeBatteryChargerState(chargerState, worldName, chargerState.x, chargerState.y);
+  const clean = sanitizeBatteryChargerState(chargerState, worldName, chargerState.x, chargerState.y);
   state.interactions.set(gridKey(clean.x, clean.y), clean);
   return clean;
 }
 
 function resolveBatteryChargerPowerSource(worldName: any, state: any, chargerState: any) {
-  const clean: any = cleanWorld(worldName || chargerState?.world || "START");
+  const clean = cleanWorld(worldName || chargerState?.world || "START");
   const result: any = {
     pole_grid: null,
     pole_entry: null,
@@ -21689,18 +21801,18 @@ function resolveBatteryChargerPowerSource(worldName: any, state: any, chargerSta
   };
   if (!state || !chargerState || chargerState.linked_pole_key === "") return result;
 
-  const poleGrid: any = parseGridKey(chargerState.linked_pole_key);
+  const poleGrid = parseGridKey(chargerState.linked_pole_key);
   if (!poleGrid || !isGridInWorld(poleGrid.x, poleGrid.y)) return result;
   result.pole_grid = poleGrid;
   result.pole_entry = getElectricPoleDeviceStateAt(state, poleGrid.x, poleGrid.y);
   if (!result.pole_entry || result.pole_entry.device_type !== ELECTRICAL_DEVICE_POLE) return result;
 
-  const generatorSources: any = getGeneratorSourcesLinkedToPoleThroughCouplings(state, chargerState.linked_pole_key);
+  const generatorSources = getGeneratorSourcesLinkedToPoleThroughCouplings(state, chargerState.linked_pole_key);
   if (generatorSources.length <= 0) return result;
-  const primarySource: any = generatorSources[0];
-  const generatorKey: any = primarySource.generator_key;
-  const generatorGrid: any = primarySource.generator_grid;
-  const generatorEntry: any = primarySource.generator_entry;
+  const primarySource = generatorSources[0];
+  const generatorKey = primarySource.generator_key;
+  const generatorGrid = primarySource.generator_grid;
+  const generatorEntry = primarySource.generator_entry;
   if (!generatorEntry || generatorEntry.device_type !== ELECTRICAL_DEVICE_GENERATOR) return result;
 
   result.generator_key = generatorKey;
@@ -21711,18 +21823,18 @@ function resolveBatteryChargerPowerSource(worldName: any, state: any, chargerSta
 }
 
 function makeBatteryChargerStatePayload(worldName: any, chargerState: any, extra: any = {}) {
-  const clean: any = cleanWorld(worldName || chargerState?.world || "START");
-  const state: any = ensureWorldState(clean);
-  const safeState: any = sanitizeBatteryChargerState(chargerState || {}, clean, chargerState?.x || 0, chargerState?.y || 0);
-  const source: any = resolveBatteryChargerPowerSource(clean, state, safeState);
-  const poleGrid: any = source.pole_grid;
-  const generatorGrid: any = source.generator_grid;
-  const generatorEntry: any = source.generator_entry;
-  const generatorSources: any = Array.isArray(source.generator_sources) ? source.generator_sources : [];
-  const maxWatts: any = generatorSources.length > 0
+  const clean = cleanWorld(worldName || chargerState?.world || "START");
+  const state = ensureWorldState(clean);
+  const safeState = sanitizeBatteryChargerState(chargerState || {}, clean, chargerState?.x || 0, chargerState?.y || 0);
+  const source = resolveBatteryChargerPowerSource(clean, state, safeState);
+  const poleGrid = source.pole_grid;
+  const generatorGrid = source.generator_grid;
+  const generatorEntry = source.generator_entry;
+  const generatorSources = Array.isArray(source.generator_sources) ? source.generator_sources : [];
+  const maxWatts = generatorSources.length > 0
     ? getTotalGeneratorSourceMaxWatts(generatorSources)
     : ELECTRICAL_GENERATOR_MAX_WATTS;
-  const transformerWatts: any = getTotalGeneratorSourceWatts(generatorSources);
+  const transformerWatts = getTotalGeneratorSourceWatts(generatorSources);
 
   const payload: any = {
     type: "world_interaction_update",
@@ -21774,11 +21886,11 @@ function getBatteryChargerLinksForClient(state: any, worldName: any, receiverPla
   const seen: any = new Set();
   for (const entry of state.interactions.values()) {
     if (!entry || entry.action !== "battery_charger_state") continue;
-    const chargerState: any = sanitizeBatteryChargerState(entry, worldName, entry.x, entry.y);
+    const chargerState = sanitizeBatteryChargerState(entry, worldName, entry.x, entry.y);
     if (!getBatteryChargerBlockAt(state, chargerState.x, chargerState.y)) continue;
-    const source: any = resolveBatteryChargerPowerSource(worldName, state, chargerState);
+    const source = resolveBatteryChargerPowerSource(worldName, state, chargerState);
     if (!source.pole_grid || !source.pole_entry) continue;
-    const linkKey: any = `${chargerState.x},${chargerState.y}|${source.pole_grid.x},${source.pole_grid.y}|battery_charger`;
+    const linkKey = `${chargerState.x},${chargerState.y}|${source.pole_grid.x},${source.pole_grid.y}|battery_charger`;
     if (seen.has(linkKey)) continue;
     seen.add(linkKey);
     links.push({
@@ -21799,14 +21911,14 @@ function getBatteryChargerLinksForClient(state: any, worldName: any, receiverPla
 }
 
 function tickOilRefineries() {
-  const now: any = Date.now();
+  const now = Date.now();
   for (const [worldName, state] of worldStates.entries()) {
     tickOilRefineriesForWorld(worldName, state, now);
   }
 }
 
 function tickOilRefineriesForWorld(worldName: any, state: any, now: any = Date.now()) {
-  const clean: any = cleanWorld(worldName || "START");
+  const clean = cleanWorld(worldName || "START");
   if (!state || !(state.interactions instanceof Map)) return;
 
   let changed: any = false;
@@ -21815,16 +21927,16 @@ function tickOilRefineriesForWorld(worldName: any, state: any, now: any = Date.n
 
   for (const [key, entry] of Array.from<any>(state.interactions.entries())) {
     if (!entry || entry.action !== "oil_refinery_state") continue;
-    const oilState: any = sanitizeOilRefineryState(entry, clean, entry.x, entry.y);
+    const oilState = sanitizeOilRefineryState(entry, clean, entry.x, entry.y);
     if (!getOilRefineryBlockAt(state, oilState.x, oilState.y)) {
       state.interactions.delete(key);
       changed = true;
       continue;
     }
 
-	const before: any = getOilRefineryChangeSignature(oilState);
+	const before = getOilRefineryChangeSignature(oilState);
 	if (oilState.output_count >= OIL_REFINERY_OUTPUT_CAPACITY) {
-		const wasActive: any = oilState.enabled || oilState.running || oilState.direct_power || oilState.crude_progress > 0 || oilState.pending_consumption_watts > 0 || oilState.shutdown_reason !== "output_full";
+		const wasActive = oilState.enabled || oilState.running || oilState.direct_power || oilState.crude_progress > 0 || oilState.pending_consumption_watts > 0 || oilState.shutdown_reason !== "output_full";
 		oilState.enabled = false;
 		oilState.running = false;
 		oilState.direct_power = false;
@@ -21843,11 +21955,11 @@ function tickOilRefineriesForWorld(worldName: any, state: any, now: any = Date.n
 			oilState.last_tick_ms = now;
 		}
 	} else {
-		const source: any = resolveOilRefineryPowerSource(clean, state, oilState);
-      const generatorSources: any = Array.isArray(source.generator_sources) ? source.generator_sources : [];
-		const availableTransformerWatts: any = getTotalGeneratorSourceWatts(generatorSources);
-		const availableBatteryWatts: any = clampInteger(oilState.battery_watts || 0, 0, OIL_REFINERY_BATTERY_WATT_CAPACITY);
-		const totalAvailableWatts: any = availableTransformerWatts + availableBatteryWatts;
+		const source = resolveOilRefineryPowerSource(clean, state, oilState);
+      const generatorSources = Array.isArray(source.generator_sources) ? source.generator_sources : [];
+		const availableTransformerWatts = getTotalGeneratorSourceWatts(generatorSources);
+		const availableBatteryWatts = clampInteger(oilState.battery_watts || 0, 0, OIL_REFINERY_BATTERY_WATT_CAPACITY);
+		const totalAvailableWatts = availableTransformerWatts + availableBatteryWatts;
 
 		if (totalAvailableWatts <= 0) {
 			oilState.running = false;
@@ -21857,22 +21969,22 @@ function tickOilRefineriesForWorld(worldName: any, state: any, now: any = Date.n
 			oilState.last_tick_ms = now;
 			oilState.pending_consumption_watts = Math.min(oilState.pending_consumption_watts, 0.999999);
 		} else {
-			const elapsedMs: any = Math.max(0, Math.min(now - oilState.last_tick_ms, OIL_REFINERY_MAX_ELAPSED_MS_PER_TICK));
+			const elapsedMs = Math.max(0, Math.min(now - oilState.last_tick_ms, OIL_REFINERY_MAX_ELAPSED_MS_PER_TICK));
 			oilState.last_tick_ms = now;
         oilState.pending_consumption_watts += (elapsedMs / 3600000) * OIL_REFINERY_CONSUMPTION_WATTS_PER_HOUR;
 
-        const wholeWatts: any = Math.floor(oilState.pending_consumption_watts);
+        const wholeWatts = Math.floor(oilState.pending_consumption_watts);
         if (wholeWatts > 0) {
-          const remainingOutputWatts: any = Math.max(
+          const remainingOutputWatts = Math.max(
             0,
             ((OIL_REFINERY_OUTPUT_CAPACITY - oilState.output_count) - oilState.crude_progress) * OIL_REFINERY_CONSUMPTION_WATTS_PER_HOUR
 			);
-			const consumableWatts: any = Math.max(0, Math.ceil(remainingOutputWatts));
-			const consumedWatts: any = Math.max(0, Math.min(wholeWatts, totalAvailableWatts, consumableWatts));
+			const consumableWatts = Math.max(0, Math.ceil(remainingOutputWatts));
+			const consumedWatts = Math.max(0, Math.min(wholeWatts, totalAvailableWatts, consumableWatts));
 			if (consumedWatts > 0) {
-				const transformerConsumedWatts: any = generatorSources.length > 0 ? Math.min(consumedWatts, availableTransformerWatts) : 0;
-				const actualTransformerConsumedWatts: any = consumeSharedGeneratorWatts(generatorSources, transformerConsumedWatts, changedGenerators);
-				const batteryConsumedWatts: any = consumedWatts - actualTransformerConsumedWatts;
+				const transformerConsumedWatts = generatorSources.length > 0 ? Math.min(consumedWatts, availableTransformerWatts) : 0;
+				const actualTransformerConsumedWatts = consumeSharedGeneratorWatts(generatorSources, transformerConsumedWatts, changedGenerators);
+				const batteryConsumedWatts = consumedWatts - actualTransformerConsumedWatts;
 				if (batteryConsumedWatts > 0) {
 					oilState.battery_watts = clampInteger(oilState.battery_watts - batteryConsumedWatts, 0, OIL_REFINERY_BATTERY_WATT_CAPACITY);
 				}
@@ -21917,8 +22029,8 @@ function tickOilRefineriesForWorld(worldName: any, state: any, now: any = Date.n
     }
 
     oilState.produced_count = oilState.output_count;
-    const savedState: any = setOilRefineryState(state, clean, oilState);
-    const after: any = getOilRefineryChangeSignature(savedState);
+    const savedState = setOilRefineryState(state, clean, oilState);
+    const after = getOilRefineryChangeSignature(savedState);
     if (after !== before) {
       changed = true;
       payloads.push(makeOilRefineryStatePayload(clean, savedState));
@@ -21928,10 +22040,10 @@ function tickOilRefineriesForWorld(worldName: any, state: any, now: any = Date.n
   if (!changed && changedGenerators.size === 0) return;
   queueWorldSave(clean);
   for (const generatorKey of changedGenerators) {
-    const generatorGrid: any = parseGridKey(generatorKey);
+    const generatorGrid = parseGridKey(generatorKey);
     if (!generatorGrid) continue;
-    const generatorEntry: any = getGeneratorDeviceStateAt(state, generatorGrid.x, generatorGrid.y);
-    const payload: any = makeGeneratorDataPayload(clean, generatorEntry, { power_consumed: true });
+    const generatorEntry = getGeneratorDeviceStateAt(state, generatorGrid.x, generatorGrid.y);
+    const payload = makeGeneratorDataPayload(clean, generatorEntry, { power_consumed: true });
     if (payload) sendGeneratorPowerPayloadToWorld(clean, payload);
   }
   for (const payload of payloads) {
@@ -21940,14 +22052,14 @@ function tickOilRefineriesForWorld(worldName: any, state: any, now: any = Date.n
 }
 
 function tickBatteryChargers() {
-  const now: any = Date.now();
+  const now = Date.now();
   for (const [worldName, state] of worldStates.entries()) {
     tickBatteryChargersForWorld(worldName, state, now);
   }
 }
 
 function tickBatteryChargersForWorld(worldName: any, state: any, now: any = Date.now()) {
-  const clean: any = cleanWorld(worldName || "START");
+  const clean = cleanWorld(worldName || "START");
   if (!state || !(state.interactions instanceof Map)) return;
 
   let changed: any = false;
@@ -21957,18 +22069,18 @@ function tickBatteryChargersForWorld(worldName: any, state: any, now: any = Date
 
   for (const [key, entry] of Array.from<any>(state.interactions.entries())) {
     if (!entry || entry.action !== "battery_charger_state") continue;
-    const chargerState: any = sanitizeBatteryChargerState(entry, clean, entry.x, entry.y);
+    const chargerState = sanitizeBatteryChargerState(entry, clean, entry.x, entry.y);
     if (!getBatteryChargerBlockAt(state, chargerState.x, chargerState.y)) {
       state.interactions.delete(key);
       changed = true;
       continue;
     }
 
-    const before: any = getBatteryChargerChangeSignature(chargerState);
-    const beforePendingConsumption: any = Math.max(0, Number(chargerState.pending_consumption_watts) || 0);
+    const before = getBatteryChargerChangeSignature(chargerState);
+    const beforePendingConsumption = Math.max(0, Number(chargerState.pending_consumption_watts) || 0);
     let activeGeneratorKeys: any = [];
     if (chargerState.output_count >= BATTERY_CHARGER_OUTPUT_CAPACITY) {
-      const wasActive: any = chargerState.enabled || chargerState.running || chargerState.direct_power || chargerState.battery_progress > 0 || chargerState.pending_consumption_watts > 0 || chargerState.shutdown_reason !== "output_full";
+      const wasActive = chargerState.enabled || chargerState.running || chargerState.direct_power || chargerState.battery_progress > 0 || chargerState.pending_consumption_watts > 0 || chargerState.shutdown_reason !== "output_full";
       chargerState.enabled = false;
       chargerState.running = false;
       chargerState.direct_power = false;
@@ -21986,12 +22098,12 @@ function tickBatteryChargersForWorld(worldName: any, state: any, now: any = Date
         chargerState.last_tick_ms = now;
       }
     } else {
-      const source: any = resolveBatteryChargerPowerSource(clean, state, chargerState);
-      const generatorSources: any = Array.isArray(source.generator_sources) ? source.generator_sources : [];
-      const availableWatts: any = getTotalGeneratorSourceWatts(generatorSources);
+      const source = resolveBatteryChargerPowerSource(clean, state, chargerState);
+      const generatorSources = Array.isArray(source.generator_sources) ? source.generator_sources : [];
+      const availableWatts = getTotalGeneratorSourceWatts(generatorSources);
       activeGeneratorKeys = generatorSources
-        .map((generatorSource) => clampString(generatorSource?.generator_key || ""))
-        .filter((generatorKey) => generatorKey !== "");
+        .map((generatorSource: ServerPacketRecord) => clampString(generatorSource?.generator_key || ""))
+        .filter((generatorKey: string) => generatorKey !== "");
 
       if (generatorSources.length <= 0 || availableWatts <= 0) {
         chargerState.running = false;
@@ -22000,20 +22112,20 @@ function tickBatteryChargersForWorld(worldName: any, state: any, now: any = Date
         chargerState.last_tick_ms = now;
         chargerState.pending_consumption_watts = Math.min(chargerState.pending_consumption_watts, 0.999999);
       } else {
-        const elapsedMs: any = Math.max(0, Math.min(now - chargerState.last_tick_ms, BATTERY_CHARGER_MAX_ELAPSED_MS_PER_TICK));
+        const elapsedMs = Math.max(0, Math.min(now - chargerState.last_tick_ms, BATTERY_CHARGER_MAX_ELAPSED_MS_PER_TICK));
         chargerState.last_tick_ms = now;
         chargerState.pending_consumption_watts += (elapsedMs / 3600000) * BATTERY_CHARGER_CONSUMPTION_WATTS_PER_HOUR;
 
-        const wholeWatts: any = Math.floor(chargerState.pending_consumption_watts);
+        const wholeWatts = Math.floor(chargerState.pending_consumption_watts);
         if (wholeWatts > 0) {
-          const remainingOutputWatts: any = Math.max(
+          const remainingOutputWatts = Math.max(
             0,
             ((BATTERY_CHARGER_OUTPUT_CAPACITY - chargerState.output_count) - chargerState.battery_progress)
               * (BATTERY_CHARGER_CONSUMPTION_WATTS_PER_HOUR / BATTERY_CHARGER_OUTPUT_PER_HOUR)
           );
-          const consumableWatts: any = Math.max(0, Math.ceil(remainingOutputWatts));
-          const consumedWatts: any = Math.max(0, Math.min(wholeWatts, availableWatts, consumableWatts));
-          const actualConsumedWatts: any = consumeSharedGeneratorWatts(generatorSources, consumedWatts, changedGenerators);
+          const consumableWatts = Math.max(0, Math.ceil(remainingOutputWatts));
+          const consumedWatts = Math.max(0, Math.min(wholeWatts, availableWatts, consumableWatts));
+          const actualConsumedWatts = consumeSharedGeneratorWatts(generatorSources, consumedWatts, changedGenerators);
           if (actualConsumedWatts > 0) {
             chargerState.pending_consumption_watts = Math.max(0, Math.min(0.999999, chargerState.pending_consumption_watts - actualConsumedWatts));
             chargerState.battery_progress += actualConsumedWatts * (BATTERY_CHARGER_OUTPUT_PER_HOUR / BATTERY_CHARGER_CONSUMPTION_WATTS_PER_HOUR);
@@ -22053,9 +22165,9 @@ function tickBatteryChargersForWorld(worldName: any, state: any, now: any = Date
 
     chargerState.produced_count = chargerState.output_count;
     chargerState.production_progress = chargerState.battery_progress;
-    const savedState: any = setBatteryChargerState(state, clean, chargerState);
-    const after: any = getBatteryChargerChangeSignature(savedState);
-    const afterPendingConsumption: any = Math.max(0, Number(savedState.pending_consumption_watts) || 0);
+    const savedState = setBatteryChargerState(state, clean, chargerState);
+    const after = getBatteryChargerChangeSignature(savedState);
+    const afterPendingConsumption = Math.max(0, Number(savedState.pending_consumption_watts) || 0);
     if (activeGeneratorKeys.length > 0 && Math.abs(afterPendingConsumption - beforePendingConsumption) > 0.000001) {
       for (const generatorKey of activeGeneratorKeys) {
         displayOnlyGenerators.add(generatorKey);
@@ -22071,10 +22183,10 @@ function tickBatteryChargersForWorld(worldName: any, state: any, now: any = Date
   if (!changed && generatorKeysToBroadcast.size === 0) return;
   if (changed || changedGenerators.size > 0) queueWorldSave(clean);
   for (const generatorKey of generatorKeysToBroadcast) {
-    const generatorGrid: any = parseGridKey(generatorKey);
+    const generatorGrid = parseGridKey(generatorKey);
     if (!generatorGrid) continue;
-    const generatorEntry: any = getGeneratorDeviceStateAt(state, generatorGrid.x, generatorGrid.y);
-    const payload: any = makeGeneratorDataPayload(clean, generatorEntry, { power_consumed: true });
+    const generatorEntry = getGeneratorDeviceStateAt(state, generatorGrid.x, generatorGrid.y);
+    const payload = makeGeneratorDataPayload(clean, generatorEntry, { power_consumed: true });
     if (payload) sendGeneratorPowerPayloadToWorld(clean, payload);
   }
   for (const payload of payloads) {
@@ -22083,14 +22195,14 @@ function tickBatteryChargersForWorld(worldName: any, state: any, now: any = Date
 }
 
 function tickChickens() {
-  const now: any = Date.now();
+  const now = Date.now();
   for (const [worldName, state] of worldStates.entries()) {
     tickChickensForWorld(worldName, state, now);
   }
 }
 
 function tickChickensForWorld(worldName: any, state: any, now: any = Date.now()) {
-  const clean: any = cleanWorld(worldName || "START");
+  const clean = cleanWorld(worldName || "START");
   if (!state || !(state.interactions instanceof Map)) return;
 
   let changed: any = false;
@@ -22098,8 +22210,8 @@ function tickChickensForWorld(worldName: any, state: any, now: any = Date.now())
 
   for (const [key, entry] of Array.from<any>(state.interactions.entries())) {
     if (!entry || entry.action !== "chicken_state") continue;
-    const chicken: any = sanitizeChickenState(entry, clean, entry.x, entry.y);
-    const block: any = state.foreground instanceof Map ? state.foreground.get(key) : null;
+    const chicken = sanitizeChickenState(entry, clean, entry.x, entry.y);
+    const block = state.foreground instanceof Map ? state.foreground.get(key) : null;
     if (!block || !isChickenBlockType(block.block_type)) {
       state.interactions.delete(key);
       changed = true;
@@ -22109,9 +22221,9 @@ function tickChickensForWorld(worldName: any, state: any, now: any = Date.now())
     state.interactions.set(key, chicken);
     if (!isChickenHungerExpired(chicken, now)) continue;
 
-    const blockType: any = clampString(block.block_type || CHICKEN_BLOCK_TYPE);
-    const itemId: any = Math.max(0, Math.trunc(Number(block.item_id) || ItemAtlasDB.getItemIdForKey(blockType) || 0));
-    const boneItemId: any = Math.max(0, Math.trunc(Number(ItemAtlasDB.getItemIdForKey(BONE_BLOCK_TYPE)) || 23));
+    const blockType = clampString(block.block_type || CHICKEN_BLOCK_TYPE);
+    const itemId = Math.max(0, Math.trunc(Number(block.item_id) || ItemAtlasDB.getItemIdForKey(blockType) || 0));
+    const boneItemId = Math.max(0, Math.trunc(Number(ItemAtlasDB.getItemIdForKey(BONE_BLOCK_TYPE)) || 23));
     state.foreground.set(key, {
       x: chicken.x,
       y: chicken.y,
@@ -22147,14 +22259,14 @@ function tickChickensForWorld(worldName: any, state: any, now: any = Date.now())
 }
 
 function tickCows() {
-  const now: any = Date.now();
+  const now = Date.now();
   for (const [worldName, state] of worldStates.entries()) {
     tickCowsForWorld(worldName, state, now);
   }
 }
 
 function tickCowsForWorld(worldName: any, state: any, now: any = Date.now()) {
-  const clean: any = cleanWorld(worldName || "START");
+  const clean = cleanWorld(worldName || "START");
   if (!state || !(state.interactions instanceof Map)) return;
 
   let changed: any = false;
@@ -22162,8 +22274,8 @@ function tickCowsForWorld(worldName: any, state: any, now: any = Date.now()) {
 
   for (const [key, entry] of Array.from<any>(state.interactions.entries())) {
     if (!entry || entry.action !== "cow_state") continue;
-    const cow: any = sanitizeCowState(entry, clean, entry.x, entry.y);
-    const block: any = state.foreground instanceof Map ? state.foreground.get(key) : null;
+    const cow = sanitizeCowState(entry, clean, entry.x, entry.y);
+    const block = state.foreground instanceof Map ? state.foreground.get(key) : null;
     if (!block || !isCowBlockType(block.block_type)) {
       state.interactions.delete(key);
       changed = true;
@@ -22173,9 +22285,9 @@ function tickCowsForWorld(worldName: any, state: any, now: any = Date.now()) {
     state.interactions.set(key, cow);
     if (!isCowHungerExpired(cow, now)) continue;
 
-    const blockType: any = clampString(block.block_type || COW_BLOCK_TYPE);
-    const itemId: any = Math.max(0, Math.trunc(Number(block.item_id) || ItemAtlasDB.getItemIdForKey(blockType) || 0));
-    const boneItemId: any = Math.max(0, Math.trunc(Number(ItemAtlasDB.getItemIdForKey(BONE_BLOCK_TYPE)) || 23));
+    const blockType = clampString(block.block_type || COW_BLOCK_TYPE);
+    const itemId = Math.max(0, Math.trunc(Number(block.item_id) || ItemAtlasDB.getItemIdForKey(blockType) || 0));
+    const boneItemId = Math.max(0, Math.trunc(Number(ItemAtlasDB.getItemIdForKey(BONE_BLOCK_TYPE)) || 23));
     state.foreground.set(key, {
       x: cow.x,
       y: cow.y,
@@ -22211,14 +22323,14 @@ function tickCowsForWorld(worldName: any, state: any, now: any = Date.now()) {
 }
 
 function tickDucks() {
-  const now: any = Date.now();
+  const now = Date.now();
   for (const [worldName, state] of worldStates.entries()) {
     tickDucksForWorld(worldName, state, now);
   }
 }
 
 function tickDucksForWorld(worldName: any, state: any, now: any = Date.now()) {
-  const clean: any = cleanWorld(worldName || "START");
+  const clean = cleanWorld(worldName || "START");
   if (!state || !(state.interactions instanceof Map)) return;
 
   let changed: any = false;
@@ -22226,8 +22338,8 @@ function tickDucksForWorld(worldName: any, state: any, now: any = Date.now()) {
 
   for (const [key, entry] of Array.from<any>(state.interactions.entries())) {
     if (!entry || entry.action !== "duck_state") continue;
-    const duck: any = sanitizeDuckState(entry, clean, entry.x, entry.y);
-    const block: any = state.foreground instanceof Map ? state.foreground.get(key) : null;
+    const duck = sanitizeDuckState(entry, clean, entry.x, entry.y);
+    const block = state.foreground instanceof Map ? state.foreground.get(key) : null;
     if (!block || !isDuckBlockType(block.block_type)) {
       state.interactions.delete(key);
       changed = true;
@@ -22237,9 +22349,9 @@ function tickDucksForWorld(worldName: any, state: any, now: any = Date.now()) {
     state.interactions.set(key, duck);
     if (!isDuckHungerExpired(duck, now)) continue;
 
-    const blockType: any = clampString(block.block_type || DUCK_BLOCK_TYPE);
-    const itemId: any = Math.max(0, Math.trunc(Number(block.item_id) || ItemAtlasDB.getItemIdForKey(blockType) || 0));
-    const boneItemId: any = Math.max(0, Math.trunc(Number(ItemAtlasDB.getItemIdForKey(BONE_BLOCK_TYPE)) || 23));
+    const blockType = clampString(block.block_type || DUCK_BLOCK_TYPE);
+    const itemId = Math.max(0, Math.trunc(Number(block.item_id) || ItemAtlasDB.getItemIdForKey(blockType) || 0));
+    const boneItemId = Math.max(0, Math.trunc(Number(ItemAtlasDB.getItemIdForKey(BONE_BLOCK_TYPE)) || 23));
     state.foreground.set(key, {
       x: duck.x,
       y: duck.y,
@@ -22277,15 +22389,15 @@ function tickDucksForWorld(worldName: any, state: any, now: any = Date.now()) {
 async function handleOilRefineryRequest(socket: any, player: any, data: any = {}) {
   if (!requireAuthenticated(socket, player, "use oil refineries")) return;
 
-  const worldName: any = cleanWorld(data.world || player.world || "START");
+  const worldName = cleanWorld(data.world || player.world || "START");
   if (!requireSameWorld(socket, player, worldName, "use that oil refinery")) return;
   if (await rejectIfWorldBanned(socket, player, worldName, "oil_refinery_request")) return;
 
-  const x: any = Number(data.x);
-  const y: any = Number(data.y);
+  const x = Number(data.x);
+  const y = Number(data.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-  const gridX: any = Math.trunc(x);
-  const gridY: any = Math.trunc(y);
+  const gridX = Math.trunc(x);
+  const gridY = Math.trunc(y);
   if (!isGridInWorld(gridX, gridY)) return;
 
 	let operation: any = clampString(
@@ -22316,8 +22428,8 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
     return;
   }
 
-  const state: any = ensureWorldState(worldName);
-  const block: any = getOilRefineryBlockAt(state, gridX, gridY);
+  const state = ensureWorldState(worldName);
+  const block = getOilRefineryBlockAt(state, gridX, gridY);
   if (!block) {
     sendActionRejected(socket, "oil_refinery_request", "Oil refinery missing.", {
       reason: "oil_refinery_missing",
@@ -22332,21 +22444,21 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
     return;
   }
 
-  const previousWorldState: any = serializeWorldState(worldName);
-  const existingState: any = getOilRefineryStateAt(state, worldName, gridX, gridY, operation !== "open");
-  const oilState: any = existingState || sanitizeOilRefineryState({ x: gridX, y: gridY, world: worldName }, worldName, gridX, gridY);
+  const previousWorldState = serializeWorldState(worldName);
+  const existingState = getOilRefineryStateAt(state, worldName, gridX, gridY, operation !== "open");
+  const oilState = existingState || sanitizeOilRefineryState({ x: gridX, y: gridY, world: worldName }, worldName, gridX, gridY);
 
   if (operation === "open") {
     sendJson(socket, makeOilRefineryStatePayload(worldName, oilState, { opened: true }));
     return;
   }
 
-  const beforeState: any = cloneJson(oilState || {});
-  const requestId: any = makeRequestId(data);
-  const crudeOilItemId: any = "crude_oil";
-  const crudeOilCategory: any = "material";
-  const batteryItemId: any = OIL_REFINERY_BATTERY_ITEM_ID;
-  const batteryCategory: any = OIL_REFINERY_BATTERY_ITEM_CATEGORY;
+  const beforeState = cloneJson(oilState || {});
+  const requestId = makeRequestId(data);
+  const crudeOilItemId = "crude_oil";
+  const crudeOilCategory = "material";
+  const batteryItemId = OIL_REFINERY_BATTERY_ITEM_ID;
+  const batteryCategory = OIL_REFINERY_BATTERY_ITEM_CATEGORY;
   let collectedCount: any = 0;
   let addedBatteryCount: any = 0;
   let beforePlayerState: any = null;
@@ -22365,11 +22477,11 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
       return;
     }
 
-    const poleX: any = Number(data.pole_x);
-    const poleY: any = Number(data.pole_y);
+    const poleX = Number(data.pole_x);
+    const poleY = Number(data.pole_y);
     if (!Number.isFinite(poleX) || !Number.isFinite(poleY)) return;
-    const gridPoleX: any = Math.trunc(poleX);
-    const gridPoleY: any = Math.trunc(poleY);
+    const gridPoleX = Math.trunc(poleX);
+    const gridPoleY = Math.trunc(poleY);
     if (!isGridInWorld(gridPoleX, gridPoleY)) return;
 
     if (!isPlayerNearGrid(player, gridPoleX, gridPoleY, MAX_GRID_ACTION_DISTANCE_PIXELS, { action: "oil_refinery_request", world: worldName })) {
@@ -22387,7 +22499,7 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
       return;
     }
 
-    const poleEntry: any = getElectricPoleDeviceStateAt(state, gridPoleX, gridPoleY);
+    const poleEntry = getElectricPoleDeviceStateAt(state, gridPoleX, gridPoleY);
     if (!poleEntry || poleEntry.device_type !== ELECTRICAL_DEVICE_POLE) {
       sendActionRejected(socket, "oil_refinery_request", "Tap an electric pole to link.", {
         reason: "electric_pole_missing",
@@ -22395,7 +22507,7 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
       return;
     }
 
-    const poleKey: any = gridKey(gridPoleX, gridPoleY);
+    const poleKey = gridKey(gridPoleX, gridPoleY);
     oilState.linked_pole_key = poleKey;
     oilState.direct_power = false;
     oilState.running = false;
@@ -22403,7 +22515,7 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
     oilState.shutdown_reason = "";
     oilState.last_tick_ms = Date.now();
   } else if (operation === "toggle") {
-    const enabled: any = Boolean(data.enabled);
+    const enabled = Boolean(data.enabled);
     if (enabled && oilState.output_count >= OIL_REFINERY_OUTPUT_CAPACITY) {
       sendActionRejected(socket, "oil_refinery_request", "Collect crude oil before turning the refinery on.", {
         reason: "output_full",
@@ -22420,20 +22532,20 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
       oilState.battery_powered = false;
       oilState.pending_consumption_watts = 0;
     } else {
-      const source: any = resolveOilRefineryPowerSource(worldName, state, oilState);
-      const generatorSources: any = Array.isArray(source.generator_sources) ? source.generator_sources : [];
-      const availableWatts: any = getTotalGeneratorSourceWatts(generatorSources);
-      const availableBatteryWatts: any = clampInteger(oilState.battery_watts || 0, 0, OIL_REFINERY_BATTERY_WATT_CAPACITY);
-      const hasPower: any = availableWatts > 0 || availableBatteryWatts > 0;
+      const source = resolveOilRefineryPowerSource(worldName, state, oilState);
+      const generatorSources = Array.isArray(source.generator_sources) ? source.generator_sources : [];
+      const availableWatts = getTotalGeneratorSourceWatts(generatorSources);
+      const availableBatteryWatts = clampInteger(oilState.battery_watts || 0, 0, OIL_REFINERY_BATTERY_WATT_CAPACITY);
+      const hasPower = availableWatts > 0 || availableBatteryWatts > 0;
       oilState.running = hasPower;
       oilState.direct_power = hasPower;
       oilState.battery_powered = availableWatts <= 0 && availableBatteryWatts > 0;
       oilState.shutdown_reason = hasPower ? "" : (source.pole_entry ? "no_transformer_or_battery_power" : "no_power_source");
     }
   } else if (operation === "add_battery") {
-    const batteryWatts: any = clampInteger(oilState.battery_watts || 0, 0, OIL_REFINERY_BATTERY_WATT_CAPACITY);
-    const batteryCount: any = getOilRefineryBatteryCountFromWatts(batteryWatts);
-    const availableSlots: any = Math.max(0, OIL_REFINERY_BATTERY_INPUT_CAPACITY - batteryCount);
+    const batteryWatts = clampInteger(oilState.battery_watts || 0, 0, OIL_REFINERY_BATTERY_WATT_CAPACITY);
+    const batteryCount = getOilRefineryBatteryCountFromWatts(batteryWatts);
+    const availableSlots = Math.max(0, OIL_REFINERY_BATTERY_INPUT_CAPACITY - batteryCount);
     if (availableSlots <= 0) {
       sendActionRejected(socket, "oil_refinery_request", "Oil refinery battery input is full.", {
         reason: "battery_input_full",
@@ -22442,14 +22554,14 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
       return;
     }
 
-    const playerState: any = ensureWritablePlayerState(player.account_username);
+    const playerState = ensureWritablePlayerState(player.account_username);
     if (!playerState) {
       sendActionRejected(socket, "oil_refinery_request", "Could not load your server inventory.", {
         reason: "player_inventory_missing",
       });
       return;
     }
-    const ownedBatteries: any = getInventoryCount(playerState, batteryItemId, batteryCategory);
+    const ownedBatteries = getInventoryCount(playerState, batteryItemId, batteryCategory);
     if (ownedBatteries <= 0) {
       sendActionRejected(socket, "oil_refinery_request", "You do not have any batteries.", {
         reason: "battery_missing",
@@ -22459,7 +22571,7 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
       return;
     }
 
-    const requestedAmount: any = clampInteger(data.amount || availableSlots, 1, OIL_REFINERY_BATTERY_INPUT_CAPACITY);
+    const requestedAmount = clampInteger(data.amount || availableSlots, 1, OIL_REFINERY_BATTERY_INPUT_CAPACITY);
     addedBatteryCount = Math.max(0, Math.min(requestedAmount, ownedBatteries, availableSlots));
     if (addedBatteryCount <= 0) {
       sendActionRejected(socket, "oil_refinery_request", "No batteries could be added.", {
@@ -22492,10 +22604,10 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
     oilState.auto_shutdown = false;
     oilState.last_tick_ms = Date.now();
     if (oilState.enabled && oilState.output_count < OIL_REFINERY_OUTPUT_CAPACITY) {
-      const source: any = resolveOilRefineryPowerSource(worldName, state, oilState);
-      const generatorSources: any = Array.isArray(source.generator_sources) ? source.generator_sources : [];
-      const availableWatts: any = getTotalGeneratorSourceWatts(generatorSources);
-      const hasPower: any = availableWatts > 0 || oilState.battery_watts > 0;
+      const source = resolveOilRefineryPowerSource(worldName, state, oilState);
+      const generatorSources = Array.isArray(source.generator_sources) ? source.generator_sources : [];
+      const availableWatts = getTotalGeneratorSourceWatts(generatorSources);
+      const hasPower = availableWatts > 0 || oilState.battery_watts > 0;
       oilState.running = hasPower;
       oilState.direct_power = hasPower;
       oilState.battery_powered = availableWatts <= 0 && oilState.battery_watts > 0;
@@ -22509,7 +22621,7 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
       return;
     }
     collectedCount = clampInteger(oilState.output_count || oilState.produced_count || 0, 0, OIL_REFINERY_OUTPUT_CAPACITY);
-    const playerState: any = ensureWritablePlayerState(player.account_username);
+    const playerState = ensureWritablePlayerState(player.account_username);
     if (!playerState) {
       sendActionRejected(socket, "oil_refinery_request", "Could not load your server inventory.", {
         reason: "player_inventory_missing",
@@ -22542,16 +22654,16 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
     oilState.last_tick_ms = Date.now();
   }
 
-  const savedState: any = setOilRefineryState(state, worldName, oilState);
-  const afterState: any = cloneJson(savedState || {});
-  const payload: any = makeOilRefineryStatePayload(worldName, savedState, {
+  const savedState = setOilRefineryState(state, worldName, oilState);
+  const afterState = cloneJson(savedState || {});
+  const payload = makeOilRefineryStatePayload(worldName, savedState, {
     operation,
     opened: operation === "open",
     collected_count: operation === "collect" ? collectedCount : 0,
     added_battery_count: operation === "add_battery" ? addedBatteryCount : 0,
   });
-  const transactionId: any = makeAuditId("oil_refinery");
-  const changeEntry: any = buildWorldObjectChangeEntry(
+  const transactionId = makeAuditId("oil_refinery");
+  const changeEntry = buildWorldObjectChangeEntry(
     socket,
     player,
     worldName,
@@ -22576,8 +22688,8 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
   );
 
   if (operation === "collect") {
-    const serializedWorld: any = serializeWorldState(worldName);
-    const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforePlayerState, stagedPlayerState, {
+    const serializedWorld = serializeWorldState(worldName);
+    const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforePlayerState, stagedPlayerState, {
       source: "oil_refinery",
       action: "oil_refinery_collect",
       reason: "oil_refinery_output",
@@ -22601,8 +22713,8 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
       return;
     }
 
-    const committedState: any = commit.state;
-    const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
+    const committedState = commit.state;
+    const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
     persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
     sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload);
     logWorldChange(socket, player, changeEntry, { skipPostgres: commit.postgres_committed });
@@ -22624,8 +22736,8 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
   }
 
   if (operation === "add_battery") {
-    const serializedWorld: any = serializeWorldState(worldName);
-    const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforePlayerState, stagedPlayerState, {
+    const serializedWorld = serializeWorldState(worldName);
+    const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforePlayerState, stagedPlayerState, {
       source: "oil_refinery",
       action: "oil_refinery_add_battery",
       reason: "oil_refinery_battery_input",
@@ -22650,8 +22762,8 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
       return;
     }
 
-    const committedState: any = commit.state;
-    const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
+    const committedState = commit.state;
+    const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
     persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
     sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload);
     logWorldChange(socket, player, changeEntry, { skipPostgres: commit.postgres_committed });
@@ -22673,7 +22785,7 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
     return;
   }
 
-  const commit: any = await commitWorldStateWithBlockChanges(worldName, [changeEntry], {
+  const commit = await commitWorldStateWithBlockChanges(worldName, [changeEntry], {
     player,
   });
   if (!commit.ok) {
@@ -22694,18 +22806,18 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
 async function handleBatteryChargerRequest(socket: any, player: any, data: any = {}) {
   if (!requireAuthenticated(socket, player, "use battery chargers")) return;
 
-  const worldName: any = cleanWorld(data.world || player.world || "START");
+  const worldName = cleanWorld(data.world || player.world || "START");
   if (!requireSameWorld(socket, player, worldName, "use that battery charger")) return;
   if (await rejectIfWorldBanned(socket, player, worldName, "battery_charger_request")) return;
 
-  const x: any = Number(data.x);
-  const y: any = Number(data.y);
+  const x = Number(data.x);
+  const y = Number(data.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return;
-  const gridX: any = Math.trunc(x);
-  const gridY: any = Math.trunc(y);
+  const gridX = Math.trunc(x);
+  const gridY = Math.trunc(y);
   if (!isGridInWorld(gridX, gridY)) return;
 
-  const operation: any = clampString(data.operation || "").toLowerCase();
+  const operation = clampString(data.operation || "").toLowerCase();
   if (!["open", "toggle", "link_pole", "collect"].includes(operation)) {
     sendActionRejected(socket, "battery_charger_request", "Unknown battery charger action.", {
       reason: "unknown_operation",
@@ -22722,8 +22834,8 @@ async function handleBatteryChargerRequest(socket: any, player: any, data: any =
     return;
   }
 
-  const state: any = ensureWorldState(worldName);
-  const block: any = getBatteryChargerBlockAt(state, gridX, gridY);
+  const state = ensureWorldState(worldName);
+  const block = getBatteryChargerBlockAt(state, gridX, gridY);
   if (!block) {
     sendActionRejected(socket, "battery_charger_request", "Battery charger missing.", {
       reason: "battery_charger_missing",
@@ -22738,19 +22850,19 @@ async function handleBatteryChargerRequest(socket: any, player: any, data: any =
     return;
   }
 
-  const previousWorldState: any = serializeWorldState(worldName);
-  const existingState: any = getBatteryChargerStateAt(state, worldName, gridX, gridY, operation !== "open");
-  const chargerState: any = existingState || sanitizeBatteryChargerState({ x: gridX, y: gridY, world: worldName }, worldName, gridX, gridY);
+  const previousWorldState = serializeWorldState(worldName);
+  const existingState = getBatteryChargerStateAt(state, worldName, gridX, gridY, operation !== "open");
+  const chargerState = existingState || sanitizeBatteryChargerState({ x: gridX, y: gridY, world: worldName }, worldName, gridX, gridY);
 
   if (operation === "open") {
     sendJson(socket, makeBatteryChargerStatePayload(worldName, chargerState, { opened: true }));
     return;
   }
 
-  const beforeState: any = cloneJson(chargerState || {});
-  const requestId: any = makeRequestId(data);
-  const batteryItemId: any = BATTERY_CHARGER_OUTPUT_ITEM_ID;
-  const batteryCategory: any = BATTERY_CHARGER_OUTPUT_CATEGORY;
+  const beforeState = cloneJson(chargerState || {});
+  const requestId = makeRequestId(data);
+  const batteryItemId = BATTERY_CHARGER_OUTPUT_ITEM_ID;
+  const batteryCategory = BATTERY_CHARGER_OUTPUT_CATEGORY;
   let collectedCount: any = 0;
   let beforePlayerState: any = null;
   let stagedPlayerState: any = null;
@@ -22768,11 +22880,11 @@ async function handleBatteryChargerRequest(socket: any, player: any, data: any =
       return;
     }
 
-    const poleX: any = Number(data.pole_x);
-    const poleY: any = Number(data.pole_y);
+    const poleX = Number(data.pole_x);
+    const poleY = Number(data.pole_y);
     if (!Number.isFinite(poleX) || !Number.isFinite(poleY)) return;
-    const gridPoleX: any = Math.trunc(poleX);
-    const gridPoleY: any = Math.trunc(poleY);
+    const gridPoleX = Math.trunc(poleX);
+    const gridPoleY = Math.trunc(poleY);
     if (!isGridInWorld(gridPoleX, gridPoleY)) return;
 
     if (!isPlayerNearGrid(player, gridPoleX, gridPoleY, MAX_GRID_ACTION_DISTANCE_PIXELS, { action: "battery_charger_request", world: worldName })) {
@@ -22790,7 +22902,7 @@ async function handleBatteryChargerRequest(socket: any, player: any, data: any =
       return;
     }
 
-    const poleEntry: any = getElectricPoleDeviceStateAt(state, gridPoleX, gridPoleY);
+    const poleEntry = getElectricPoleDeviceStateAt(state, gridPoleX, gridPoleY);
     if (!poleEntry || poleEntry.device_type !== ELECTRICAL_DEVICE_POLE) {
       sendActionRejected(socket, "battery_charger_request", "Tap an electric pole to link.", {
         reason: "electric_pole_missing",
@@ -22798,14 +22910,14 @@ async function handleBatteryChargerRequest(socket: any, player: any, data: any =
       return;
     }
 
-    const poleKey: any = gridKey(gridPoleX, gridPoleY);
+    const poleKey = gridKey(gridPoleX, gridPoleY);
     chargerState.linked_pole_key = poleKey;
     chargerState.direct_power = false;
     chargerState.running = false;
     chargerState.shutdown_reason = "";
     chargerState.last_tick_ms = Date.now();
   } else if (operation === "toggle") {
-    const enabled: any = Boolean(data.enabled ?? data.running);
+    const enabled = Boolean(data.enabled ?? data.running);
     if (enabled && chargerState.output_count >= BATTERY_CHARGER_OUTPUT_CAPACITY) {
       sendActionRejected(socket, "battery_charger_request", "Collect batteries before turning the charger on.", {
         reason: "output_full",
@@ -22821,9 +22933,9 @@ async function handleBatteryChargerRequest(socket: any, player: any, data: any =
       chargerState.direct_power = false;
       chargerState.pending_consumption_watts = 0;
     } else {
-      const source: any = resolveBatteryChargerPowerSource(worldName, state, chargerState);
-      const generatorSources: any = Array.isArray(source.generator_sources) ? source.generator_sources : [];
-      const availableWatts: any = getTotalGeneratorSourceWatts(generatorSources);
+      const source = resolveBatteryChargerPowerSource(worldName, state, chargerState);
+      const generatorSources = Array.isArray(source.generator_sources) ? source.generator_sources : [];
+      const availableWatts = getTotalGeneratorSourceWatts(generatorSources);
       chargerState.running = availableWatts > 0;
       chargerState.direct_power = availableWatts > 0;
       chargerState.shutdown_reason = availableWatts > 0 ? "" : (source.pole_entry ? "no_transformer_power" : "no_linked_power_source");
@@ -22836,7 +22948,7 @@ async function handleBatteryChargerRequest(socket: any, player: any, data: any =
       return;
     }
     collectedCount = clampInteger(chargerState.output_count || chargerState.produced_count || 0, 0, BATTERY_CHARGER_OUTPUT_CAPACITY);
-    const playerState: any = ensureWritablePlayerState(player.account_username);
+    const playerState = ensureWritablePlayerState(player.account_username);
     if (!playerState) {
       sendActionRejected(socket, "battery_charger_request", "Could not load your server inventory.", {
         reason: "player_inventory_missing",
@@ -22869,15 +22981,15 @@ async function handleBatteryChargerRequest(socket: any, player: any, data: any =
     chargerState.last_tick_ms = Date.now();
   }
 
-  const savedState: any = setBatteryChargerState(state, worldName, chargerState);
-  const afterState: any = cloneJson(savedState || {});
-  const payload: any = makeBatteryChargerStatePayload(worldName, savedState, {
+  const savedState = setBatteryChargerState(state, worldName, chargerState);
+  const afterState = cloneJson(savedState || {});
+  const payload = makeBatteryChargerStatePayload(worldName, savedState, {
     operation,
     opened: operation === "open",
     collected_count: operation === "collect" ? collectedCount : 0,
   });
-  const transactionId: any = makeAuditId("battery_charger");
-  const changeEntry: any = buildWorldObjectChangeEntry(
+  const transactionId = makeAuditId("battery_charger");
+  const changeEntry = buildWorldObjectChangeEntry(
     socket,
     player,
     worldName,
@@ -22900,8 +23012,8 @@ async function handleBatteryChargerRequest(socket: any, player: any, data: any =
   );
 
   if (operation === "collect") {
-    const serializedWorld: any = serializeWorldState(worldName);
-    const commit: any = await commitPlayerInventoryState(socket, player, player.account_username, beforePlayerState, stagedPlayerState, {
+    const serializedWorld = serializeWorldState(worldName);
+    const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforePlayerState, stagedPlayerState, {
       source: "battery_charger",
       action: "battery_charger_collect",
       reason: "battery_charger_output",
@@ -22925,8 +23037,8 @@ async function handleBatteryChargerRequest(socket: any, player: any, data: any =
       return;
     }
 
-    const committedState: any = commit.state;
-    const inventoryDeltas: any = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
+    const committedState = commit.state;
+    const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
     persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
     sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload);
     logWorldChange(socket, player, changeEntry, { skipPostgres: commit.postgres_committed });
@@ -22947,7 +23059,7 @@ async function handleBatteryChargerRequest(socket: any, player: any, data: any =
     return;
   }
 
-  const commit: any = await commitWorldStateWithBlockChanges(worldName, [changeEntry], {
+  const commit = await commitWorldStateWithBlockChanges(worldName, [changeEntry], {
     player,
   });
   if (!commit.ok) {
@@ -22967,21 +23079,21 @@ async function handleBatteryChargerRequest(socket: any, player: any, data: any =
 
 function getGeneratorDeviceStateAt(state: any, x: any, y: any) {
   if (!state || !(state.foreground instanceof Map)) return null;
-  const block: any = state.foreground.get(gridKey(x, y));
+  const block = state.foreground.get(gridKey(x, y));
   if (!block || clampString(block.block_type || "").toLowerCase() !== ELECTRICAL_GENERATOR_ITEM) return null;
   return ensureElectricalDeviceStateForBlock(state, block);
 }
 
 function getMetalPadDeviceStateAt(state: any, x: any, y: any) {
   if (!state || !(state.background instanceof Map)) return null;
-  const block: any = state.background.get(gridKey(x, y));
+  const block = state.background.get(gridKey(x, y));
   if (!block || clampString(block.block_type || "").toLowerCase() !== ELECTRICAL_METAL_PAD_ITEM) return null;
   return ensureElectricalDeviceStateForBlock(state, block);
 }
 
 function getElectricPoleDeviceStateAt(state: any, x: any, y: any) {
   if (!state || !(state.foreground instanceof Map)) return null;
-  const block: any = state.foreground.get(gridKey(x, y));
+  const block = state.foreground.get(gridKey(x, y));
   if (!block || clampString(block.block_type || "").toLowerCase() !== ELECTRICAL_POLE_ITEM) return null;
   return ensureElectricalDeviceStateForBlock(state, block);
 }
@@ -22998,7 +23110,7 @@ function findGeneratorLinkedToPad(state: any, padKey: any) {
 }
 
 function findGeneratorLinkedToPole(state: any, poleKey: any) {
-  const generatorKeys: any = getGeneratorKeysLinkedToPole(state, poleKey);
+  const generatorKeys = getGeneratorKeysLinkedToPole(state, poleKey);
   return generatorKeys.length > 0 ? generatorKeys[0] : "";
 }
 
@@ -23009,7 +23121,7 @@ function getGeneratorKeysLinkedToPole(state: any, poleKey: any) {
   for (const entry of state.electrical_devices.values()) {
     if (!entry || entry.device_type !== ELECTRICAL_DEVICE_GENERATOR) continue;
     if (getGeneratorLinkedPoleKeys(entry).includes(poleKey)) {
-      const generatorKey: any = gridKey(entry.x, entry.y);
+      const generatorKey = gridKey(entry.x, entry.y);
       if (!seen.has(generatorKey)) {
         seen.add(generatorKey);
         result.push(generatorKey);
@@ -23021,8 +23133,8 @@ function getGeneratorKeysLinkedToPole(state: any, poleKey: any) {
 
 function getGeneratorKeysLinkedToPoleThroughCouplings(state: any, poleKey: any) {
   if (!state || poleKey === "") return [];
-  const cache: any = getFreshElectricalNetworkCache(state);
-  const cached: any = cache.linked_pole_to_generators instanceof Map
+  const cache = getFreshElectricalNetworkCache(state);
+  const cached = cache.linked_pole_to_generators instanceof Map
     ? cache.linked_pole_to_generators.get(poleKey)
     : null;
   if (cached instanceof Set) return Array.from<any>(cached);
@@ -23031,23 +23143,23 @@ function getGeneratorKeysLinkedToPoleThroughCouplings(state: any, poleKey: any) 
 }
 
 function findGeneratorLinkedToPoleThroughCouplings(state: any, poleKey: any) {
-  const generatorKeys: any = getGeneratorKeysLinkedToPoleThroughCouplings(state, poleKey);
+  const generatorKeys = getGeneratorKeysLinkedToPoleThroughCouplings(state, poleKey);
   return generatorKeys.length > 0 ? generatorKeys[0] : "";
 }
 
 function getGeneratorSourcesLinkedToPoleThroughCouplings(state: any, poleKey: any) {
-  const generatorKeys: any = getGeneratorKeysLinkedToPoleThroughCouplings(state, poleKey);
+  const generatorKeys = getGeneratorKeysLinkedToPoleThroughCouplings(state, poleKey);
   const sources: any = [];
   const seen: any = new Set();
   for (const generatorKey of generatorKeys) {
     if (seen.has(generatorKey)) continue;
     seen.add(generatorKey);
-    const generatorGrid: any = parseGridKey(generatorKey);
+    const generatorGrid = parseGridKey(generatorKey);
     if (!generatorGrid || !isGridInWorld(generatorGrid.x, generatorGrid.y)) continue;
-    const generatorEntry: any = getGeneratorDeviceStateAt(state, generatorGrid.x, generatorGrid.y);
+    const generatorEntry = getGeneratorDeviceStateAt(state, generatorGrid.x, generatorGrid.y);
     if (!generatorEntry || generatorEntry.device_type !== ELECTRICAL_DEVICE_GENERATOR) continue;
-    const maxWatts: any = clampInteger(generatorEntry.max_watts || ELECTRICAL_GENERATOR_MAX_WATTS, 1, ELECTRICAL_GENERATOR_MAX_WATTS);
-    const watts: any = clampInteger(generatorEntry.watts || 0, 0, maxWatts);
+    const maxWatts = clampInteger(generatorEntry.max_watts || ELECTRICAL_GENERATOR_MAX_WATTS, 1, ELECTRICAL_GENERATOR_MAX_WATTS);
+    const watts = clampInteger(generatorEntry.watts || 0, 0, maxWatts);
     sources.push({
       generator_key: generatorKey,
       generator_grid: generatorGrid,
@@ -23056,21 +23168,24 @@ function getGeneratorSourcesLinkedToPoleThroughCouplings(state: any, poleKey: an
       watts,
     });
   }
-  sources.sort((a, b) => (b.watts - a.watts) || String(a.generator_key).localeCompare(String(b.generator_key)));
+  sources.sort((
+    a: { watts: number; generator_key: unknown },
+    b: { watts: number; generator_key: unknown },
+  ) => (b.watts - a.watts) || String(a.generator_key).localeCompare(String(b.generator_key)));
   return sources;
 }
 
 function findBestGeneratorLinkedToPoleThroughCouplings(state: any, poleKey: any) {
-  const sources: any = getGeneratorSourcesLinkedToPoleThroughCouplings(state, poleKey);
+  const sources = getGeneratorSourcesLinkedToPoleThroughCouplings(state, poleKey);
   return sources.length > 0 ? sources[0].generator_key : "";
 }
 
 function getTotalGeneratorSourceWatts(sources: any) {
   if (!Array.isArray(sources)) return 0;
   return sources.reduce((total, source) => {
-    const entry: any = source?.generator_entry || null;
+    const entry = source?.generator_entry || null;
     if (!entry || entry.device_type !== ELECTRICAL_DEVICE_GENERATOR) return total;
-    const maxWatts: any = clampInteger(entry.max_watts || source.max_watts || ELECTRICAL_GENERATOR_MAX_WATTS, 1, ELECTRICAL_GENERATOR_MAX_WATTS);
+    const maxWatts = clampInteger(entry.max_watts || source.max_watts || ELECTRICAL_GENERATOR_MAX_WATTS, 1, ELECTRICAL_GENERATOR_MAX_WATTS);
     return total + clampInteger(entry.watts || 0, 0, maxWatts);
   }, 0);
 }
@@ -23078,7 +23193,7 @@ function getTotalGeneratorSourceWatts(sources: any) {
 function getTotalGeneratorSourceMaxWatts(sources: any) {
   if (!Array.isArray(sources)) return 0;
   return sources.reduce((total, source) => {
-    const entry: any = source?.generator_entry || null;
+    const entry = source?.generator_entry || null;
     if (!entry || entry.device_type !== ELECTRICAL_DEVICE_GENERATOR) return total;
     return total + clampInteger(entry.max_watts || source.max_watts || ELECTRICAL_GENERATOR_MAX_WATTS, 1, ELECTRICAL_GENERATOR_MAX_WATTS);
   }, 0);
@@ -23087,9 +23202,9 @@ function getTotalGeneratorSourceMaxWatts(sources: any) {
 function getAvailableGeneratorSources(sources: any) {
   if (!Array.isArray(sources)) return [];
   return sources.filter((source) => {
-    const entry: any = source?.generator_entry || null;
+    const entry = source?.generator_entry || null;
     if (!entry || entry.device_type !== ELECTRICAL_DEVICE_GENERATOR) return false;
-    const maxWatts: any = clampInteger(entry.max_watts || source.max_watts || ELECTRICAL_GENERATOR_MAX_WATTS, 1, ELECTRICAL_GENERATOR_MAX_WATTS);
+    const maxWatts = clampInteger(entry.max_watts || source.max_watts || ELECTRICAL_GENERATOR_MAX_WATTS, 1, ELECTRICAL_GENERATOR_MAX_WATTS);
     return clampInteger(entry.watts || 0, 0, maxWatts) > 0;
   });
 }
@@ -23105,12 +23220,12 @@ function consumeSharedGeneratorWatts(sources: any, requestedWatts: any, changedG
   let consumed: any = 0;
 
   while (remaining > 0) {
-    const availableSources: any = sources
+    const availableSources = sources
       .map((source) => {
-        const entry: any = source?.generator_entry || null;
+        const entry = source?.generator_entry || null;
         if (!entry || entry.device_type !== ELECTRICAL_DEVICE_GENERATOR) return null;
-        const maxWatts: any = clampInteger(entry.max_watts || source.max_watts || ELECTRICAL_GENERATOR_MAX_WATTS, 1, ELECTRICAL_GENERATOR_MAX_WATTS);
-        const watts: any = clampInteger(entry.watts || 0, 0, maxWatts);
+        const maxWatts = clampInteger(entry.max_watts || source.max_watts || ELECTRICAL_GENERATOR_MAX_WATTS, 1, ELECTRICAL_GENERATOR_MAX_WATTS);
+        const watts = clampInteger(entry.watts || 0, 0, maxWatts);
         if (watts <= 0) return null;
         return {
           ...source,
@@ -23124,17 +23239,17 @@ function consumeSharedGeneratorWatts(sources: any, requestedWatts: any, changedG
 
     if (availableSources.length === 0) break;
 
-    const baseShare: any = Math.floor(remaining / availableSources.length);
+    const baseShare = Math.floor(remaining / availableSources.length);
     let extraShares: any = remaining % availableSources.length;
     let consumedThisPass: any = 0;
 
     for (const source of availableSources) {
       if (remaining <= 0) break;
-      const plannedShare: any = baseShare + (extraShares > 0 ? 1 : 0);
+      const plannedShare = baseShare + (extraShares > 0 ? 1 : 0);
       if (extraShares > 0) extraShares -= 1;
       if (plannedShare <= 0) continue;
 
-      const take: any = Math.min(source.watts, plannedShare, remaining);
+      const take = Math.min(source.watts, plannedShare, remaining);
       if (take <= 0) continue;
 
       source.generator_entry.watts = clampInteger(source.watts - take, 0, source.max_watts);
@@ -23155,9 +23270,9 @@ function removeLinkedPadFromGenerators(state: any, padKey: any) {
   let changed: any = false;
   for (const entry of state.electrical_devices.values()) {
     if (!entry || entry.device_type !== ELECTRICAL_DEVICE_GENERATOR) continue;
-    const linkedPadKeys: any = getGeneratorLinkedPadKeys(entry);
+    const linkedPadKeys = getGeneratorLinkedPadKeys(entry);
     if (!linkedPadKeys.includes(padKey)) continue;
-    setGeneratorLinkedPadKeys(entry, linkedPadKeys.filter((key) => key !== padKey));
+    setGeneratorLinkedPadKeys(entry, linkedPadKeys.filter((key: unknown) => key !== padKey));
     changed = true;
   }
   return changed;
@@ -23168,9 +23283,9 @@ function removeLinkedPoleFromGenerators(state: any, poleKey: any) {
   let changed: any = false;
   for (const entry of state.electrical_devices.values()) {
     if (!entry || entry.device_type !== ELECTRICAL_DEVICE_GENERATOR) continue;
-    const linkedPoleKeys: any = getGeneratorLinkedPoleKeys(entry);
+    const linkedPoleKeys = getGeneratorLinkedPoleKeys(entry);
     if (!linkedPoleKeys.includes(poleKey)) continue;
-    setGeneratorLinkedPoleKeys(entry, linkedPoleKeys.filter((key) => key !== poleKey));
+    setGeneratorLinkedPoleKeys(entry, linkedPoleKeys.filter((key: unknown) => key !== poleKey));
     changed = true;
   }
   return changed;
@@ -23181,9 +23296,9 @@ function removeLinkedPoleFromPoleCouplings(state: any, poleKey: any) {
   let changed: any = false;
   for (const entry of state.electrical_devices.values()) {
     if (!entry || entry.device_type !== ELECTRICAL_DEVICE_POLE) continue;
-    const linkedPoleKeys: any = getPoleLinkedPoleKeys(entry);
+    const linkedPoleKeys = getPoleLinkedPoleKeys(entry);
     if (!linkedPoleKeys.includes(poleKey)) continue;
-    setPoleLinkedPoleKeys(entry, linkedPoleKeys.filter((key) => key !== poleKey));
+    setPoleLinkedPoleKeys(entry, linkedPoleKeys.filter((key: unknown) => key !== poleKey));
     changed = true;
   }
   return changed;
@@ -23219,21 +23334,21 @@ function sanitizeBlockUpdate(data: any, worldName: any) {
 }
 
 function sanitizeSeedUpdate(data: any, worldName: any) {
-  const action: any = String(data.action || "").trim();
+  const action = String(data.action || "").trim();
   if (action !== "place") return null;
 
-  const x: any = Number(data.x);
-  const y: any = Number(data.y);
+  const x = Number(data.x);
+  const y = Number(data.y);
   if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
-  const gridX: any = Math.trunc(x);
-  const gridY: any = Math.trunc(y);
+  const gridX = Math.trunc(x);
+  const gridY = Math.trunc(y);
   if (!isGridInWorld(gridX, gridY)) return null;
 
-  const seedType: any = clampString(data.seed_type || "");
+  const seedType = clampString(data.seed_type || "");
   if (action === "place" && seedType.length === 0) return null;
   if (seedType !== "" && (!ItemDatabase.hasItem(seedType) || resolveInventoryCategory(seedType) !== "seed")) return null;
 
-  const maxGrowTime: any = action === "place" ? getSeedConfiguredGrowTime(seedType) : SERVER_SEED_GROW_TIME_SECONDS;
+  const maxGrowTime = action === "place" ? getSeedConfiguredGrowTime(seedType) : SERVER_SEED_GROW_TIME_SECONDS;
 
   return {
     type: "world_seed_update",
@@ -23248,12 +23363,12 @@ function sanitizeSeedUpdate(data: any, worldName: any) {
 }
 
 function applyBlockUpdateToWorldState(worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const key: any = gridKey(update.x, update.y);
-  const target: any = getWorldLayerMap(state, update.layer);
-  const removed: any = getWorldRemovedLayerMap(state, update.layer);
-  const isForeground: any = update.layer === "foreground";
-  const cctvPlacementStartsFresh: any = isForeground && update.action === "place" && isCctvBlockType(update.block_type) && !hasCctvBlock(worldName);
+  const state = ensureWorldState(worldName);
+  const key = gridKey(update.x, update.y);
+  const target = getWorldLayerMap(state, update.layer);
+  const removed = getWorldRemovedLayerMap(state, update.layer);
+  const isForeground = update.layer === "foreground";
+  const cctvPlacementStartsFresh = isForeground && update.action === "place" && isCctvBlockType(update.block_type) && !hasCctvBlock(worldName);
 
   if (update.action === "place") {
     if (update.toggle_action !== "punch_toggle") {
@@ -23265,7 +23380,7 @@ function applyBlockUpdateToWorldState(worldName: any, update: any) {
       block_type: update.block_type,
       item_id: Math.max(0, Math.trunc(Number(update.item_id) || ItemAtlasDB.getItemIdForKey(update.block_type) || 0)),
     });
-    const electricalDeviceChanged: any = syncElectricalDeviceStateForBlockUpdate(state, update);
+    const electricalDeviceChanged = syncElectricalDeviceStateForBlockUpdate(state, update);
     removed.delete(key);
     if (isDiceBlockType(update.block_type)) {
       state.interactions.set(key, makeEmptyDiceState(worldName, update.x, update.y));
@@ -23287,7 +23402,7 @@ function applyBlockUpdateToWorldState(worldName: any, update: any) {
   if (update.action === "break") {
     clearServerBlockDamage(worldName, update);
     target.delete(key);
-    const electricalDeviceChanged: any = syncElectricalDeviceStateForBlockUpdate(state, update);
+    const electricalDeviceChanged = syncElectricalDeviceStateForBlockUpdate(state, update);
     state.interactions.delete(key);
     removed.set(key, {
       x: update.x,
@@ -23312,9 +23427,9 @@ function applyBlockUpdateToWorldState(worldName: any, update: any) {
 }
 
 function applyElectricalLayerUpdateToWorldState(worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const key: any = gridKey(update.x, update.y);
-  const previousEntry: any = state.electrical.get(key) || null;
+  const state = ensureWorldState(worldName);
+  const key = gridKey(update.x, update.y);
+  const previousEntry = state.electrical.get(key) || null;
   let nextEntry: any = null;
 
   if (update.action === "place") {
@@ -23335,11 +23450,11 @@ function applyElectricalLayerUpdateToWorldState(worldName: any, update: any) {
 
 function createElectricalBreakDrops(worldName: any, update: any, previousEntry: any) {
   if (!update || update.action !== "break" || !previousEntry) return [];
-  const itemId: any = clampString(previousEntry.item_id || previousEntry.block_type || update.block_type || "");
+  const itemId = clampString(previousEntry.item_id || previousEntry.block_type || update.block_type || "");
   if (!isElectricalLayerItem(itemId)) return [];
 
-  const position: any = getGridCenterPixels(update.x, update.y);
-  const payload: any = createServerDrop(worldName, itemId, "block", 1, position.x, position.y, SERVER_DROP_PICKUP_DELAY);
+  const position = getGridCenterPixels(update.x, update.y);
+  const payload = createServerDrop(worldName, itemId, "block", 1, position.x, position.y, SERVER_DROP_PICKUP_DELAY);
   return payload ? [payload] : [];
 }
 
@@ -23348,28 +23463,28 @@ function applyElectricalGenerationForBlockBreak(worldName: any, update: any) {
   if (clampString(update.layer || "foreground").toLowerCase() !== "foreground") return null;
   if (clampString(update.block_type || "").toLowerCase() === ELECTRICAL_METAL_PAD_ITEM) return null;
 
-  const state: any = ensureWorldState(worldName);
-  const padKey: any = gridKey(update.x, update.y);
-  const padEntry: any = getMetalPadDeviceStateAt(state, update.x, update.y);
+  const state = ensureWorldState(worldName);
+  const padKey = gridKey(update.x, update.y);
+  const padEntry = getMetalPadDeviceStateAt(state, update.x, update.y);
   if (!padEntry || padEntry.device_type !== ELECTRICAL_DEVICE_METAL_PAD) return null;
 
-  const cache: any = getFreshElectricalNetworkCache(state);
-  const linkedGeneratorKey: any = cache.linked_pad_to_generator.get(padKey) || "";
-  const generatorKey: any = linkedGeneratorKey !== "" ? linkedGeneratorKey : (cache.pad_to_generator.get(padKey) || "");
+  const cache = getFreshElectricalNetworkCache(state);
+  const linkedGeneratorKey = cache.linked_pad_to_generator.get(padKey) || "";
+  const generatorKey = linkedGeneratorKey !== "" ? linkedGeneratorKey : (cache.pad_to_generator.get(padKey) || "");
   if (generatorKey === "") return null;
 
-  const network: any = cache.by_tile.get(padKey) || {};
+  const network = cache.by_tile.get(padKey) || {};
   if (linkedGeneratorKey === "" && network.status !== "valid") return null;
 
-  const generatorGrid: any = parseGridKey(generatorKey);
+  const generatorGrid = parseGridKey(generatorKey);
   if (!generatorGrid) return null;
 
-  const generatorEntry: any = getMutableElectricalDeviceStateAt(state, generatorGrid.x, generatorGrid.y);
+  const generatorEntry = getMutableElectricalDeviceStateAt(state, generatorGrid.x, generatorGrid.y);
   if (!generatorEntry || generatorEntry.device_type !== ELECTRICAL_DEVICE_GENERATOR) return null;
 
-  const maxWatts: any = clampInteger(generatorEntry.max_watts || ELECTRICAL_GENERATOR_MAX_WATTS, 1, ELECTRICAL_GENERATOR_MAX_WATTS);
-  const previousWatts: any = clampInteger(generatorEntry.watts || 0, 0, maxWatts);
-  const generatorBefore: any = cloneJson(generatorEntry);
+  const maxWatts = clampInteger(generatorEntry.max_watts || ELECTRICAL_GENERATOR_MAX_WATTS, 1, ELECTRICAL_GENERATOR_MAX_WATTS);
+  const previousWatts = clampInteger(generatorEntry.watts || 0, 0, maxWatts);
+  const generatorBefore = cloneJson(generatorEntry);
   if (previousWatts >= maxWatts) {
     return {
       generated_watts: 0,
@@ -23387,12 +23502,12 @@ function applyElectricalGenerationForBlockBreak(worldName: any, update: any) {
     };
   }
 
-  const nextWatts: any = Math.min(maxWatts, previousWatts + ELECTRICAL_PAD_GENERATION_WATTS);
+  const nextWatts = Math.min(maxWatts, previousWatts + ELECTRICAL_PAD_GENERATION_WATTS);
   generatorEntry.watts = nextWatts;
   generatorEntry.max_watts = maxWatts;
-  const generatedWatts: any = nextWatts - previousWatts;
+  const generatedWatts = nextWatts - previousWatts;
 
-  const dataUpdate: any = makeGeneratorDataPayload(worldName, generatorEntry, {
+  const dataUpdate = makeGeneratorDataPayload(worldName, generatorEntry, {
     generated_watts: generatedWatts,
     source_x: update.x,
     source_y: update.y,
@@ -23423,11 +23538,11 @@ function applyElectricalGenerationForBlockBreak(worldName: any, update: any) {
 }
 
 function applySeedUpdateToWorldState(worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const key: any = gridKey(update.x, update.y);
+  const state = ensureWorldState(worldName);
+  const key = gridKey(update.x, update.y);
 
   if (update.action === "place" || update.action === "splice") {
-    const seedEntry: any = makeServerSeedEntry(update.x, update.y, update.seed_type);
+    const seedEntry = makeServerSeedEntry(update.x, update.y, update.seed_type);
     state.seeds.set(key, seedEntry);
     update.grow_time = seedEntry.grow_time;
     update.max_grow_time = seedEntry.max_grow_time;
@@ -23465,8 +23580,8 @@ function findEntranceGatesInState(state: any) {
 }
 
 function getEntranceGateSpawnForWorld(worldName: any) {
-  const state: any = ensureWorldState(worldName);
-  const gate: any = repairEntranceGateState(state, worldName)
+  const state = ensureWorldState(worldName);
+  const gate = repairEntranceGateState(state, worldName)
     || findEntranceGateInState(state)
     || findEntranceGateInBlockMap(buildEffectiveForegroundMap(worldName, state));
   if (!gate || !isGridInWorld(gate.x, gate.y)) return null;
@@ -23488,16 +23603,16 @@ function getWorldGenerationVersion(state: any) {
 }
 
 function getGeneratedEntranceGateGridY(surfaceY: any, state: any) {
-  const verticalOffset: any = getWorldGenerationVersion(state) >= LOWERED_ENTRANCE_GATE_GENERATION_VERSION ? 0 : -1;
+  const verticalOffset = getWorldGenerationVersion(state) >= LOWERED_ENTRANCE_GATE_GENERATION_VERSION ? 0 : -1;
   return clampInteger(surfaceY + verticalOffset, 0, Math.max(0, WORLD_HEIGHT - 2));
 }
 
 function getDefaultEntranceGateSpawnForWorld(worldName: any, state: any = null) {
-  const gridX: any = clampInteger(Math.floor(WORLD_WIDTH * 0.5), 0, WORLD_WIDTH - 1);
-  const terrain: any = buildServerTerrainSurface(worldName);
-  const surfaceY: any = serverSurfaceYAt(terrain.surface, gridX);
-  const resolvedState: any = state || ensureWorldState(worldName);
-  const gridY: any = getGeneratedEntranceGateGridY(surfaceY, resolvedState);
+  const gridX = clampInteger(Math.floor(WORLD_WIDTH * 0.5), 0, WORLD_WIDTH - 1);
+  const terrain = buildServerTerrainSurface(worldName);
+  const surfaceY = serverSurfaceYAt(terrain.surface, gridX);
+  const resolvedState = state || ensureWorldState(worldName);
+  const gridY = getGeneratedEntranceGateGridY(surfaceY, resolvedState);
 
   return {
     x: gridX * TILE_SIZE,
@@ -23514,11 +23629,11 @@ function getJoinWorldSpawnForWorld(worldName: any) {
 function ensureEntranceGateSupportInState(state: any, gate: any) {
   if (!state || !gate) return;
 
-  const x: any = gate.x;
-  const y: any = gate.y + 1;
+  const x = gate.x;
+  const y = gate.y + 1;
   if (!isGridInWorld(x, y)) return;
 
-  const key: any = gridKey(x, y);
+  const key = gridKey(x, y);
   state.foreground.set(key, { x, y, block_type: "bedrock" });
   state.removed_foreground.delete(key);
   state.interactions.delete(key);
@@ -23528,12 +23643,12 @@ function ensureEntranceGateSupportInState(state: any, gate: any) {
 function cleanupLegacyEntranceGateSupportInState(state: any, gate: any) {
   if (!state || !gate) return;
 
-  const y: any = gate.y + 1;
+  const y = gate.y + 1;
   for (const x of [gate.x - 1, gate.x + 1]) {
     if (!isGridInWorld(x, y)) continue;
 
-    const key: any = gridKey(x, y);
-    const blockType: any = clampString(state.foreground.get(key)?.block_type || "");
+    const key = gridKey(x, y);
+    const blockType = clampString(state.foreground.get(key)?.block_type || "");
     if (blockType !== "bedrock") continue;
 
     state.foreground.delete(key);
@@ -23545,21 +23660,21 @@ function cleanupLegacyEntranceGateSupportInState(state: any, gate: any) {
 function repairMovedDefaultEntranceGateSupportInState(state: any, gate: any, worldName: any) {
   if (!state || !gate || String(worldName || "").trim() === "") return;
 
-  const defaultGate: any = getDefaultEntranceGateSpawnForWorld(worldName, state);
-  const defaultGateX: any = Math.trunc(Number(defaultGate?.grid_x));
-  const defaultGateY: any = Math.trunc(Number(defaultGate?.grid_y));
+  const defaultGate = getDefaultEntranceGateSpawnForWorld(worldName, state);
+  const defaultGateX = Math.trunc(Number(defaultGate?.grid_x));
+  const defaultGateY = Math.trunc(Number(defaultGate?.grid_y));
   if (!Number.isFinite(defaultGateX) || !Number.isFinite(defaultGateY)) return;
   if (gate.x === defaultGateX && gate.y === defaultGateY) return;
 
-  const defaultGateKey: any = gridKey(defaultGateX, defaultGateY);
-  const removedGateType: any = clampString(state.removed_foreground.get(defaultGateKey)?.block_type || "");
+  const defaultGateKey = gridKey(defaultGateX, defaultGateY);
+  const removedGateType = clampString(state.removed_foreground.get(defaultGateKey)?.block_type || "");
   if (removedGateType !== ENTRANCE_GATE_TYPE) return;
 
-  const supportX: any = defaultGateX;
-  const supportY: any = defaultGateY + 1;
+  const supportX = defaultGateX;
+  const supportY = defaultGateY + 1;
   if (!isGridInWorld(supportX, supportY)) return;
 
-  const supportKey: any = gridKey(supportX, supportY);
+  const supportKey = gridKey(supportX, supportY);
   if (state.foreground.has(supportKey)) return;
   state.removed_foreground.set(supportKey, {
     x: supportX,
@@ -23571,14 +23686,14 @@ function repairMovedDefaultEntranceGateSupportInState(state: any, gate: any, wor
 function repairEntranceGateState(state: any, worldName: any = "") {
   if (!state) return null;
 
-  const gates: any = findEntranceGatesInState(state);
+  const gates = findEntranceGatesInState(state);
   if (gates.length === 0) return null;
 
-  const keptGate: any = gates[gates.length - 1];
-  const keptKey: any = gridKey(keptGate.x, keptGate.y);
+  const keptGate = gates[gates.length - 1];
+  const keptKey = gridKey(keptGate.x, keptGate.y);
 
   for (const gate of gates) {
-    const key: any = gridKey(gate.x, gate.y);
+    const key = gridKey(gate.x, gate.y);
     if (key === keptKey) continue;
 
     state.foreground.delete(key);
@@ -23597,7 +23712,7 @@ function repairEntranceGateState(state: any, worldName: any = "") {
 }
 
 function isProtectedEntranceSupportBlock(blockType: any) {
-  const clean: any = clampString(blockType || "");
+  const clean = clampString(blockType || "");
   return (
     isWorldLockBlockType(clean) ||
     clean === SAFE_BLOCK_TYPE ||
@@ -23617,8 +23732,8 @@ function rejectEntranceMove(socket: any, message: any) {
 }
 
 function validateEntranceGateMove(socket: any, player: any, worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const oldGate: any = findEntranceGateInBlockMap(buildEffectiveForegroundMap(worldName, state));
+  const state = ensureWorldState(worldName);
+  const oldGate = findEntranceGateInBlockMap(buildEffectiveForegroundMap(worldName, state));
 
   if (!oldGate || !isGridInWorld(oldGate.x, oldGate.y)) {
     return rejectEntranceMove(socket, "Entrance Gate missing.");
@@ -23640,7 +23755,7 @@ function validateEntranceGateMove(socket: any, player: any, worldName: any, upda
     return rejectEntranceMove(socket, "Too far away.");
   }
 
-  const targetKey: any = gridKey(update.x, update.y);
+  const targetKey = gridKey(update.x, update.y);
   if (state.foreground.has(targetKey)) {
     return rejectEntranceMove(socket, "That spot is blocked.");
   }
@@ -23650,7 +23765,7 @@ function validateEntranceGateMove(socket: any, player: any, worldName: any, upda
   }
 
   for (let x: any = update.x - 1; x <= update.x + 1; x += 1) {
-    const walkingKey: any = gridKey(x, update.y);
+    const walkingKey = gridKey(x, update.y);
     if (!isGridInWorld(x, update.y)) {
       return rejectEntranceMove(socket, "Not enough walking space around the gate.");
     }
@@ -23660,18 +23775,18 @@ function validateEntranceGateMove(socket: any, player: any, worldName: any, upda
     }
   }
 
-  const underY: any = update.y + 1;
+  const underY = update.y + 1;
   if (!isGridInWorld(update.x, underY)) {
     return rejectEntranceMove(socket, "Not enough space under the gate.");
   }
 
-  const underKey: any = gridKey(update.x, underY);
+  const underKey = gridKey(update.x, underY);
   if (state.seeds.has(underKey)) {
     return rejectEntranceMove(socket, "A seed is under the gate spot.");
   }
 
-  const underBlock: any = state.foreground.get(underKey);
-  const underType: any = clampString(underBlock?.block_type || "");
+  const underBlock = state.foreground.get(underKey);
+  const underType = clampString(underBlock?.block_type || "");
 
   if (underType === ENTRANCE_GATE_TYPE || isProtectedEntranceSupportBlock(underType)) {
     return rejectEntranceMove(socket, "A protected block is under that spot.");
@@ -23686,8 +23801,8 @@ function validateEntranceGateMove(socket: any, player: any, worldName: any, upda
 
 function applyEntranceGateMoveToWorldState(worldName: any, state: any, oldGate: any, newGate: any) {
   const updates: any = [];
-  const effectiveForeground: any = buildEffectiveForegroundMap(worldName, state);
-  const oldGateKey: any = gridKey(oldGate.x, oldGate.y);
+  const effectiveForeground = buildEffectiveForegroundMap(worldName, state);
+  const oldGateKey = gridKey(oldGate.x, oldGate.y);
 
   state.foreground.delete(oldGateKey);
   state.interactions.delete(oldGateKey);
@@ -23707,11 +23822,11 @@ function applyEntranceGateMoveToWorldState(worldName: any, state: any, oldGate: 
   });
 
   for (let x: any = oldGate.x - 1; x <= oldGate.x + 1; x += 1) {
-    const y: any = oldGate.y + 1;
+    const y = oldGate.y + 1;
     if (!isGridInWorld(x, y)) continue;
 
-    const key: any = gridKey(x, y);
-    const oldSupportType: any = clampString(effectiveForeground.get(key)?.block_type || "");
+    const key = gridKey(x, y);
+    const oldSupportType = clampString(effectiveForeground.get(key)?.block_type || "");
     if (oldSupportType !== "bedrock") continue;
 
     state.foreground.delete(key);
@@ -23728,9 +23843,9 @@ function applyEntranceGateMoveToWorldState(worldName: any, state: any, oldGate: 
     });
   }
 
-  const supportX: any = newGate.x;
-  const supportY: any = newGate.y + 1;
-  const supportKey: any = gridKey(supportX, supportY);
+  const supportX = newGate.x;
+  const supportY = newGate.y + 1;
+  const supportKey = gridKey(supportX, supportY);
   state.foreground.set(supportKey, { x: supportX, y: supportY, block_type: "bedrock" });
   state.removed_foreground.delete(supportKey);
   state.interactions.delete(supportKey);
@@ -23744,7 +23859,7 @@ function applyEntranceGateMoveToWorldState(worldName: any, state: any, oldGate: 
     world: cleanWorld(worldName),
   });
 
-  const newGateKey: any = gridKey(newGate.x, newGate.y);
+  const newGateKey = gridKey(newGate.x, newGate.y);
   state.foreground.set(newGateKey, {
     x: newGate.x,
     y: newGate.y,
@@ -23770,8 +23885,8 @@ async function handleEntranceGateMoveUpdate(socket: any, player: any, worldName:
   const validation: any = validateEntranceGateMove(socket, player, worldName, update);
   if (!validation.ok) return false;
 
-  const moveTransactionId: any = makeAuditId("gate_move");
-  const spendResult: any = await spendServerInventoryCost(player.account_username, {
+  const moveTransactionId = makeAuditId("gate_move");
+  const spendResult = await spendServerInventoryCost(player.account_username, {
     item_id: "entrance_mover",
     item_category: "tool",
     amount: 1,
@@ -23796,7 +23911,7 @@ async function handleEntranceGateMoveUpdate(socket: any, player: any, worldName:
     return false;
   }
 
-  const updates: any = applyEntranceGateMoveToWorldState(
+  const updates = applyEntranceGateMoveToWorldState(
     worldName,
     validation.state,
     validation.oldGate,
@@ -23852,7 +23967,7 @@ async function handleEntranceGateMoveUpdate(socket: any, player: any, worldName:
 }
 
 function validateWorldLockMove(socket: any, player: any, worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   const lock: any = getEffectiveWorldLockStateInState(state);
 
   if (!lock.is_locked) {
@@ -23879,7 +23994,7 @@ function validateWorldLockMove(socket: any, player: any, worldName: any, update:
     return { ok: false };
   }
 
-  const activeLockBlock: any = getWorldLockBlockEntry(state);
+  const activeLockBlock = getWorldLockBlockEntry(state);
   if (!activeLockBlock) {
     sendActionRejected(socket, "world_interaction_update", "World Lock block missing.", {
       reason: "world_lock_block_missing",
@@ -23907,7 +24022,7 @@ function validateWorldLockMove(socket: any, player: any, worldName: any, update:
     return { ok: false };
   }
 
-  const targetKey: any = gridKey(update.x, update.y);
+  const targetKey = gridKey(update.x, update.y);
   if (state.foreground.has(targetKey)) {
     sendActionRejected(socket, "world_interaction_update", "That spot is already occupied.", {
       reason: "occupied",
@@ -23949,12 +24064,12 @@ function validateWorldLockMove(socket: any, player: any, worldName: any, update:
 }
 
 function applyWorldLockMoveToWorldState(worldName: any, validation: any) {
-  const state: any = validation.state || ensureWorldState(worldName);
-  const oldLock: any = validation.oldLock;
-  const newLock: any = validation.newLock;
-  const oldKey: any = gridKey(oldLock.x, oldLock.y);
-  const newKey: any = gridKey(newLock.x, newLock.y);
-  const cleanWorldName: any = cleanWorld(worldName);
+  const state = validation.state || ensureWorldState(worldName);
+  const oldLock = validation.oldLock;
+  const newLock = validation.newLock;
+  const oldKey = gridKey(oldLock.x, oldLock.y);
+  const newKey = gridKey(newLock.x, newLock.y);
+  const cleanWorldName = cleanWorld(worldName);
   const updates: any = [];
 
   state.foreground.delete(oldKey);
@@ -23993,7 +24108,7 @@ function applyWorldLockMoveToWorldState(worldName: any, validation: any) {
     source_tool: LOCK_MOVER_ITEM_TYPE,
   });
 
-  const nextLock: any = sanitizeWorldLockState({
+  const nextLock = sanitizeWorldLockState({
     ...(state.world_lock || {}),
     is_locked: true,
     lock_block_type: newLock.block_type,
@@ -24008,8 +24123,8 @@ function applyWorldLockMoveToWorldState(worldName: any, validation: any) {
 }
 
 function buildWorldLockMoveChangeEntries(socket: any, player: any, worldName: any, validation: any, objectBefore: any, objectAfter: any, sourceId: any) {
-  const oldLock: any = validation.oldLock;
-  const newLock: any = validation.newLock;
+  const oldLock = validation.oldLock;
+  const newLock = validation.newLock;
   const baseDetails: any = {
     old_x: oldLock.x,
     old_y: oldLock.y,
@@ -24084,8 +24199,8 @@ async function handleWorldLockMoveUpdate(socket: any, player: any, worldName: an
   const validation: any = validateWorldLockMove(socket, player, worldName, update);
   if (!validation.ok) return false;
 
-  const moveTransactionId: any = makeAuditId("lock_move");
-  const spendResult: any = await spendServerInventoryCost(player.account_username, {
+  const moveTransactionId = makeAuditId("lock_move");
+  const spendResult = await spendServerInventoryCost(player.account_username, {
     item_id: LOCK_MOVER_ITEM_TYPE,
     item_category: "tool",
     amount: 1,
@@ -24112,18 +24227,18 @@ async function handleWorldLockMoveUpdate(socket: any, player: any, worldName: an
     return false;
   }
 
-  const previousWorldState: any = serializeWorldState(worldName);
-  const objectBefore: any = cloneJson(validation.lock);
-  const updates: any = applyWorldLockMoveToWorldState(worldName, validation);
-  const objectAfter: any = cloneJson(ensureWorldState(worldName).world_lock || {});
-  const worldChanges: any = buildWorldLockMoveChangeEntries(socket, player, worldName, validation, objectBefore, objectAfter, moveTransactionId);
+  const previousWorldState = serializeWorldState(worldName);
+  const objectBefore = cloneJson(validation.lock);
+  const updates = applyWorldLockMoveToWorldState(worldName, validation);
+  const objectAfter = cloneJson(ensureWorldState(worldName).world_lock || {});
+  const worldChanges = buildWorldLockMoveChangeEntries(socket, player, worldName, validation, objectBefore, objectAfter, moveTransactionId);
   let inventoryCommit: any = null;
   let requesterInventoryDeltas: any = buildInventoryDeltaClientPayloads(spendResult.deltas, spendResult.state);
   let postgresCommitted: any = Boolean(spendResult.postgres_committed);
 
   if (spendResult.deferred_inventory_commit) {
-    const deferred: any = spendResult.deferred_inventory_commit;
-    const serializedWorld: any = serializeWorldState(worldName);
+    const deferred = spendResult.deferred_inventory_commit;
+    const serializedWorld = serializeWorldState(worldName);
     inventoryCommit = await commitPlayerInventoryState(
       socket,
       player,
@@ -24148,7 +24263,7 @@ async function handleWorldLockMoveUpdate(socket: any, player: any, worldName: an
     postgresCommitted = Boolean(inventoryCommit.postgres_committed);
     persistWorldStateAfterInventoryCommit(worldName, postgresCommitted, serializedWorld);
   } else {
-    const worldCommit: any = await commitWorldStateWithBlockChanges(worldName, worldChanges, {
+    const worldCommit = await commitWorldStateWithBlockChanges(worldName, worldChanges, {
       player,
     });
     if (!worldCommit.ok) {
@@ -24186,10 +24301,10 @@ async function handleWorldLockMoveUpdate(socket: any, player: any, worldName: an
 }
 
 function makeDoorMoveClientFields(doorState: any = {}) {
-  const doorName: any = cleanDoorName(doorState.door_name || doorState.name || "");
-  const destination: any = cleanDoorDestination(doorState.destination || doorState.door_destination || "");
-  const targetWorld: any = cleanWorld(doorState.target_world || doorState.door_target_world || "");
-  const targetDoorId: any = cleanDoorId(doorState.target_door_id || doorState.door_target_id || "");
+  const doorName = cleanDoorName(doorState.door_name || doorState.name || "");
+  const destination = cleanDoorDestination(doorState.destination || doorState.door_destination || "");
+  const targetWorld = cleanWorld(doorState.target_world || doorState.door_target_world || "");
+  const targetDoorId = cleanDoorId(doorState.target_door_id || doorState.door_target_id || "");
   return {
     door_id: cleanDoorId(doorState.door_id || ""),
     door_name: doorName,
@@ -24204,7 +24319,7 @@ function makeDoorMoveClientFields(doorState: any = {}) {
 }
 
 function makeDoorMoveBlockEntry(x: any, y: any, blockType: any, doorState: any = {}) {
-  const fields: any = makeDoorMoveClientFields(doorState);
+  const fields = makeDoorMoveClientFields(doorState);
   const entry: any = {
     x,
     y,
@@ -24221,7 +24336,7 @@ function makeDoorMoveBlockEntry(x: any, y: any, blockType: any, doorState: any =
 }
 
 function makeDoorMoveInteractionUpdate(worldName: any, x: any, y: any, blockType: any, doorState: any = {}) {
-  const fields: any = makeDoorMoveClientFields(doorState);
+  const fields = makeDoorMoveClientFields(doorState);
   return {
     type: "world_interaction_update",
     world: cleanWorld(worldName),
@@ -24242,7 +24357,7 @@ function makeDoorMoveInteractionUpdate(worldName: any, x: any, y: any, blockType
 }
 
 function makeDoorMoveJournalData(block: any = {}, doorState: any = {}) {
-  const fields: any = makeDoorMoveClientFields(doorState);
+  const fields = makeDoorMoveClientFields(doorState);
   return {
     x: Math.trunc(Number(block.x) || 0),
     y: Math.trunc(Number(block.y) || 0),
@@ -24258,9 +24373,9 @@ function makeDoorMoveJournalData(block: any = {}, doorState: any = {}) {
 }
 
 function validateDoorMove(socket: any, player: any, worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const oldKey: any = gridKey(update.old_x, update.old_y);
-  const oldDoor: any = state.foreground.get(oldKey);
+  const state = ensureWorldState(worldName);
+  const oldKey = gridKey(update.old_x, update.old_y);
+  const oldDoor = state.foreground.get(oldKey);
 
   if (!oldDoor || !isDoorBlockType(oldDoor.block_type)) {
     sendActionRejected(socket, "world_interaction_update", "Door missing.", {
@@ -24305,7 +24420,7 @@ function validateDoorMove(socket: any, player: any, worldName: any, update: any)
     return { ok: false };
   }
 
-  const newKey: any = gridKey(update.x, update.y);
+  const newKey = gridKey(update.x, update.y);
   if (state.foreground.has(newKey)) {
     sendActionRejected(socket, "world_interaction_update", "That spot is already occupied.", {
       reason: "occupied",
@@ -24333,7 +24448,7 @@ function validateDoorMove(socket: any, player: any, worldName: any, update: any)
     return { ok: false };
   }
 
-  const doorState: any = getDoorStateForBlock(state, oldDoor, worldName) || {};
+  const doorState = getDoorStateForBlock(state, oldDoor, worldName) || {};
   return {
     ok: true,
     state,
@@ -24348,14 +24463,14 @@ function validateDoorMove(socket: any, player: any, worldName: any, update: any)
 }
 
 function applyDoorMoveToWorldState(worldName: any, validation: any) {
-  const state: any = validation.state || ensureWorldState(worldName);
-  const oldDoor: any = validation.oldDoor;
-  const newDoor: any = validation.newDoor;
-  const oldKey: any = gridKey(oldDoor.x, oldDoor.y);
-  const newKey: any = gridKey(newDoor.x, newDoor.y);
-  const cleanWorldName: any = cleanWorld(worldName);
-  const doorState: any = validation.oldDoorState || {};
-  const clientFields: any = makeDoorMoveClientFields(doorState);
+  const state = validation.state || ensureWorldState(worldName);
+  const oldDoor = validation.oldDoor;
+  const newDoor = validation.newDoor;
+  const oldKey = gridKey(oldDoor.x, oldDoor.y);
+  const newKey = gridKey(newDoor.x, newDoor.y);
+  const cleanWorldName = cleanWorld(worldName);
+  const doorState = validation.oldDoorState || {};
+  const clientFields = makeDoorMoveClientFields(doorState);
   const updates: any = [];
 
   state.foreground.delete(oldKey);
@@ -24376,7 +24491,7 @@ function applyDoorMoveToWorldState(worldName: any, validation: any) {
     source_tool: DOOR_MOVER_ITEM_TYPE,
   });
 
-  const newBlockEntry: any = makeDoorMoveBlockEntry(newDoor.x, newDoor.y, newDoor.block_type, doorState);
+  const newBlockEntry = makeDoorMoveBlockEntry(newDoor.x, newDoor.y, newDoor.block_type, doorState);
   state.foreground.set(newKey, newBlockEntry);
   state.removed_foreground.delete(newKey);
   state.interactions.delete(newKey);
@@ -24398,9 +24513,9 @@ function applyDoorMoveToWorldState(worldName: any, validation: any) {
 }
 
 function buildDoorMoveChangeEntries(socket: any, player: any, worldName: any, validation: any, objectBefore: any, objectAfter: any, sourceId: any) {
-  const oldDoor: any = validation.oldDoor;
-  const newDoor: any = validation.newDoor;
-  const doorState: any = validation.oldDoorState || {};
+  const oldDoor = validation.oldDoor;
+  const newDoor = validation.newDoor;
+  const doorState = validation.oldDoorState || {};
   const details: any = {
     old_x: oldDoor.x,
     old_y: oldDoor.y,
@@ -24473,8 +24588,8 @@ async function handleDoorMoveUpdate(socket: any, player: any, worldName: any, up
   const validation: any = validateDoorMove(socket, player, worldName, update);
   if (!validation.ok) return false;
 
-  const moveTransactionId: any = makeAuditId("door_move");
-  const spendResult: any = await spendServerInventoryCost(player.account_username, {
+  const moveTransactionId = makeAuditId("door_move");
+  const spendResult = await spendServerInventoryCost(player.account_username, {
     item_id: DOOR_MOVER_ITEM_TYPE,
     item_category: "tool",
     amount: 1,
@@ -24502,20 +24617,20 @@ async function handleDoorMoveUpdate(socket: any, player: any, worldName: any, up
     return false;
   }
 
-  const previousWorldState: any = serializeWorldState(worldName);
-  const objectBefore: any = makeDoorMoveJournalData(validation.oldDoor, validation.oldDoorState);
-  const updates: any = applyDoorMoveToWorldState(worldName, validation);
-  const nextDoorBlock: any = ensureWorldState(worldName).foreground.get(gridKey(validation.newDoor.x, validation.newDoor.y)) || validation.newDoor;
-  const nextDoorState: any = getDoorStateForBlock(ensureWorldState(worldName), nextDoorBlock, worldName) || validation.oldDoorState;
-  const objectAfter: any = makeDoorMoveJournalData(nextDoorBlock, nextDoorState);
-  const worldChanges: any = buildDoorMoveChangeEntries(socket, player, worldName, validation, objectBefore, objectAfter, moveTransactionId);
+  const previousWorldState = serializeWorldState(worldName);
+  const objectBefore = makeDoorMoveJournalData(validation.oldDoor, validation.oldDoorState);
+  const updates = applyDoorMoveToWorldState(worldName, validation);
+  const nextDoorBlock = ensureWorldState(worldName).foreground.get(gridKey(validation.newDoor.x, validation.newDoor.y)) || validation.newDoor;
+  const nextDoorState = getDoorStateForBlock(ensureWorldState(worldName), nextDoorBlock, worldName) || validation.oldDoorState;
+  const objectAfter = makeDoorMoveJournalData(nextDoorBlock, nextDoorState);
+  const worldChanges = buildDoorMoveChangeEntries(socket, player, worldName, validation, objectBefore, objectAfter, moveTransactionId);
   let inventoryCommit: any = null;
   let requesterInventoryDeltas: any = buildInventoryDeltaClientPayloads(spendResult.deltas, spendResult.state);
   let postgresCommitted: any = Boolean(spendResult.postgres_committed);
 
   if (spendResult.deferred_inventory_commit) {
-    const deferred: any = spendResult.deferred_inventory_commit;
-    const serializedWorld: any = serializeWorldState(worldName);
+    const deferred = spendResult.deferred_inventory_commit;
+    const serializedWorld = serializeWorldState(worldName);
     inventoryCommit = await commitPlayerInventoryState(
       socket,
       player,
@@ -24540,7 +24655,7 @@ async function handleDoorMoveUpdate(socket: any, player: any, worldName: any, up
     postgresCommitted = Boolean(inventoryCommit.postgres_committed);
     persistWorldStateAfterInventoryCommit(worldName, postgresCommitted, serializedWorld);
   } else {
-    const worldCommit: any = await commitWorldStateWithBlockChanges(worldName, worldChanges, {
+    const worldCommit = await commitWorldStateWithBlockChanges(worldName, worldChanges, {
       player,
     });
     if (!worldCommit.ok) {
@@ -24587,19 +24702,19 @@ function sanitizeInteractionUpdate(data: any, worldName: any) {
  * @returns {PixelMania.WorldLockState}
  */
 function sanitizeWorldLockState(state: any) {
-  const rawState: any = state && typeof state === "object" && !Array.isArray(state) ? state : {};
-  const allowedPlayers: any = Array.isArray(rawState.allowed_players) ? rawState.allowed_players : [];
-  const allowedAccountIds: any = Array.isArray(rawState.allowed_account_ids) ? rawState.allowed_account_ids : [];
-  const allowedPlayerIds: any = Array.isArray(rawState.allowed_player_ids) ? rawState.allowed_player_ids : [];
-  const isLocked: any = Boolean(rawState.is_locked);
-  const rawLockGridX: any = Number(rawState.lock_grid_x);
-  const rawLockGridY: any = Number(rawState.lock_grid_y);
-  const lockGridX: any = Number.isFinite(rawLockGridX) ? Math.trunc(rawLockGridX) : WORLD_LOCK_GRID_SENTINEL;
-  const lockGridY: any = Number.isFinite(rawLockGridY) ? Math.trunc(rawLockGridY) : WORLD_LOCK_GRID_SENTINEL;
-  const ownerName: any = cleanAccountName(rawState.owner_name || "").toUpperCase();
-  const ownerAccountId: any = cleanStableIdentityId(rawState.owner_account_id || rawState.account_id || "");
-  const ownerPlayerId: any = cleanStableIdentityId(rawState.owner_player_id || rawState.owner_profile_id || rawState.profile_id || "");
-  const lockBlockType: any = isLocked
+  const rawState = state && typeof state === "object" && !Array.isArray(state) ? state : {};
+  const allowedPlayers = Array.isArray(rawState.allowed_players) ? rawState.allowed_players : [];
+  const allowedAccountIds = Array.isArray(rawState.allowed_account_ids) ? rawState.allowed_account_ids : [];
+  const allowedPlayerIds = Array.isArray(rawState.allowed_player_ids) ? rawState.allowed_player_ids : [];
+  const isLocked = Boolean(rawState.is_locked);
+  const rawLockGridX = Number(rawState.lock_grid_x);
+  const rawLockGridY = Number(rawState.lock_grid_y);
+  const lockGridX = Number.isFinite(rawLockGridX) ? Math.trunc(rawLockGridX) : WORLD_LOCK_GRID_SENTINEL;
+  const lockGridY = Number.isFinite(rawLockGridY) ? Math.trunc(rawLockGridY) : WORLD_LOCK_GRID_SENTINEL;
+  const ownerName = cleanAccountName(rawState.owner_name || "").toUpperCase();
+  const ownerAccountId = cleanStableIdentityId(rawState.owner_account_id || rawState.account_id || "");
+  const ownerPlayerId = cleanStableIdentityId(rawState.owner_player_id || rawState.owner_profile_id || rawState.profile_id || "");
+  const lockBlockType = isLocked
     ? normalizeWorldLockBlockType(rawState.lock_block_type || rawState.lock_type || WORLD_LOCK_BLOCK_TYPE)
     : WORLD_LOCK_BLOCK_TYPE;
   const allowedSet: any = new Set();
@@ -24610,56 +24725,56 @@ function sanitizeWorldLockState(state: any) {
   const playerRolesByPlayerId: any = {};
 
   for (const rawName of allowedPlayers) {
-    const cleanAllowedName: any = cleanAccountName(rawName).toUpperCase();
+    const cleanAllowedName = cleanAccountName(rawName).toUpperCase();
     if (cleanAllowedName.length === 0 || cleanAllowedName === ownerName) continue;
     allowedSet.add(cleanAllowedName);
   }
 
   for (const rawId of allowedAccountIds) {
-    const cleanAllowedId: any = cleanStableIdentityId(rawId);
+    const cleanAllowedId = cleanStableIdentityId(rawId);
     if (cleanAllowedId === "" || stableIdentityEquals(cleanAllowedId, ownerAccountId)) continue;
     allowedAccountIdSet.add(cleanAllowedId);
   }
 
   for (const rawId of allowedPlayerIds) {
-    const cleanAllowedId: any = cleanStableIdentityId(rawId);
+    const cleanAllowedId = cleanStableIdentityId(rawId);
     if (cleanAllowedId === "" || stableIdentityEquals(cleanAllowedId, ownerPlayerId)) continue;
     allowedPlayerIdSet.add(cleanAllowedId);
   }
 
-  const rawRoles: any = rawState.player_roles && typeof rawState.player_roles === "object" && !Array.isArray(rawState.player_roles)
+  const rawRoles = rawState.player_roles && typeof rawState.player_roles === "object" && !Array.isArray(rawState.player_roles)
     ? rawState.player_roles
     : {};
   for (const [rawName, rawRole] of Object.entries<any>(rawRoles)) {
-    const cleanRoleName: any = cleanAccountName(rawName).toUpperCase();
+    const cleanRoleName = cleanAccountName(rawName).toUpperCase();
     if (cleanRoleName.length === 0 || cleanRoleName === ownerName) continue;
     allowedSet.add(cleanRoleName);
     playerRoles[cleanRoleName] = normalizeWorldLockAccessRole(rawRole, "builder");
   }
 
-  const rawRolesByAccountId: any = rawState.player_roles_by_account_id && typeof rawState.player_roles_by_account_id === "object" && !Array.isArray(rawState.player_roles_by_account_id)
+  const rawRolesByAccountId = rawState.player_roles_by_account_id && typeof rawState.player_roles_by_account_id === "object" && !Array.isArray(rawState.player_roles_by_account_id)
     ? rawState.player_roles_by_account_id
     : {};
   for (const [rawId, rawRole] of Object.entries<any>(rawRolesByAccountId)) {
-    const cleanRoleId: any = cleanStableIdentityId(rawId);
+    const cleanRoleId = cleanStableIdentityId(rawId);
     if (cleanRoleId === "" || stableIdentityEquals(cleanRoleId, ownerAccountId)) continue;
     allowedAccountIdSet.add(cleanRoleId);
     playerRolesByAccountId[cleanRoleId] = normalizeWorldLockAccessRole(rawRole, "builder");
   }
 
-  const rawRolesByPlayerId: any = rawState.player_roles_by_player_id && typeof rawState.player_roles_by_player_id === "object" && !Array.isArray(rawState.player_roles_by_player_id)
+  const rawRolesByPlayerId = rawState.player_roles_by_player_id && typeof rawState.player_roles_by_player_id === "object" && !Array.isArray(rawState.player_roles_by_player_id)
     ? rawState.player_roles_by_player_id
     : {};
   for (const [rawId, rawRole] of Object.entries<any>(rawRolesByPlayerId)) {
-    const cleanRoleId: any = cleanStableIdentityId(rawId);
+    const cleanRoleId = cleanStableIdentityId(rawId);
     if (cleanRoleId === "" || stableIdentityEquals(cleanRoleId, ownerPlayerId)) continue;
     allowedPlayerIdSet.add(cleanRoleId);
     playerRolesByPlayerId[cleanRoleId] = normalizeWorldLockAccessRole(rawRole, "builder");
   }
 
-  const cleanAllowedPlayers: any = Array.from<any>(allowedSet).slice(0, 100);
-  const cleanAllowedAccountIds: any = Array.from<any>(allowedAccountIdSet).slice(0, 100);
-  const cleanAllowedPlayerIds: any = Array.from<any>(allowedPlayerIdSet).slice(0, 100);
+  const cleanAllowedPlayers = Array.from<any>(allowedSet).slice(0, 100);
+  const cleanAllowedAccountIds = Array.from<any>(allowedAccountIdSet).slice(0, 100);
+  const cleanAllowedPlayerIds = Array.from<any>(allowedPlayerIdSet).slice(0, 100);
   for (const cleanAllowedName of cleanAllowedPlayers) {
     if (!playerRoles[cleanAllowedName]) {
       playerRoles[cleanAllowedName] = "builder";
@@ -24675,8 +24790,8 @@ function sanitizeWorldLockState(state: any) {
       playerRolesByPlayerId[cleanAllowedId] = "builder";
     }
   }
-  const rawTrustedBuilderSlotLimit: any = Number(rawState.trusted_builder_slot_limit);
-  const trustedBuilderSlotLimit: any = Number.isFinite(rawTrustedBuilderSlotLimit)
+  const rawTrustedBuilderSlotLimit = Number(rawState.trusted_builder_slot_limit);
+  const trustedBuilderSlotLimit = Number.isFinite(rawTrustedBuilderSlotLimit)
     ? clampInteger(rawTrustedBuilderSlotLimit, MIN_TRUSTED_BUILDER_SLOT_LIMIT, MAX_TRUSTED_BUILDER_SLOT_LIMIT)
     : DEFAULT_TRUSTED_BUILDER_SLOT_LIMIT;
 
@@ -24815,7 +24930,7 @@ function makeBulkDropPickupWorldResultPayload(worldName: any, player: any, dropI
  * @returns {void}
  */
 function sendBulkDropPickupWorldResult(socket: any, player: any, worldName: any, dropIds: any, pickupResults: any, worldUpdates: any, successAmount: any, latestPickupState: any = null) {
-  const payload: any = makeBulkDropPickupWorldResultPayload(worldName, player, dropIds, pickupResults, worldUpdates, successAmount);
+  const payload = makeBulkDropPickupWorldResultPayload(worldName, player, dropIds, pickupResults, worldUpdates, successAmount);
   if (!payload.drop_id && (!payload.drop_ids || payload.drop_ids.length === 0)) return;
   sendWorldUpdateToRequesterAndWorld(socket, player, cleanWorld(worldName), payload, {
     username: player.account_username,
@@ -24824,7 +24939,7 @@ function sendBulkDropPickupWorldResult(socket: any, player: any, worldName: any,
 }
 
 async function handleBulkDropPickup(socket: any, player: any, data: any, worldName: any, requestId: any) {
-  const bulkUpdate: any = sanitizeBulkDropPickup(data, worldName, player);
+  const bulkUpdate = sanitizeBulkDropPickup(data, worldName, player);
   if (!bulkUpdate) {
     sendActionRejected(socket, "world_item_drop_pickup", "That drop is not available.", {
       world: cleanWorld(worldName),
@@ -24848,7 +24963,7 @@ async function handleBulkDropPickup(socket: any, player: any, data: any, worldNa
     return;
   }
 
-  const bulkTransactionId: any = makeAuditId("pickup_bulk");
+  const bulkTransactionId = makeAuditId("pickup_bulk");
   const lockedDropEntries: any = [];
   const pickupResults: any = [];
   let inventoryLocks: any = null;
@@ -24863,14 +24978,14 @@ async function handleBulkDropPickup(socket: any, player: any, data: any, worldNa
   try {
     for (const dropId of bulkUpdate.drop_ids) {
       const singleUpdate: any = { ...bulkUpdate, drop_id: dropId };
-      const initialPlan: any = prepareDropPickup(bulkUpdate.world, player, singleUpdate);
+      const initialPlan = prepareDropPickup(bulkUpdate.world, player, singleUpdate);
       if (!initialPlan.ok) {
         pickupResults.push(makeBulkDropPickupFailure(dropId, initialPlan.reason, getPreparedDropPickupFailureMessage(initialPlan)));
         continue;
       }
 
-      const dropLockKey: any = `${initialPlan.world}:${initialPlan.dropId}`;
-      const dropLock: any = await acquireLiveActionLock(worldDropActionLocks, "drop", dropLockKey, player.id);
+      const dropLockKey = `${initialPlan.world}:${initialPlan.dropId}`;
+      const dropLock = await acquireLiveActionLock(worldDropActionLocks, "drop", dropLockKey, player.id);
       if (!dropLock.acquired) {
         pickupResults.push(makeBulkDropPickupFailure(dropId, "drop_locked", "That drop is already being picked up."));
         continue;
@@ -24900,7 +25015,7 @@ async function handleBulkDropPickup(socket: any, player: any, data: any, worldNa
       return;
     }
 
-    const sessionAccount: any = accounts.get(accountKey(player.account_username)) || {};
+    const sessionAccount = accounts.get(accountKey(player.account_username)) || {};
     for (const entry of lockedDropEntries) {
       let pickupPlan: any = prepareDropPickup(bulkUpdate.world, player, entry.singleUpdate);
       if (!pickupPlan.ok) {
@@ -24908,8 +25023,8 @@ async function handleBulkDropPickup(socket: any, player: any, data: any, worldNa
         continue;
       }
 
-      const pickupTransactionId: any = makeAuditId("pickup");
-      const postgresPickup: any = await postgresStore.applyDropPickupTransaction({
+      const pickupTransactionId = makeAuditId("pickup");
+      const postgresPickup = await postgresStore.applyDropPickupTransaction({
         account_username: player.account_username,
         world: pickupPlan.world,
         drop_id: pickupPlan.dropId,
@@ -24936,10 +25051,10 @@ async function handleBulkDropPickup(socket: any, player: any, data: any, worldNa
       });
 
       if (!postgresPickup.ok) {
-        const postgresPickupReason: any = DropContracts.getPostgresDropPickupFailureReason(postgresPickup);
+        const postgresPickupReason = DropContracts.getPostgresDropPickupFailureReason(postgresPickup);
         logDropPickupInventoryIssue(postgresPickupReason, player, pickupPlan.world, entry.dropId, pickupPlan, postgresPickup);
         if (DropContracts.isPostgresDropPickupUnavailableFailure(postgresPickup)) {
-          const removal: any = removeUnavailableDropFromWorldState(pickupPlan.world, pickupPlan.dropId, pickupPlan);
+          const removal = removeUnavailableDropFromWorldState(pickupPlan.world, pickupPlan.dropId, pickupPlan);
           if (removal.ok && removal.payload) {
             worldUpdates.push({ world: pickupPlan.world, payload: removal.payload });
           }
@@ -24952,24 +25067,24 @@ async function handleBulkDropPickup(socket: any, player: any, data: any, worldNa
         continue;
       }
 
-      const pickupState: any = pickupPlan.playerState;
-      const inventoryField: any = getInventoryFieldForCategory(pickupPlan.item_category, pickupPlan.item_type);
+      const pickupState = pickupPlan.playerState;
+      const inventoryField = getInventoryFieldForCategory(pickupPlan.item_category, pickupPlan.item_type);
       if (!pickupState[inventoryField] || typeof pickupState[inventoryField] !== "object" || Array.isArray(pickupState[inventoryField])) {
         pickupState[inventoryField] = {};
       }
-      const committedAfterAmountRaw: any = Number(postgresPickup.after_amount);
-      const committedAfterAmount: any = Number.isFinite(committedAfterAmountRaw)
+      const committedAfterAmountRaw = Number(postgresPickup.after_amount);
+      const committedAfterAmount = Number.isFinite(committedAfterAmountRaw)
         ? clampInteger(committedAfterAmountRaw, 0, pickupPlan.stackLimit)
         : clampInteger(pickupPlan.currentCount + pickupPlan.pickedAmount, 0, pickupPlan.stackLimit);
       pickupState[inventoryField][pickupPlan.item_type] = committedAfterAmount;
       persistPlayerInventoryChange(player.account_username, pickupState, { postgresCommitted: true });
 
-      const committedDropAfterAmountRaw: any = Number(postgresPickup.drop_after_amount);
+      const committedDropAfterAmountRaw = Number(postgresPickup.drop_after_amount);
       pickupPlan.remaining = Number.isFinite(committedDropAfterAmountRaw)
         ? Math.max(0, Math.trunc(committedDropAfterAmountRaw))
         : pickupPlan.remaining;
-      const worldApply: any = applyDropPickupWorldState(pickupPlan.world, pickupPlan);
-      const pickupUpdate: any = worldApply.ok
+      const worldApply = applyDropPickupWorldState(pickupPlan.world, pickupPlan);
+      const pickupUpdate = worldApply.ok
         ? worldApply.payload
         : removeUnavailableDropFromWorldState(pickupPlan.world, pickupPlan.dropId, pickupPlan).payload || null;
       if (pickupUpdate) {
@@ -25037,8 +25152,8 @@ async function handleBulkDropPickup(socket: any, player: any, data: any, worldNa
       return;
     }
 
-    const postPickupWorldState: any = serializeWorldState(successWorld);
-    const worldPersistResult: any = await persistAuthoritativeWorldState(successWorld, postPickupWorldState, "drop_pickup_bulk");
+    const postPickupWorldState = serializeWorldState(successWorld);
+    const worldPersistResult = await persistAuthoritativeWorldState(successWorld, postPickupWorldState, "drop_pickup_bulk");
     if (!worldPersistResult.ok) {
       console.warn("[drop_pickup_bulk_world_persist_failed]", {
         world: successWorld,
@@ -25047,15 +25162,15 @@ async function handleBulkDropPickup(socket: any, player: any, data: any, worldNa
       });
     }
 
-    const inventoryDeltas: any = buildInventoryDeltaClientPayloads(Array.from<any>(deltaMap.values()), latestPickupState || ensureWritablePlayerState(player.account_username) || {});
-    const bulkClientResultPayload: any = makeBulkDropPickupWorldResultPayload(successWorld, player, bulkUpdate.drop_ids, pickupResults, worldUpdates, successAmount);
+    const inventoryDeltas = buildInventoryDeltaClientPayloads(Array.from<any>(deltaMap.values()), latestPickupState || ensureWritablePlayerState(player.account_username) || {});
+    const bulkClientResultPayload = makeBulkDropPickupWorldResultPayload(successWorld, player, bulkUpdate.drop_ids, pickupResults, worldUpdates, successAmount);
     sendInventoryTransactionResult(socket, InventoryContracts.buildDropPickupInventoryTransactionResult({
       ok: true,
       request_id: requestId || bulkTransactionId,
       server_action_id: bulkTransactionId,
       bulk_pickup: true,
       world: successWorld,
-      drop_id: pickupResults.find((result) => result && result.ok)?.drop_id || bulkUpdate.drop_id,
+      drop_id: pickupResults.find((result: ServerPacketRecord | null) => result && result.ok)?.drop_id || bulkUpdate.drop_id,
       drop_ids: bulkUpdate.drop_ids,
       removed_drop_ids: bulkClientResultPayload.removed_drop_ids || [],
       updated_drops: bulkClientResultPayload.updated_drops || [],
@@ -25103,13 +25218,13 @@ function handleLegacyBulkDropPickup(socket: any, player: any, bulkUpdate: any, w
   let successWorld: any = cleanWorld(bulkUpdate.world || worldName);
 
   for (const dropId of bulkUpdate.drop_ids) {
-    const pickupResult: any = applyDropPickupToWorldState(bulkUpdate.world, { ...bulkUpdate, drop_id: dropId }, player);
+    const pickupResult = applyDropPickupToWorldState(bulkUpdate.world, { ...bulkUpdate, drop_id: dropId }, player);
     if (!pickupResult.ok) {
       pickupResults.push(makeBulkDropPickupFailure(dropId, pickupResult.reason, getPreparedDropPickupFailureMessage(pickupResult)));
       continue;
     }
 
-    const pickedDrop: any = pickupResult.drop;
+    const pickedDrop = pickupResult.drop;
     latestPickupState = pickupResult.playerState;
     successWorld = cleanWorld(bulkUpdate.world || worldName);
     worldUpdates.push({ world: successWorld, payload: pickupResult.update });
@@ -25147,14 +25262,14 @@ function handleLegacyBulkDropPickup(socket: any, player: any, bulkUpdate: any, w
 
   persistPlayerInventoryChange(player.account_username, latestPickupState);
   queueWorldSave(successWorld);
-  const inventoryDeltas: any = buildInventoryDeltaClientPayloads(Array.from<any>(deltaMap.values()), latestPickupState);
-  const bulkClientResultPayload: any = makeBulkDropPickupWorldResultPayload(successWorld, player, bulkUpdate.drop_ids, pickupResults, worldUpdates, successAmount);
+  const inventoryDeltas = buildInventoryDeltaClientPayloads(Array.from<any>(deltaMap.values()), latestPickupState);
+  const bulkClientResultPayload = makeBulkDropPickupWorldResultPayload(successWorld, player, bulkUpdate.drop_ids, pickupResults, worldUpdates, successAmount);
   sendInventoryTransactionResult(socket, InventoryContracts.buildDropPickupInventoryTransactionResult({
     ok: true,
     request_id: requestId,
     bulk_pickup: true,
     world: successWorld,
-    drop_id: pickupResults.find((result) => result && result.ok)?.drop_id || bulkUpdate.drop_id,
+    drop_id: pickupResults.find((result: ServerPacketRecord | null) => result && result.ok)?.drop_id || bulkUpdate.drop_id,
     drop_ids: bulkUpdate.drop_ids,
     removed_drop_ids: bulkClientResultPayload.removed_drop_ids || [],
     updated_drops: bulkClientResultPayload.updated_drops || [],
@@ -25179,8 +25294,8 @@ function handleLegacyBulkDropPickup(socket: any, player: any, bulkUpdate: any, w
  * @returns {PixelMania.WorldName}
  */
 function resolveDropPickupWorldName(worldName: any, update: any = {}) {
-  const fallbackWorld: any = cleanWorld(worldName || "START");
-  const found: any = findDropForPickup(fallbackWorld, update.drop_id, update.requested_world);
+  const fallbackWorld = cleanWorld(worldName || "START");
+  const found = findDropForPickup(fallbackWorld, update.drop_id, update.requested_world);
   return cleanWorld(found?.world || fallbackWorld);
 }
 
@@ -25189,7 +25304,7 @@ function sanitizeOptionalDropPickupPosition(data: any, player: any, worldName: a
     return null;
   }
 
-  const position: any = sanitizePlayerPosition({
+  const position = sanitizePlayerPosition({
     x: data.x,
     y: data.y,
     facing: data.facing,
@@ -25206,7 +25321,7 @@ function sanitizeOptionalDropPickupPosition(data: any, player: any, worldName: a
  * @returns {void}
  */
 function applyDropCreateToWorldState(worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   state.drops.set(update.drop_id, {
     drop_id: update.drop_id,
     item_type: update.item_type,
@@ -25227,8 +25342,8 @@ function applyDropCreateToWorldState(worldName: any, update: any) {
  * @returns {void}
  */
 function applyDropUpdateToWorldState(worldName: any, update: any) {
-  const state: any = ensureWorldState(worldName);
-  const drop: any = state.drops.get(update.drop_id);
+  const state = ensureWorldState(worldName);
+  const drop = state.drops.get(update.drop_id);
   if (!drop) return;
 
   if (Object.prototype.hasOwnProperty.call(update, "amount")) {
@@ -25255,40 +25370,40 @@ function applyDropUpdateToWorldState(worldName: any, update: any) {
  * @returns {PixelMania.LegacyDropPickupResult}
  */
 function applyDropPickupToWorldState(worldName: any, update: any, player: any) {
-  const found: any = findDropForPickup(worldName, update.drop_id);
-  const state: any = found.state;
-  const drop: any = found.drop;
-  const authoritativeDropId: any = found.publicDropId;
-  const dropStateKey: any = found.key;
+  const found = findDropForPickup(worldName, update.drop_id);
+  const state = found.state;
+  const drop = found.drop;
+  const authoritativeDropId = found.publicDropId;
+  const dropStateKey = found.key;
   if (!drop) return DropContracts.buildDropPickupFailure({ reason: "not_available" });
-  const validationPosition: any = getPlayerValidationPosition(player, {
+  const validationPosition = getPlayerValidationPosition(player, {
     action: "world_item_drop_pickup",
     world: cleanWorld(worldName),
   });
-  const pickupPosition: any = validationPosition.ok ? validationPosition : player;
+  const pickupPosition = validationPosition.ok ? validationPosition : player;
   if (!isPositionNearDrop(pickupPosition, drop)) return DropContracts.buildDropPickupFailure({ reason: "too_far", drop });
 
-  const itemId: any = clampString(drop.item_type || "");
+  const itemId = clampString(drop.item_type || "");
   if (!ItemDatabase.hasItem(itemId)) return DropContracts.buildDropPickupFailure({ reason: "not_available" });
-  const itemCategory: any = resolveInventoryCategory(itemId, drop.item_category || "");
+  const itemCategory = resolveInventoryCategory(itemId, drop.item_category || "");
   if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) return DropContracts.buildDropPickupFailure({ reason: "not_available" });
 
-  const playerState: any = ensureWritablePlayerState(player.account_username);
+  const playerState = ensureWritablePlayerState(player.account_username);
   if (!playerState) return DropContracts.buildDropPickupFailure({ reason: "inventory_unavailable" });
 
-  const stackLimit: any = ItemDatabase.getStackLimit(itemId);
-  const dropAmount: any = clampInteger(drop.amount || 0, 0, Math.min(MAX_DROP_TILE_AMOUNT, stackLimit));
+  const stackLimit = ItemDatabase.getStackLimit(itemId);
+  const dropAmount = clampInteger(drop.amount || 0, 0, Math.min(MAX_DROP_TILE_AMOUNT, stackLimit));
   if (dropAmount <= 0) {
     state.drops.delete(dropStateKey);
     return DropContracts.buildDropPickupFailure({ reason: "not_available" });
   }
 
-  const currentCount: any = getInventoryCount(playerState, itemId, itemCategory);
-  const availableSpace: any = Math.max(0, stackLimit - currentCount);
+  const currentCount = getInventoryCount(playerState, itemId, itemCategory);
+  const availableSpace = Math.max(0, stackLimit - currentCount);
   if (availableSpace <= 0) return DropContracts.buildDropPickupFailure({ reason: "inventory_full", drop });
 
-  const pickedAmount: any = Math.min(dropAmount, availableSpace);
-  const remaining: any = Math.max(0, dropAmount - pickedAmount);
+  const pickedAmount = Math.min(dropAmount, availableSpace);
+  const remaining = Math.max(0, dropAmount - pickedAmount);
   const pickedDrop: any = {
     ...drop,
     drop_id: authoritativeDropId,
@@ -25297,7 +25412,7 @@ function applyDropPickupToWorldState(worldName: any, update: any, player: any) {
     amount: pickedAmount,
   };
 
-  const addResult: any = addItemToState(playerState, itemId, itemCategory, pickedAmount);
+  const addResult = addItemToState(playerState, itemId, itemCategory, pickedAmount);
   if (!addResult) return DropContracts.buildDropPickupFailure({ reason: "inventory_unavailable", drop });
 
   playerState.saved_at = new Date().toISOString();
@@ -25342,14 +25457,14 @@ function applyDropPickupToWorldState(worldName: any, update: any, player: any) {
  * @returns {PixelMania.PreparedDropPickupResult}
  */
 function prepareDropPickup(worldName: any, player: any, update: any) {
-  const found: any = findDropForPickup(worldName, update.drop_id, update.requested_world);
+  const found = findDropForPickup(worldName, update.drop_id, update.requested_world);
   if (!found.drop) return DropContracts.buildDropPickupFailure({ reason: "not_available" });
 
-  const drop: any = found.drop;
-  const dropId: any = found.publicDropId;
-  const dropStateKey: any = found.key;
-  const cleanWorldName: any = cleanWorld(found.world || worldName);
-  const sessionWorldName: any = getPlayerCurrentWorldName(player);
+  const drop = found.drop;
+  const dropId = found.publicDropId;
+  const dropStateKey = found.key;
+  const cleanWorldName = cleanWorld(found.world || worldName);
+  const sessionWorldName = getPlayerCurrentWorldName(player);
   if (sessionWorldName !== cleanWorldName && !usesTrustedMovementPosition(player)) {
     return DropContracts.buildDropPickupFailure({
       reason: "wrong_world",
@@ -25359,7 +25474,7 @@ function prepareDropPickup(worldName: any, player: any, update: any) {
       requested_world: update.requested_world || "",
     });
   }
-  const validationPosition: any = getPlayerValidationPosition(player, {
+  const validationPosition = getPlayerValidationPosition(player, {
     action: "world_item_drop_pickup",
     world: cleanWorldName,
   });
@@ -25380,20 +25495,20 @@ function prepareDropPickup(worldName: any, player: any, update: any) {
     });
   }
 
-  const itemType: any = clampString(drop.item_type || "");
+  const itemType = clampString(drop.item_type || "");
   if (!ItemDatabase.hasItem(itemType)) return DropContracts.buildDropPickupFailure({ reason: "not_available", drop, world: cleanWorldName });
-  const itemCategory: any = resolveInventoryCategory(itemType, drop.item_category || "");
+  const itemCategory = resolveInventoryCategory(itemType, drop.item_category || "");
   if (!ItemDatabase.canStoreItemInCategory(itemType, itemCategory)) return DropContracts.buildDropPickupFailure({ reason: "not_available", drop, world: cleanWorldName });
 
-  const playerState: any = ensureWritablePlayerState(player.account_username);
+  const playerState = ensureWritablePlayerState(player.account_username);
   if (!playerState) return DropContracts.buildDropPickupFailure({ reason: "inventory_unavailable", drop, world: cleanWorldName });
 
-  const stackLimit: any = ItemDatabase.getStackLimit(itemType);
-  const dropAmount: any = clampInteger(drop.amount || 0, 0, MAX_DROP_TILE_AMOUNT);
+  const stackLimit = ItemDatabase.getStackLimit(itemType);
+  const dropAmount = clampInteger(drop.amount || 0, 0, MAX_DROP_TILE_AMOUNT);
   if (dropAmount <= 0) return DropContracts.buildDropPickupFailure({ reason: "not_available", world: cleanWorldName });
 
-  const currentCount: any = getInventoryCount(playerState, itemType, itemCategory);
-  const availableSpace: any = Math.max(0, stackLimit - currentCount);
+  const currentCount = getInventoryCount(playerState, itemType, itemCategory);
+  const availableSpace = Math.max(0, stackLimit - currentCount);
   if (availableSpace <= 0) {
     return DropContracts.buildDropPickupFailure({
       reason: "inventory_full",
@@ -25408,7 +25523,7 @@ function prepareDropPickup(worldName: any, player: any, update: any) {
     });
   }
 
-  const pickedAmount: any = Math.min(dropAmount, availableSpace);
+  const pickedAmount = Math.min(dropAmount, availableSpace);
   if (pickedAmount <= 0) {
     return DropContracts.buildDropPickupFailure({
       reason: "inventory_full",
@@ -25455,9 +25570,9 @@ function prepareDropPickup(worldName: any, player: any, update: any) {
  */
 function applyDropPickupWorldState(worldName: any, pickupPlan: any) {
   if (!pickupPlan) return DropContracts.buildDropPickupWorldApplyFailure("not_available");
-  const state: any = ensureWorldState(worldName);
-  const dropId: any = clampString(pickupPlan.dropId || "", MAX_DROP_ID_LENGTH);
-  const targetDropId: any = clampString(pickupPlan.drop?.drop_id || dropId, MAX_DROP_ID_LENGTH);
+  const state = ensureWorldState(worldName);
+  const dropId = clampString(pickupPlan.dropId || "", MAX_DROP_ID_LENGTH);
+  const targetDropId = clampString(pickupPlan.drop?.drop_id || dropId, MAX_DROP_ID_LENGTH);
   let dropStateKey: any = clampString(pickupPlan.dropStateKey || "", MAX_DROP_ID_LENGTH);
   let drop: any = null;
 
@@ -25465,7 +25580,7 @@ function applyDropPickupWorldState(worldName: any, pickupPlan: any) {
     drop = state.drops.get(dropStateKey);
   } else {
     for (const [candidateKey, candidateDrop] of state.drops.entries()) {
-      const candidateDropId: any = clampString(candidateDrop?.drop_id || candidateKey || "", MAX_DROP_ID_LENGTH);
+      const candidateDropId = clampString(candidateDrop?.drop_id || candidateKey || "", MAX_DROP_ID_LENGTH);
       if (candidateDropId === targetDropId) {
         drop = candidateDrop;
         dropStateKey = candidateKey;
@@ -25475,7 +25590,7 @@ function applyDropPickupWorldState(worldName: any, pickupPlan: any) {
   }
 
   if (!drop) {
-    const found: any = findDropForPickup(worldName, dropId);
+    const found = findDropForPickup(worldName, dropId);
     if (found && found.drop) {
       drop = found.drop;
       dropStateKey = found.key;
@@ -25500,7 +25615,7 @@ function applyDropPickupWorldState(worldName: any, pickupPlan: any) {
     }));
   }
 
-  const remainingAmount: any = Math.max(0, Number(pickupPlan.remaining) || 0);
+  const remainingAmount = Math.max(0, Number(pickupPlan.remaining) || 0);
   if (!state.drops.has(dropStateKey)) {
     return DropContracts.buildDropPickupWorldApplyFailure("not_available");
   }
@@ -25525,15 +25640,15 @@ function applyDropPickupWorldState(worldName: any, pickupPlan: any) {
  * @returns {PixelMania.DropPickupWorldApplyResult}
  */
 function removeUnavailableDropFromWorldState(worldName: any, dropId: any, pickupPlan: any = null) {
-  const cleanWorldName: any = cleanWorld(worldName);
-  const state: any = ensureWorldState(cleanWorldName);
-  const cleanDropId: any = clampString(dropId || pickupPlan?.dropId || pickupPlan?.drop?.drop_id || "", MAX_DROP_ID_LENGTH);
-  const targetDropId: any = clampString(pickupPlan?.drop?.drop_id || cleanDropId, MAX_DROP_ID_LENGTH);
-  const dropStateKey: any = clampString(pickupPlan?.dropStateKey || "", MAX_DROP_ID_LENGTH);
+  const cleanWorldName = cleanWorld(worldName);
+  const state = ensureWorldState(cleanWorldName);
+  const cleanDropId = clampString(dropId || pickupPlan?.dropId || pickupPlan?.drop?.drop_id || "", MAX_DROP_ID_LENGTH);
+  const targetDropId = clampString(pickupPlan?.drop?.drop_id || cleanDropId, MAX_DROP_ID_LENGTH);
+  const dropStateKey = clampString(pickupPlan?.dropStateKey || "", MAX_DROP_ID_LENGTH);
   let removed: any = false;
 
   for (const [candidateKey, candidateDrop] of Array.from<any>(state.drops.entries())) {
-    const candidateDropId: any = clampString(candidateDrop?.drop_id || candidateKey || "", MAX_DROP_ID_LENGTH);
+    const candidateDropId = clampString(candidateDrop?.drop_id || candidateKey || "", MAX_DROP_ID_LENGTH);
     if (
       candidateKey === dropStateKey ||
       candidateKey === cleanDropId ||
@@ -25562,15 +25677,15 @@ function removeUnavailableDropFromWorldState(worldName: any, dropId: any, pickup
  * @returns {PixelMania.DropPickupWorldLookupResult}
  */
 function findDropForPickup(worldName: any, dropId: any, requestedWorldName: any = "") {
-  const cleanWorldName: any = cleanWorld(worldName);
-  const cleanDropId: any = clampString(dropId || "", MAX_DROP_ID_LENGTH);
+  const cleanWorldName = cleanWorld(worldName);
+  const cleanDropId = clampString(dropId || "", MAX_DROP_ID_LENGTH);
   const searchedWorlds: any = new Set();
 
-  const findInWorld: any = (candidateWorldName) => {
-    const cleanCandidateWorld: any = cleanWorld(candidateWorldName);
+  const findInWorld = (candidateWorldName: unknown) => {
+    const cleanCandidateWorld = cleanWorld(candidateWorldName);
     if (searchedWorlds.has(cleanCandidateWorld)) return null;
     searchedWorlds.add(cleanCandidateWorld);
-    const state: any = ensureWorldState(cleanCandidateWorld);
+    const state = ensureWorldState(cleanCandidateWorld);
 
     if (state.drops.has(cleanDropId)) {
       return {
@@ -25583,7 +25698,7 @@ function findDropForPickup(worldName: any, dropId: any, requestedWorldName: any 
     }
 
     for (const [candidateId, candidateDrop] of state.drops.entries()) {
-      const candidateDropId: any = clampString(candidateDrop?.drop_id || candidateId || "", MAX_DROP_ID_LENGTH);
+      const candidateDropId = clampString(candidateDrop?.drop_id || candidateId || "", MAX_DROP_ID_LENGTH);
       if (candidateDropId === cleanDropId) {
         return {
           state,
@@ -25598,18 +25713,18 @@ function findDropForPickup(worldName: any, dropId: any, requestedWorldName: any 
     return null;
   };
 
-  const primary: any = findInWorld(cleanWorldName);
+  const primary = findInWorld(cleanWorldName);
   if (primary) return primary;
 
-  const hasRequestedWorld: any = String(requestedWorldName || "").trim() !== "";
-  const cleanRequestedWorld: any = hasRequestedWorld ? cleanWorld(requestedWorldName) : "";
+  const hasRequestedWorld = String(requestedWorldName || "").trim() !== "";
+  const cleanRequestedWorld = hasRequestedWorld ? cleanWorld(requestedWorldName) : "";
   if (hasRequestedWorld && cleanRequestedWorld !== cleanWorldName) {
-    const requested: any = findInWorld(cleanRequestedWorld);
+    const requested = findInWorld(cleanRequestedWorld);
     if (requested) return requested;
   }
 
   for (const candidateWorldName of worldStates.keys()) {
-    const loaded: any = findInWorld(candidateWorldName);
+    const loaded = findInWorld(candidateWorldName);
     if (loaded) return loaded;
   }
 
@@ -25623,9 +25738,9 @@ function findDropForPickup(worldName: any, dropId: any, requestedWorldName: any 
 }
 
 function logDropPickupNotAvailable(player: any, worldName: any, dropId: any) {
-  const cleanWorldName: any = cleanWorld(worldName);
-  const state: any = ensureWorldState(cleanWorldName);
-  const cleanDropId: any = clampString(dropId || "", MAX_DROP_ID_LENGTH);
+  const cleanWorldName = cleanWorld(worldName);
+  const state = ensureWorldState(cleanWorldName);
+  const cleanDropId = clampString(dropId || "", MAX_DROP_ID_LENGTH);
   const loadedWorldsWithDrop: any = [];
   for (const [loadedWorldName, loadedState] of worldStates.entries()) {
     if (!loadedState || !loadedState.drops) continue;
@@ -25634,7 +25749,7 @@ function logDropPickupNotAvailable(player: any, worldName: any, dropId: any) {
       continue;
     }
     for (const [candidateId, candidateDrop] of loadedState.drops.entries()) {
-      const candidateDropId: any = clampString(candidateDrop?.drop_id || candidateId || "", MAX_DROP_ID_LENGTH);
+      const candidateDropId = clampString(candidateDrop?.drop_id || candidateId || "", MAX_DROP_ID_LENGTH);
       if (candidateDropId === cleanDropId) {
         loadedWorldsWithDrop.push(loadedWorldName);
         break;
@@ -25653,10 +25768,10 @@ function logDropPickupNotAvailable(player: any, worldName: any, dropId: any) {
 }
 
 function logDropPickupTooFar(player: any, worldName: any, dropId: any, drop: any, update: any = {}) {
-  const actionPosition: any = update?.action_position || null;
-  const validationPosition: any = update?.validation_position || update?.validationPosition || null;
-  const sourcePosition: any = validationPosition && validationPosition.ok === true ? validationPosition : player;
-  const dropPosition: any = getDropPublicPosition(drop) || {
+  const actionPosition = update?.action_position || null;
+  const validationPosition = update?.validation_position || update?.validationPosition || null;
+  const sourcePosition = validationPosition && validationPosition.ok === true ? validationPosition : player;
+  const dropPosition = getDropPublicPosition(drop) || {
     x: Number(drop?.x || 0),
     y: Number(drop?.y || 0),
   };
@@ -25703,10 +25818,10 @@ function logDropPickupInventoryIssue(reason: any, player: any, worldName: any, d
 
 function isPositionNearDrop(position: any, drop: any) {
   if (!position || !drop) return false;
-  const playerX: any = Number(position.x);
-  const playerY: any = Number(position.y);
+  const playerX = Number(position.x);
+  const playerY = Number(position.y);
   if (!Number.isFinite(playerX) || !Number.isFinite(playerY)) return false;
-  const dropPosition: any = getDropPublicPosition(drop);
+  const dropPosition = getDropPublicPosition(drop);
   if (!dropPosition) return false;
 
   return Math.hypot(playerX - dropPosition.x, playerY - dropPosition.y) <= MAX_PICKUP_DISTANCE_PIXELS;
@@ -25718,8 +25833,8 @@ function getForegroundNetworkPriority(entry: any) {
 
 function addAtlasItemIdToBlockEntry(entry: any) {
   if (!entry || typeof entry !== "object" || Array.isArray(entry)) return entry;
-  const blockType: any = clampString(entry.block_type || "");
-  const itemId: any = Math.max(0, Math.trunc(Number(entry.item_id) || ItemAtlasDB.getItemIdForKey(blockType) || 0));
+  const blockType = clampString(entry.block_type || "");
+  const itemId = Math.max(0, Math.trunc(Number(entry.item_id) || ItemAtlasDB.getItemIdForKey(blockType) || 0));
   if (itemId > 0) {
     entry.item_id = itemId;
   }
@@ -25732,8 +25847,8 @@ function getForegroundBlocksForMap(blockMap: any, state: any, worldName: any = "
   for (const block of blockMap.values()) {
     const entry: any = { ...block };
     addAtlasItemIdToBlockEntry(entry);
-    const interaction: any = state.interactions.get(gridKey(block.x, block.y));
-    const blockType: any = clampString(entry.block_type || "");
+    const interaction = state.interactions.get(gridKey(block.x, block.y));
+    const blockType = clampString(entry.block_type || "");
     if (!isDoorBlockType(blockType)) {
       delete entry.door_id;
       delete entry.door_name;
@@ -25771,7 +25886,7 @@ function getForegroundBlocksForMap(blockMap: any, state: any, worldName: any = "
     blocks.push(entry);
   }
 
-  blocks.sort((a, b) => getForegroundNetworkPriority(a) - getForegroundNetworkPriority(b));
+  blocks.sort((a: ServerPacketRecord, b: ServerPacketRecord) => getForegroundNetworkPriority(a) - getForegroundNetworkPriority(b));
   return blocks;
 }
 
@@ -25789,7 +25904,7 @@ function getEffectiveBackgroundBlocksForState(state: any, worldName: any = "", g
 }
 
 function getBearerTokenFromRequest(request: any) {
-  const rawHeader: any = String(request?.headers?.authorization || request?.headers?.Authorization || "").trim();
+  const rawHeader = String(request?.headers?.authorization || request?.headers?.Authorization || "").trim();
   if (rawHeader.toLowerCase().startsWith("bearer ")) {
     return rawHeader.slice(7).trim();
   }
@@ -25813,19 +25928,19 @@ function isNetfoxSpawnTicketConfigured() {
 }
 
 function base64UrlEncode(value: any) {
-  const buffer: any = Buffer.isBuffer(value) ? value : Buffer.from(String(value), "utf8");
+  const buffer = Buffer.isBuffer(value) ? value : Buffer.from(String(value), "utf8");
   return buffer.toString("base64").replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/g, "");
 }
 
 function base64UrlDecodeToString(value: any) {
-  const clean: any = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
+  const clean = String(value || "").replace(/-/g, "+").replace(/_/g, "/");
   if (!/^[A-Za-z0-9+/]*={0,2}$/.test(clean)) return "";
-  const padded: any = clean.padEnd(clean.length + ((4 - (clean.length % 4)) % 4), "=");
+  const padded = clean.padEnd(clean.length + ((4 - (clean.length % 4)) % 4), "=");
   return Buffer.from(padded, "base64").toString("utf8");
 }
 
 function signNetfoxSpawnTicketPayload(encodedPayload: any) {
-  const secret: any = getNetfoxSpawnTicketSecret();
+  const secret = getNetfoxSpawnTicketSecret();
   if (secret === "") return "";
   return base64UrlEncode(crypto.createHmac("sha256", secret).update(String(encodedPayload || "")).digest());
 }
@@ -25836,8 +25951,8 @@ function signNetfoxSpawnTicketPayload(encodedPayload: any) {
  */
 function makeNetfoxSpawnTicket(payload: any) {
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return "";
-  const encodedPayload: any = base64UrlEncode(JSON.stringify(payload));
-  const signature: any = signNetfoxSpawnTicketPayload(encodedPayload);
+  const encodedPayload = base64UrlEncode(JSON.stringify(payload));
+  const signature = signNetfoxSpawnTicketPayload(encodedPayload);
   if (signature === "") return "";
   return `pmnt1.${encodedPayload}.${signature}`;
 }
@@ -25847,20 +25962,20 @@ function makeNetfoxSpawnTicket(payload: any) {
  * @returns {PixelMania.NetfoxSpawnTicketParseResult}
  */
 function parseNetfoxSpawnTicket(ticket: any) {
-  const cleanTicket: any = String(ticket || "").trim();
-  const parts: any = cleanTicket.split(".");
+  const cleanTicket = String(ticket || "").trim();
+  const parts = cleanTicket.split(".");
   if (parts.length !== 3 || parts[0] !== "pmnt1") {
     return { ok: false, reason: "spawn_ticket_malformed", error: "Malformed Netfox spawn ticket.", status: 400 };
   }
 
-  const expectedSignature: any = signNetfoxSpawnTicketPayload(parts[1]);
+  const expectedSignature = signNetfoxSpawnTicketPayload(parts[1]);
   if (expectedSignature === "" || !safeTimingEqualString(parts[2], expectedSignature)) {
     return { ok: false, reason: "spawn_ticket_bad_signature", error: "Netfox spawn ticket signature is invalid.", status: 401 };
   }
 
   try {
-    const payloadText: any = base64UrlDecodeToString(parts[1]);
-    const payload: any = JSON.parse(payloadText);
+    const payloadText = base64UrlDecodeToString(parts[1]);
+    const payload = JSON.parse(payloadText);
     if (!payload || typeof payload !== "object" || Array.isArray(payload)) {
       return { ok: false, reason: "spawn_ticket_invalid_payload", error: "Netfox spawn ticket payload is invalid.", status: 400 };
     }
@@ -25877,10 +25992,10 @@ function parseNetfoxSpawnTicket(ticket: any) {
  * @returns {PixelMania.NetfoxTicketIdentity}
  */
 function getNetfoxTicketIdentityFromPlayer(player: any, worldName: any, overrides: any = {}) {
-  const cleanWorldName: any = cleanWorld(worldName || getPlayerCurrentWorldName(player));
-  const username: any = cleanAccountName(player?.account_username || player?.name || "");
-  const websocketPlayerId: any = clampString(overrides.websocket_player_id || player?.id || "", 96);
-  const gamePlayerId: any = clampString(player?.profile_id || player?.account_id || username || websocketPlayerId, 96);
+  const cleanWorldName = cleanWorld(worldName || getPlayerCurrentWorldName(player));
+  const username = cleanAccountName(player?.account_username || player?.name || "");
+  const websocketPlayerId = clampString(overrides.websocket_player_id || player?.id || "", 96);
+  const gamePlayerId = clampString(player?.profile_id || player?.account_id || username || websocketPlayerId, 96);
 
   return {
     world: cleanWorldName,
@@ -25919,14 +26034,14 @@ function sanitizeNetfoxRoutePort(value: any, fallback: any = NETFOX_MOVEMENT_PUB
 function normalizeNetfoxMovementRouteForBackend(route: any, worldName: any) {
   if (!route || typeof route !== "object" || Array.isArray(route)) return null;
 
-  const cleanWorldName: any = cleanWorld(worldName || route.world || route.world_id || "START");
-  const host: any = sanitizeNetfoxRouteHost(route.host || route.public_host || "");
+  const cleanWorldName = cleanWorld(worldName || route.world || route.world_id || "START");
+  const host = sanitizeNetfoxRouteHost(route.host || route.public_host || "");
   if (host === "") return null;
 
-  const port: any = sanitizeNetfoxRoutePort(route.port || route.public_port || NETFOX_MOVEMENT_PUBLIC_PORT);
-  const maxClients: any = Math.max(1, Math.min(512, Math.trunc(Number(route.max_clients || route.maxClients) || NETFOX_MOVEMENT_MAX_CLIENTS)));
-  const registeredAtMs: any = Math.trunc(Number(route.registered_at_ms || 0));
-  const expiresAtMs: any = Math.trunc(Number(route.expires_at_ms || 0));
+  const port = sanitizeNetfoxRoutePort(route.port || route.public_port || NETFOX_MOVEMENT_PUBLIC_PORT);
+  const maxClients = Math.max(1, Math.min(512, Math.trunc(Number(route.max_clients || route.maxClients) || NETFOX_MOVEMENT_MAX_CLIENTS)));
+  const registeredAtMs = Math.trunc(Number(route.registered_at_ms || 0));
+  const expiresAtMs = Math.trunc(Number(route.expires_at_ms || 0));
 
   return {
     ...route,
@@ -25949,11 +26064,11 @@ function normalizeNetfoxMovementRouteForBackend(route: any, worldName: any) {
  * @returns {Promise<PixelMania.NetfoxMovementRoute>}
  */
 async function registerNetfoxMovementRoute(routePayload: any = {}) {
-  const worldName: any = cleanWorld(routePayload.world || routePayload.world_id || "START");
-  const host: any = sanitizeNetfoxRouteHost(routePayload.host || routePayload.public_host || NETFOX_MOVEMENT_PUBLIC_HOST);
-  const port: any = sanitizeNetfoxRoutePort(routePayload.port || routePayload.public_port || NETFOX_MOVEMENT_PUBLIC_PORT);
-  const maxClients: any = Math.max(1, Math.min(512, Math.trunc(Number(routePayload.max_clients || routePayload.maxClients) || NETFOX_MOVEMENT_MAX_CLIENTS)));
-  const now: any = Date.now();
+  const worldName = cleanWorld(routePayload.world || routePayload.world_id || "START");
+  const host = sanitizeNetfoxRouteHost(routePayload.host || routePayload.public_host || NETFOX_MOVEMENT_PUBLIC_HOST);
+  const port = sanitizeNetfoxRoutePort(routePayload.port || routePayload.public_port || NETFOX_MOVEMENT_PUBLIC_PORT);
+  const maxClients = Math.max(1, Math.min(512, Math.trunc(Number(routePayload.max_clients || routePayload.maxClients) || NETFOX_MOVEMENT_MAX_CLIENTS)));
+  const now = Date.now();
   const route: any = {
     world: worldName,
     world_id: worldName,
@@ -25969,7 +26084,7 @@ async function registerNetfoxMovementRoute(routePayload: any = {}) {
   };
 
   netfoxMovementRoutes.set(worldName, route);
-  const redisResult: any = await redisStore.setNetfoxMovementRoute(worldName, route, NETFOX_MOVEMENT_ROUTE_TTL_MS);
+  const redisResult = await redisStore.setNetfoxMovementRoute(worldName, route, NETFOX_MOVEMENT_ROUTE_TTL_MS);
   if (redisResult && !redisResult.ok && !redisResult.fallback) {
     console.warn("[NetfoxReal] Netfox movement route Redis registration rejected.", {
       world: worldName,
@@ -25984,18 +26099,18 @@ async function registerNetfoxMovementRoute(routePayload: any = {}) {
  * @returns {Promise<PixelMania.NetfoxMovementRoute | null>}
  */
 async function getNetfoxMovementRouteForWorld(worldName: any) {
-  const cleanWorldName: any = cleanWorld(worldName || "START");
+  const cleanWorldName = cleanWorld(worldName || "START");
   pruneExpiredNetfoxMovementRoutes();
-  const registered: any = netfoxMovementRoutes.get(cleanWorldName);
+  const registered = netfoxMovementRoutes.get(cleanWorldName);
   if (registered) {
     return { ...registered };
   }
 
-  const redisResult: any = await redisStore.getNetfoxMovementRoute(cleanWorldName);
+  const redisResult = await redisStore.getNetfoxMovementRoute(cleanWorldName);
   if (redisResult && redisResult.ok && redisResult.route) {
-    const redisRoute: any = normalizeNetfoxMovementRouteForBackend(redisResult.route, cleanWorldName);
+    const redisRoute = normalizeNetfoxMovementRouteForBackend(redisResult.route, cleanWorldName);
     if (redisRoute) {
-      const expiresAtMs: any = Math.trunc(Number(redisRoute.expires_at_ms || 0));
+      const expiresAtMs = Math.trunc(Number(redisRoute.expires_at_ms || 0));
       if (expiresAtMs > 0 && expiresAtMs <= Date.now()) {
         netfoxMovementRoutes.delete(cleanWorldName);
         await redisStore.deleteNetfoxMovementRoute(cleanWorldName);
@@ -26030,7 +26145,7 @@ async function getNetfoxMovementRouteForWorld(worldName: any) {
  */
 function getNetfoxMovementRouteStats() {
   pruneExpiredNetfoxMovementRoutes();
-  const now: any = Date.now();
+  const now = Date.now();
   const registeredRoutes: any = {};
   for (const [worldName, route] of netfoxMovementRoutes.entries()) {
     if (!route) continue;
@@ -26061,10 +26176,10 @@ function getNetfoxMovementRouteStats() {
  * @returns {Promise<PixelMania.NetfoxSpawnTicketRoute>}
  */
 async function buildNetfoxSpawnTicketPayload(player: any, worldName: any, overrides: any = {}) {
-  const cleanWorldName: any = cleanWorld(worldName || getPlayerCurrentWorldName(player));
-  const now: any = Date.now();
-  const expiresAt: any = now + NETFOX_SPAWN_TICKET_TTL_MS;
-  const movementRoute: any = await getNetfoxMovementRouteForWorld(cleanWorldName);
+  const cleanWorldName = cleanWorld(worldName || getPlayerCurrentWorldName(player));
+  const now = Date.now();
+  const expiresAt = now + NETFOX_SPAWN_TICKET_TTL_MS;
+  const movementRoute = await getNetfoxMovementRouteForWorld(cleanWorldName);
   const route: any = {
     enabled: NETFOX_MOVEMENT_ENABLED,
     world: cleanWorldName,
@@ -26104,7 +26219,7 @@ async function buildNetfoxSpawnTicketPayload(player: any, worldName: any, overri
     return route;
   }
 
-  const identity: any = getNetfoxTicketIdentityFromPlayer(player, cleanWorldName, overrides);
+  const identity = getNetfoxTicketIdentityFromPlayer(player, cleanWorldName, overrides);
   const ticketPayload: any = {
     v: 1,
     type: "netfox_spawn",
@@ -26138,27 +26253,27 @@ function verifyNetfoxSpawnTicketPayload(body: any) {
     return { ok: false, reason: "invalid_request", error: "Invalid spawn ticket verification request.", status: 400 };
   }
 
-  const parsed: any = parseNetfoxSpawnTicket(body.ticket);
+  const parsed = parseNetfoxSpawnTicket(body.ticket);
   if (!parsed.ok) return parsed;
 
-  const payload: any = parsed.payload;
+  const payload = parsed.payload;
   if (payload.type !== "netfox_spawn" || Math.trunc(Number(payload.v) || 0) !== 1) {
     return { ok: false, reason: "spawn_ticket_wrong_type", error: "Netfox spawn ticket has the wrong type.", status: 400 };
   }
 
-  const now: any = Date.now();
-  const expiresAt: any = Math.trunc(Number(payload.exp) || 0);
+  const now = Date.now();
+  const expiresAt = Math.trunc(Number(payload.exp) || 0);
   if (expiresAt <= now) {
     return { ok: false, reason: "spawn_ticket_expired", error: "Netfox spawn ticket expired.", status: 401 };
   }
 
-  const ticketWorld: any = cleanWorld(payload.world || payload.world_id || "");
-  const requestedWorld: any = cleanWorld(body.world || ticketWorld);
+  const ticketWorld = cleanWorld(payload.world || payload.world_id || "");
+  const requestedWorld = cleanWorld(body.world || ticketWorld);
   if (requestedWorld !== ticketWorld) {
     return { ok: false, reason: "world_mismatch", error: "Netfox spawn ticket is for a different world.", status: 401 };
   }
 
-  const peerId: any = Math.max(0, Math.trunc(Number(body.peer_id || payload.peer_id || 0)));
+  const peerId = Math.max(0, Math.trunc(Number(body.peer_id || payload.peer_id || 0)));
   const identity: any = {
     peer_id: peerId,
     display_name: clampString(payload.display_name || payload.username || payload.account_username || "Player", 32),
@@ -26187,7 +26302,7 @@ function isNetfoxServerWorldStateEndpointConfigured() {
 }
 
 function verifyNetfoxServerWorldStateRequest(request: any) {
-  const token: any = getBearerTokenFromRequest(request);
+  const token = getBearerTokenFromRequest(request);
   if (token === "") return false;
 
   if (NETFOX_SERVER_WORLD_STATE_TOKEN !== "" && safeTimingEqualString(token, NETFOX_SERVER_WORLD_STATE_TOKEN)) {
@@ -26206,7 +26321,7 @@ function isCustomMovementServerWorldStateEndpointConfigured() {
 }
 
 function verifyCustomMovementServerWorldStateRequest(request: any) {
-  const token: any = getBearerTokenFromRequest(request);
+  const token = getBearerTokenFromRequest(request);
   if (token === "") return false;
 
   if (CUSTOM_MOVEMENT_SERVER_WORLD_STATE_TOKEN !== "" && safeTimingEqualString(token, CUSTOM_MOVEMENT_SERVER_WORLD_STATE_TOKEN)) {
@@ -26221,24 +26336,24 @@ function verifyCustomMovementServerWorldStateRequest(request: any) {
 }
 
 function getEffectiveWorldCollisionBlockCount(worldName: any, state: any) {
-  const effectiveForeground: any = getEffectiveForegroundBlocksForState(state, worldName);
-  return effectiveForeground.filter((entry) => {
-    const blockType: any = clampString(entry?.block_type || "");
-    const definition: any = ItemDatabase.getItemDefinition(blockType) || {};
+  const effectiveForeground = getEffectiveForegroundBlocksForState(state, worldName);
+  return effectiveForeground.filter((entry: ServerPacketRecord) => {
+    const blockType = clampString(entry?.block_type || "");
+    const definition = ItemDatabase.getItemDefinition(blockType) || {};
     return !definition.no_collision;
   }).length;
 }
 
 function buildNetfoxWorldStateHttpPayload(worldName: any, reason: any = "netfox_server_world_load") {
-  const clean: any = cleanWorld(worldName);
-  const state: any = ensureWorldState(clean);
-  const effectiveForeground: any = getEffectiveForegroundBlocksForState(state, clean);
-  const worldState: any = buildWorldStateMessage(clean, {
+  const clean = cleanWorld(worldName);
+  const state = ensureWorldState(clean);
+  const effectiveForeground = getEffectiveForegroundBlocksForState(state, clean);
+  const worldState = buildWorldStateMessage(clean, {
     respawn_player: false,
     force_player_position: false,
     world_state_reason: reason,
   });
-  const background: any = Array.isArray(worldState.background) ? worldState.background : [];
+  const background = Array.isArray(worldState.background) ? worldState.background : [];
 
   return {
     ok: true,
@@ -26255,15 +26370,15 @@ function serializeWorldState(worldName: any) {
 }
 
 function getWorldBlockTypeAt(worldName: any, x: any, y: any, layer: any = "foreground") {
-  const state: any = ensureWorldState(worldName);
-  const cleanLayer: any = String(layer || "").toLowerCase();
-  const target: any = cleanLayer === "background" ? state.background : state.foreground;
-  const block: any = target.get(gridKey(x, y));
+  const state = ensureWorldState(worldName);
+  const cleanLayer = String(layer || "").toLowerCase();
+  const target = cleanLayer === "background" ? state.background : state.foreground;
+  const block = target.get(gridKey(x, y));
   return clampString(block?.block_type || "");
 }
 
 function getWorldLayerMap(state: any, layer: any = "foreground") {
-  const cleanLayer: any = String(layer || "").toLowerCase();
+  const cleanLayer = String(layer || "").toLowerCase();
   if (cleanLayer === "background") return state.background;
   return state.foreground;
 }
@@ -26272,9 +26387,9 @@ function syncElectricalDeviceStateForBlockUpdate(state: any, update: any) {
   if (!state || !update) return false;
   if (!(state.electrical_devices instanceof Map)) state.electrical_devices = new Map();
 
-  const key: any = gridKey(update.x, update.y);
+  const key = gridKey(update.x, update.y);
   if (update.action === "place" && isElectricalDeviceBlockOnLayer(update.block_type, update.layer)) {
-    const deviceEntry: any = normalizeElectricalDeviceStateEntry({
+    const deviceEntry = normalizeElectricalDeviceStateEntry({
       x: update.x,
       y: update.y,
       item_id: update.block_type,
@@ -26301,15 +26416,15 @@ function syncElectricalDeviceStateForBlockUpdate(state: any, update: any) {
 }
 
 function getWorldRemovedLayerMap(state: any, layer: any = "foreground") {
-  const cleanLayer: any = String(layer || "").toLowerCase();
+  const cleanLayer = String(layer || "").toLowerCase();
   if (cleanLayer === "background") return state.removed_background;
   return state.removed_foreground;
 }
 
 function getWorldObjectJournalType(update: any = {}) {
-  const explicitType: any = clampString(update.object_type || "");
+  const explicitType = clampString(update.object_type || "");
   if (explicitType !== "") return explicitType;
-  const action: any = clampString(update.action || "", 80).toLowerCase();
+  const action = clampString(update.action || "", 80).toLowerCase();
   if (action.includes("electrical")) return action.includes("generator") ? "electrical_generator" : "electrical_tile";
   if (action.includes("vend")) return "vending";
   if (action.includes("safe")) return "safe";
@@ -26336,24 +26451,24 @@ function getWorldObjectJournalType(update: any = {}) {
 }
 
 function getWorldObjectJournalId(worldName: any, update: any = {}, objectType: any = "") {
-  const explicit: any = clampString(update.object_id || "");
+  const explicit = clampString(update.object_id || "");
   if (explicit !== "") return explicit;
 
-  const cleanType: any = clampString(objectType || getWorldObjectJournalType(update), 80) || "interaction";
-  const doorId: any = cleanDoorId(update.door_id || "");
+  const cleanType = clampString(objectType || getWorldObjectJournalType(update), 80) || "interaction";
+  const doorId = cleanDoorId(update.door_id || "");
   if (doorId !== "") return `door:${doorId}`;
   if (cleanType === "world_lock") return `${cleanWorld(worldName)}:world_lock`;
   if (cleanType === "area_lock") return `${cleanWorld(worldName)}:area_locks`;
   if (cleanType === "cctv") return `${cleanWorld(worldName)}:cctv`;
 
-  const x: any = Number.isFinite(Number(update.x)) ? Math.trunc(Number(update.x)) : 0;
-  const y: any = Number.isFinite(Number(update.y)) ? Math.trunc(Number(update.y)) : 0;
+  const x = Number.isFinite(Number(update.x)) ? Math.trunc(Number(update.x)) : 0;
+  const y = Number.isFinite(Number(update.y)) ? Math.trunc(Number(update.y)) : 0;
   return `${cleanType}:${x}:${y}`;
 }
 
 function getWorldObjectJournalData(worldName: any, update: any = {}) {
-  const state: any = ensureWorldState(worldName);
-  const action: any = clampString(update.action || "", 80).toLowerCase();
+  const state = ensureWorldState(worldName);
+  const action = clampString(update.action || "", 80).toLowerCase();
 
   if (action === "world_lock_state") {
     return cloneJson(state.world_lock || {});
@@ -26367,15 +26482,15 @@ function getWorldObjectJournalData(worldName: any, update: any = {}) {
     return cloneJson(sanitizeCctvWorldState(state.cctv_state || {}, worldName));
   }
 
-  const key: any = gridKey(update.x, update.y);
+  const key = gridKey(update.x, update.y);
   if (action.includes("electrical")) {
     return cloneJson(state.electrical?.get(key) || {});
   }
 
-  const interaction: any = state.interactions.get(key);
+  const interaction = state.interactions.get(key);
   if (!interaction) return {};
 
-  const block: any = state.foreground.get(key);
+  const block = state.foreground.get(key);
   return cloneJson({
     block_type: clampString(update.block_type || block?.block_type || interaction.block_type || ""),
     ...interaction,
@@ -26392,9 +26507,12 @@ function buildWorldInteractionDetails(update: any = {}) {
     interactionDetails.allowed_count = Array.isArray(update.state.allowed_players) ? update.state.allowed_players.length : 0;
     interactionDetails.public_build = Boolean(update.state.public_build);
   } else if (update.action === "area_lock_state") {
-    const locks: any = sanitizeAreaLocksList(update.state?.area_locks || update.state || []);
+    const locks = sanitizeAreaLocksList(update.state?.area_locks || update.state || []);
     interactionDetails.area_lock_count = locks.length;
-    interactionDetails.protected_tile_count = locks.reduce((sum, lock) => sum + getAreaLockPositions(lock, ensureWorldState(update.world || "")).length, 0);
+    interactionDetails.protected_tile_count = locks.reduce(
+      (sum: number, lock: ServerAreaLockRecord) => sum + getAreaLockPositions(lock, ensureWorldState(update.world || "")).length,
+      0,
+    );
   } else if (update.action === "sign_text") {
     interactionDetails.text_length = String(update.text || "").length;
   } else if (update.action === "wooden_entrance_state") {
@@ -26415,45 +26533,45 @@ function buildWorldInteractionDetails(update: any = {}) {
     interactionDetails.safe_action = String(update.action || "");
   } else if (String(update.action || "").includes("mailbox")) {
     interactionDetails.mailbox_action = String(update.operation || update.action || "");
-    const messages: any = update.state && Array.isArray(update.state.messages) ? update.state.messages : [];
+    const messages = update.state && Array.isArray(update.state.messages) ? update.state.messages : [];
     interactionDetails.message_count = messages.length;
   } else if (String(update.action || "").includes("bulletin_board")) {
     interactionDetails.bulletin_board_action = String(update.operation || update.action || "");
-    const messages: any = update.state && Array.isArray(update.state.messages) ? update.state.messages : [];
+    const messages = update.state && Array.isArray(update.state.messages) ? update.state.messages : [];
     interactionDetails.message_count = messages.length;
   } else if (String(update.action || "").includes("display")) {
     interactionDetails.display_action = String(update.action || "");
-    const slot: any = update.state && update.state.slot && typeof update.state.slot === "object" ? update.state.slot : {};
+    const slot = update.state && update.state.slot && typeof update.state.slot === "object" ? update.state.slot : {};
     interactionDetails.item_id = slot.item_id || "";
     interactionDetails.item_category = slot.item_category || "";
   } else if (String(update.action || "").includes("tackle_box")) {
     interactionDetails.tackle_box_action = String(update.operation || update.action || "");
-    const state: any = update.state && typeof update.state === "object" ? update.state : {};
+    const state = update.state && typeof update.state === "object" ? update.state : {};
     interactionDetails.remaining_ms = Number(state.remaining_ms || 0);
     interactionDetails.next_harvest_at = String(state.next_harvest_at || "");
   } else if (String(update.action || "").includes("chicken")) {
     interactionDetails.chicken_action = String(update.operation || update.action || "");
-    const state: any = update.state && typeof update.state === "object" ? update.state : {};
+    const state = update.state && typeof update.state === "object" ? update.state : {};
     interactionDetails.status = String(state.status || "");
     interactionDetails.remaining_ms = Number(state.remaining_ms || 0);
     interactionDetails.next_harvest_at = String(state.next_harvest_at || "");
     interactionDetails.dies_at = String(state.dies_at || "");
   } else if (String(update.action || "").includes("cow")) {
     interactionDetails.cow_action = String(update.operation || update.action || "");
-    const state: any = update.state && typeof update.state === "object" ? update.state : {};
+    const state = update.state && typeof update.state === "object" ? update.state : {};
     interactionDetails.status = String(state.status || "");
     interactionDetails.remaining_ms = Number(state.remaining_ms || 0);
     interactionDetails.next_harvest_at = String(state.next_harvest_at || "");
     interactionDetails.dies_at = String(state.dies_at || "");
   } else if (String(update.action || "").includes("duck")) {
     interactionDetails.duck_action = String(update.operation || update.action || "");
-    const state: any = update.state && typeof update.state === "object" ? update.state : {};
+    const state = update.state && typeof update.state === "object" ? update.state : {};
     interactionDetails.status = String(state.status || "");
     interactionDetails.remaining_ms = Number(state.remaining_ms || 0);
     interactionDetails.next_harvest_at = String(state.next_harvest_at || "");
     interactionDetails.dies_at = String(state.dies_at || "");
   } else if (String(update.action || "").includes("dice")) {
-    const state: any = update.state && typeof update.state === "object" ? update.state : update;
+    const state = update.state && typeof update.state === "object" ? update.state : update;
     interactionDetails.rolled_number = Number(state.rolled_number || state.face || 1);
     interactionDetails.rolled_by = String(state.rolled_by || "");
   } else if (String(update.action || "").includes("anti_punch")) {
@@ -26466,8 +26584,8 @@ function buildWorldInteractionDetails(update: any = {}) {
     interactionDetails.enabled = Boolean(update.enabled);
     interactionDetails.theme = sanitizeWorldBackgroundTheme(update.theme || "night") || "night";
   } else if (String(update.action || "").includes("cctv")) {
-    const state: any = update.state && typeof update.state === "object" ? update.state : {};
-    const entries: any = Array.isArray(state.entries) ? state.entries : [];
+    const state = update.state && typeof update.state === "object" ? update.state : {};
+    const entries = Array.isArray(state.entries) ? state.entries : [];
     interactionDetails.entry_count = entries.length;
     interactionDetails.event_type = String(update.event_type || "");
     interactionDetails.player_name = String(update.player_name || "");
@@ -26479,7 +26597,7 @@ function buildWorldInteractionDetails(update: any = {}) {
  * @returns {PixelMania.WorldObjectChangeEntry}
  */
 function buildWorldObjectChangeEntry(socket: any, player: any, worldName: any, update: any = {}, oldData: any = {}, newData: any = {}, sourceId: any = "", details: any = {}) {
-  const objectType: any = getWorldObjectJournalType(update);
+  const objectType = getWorldObjectJournalType(update);
   return {
     ...getAuditActor(socket, player),
     source_type: String(update.source_type || "world_interaction_update"),
@@ -26500,10 +26618,10 @@ function buildWorldObjectChangeEntry(socket: any, player: any, worldName: any, u
 }
 
 function getDropsForWorldStateMessage(state: any, worldName: any, receiverPlayer: any = null) {
-  const drops: any = Array.from<any>(state.drops.values());
+  const drops = Array.from<any>(state.drops.values());
   if (!receiverPlayer || !isDropInterestManagementEnabled()) return drops;
 
-  const clean: any = cleanWorld(worldName || receiverPlayer.world || "START");
+  const clean = cleanWorld(worldName || receiverPlayer.world || "START");
   return drops.filter((drop) => shouldReceiverSeeDrop(receiverPlayer, drop, clean));
 }
 
@@ -26515,25 +26633,25 @@ function getInteractionsForWorldStateMessage(state: any, worldName: any, receive
 }
 
 function getActiveThemeMachineDisableUpdates(worldName: any, nextUpdate: any = {}) {
-  const clean: any = cleanWorld(worldName);
-  const state: any = ensureWorldState(clean);
+  const clean = cleanWorld(worldName);
+  const state = ensureWorldState(clean);
   if (!state || !(state.interactions instanceof Map)) return [];
 
-  const nextX: any = Number(nextUpdate.x);
-  const nextY: any = Number(nextUpdate.y);
-  const nextKey: any = Number.isFinite(nextX) && Number.isFinite(nextY)
+  const nextX = Number(nextUpdate.x);
+  const nextY = Number(nextUpdate.y);
+  const nextKey = Number.isFinite(nextX) && Number.isFinite(nextY)
     ? gridKey(Math.trunc(nextX), Math.trunc(nextY))
     : "";
   const updates: any = [];
 
   for (const interaction of state.interactions.values()) {
     if (!interaction || interaction.action !== "theme_machine_state" || !interaction.enabled) continue;
-    const x: any = Math.trunc(Number(interaction.x));
-    const y: any = Math.trunc(Number(interaction.y));
+    const x = Math.trunc(Number(interaction.x));
+    const y = Math.trunc(Number(interaction.y));
     if (!isGridInWorld(x, y)) continue;
-    const key: any = gridKey(x, y);
+    const key = gridKey(x, y);
     if (key === nextKey) continue;
-    const block: any = state.foreground.get(key);
+    const block = state.foreground.get(key);
     if (!block || !isThemeMachineBlockType(block.block_type || "")) continue;
     updates.push({
       type: "world_interaction_update",
@@ -26555,23 +26673,23 @@ function getActiveWorldBackgroundTheme(state: any) {
   if (!state || !(state.interactions instanceof Map)) return "";
   for (const interaction of state.interactions.values()) {
     if (!interaction || interaction.action !== "theme_machine_state" || !interaction.enabled) continue;
-    const key: any = gridKey(interaction.x, interaction.y);
-    const block: any = state.foreground.get(key);
+    const key = gridKey(interaction.x, interaction.y);
+    const block = state.foreground.get(key);
     if (!block || !isThemeMachineBlockType(block.block_type || "")) continue;
-    const theme: any = sanitizeWorldBackgroundTheme(interaction.theme || "night");
+    const theme = sanitizeWorldBackgroundTheme(interaction.theme || "night");
     if (theme !== "") return theme;
   }
   return "";
 }
 
 function buildWorldStateMessage(worldName: any, extraMessageData: any = {}) {
-  const clean: any = cleanWorld(worldName);
-  const state: any = ensureWorldState(clean);
-  const generatedMaps: any = buildServerGeneratedWorldMaps(clean, state);
-  const extras: any = extraMessageData && typeof extraMessageData === "object" && !Array.isArray(extraMessageData)
+  const clean = cleanWorld(worldName);
+  const state = ensureWorldState(clean);
+  const generatedMaps = buildServerGeneratedWorldMaps(clean, state);
+  const extras = extraMessageData && typeof extraMessageData === "object" && !Array.isArray(extraMessageData)
     ? { ...extraMessageData }
     : {};
-  const receiverPlayer: any = extras.receiver_player || extras.receiverPlayer || null;
+  const receiverPlayer = extras.receiver_player || extras.receiverPlayer || null;
   delete extras.receiver_player;
   delete extras.receiverPlayer;
 
@@ -26609,7 +26727,7 @@ function buildWorldStateMessage(worldName: any, extraMessageData: any = {}) {
 
 function getActiveWorldEventRemainingMs(state: any) {
   if (!state || state.active_event_type !== SNOW_STORM_EVENT_TYPE) return 0;
-  const endsAt: any = Date.parse(state.event_ends_at || "");
+  const endsAt = Date.parse(state.event_ends_at || "");
   if (!Number.isFinite(endsAt)) return 0;
   return Math.max(0, endsAt - Date.now());
 }
@@ -26632,26 +26750,26 @@ function hasLocalWorldPlayersForPersistence(worldName: any) {
 }
 
 function rememberWorldSaveRouteAuthorization(worldName: any, debounceMs: any = 0) {
-  const clean: any = cleanWorld(worldName);
+  const clean = cleanWorld(worldName);
   if (!POSTGRES_ENABLED || !POSTGRES_AUTHORITATIVE || !WORLD_ROUTE_ENFORCEMENT_ENABLED) return;
   if (!ownedWorldRoutes.has(clean) && !hasLocalWorldPlayersForPersistence(clean)) return;
 
-  const ttlMs: any = Math.max(10000, Math.trunc(Number(debounceMs) || 0) + 5000);
+  const ttlMs = Math.max(10000, Math.trunc(Number(debounceMs) || 0) + 5000);
   worldSaveRouteAuthorizations.set(clean, Date.now() + ttlMs);
 }
 
 function isWorldSaveRouteAuthorized(worldName: any) {
-  const clean: any = cleanWorld(worldName);
-  const expiresAt: any = Number(worldSaveRouteAuthorizations.get(clean) || 0);
+  const clean = cleanWorld(worldName);
+  const expiresAt = Number(worldSaveRouteAuthorizations.get(clean) || 0);
   if (expiresAt > Date.now()) return true;
   if (expiresAt > 0) worldSaveRouteAuthorizations.delete(clean);
   return false;
 }
 
 function warnWorldPersistenceGuard(worldName: any, reason: any) {
-  const clean: any = cleanWorld(worldName);
-  const now: any = Date.now();
-  const previousWarnAt: any = Number(worldPersistenceGuardWarns.get(clean) || 0);
+  const clean = cleanWorld(worldName);
+  const now = Date.now();
+  const previousWarnAt = Number(worldPersistenceGuardWarns.get(clean) || 0);
   if (now - previousWarnAt < 15000) return;
   worldPersistenceGuardWarns.set(clean, now);
   console.warn("[world_persistence_guard] skipped whole-world save from non-owner route instance", {
@@ -26666,7 +26784,7 @@ function warnWorldPersistenceGuard(worldName: any, reason: any) {
 }
 
 function shouldPersistWholeWorldState(worldName: any, reason: any = "world_state_save") {
-  const clean: any = cleanWorld(worldName);
+  const clean = cleanWorld(worldName);
   if (!POSTGRES_ENABLED || !POSTGRES_AUTHORITATIVE || !WORLD_ROUTE_ENFORCEMENT_ENABLED) return true;
   if (ownedWorldRoutes.has(clean)) return true;
   if (hasLocalWorldPlayersForPersistence(clean)) return true;
@@ -26677,10 +26795,10 @@ function shouldPersistWholeWorldState(worldName: any, reason: any = "world_state
 }
 
 function queueWorldSave(worldName: any, options: any = {}) {
-  const clean: any = cleanWorld(worldName);
-  const existingTimer: any = worldSaveTimers.get(clean);
+  const clean = cleanWorld(worldName);
+  const existingTimer = worldSaveTimers.get(clean);
   if (existingTimer) clearTimeout(existingTimer);
-  const debounceMs: any = Math.max(0, Math.trunc(Number(options?.critical === true ? SAVE_DEBOUNCE_MS : WORLD_NON_CRITICAL_WORLD_SAVE_DEBOUNCE_MS) || SAVE_DEBOUNCE_MS));
+  const debounceMs = Math.max(0, Math.trunc(Number(options?.critical === true ? SAVE_DEBOUNCE_MS : WORLD_NON_CRITICAL_WORLD_SAVE_DEBOUNCE_MS) || SAVE_DEBOUNCE_MS));
   rememberWorldSaveRouteAuthorization(clean, debounceMs);
 
   worldSaveTimers.set(clean, setTimeout(() => {
@@ -26690,12 +26808,12 @@ function queueWorldSave(worldName: any, options: any = {}) {
 }
 
 function saveWorldState(worldName: any) {
-  const clean: any = cleanWorld(worldName);
+  const clean = cleanWorld(worldName);
   if (!shouldPersistWholeWorldState(clean, "saveWorldState")) return null;
-  const serialized: any = serializeWorldState(clean);
+  const serialized = serializeWorldState(clean);
   writeWorldStateJsonBackup(clean, serialized);
   if (postgresStore.isReady()) {
-    const write: any = trackPersistenceWrite(postgresStore.saveWorldState(clean, serialized), `world state ${clean}`);
+    const write = trackPersistenceWrite(postgresStore.saveWorldState(clean, serialized), `world state ${clean}`);
     worldSaveWrites.set(clean, write);
     return write;
   }
@@ -26709,8 +26827,8 @@ function saveWorldState(worldName: any) {
  * @returns {Promise<PixelMania.CommitWorldStateWithBlockChangesResult>}
  */
 async function commitWorldStateWithBlockChanges(worldName: any, changes: any = [], options: any = {}) {
-  const clean: any = cleanWorld(worldName);
-  const serialized: any = serializeWorldState(clean);
+  const clean = cleanWorld(worldName);
+  const serialized = serializeWorldState(clean);
 
   if (isPostgresAuthoritativeReady()) {
     const result: any = await postgresStore.saveWorldStateWithWorldChanges(clean, serialized, changes);
@@ -26743,14 +26861,14 @@ async function commitWorldStateWithBlockChanges(worldName: any, changes: any = [
  * @returns {Promise<PixelMania.WorldStateCommitResult>}
  */
 async function commitWorldEventStateOnly(worldName: any) {
-  const clean: any = cleanWorld(worldName);
-  const serialized: any = serializeWorldState(clean);
+  const clean = cleanWorld(worldName);
+  const serialized = serializeWorldState(clean);
   if (!shouldPersistWholeWorldState(clean, "world_event_state")) {
     return { ok: true, postgres_committed: false, skipped: true, reason: "non_owner_route" };
   }
 
   if (isPostgresAuthoritativeReady()) {
-    const saved: any = await postgresStore.saveWorldState(clean, serialized);
+    const saved = await postgresStore.saveWorldState(clean, serialized);
     if (!saved) {
       return { ok: false, reason: "database_error", message: "PostgreSQL rejected the world event update." };
     }
@@ -26777,17 +26895,17 @@ function clearWorldEventState(state: any) {
 
 function hasActiveSnowStormEvent(state: any) {
   if (!state || state.active_event_type !== SNOW_STORM_EVENT_TYPE) return false;
-  const endsAt: any = Date.parse(state.event_ends_at || "");
+  const endsAt = Date.parse(state.event_ends_at || "");
   return Number.isFinite(endsAt) && endsAt > Date.now();
 }
 
 function consumeSnowStormCommandCooldown(worldName: any) {
   if (SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS <= 0) return { ok: true, retry_ms: 0 };
 
-  const key: any = `${cleanWorld(worldName)}:${SNOW_STORM_EVENT_TYPE}`;
-  const now: any = Date.now();
-  const lastActionAt: any = Number(worldEventCommandCooldowns.get(key) || 0);
-  const retryMs: any = SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS - (now - lastActionAt);
+  const key = `${cleanWorld(worldName)}:${SNOW_STORM_EVENT_TYPE}`;
+  const now = Date.now();
+  const lastActionAt = Number(worldEventCommandCooldowns.get(key) || 0);
+  const retryMs = SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS - (now - lastActionAt);
   if (retryMs > 0) {
     return { ok: false, retry_ms: retryMs };
   }
@@ -26812,14 +26930,14 @@ function buildWorldEventStartedMessage(worldName: any, state: any) {
 }
 
 function buildActiveWorldEventTileUpdates(worldName: any, state: any) {
-  const clean: any = cleanWorld(worldName);
+  const clean = cleanWorld(worldName);
   if (!hasActiveSnowStormEvent(state)) return [];
-  const eventId: any = state.event_id || "";
-  const tiles: any = Array.isArray(state.event_changed_tiles) ? state.event_changed_tiles : [];
+  const eventId = state.event_id || "";
+  const tiles = Array.isArray(state.event_changed_tiles) ? state.event_changed_tiles : [];
   const updates: any = [];
 
   for (const rawTile of tiles) {
-    const tile: any = normalizeWorldEventTileEntry(rawTile, eventId);
+    const tile = normalizeWorldEventTileEntry(rawTile, eventId);
     if (tile.event_block_id === "") continue;
     updates.push({
       type: "world_block_update",
@@ -26836,9 +26954,9 @@ function buildActiveWorldEventTileUpdates(worldName: any, state: any) {
 }
 
 function sendEventTileUpdatesToSocket(socket: any, worldName: any, eventId: any, phase: any, updates: any = []) {
-  const clean: any = cleanWorld(worldName);
-  const safeUpdates: any = Array.isArray(updates) ? updates : [];
-  const batchCount: any = Math.ceil(safeUpdates.length / SNOW_STORM_EVENT_TILE_BATCH_SIZE);
+  const clean = cleanWorld(worldName);
+  const safeUpdates = Array.isArray(updates) ? updates : [];
+  const batchCount = Math.ceil(safeUpdates.length / SNOW_STORM_EVENT_TILE_BATCH_SIZE);
 
   for (let index: any = 0; index < safeUpdates.length; index += SNOW_STORM_EVENT_TILE_BATCH_SIZE) {
     sendJson(socket, {
@@ -26855,7 +26973,7 @@ function sendEventTileUpdatesToSocket(socket: any, worldName: any, eventId: any,
 }
 
 function sendActiveWorldEventState(socket: any, worldName: any) {
-  const state: any = ensureWorldState(worldName);
+  const state = ensureWorldState(worldName);
   if (!hasActiveSnowStormEvent(state)) return;
   sendJson(socket, buildWorldEventStartedMessage(worldName, state));
   sendEventTileUpdatesToSocket(
@@ -26894,8 +27012,8 @@ function buildSnowStormCountdownMessage(label: any) {
 }
 
 function clearWorldEventCountdownTimers(worldName: any) {
-  const clean: any = cleanWorld(worldName);
-  const timers: any = worldEventCountdownTimers.get(clean);
+  const clean = cleanWorld(worldName);
+  const timers = worldEventCountdownTimers.get(clean);
   if (Array.isArray(timers)) {
     for (const timer of timers) {
       clearTimeout(timer);
@@ -26905,22 +27023,22 @@ function clearWorldEventCountdownTimers(worldName: any) {
 }
 
 function scheduleWorldEventCountdowns(worldName: any) {
-  const clean: any = cleanWorld(worldName);
+  const clean = cleanWorld(worldName);
   clearWorldEventCountdownTimers(clean);
 
-  const state: any = ensureWorldState(clean);
+  const state = ensureWorldState(clean);
   if (state.active_event_type !== SNOW_STORM_EVENT_TYPE) return;
 
-  const endsAt: any = Date.parse(state.event_ends_at || "");
+  const endsAt = Date.parse(state.event_ends_at || "");
   if (!Number.isFinite(endsAt)) return;
 
-  const eventId: any = state.event_id || "";
+  const eventId = state.event_id || "";
   const timers: any = [];
   for (const countdown of SNOW_STORM_COUNTDOWN_MESSAGES) {
-    const fireInMs: any = endsAt - countdown.remainingMs - Date.now();
+    const fireInMs = endsAt - countdown.remainingMs - Date.now();
     if (fireInMs <= 0) continue;
-    const timer: any = setTimeout(() => {
-      const liveState: any = ensureWorldState(clean);
+    const timer = setTimeout(() => {
+      const liveState = ensureWorldState(clean);
       if (liveState.active_event_type !== SNOW_STORM_EVENT_TYPE) return;
       if ((liveState.event_id || "") !== eventId) return;
       broadcastEventSystemMessage(clean, liveState.event_id || "", buildSnowStormCountdownMessage(countdown.label));
@@ -26939,11 +27057,11 @@ function sleepMs(ms: any) {
 }
 
 async function broadcastEventTileUpdates(worldName: any, eventId: any, phase: any, updates: any = []) {
-  const clean: any = cleanWorld(worldName);
-  const safeUpdates: any = Array.isArray(updates) ? updates : [];
-  const batchCount: any = Math.ceil(safeUpdates.length / SNOW_STORM_EVENT_TILE_BATCH_SIZE);
+  const clean = cleanWorld(worldName);
+  const safeUpdates = Array.isArray(updates) ? updates : [];
+  const batchCount = Math.ceil(safeUpdates.length / SNOW_STORM_EVENT_TILE_BATCH_SIZE);
   for (let index: any = 0; index < safeUpdates.length; index += SNOW_STORM_EVENT_TILE_BATCH_SIZE) {
-    const batch: any = safeUpdates.slice(index, index + SNOW_STORM_EVENT_TILE_BATCH_SIZE);
+    const batch = safeUpdates.slice(index, index + SNOW_STORM_EVENT_TILE_BATCH_SIZE);
     broadcastToWorld(clean, {
       type: "event_tile_updates",
       world: clean,
@@ -26964,18 +27082,18 @@ async function broadcastEventTileUpdates(worldName: any, eventId: any, phase: an
 }
 
 function scheduleWorldEventEnd(worldName: any) {
-  const clean: any = cleanWorld(worldName);
-  const existing: any = worldEventTimers.get(clean);
+  const clean = cleanWorld(worldName);
+  const existing = worldEventTimers.get(clean);
   if (existing) clearTimeout(existing);
   worldEventTimers.delete(clean);
   scheduleWorldEventCountdowns(clean);
 
-  const state: any = ensureWorldState(clean);
+  const state = ensureWorldState(clean);
   if (state.active_event_type !== SNOW_STORM_EVENT_TYPE) return;
 
-  const endsAt: any = Date.parse(state.event_ends_at || "");
+  const endsAt = Date.parse(state.event_ends_at || "");
   if (!Number.isFinite(endsAt)) return;
-  const timer: any = setTimeout(() => {
+  const timer = setTimeout(() => {
     worldEventTimers.delete(clean);
     endSnowStormEvent(clean, { reason: "timer" }).catch((error) => {
       console.warn("[world_event] snow_storm end failed:", error.message);
@@ -26988,7 +27106,7 @@ function scheduleWorldEventEnd(worldName: any) {
 async function recoverWorldEventsAfterLoad() {
   for (const [worldName, state] of worldStates.entries()) {
     if (!state || state.active_event_type !== SNOW_STORM_EVENT_TYPE) continue;
-    const endsAt: any = Date.parse(state.event_ends_at || "");
+    const endsAt = Date.parse(state.event_ends_at || "");
     if (!Number.isFinite(endsAt) || endsAt <= Date.now()) {
       await endSnowStormEvent(worldName, { reason: "startup_expired", broadcast: false });
     } else {
@@ -27016,17 +27134,17 @@ function getActiveWorldNamesForEvents() {
 }
 
 async function tryStartRandomSnowStormEvent() {
-  const activeWorlds: any = getActiveWorldNamesForEvents()
-    .filter((worldName) => !hasActiveSnowStormEvent(ensureWorldState(worldName)) && !hasSnowRepellentBlock(worldName));
+  const activeWorlds = getActiveWorldNamesForEvents()
+    .filter((worldName: string) => !hasActiveSnowStormEvent(ensureWorldState(worldName)) && !hasSnowRepellentBlock(worldName));
   if (activeWorlds.length === 0) return { ok: false, reason: "no_active_world" };
   if (!randomChance(SNOW_STORM_RANDOM_CHANCE)) return { ok: false, reason: "chance_missed" };
 
-  const worldName: any = activeWorlds[crypto.randomInt(0, activeWorlds.length)];
+  const worldName = activeWorlds[crypto.randomInt(0, activeWorlds.length)];
   return startSnowStormEvent(worldName, { reason: "random" });
 }
 
 function makeDeterministicRng(seedText: any) {
-  const digest: any = crypto.createHash("sha256").update(String(seedText || "")).digest();
+  const digest = crypto.createHash("sha256").update(String(seedText || "")).digest();
   let state: any = digest.readUInt32LE(0) || 0x6d2b79f5;
   return () => {
     state = (state + 0x6d2b79f5) >>> 0;
@@ -27038,16 +27156,16 @@ function makeDeterministicRng(seedText: any) {
 }
 
 function deterministicInt(rng: any, min: any, max: any) {
-  const safeMin: any = Math.trunc(Number(min) || 0);
-  const safeMax: any = Math.trunc(Number(max) || safeMin);
+  const safeMin = Math.trunc(Number(min) || 0);
+  const safeMax = Math.trunc(Number(max) || safeMin);
   if (safeMax <= safeMin) return safeMin;
   return safeMin + Math.floor(rng() * (safeMax - safeMin + 1));
 }
 
 function deterministicTileVariantIndex(x: any, y: any, count: any, salt: any = 0) {
-  const safeCount: any = Math.trunc(Number(count) || 0);
+  const safeCount = Math.trunc(Number(count) || 0);
   if (safeCount <= 1) return 0;
-  const value: any = (
+  const value = (
     Math.trunc(Number(x) || 0) * 73856093 +
     Math.trunc(Number(y) || 0) * 19349663 +
     Math.trunc(Number(salt) || 0) * 83492791
@@ -27056,7 +27174,7 @@ function deterministicTileVariantIndex(x: any, y: any, count: any, salt: any = 0
 }
 
 function serverWorldGenerationSeed(worldName: any) {
-  const source: any = `PIXELMANIA_WORLD_${cleanWorld(worldName).toUpperCase() || "START"}`;
+  const source = `PIXELMANIA_WORLD_${cleanWorld(worldName).toUpperCase() || "START"}`;
   let value: any = 173;
   for (let i: any = 0; i < source.length; i += 1) {
     value = (value * 131 + source.charCodeAt(i)) % 2147483647;
@@ -27065,8 +27183,8 @@ function serverWorldGenerationSeed(worldName: any) {
 }
 
 function serverCellNoise(generationSeed: any, x: any, y: any, salt: any = 0) {
-  const seedOffset: any = (generationSeed % 1000003) * 0.0001;
-  const value: any = Math.sin((Number(x) || 0) * 12.9898 + (Number(y) || 0) * 78.233 + (Number(salt) || 0) * 37.719 + seedOffset) * 43758.5453123;
+  const seedOffset = (generationSeed % 1000003) * 0.0001;
+  const value = Math.sin((Number(x) || 0) * 12.9898 + (Number(y) || 0) * 78.233 + (Number(salt) || 0) * 37.719 + seedOffset) * 43758.5453123;
   return value - Math.floor(value);
 }
 
@@ -27087,13 +27205,13 @@ function isServerSpawnSafeColumn(x: any) {
 }
 
 function buildServerTerrainSurface(worldName: any) {
-  const generationSeed: any = serverWorldGenerationSeed(worldName);
-  const baseSurfaceY: any = serverGenerationSurfaceBaseY();
-  const minSurfaceY: any = serverGenerationMinSurfaceY();
-  const maxSurfaceY: any = serverGenerationMaxSurfaceY();
-  const phaseA: any = serverCellNoise(generationSeed, 1, 1, 5001) * Math.PI * 2;
-  const phaseB: any = serverCellNoise(generationSeed, 2, 1, 5002) * Math.PI * 2;
-  const phaseC: any = serverCellNoise(generationSeed, 3, 1, 5003) * Math.PI * 2;
+  const generationSeed = serverWorldGenerationSeed(worldName);
+  const baseSurfaceY = serverGenerationSurfaceBaseY();
+  const minSurfaceY = serverGenerationMinSurfaceY();
+  const maxSurfaceY = serverGenerationMaxSurfaceY();
+  const phaseA = serverCellNoise(generationSeed, 1, 1, 5001) * Math.PI * 2;
+  const phaseB = serverCellNoise(generationSeed, 2, 1, 5002) * Math.PI * 2;
+  const phaseC = serverCellNoise(generationSeed, 3, 1, 5003) * Math.PI * 2;
   const surface: any = new Map();
 
   for (let x: any = 0; x < WORLD_WIDTH; x += 1) {
@@ -27102,10 +27220,10 @@ function buildServerTerrainSurface(worldName: any) {
       continue;
     }
 
-    const drift: any = Math.round((serverCellNoise(generationSeed, Math.floor(x / 6), 0, 5004) - 0.5) * 4);
-    const wave1: any = Math.sin(x * 0.070 + phaseA) * 4.8;
-    const wave2: any = Math.sin(x * 0.145 + phaseB) * 2.4;
-    const wave3: any = Math.sin(x * 0.310 + phaseC) * 1.2;
+    const drift = Math.round((serverCellNoise(generationSeed, Math.floor(x / 6), 0, 5004) - 0.5) * 4);
+    const wave1 = Math.sin(x * 0.070 + phaseA) * 4.8;
+    const wave2 = Math.sin(x * 0.145 + phaseB) * 2.4;
+    const wave3 = Math.sin(x * 0.310 + phaseC) * 1.2;
     surface.set(x, clampInteger(Math.round(baseSurfaceY + wave1 + wave2 + wave3 + drift), minSurfaceY, maxSurfaceY));
   }
 
@@ -27117,8 +27235,8 @@ function buildServerTerrainSurface(worldName: any) {
       }
 
       let current: any = surface.get(x);
-      const left: any = surface.get(x - 1);
-      const right: any = surface.get(x + 1);
+      const left = surface.get(x - 1);
+      const right = surface.get(x + 1);
       if (current < left - 1) current = left - 1;
       if (current > left + 1) current = left + 1;
       if (current < right - 1) current = right - 1;
@@ -27131,12 +27249,15 @@ function buildServerTerrainSurface(worldName: any) {
 }
 
 function serverSurfaceYAt(surface: any, x: any) {
-  const safeX: any = clampInteger(x, 0, WORLD_WIDTH - 1);
+  const safeX = clampInteger(x, 0, WORLD_WIDTH - 1);
   return surface.has(safeX) ? surface.get(safeX) : serverGenerationSurfaceBaseY();
 }
 
 function serverPickWeightedBlock(generationSeed: any, x: any, y: any, options: any) {
-  const total: any = options.reduce((sum, option) => sum + Math.max(0, Number(option.weight) || 0), 0);
+  const total = options.reduce(
+    (sum: number, option: ServerPacketRecord) => sum + Math.max(0, Number(option.weight) || 0),
+    0,
+  );
   if (total <= 0) return "dirt";
   let roll: any = serverCellNoise(generationSeed, x, y, 9047) * total;
   for (const option of options) {
@@ -27147,23 +27268,23 @@ function serverPickWeightedBlock(generationSeed: any, x: any, y: any, options: a
 }
 
 function isServerBottomLavaStoneLayer(y: any) {
-  const depth: any = BEDROCK_START_Y - Math.trunc(Number(y) || 0);
+  const depth = BEDROCK_START_Y - Math.trunc(Number(y) || 0);
   return depth >= 1 && depth <= SERVER_BOTTOM_LAVA_STONE_HEIGHT;
 }
 
 function getEffectiveGeneratedBottomForegroundBlockAt(worldName: any, state: any, x: any, y: any) {
-  const gridX: any = Math.trunc(Number(x) || 0);
-  const gridY: any = Math.trunc(Number(y) || 0);
+  const gridX = Math.trunc(Number(x) || 0);
+  const gridY = Math.trunc(Number(y) || 0);
   if (!state || state.cleared || !isGridInWorld(gridX, gridY) || !isServerBottomLavaStoneLayer(gridY)) {
     return null;
   }
 
-  const key: any = gridKey(gridX, gridY);
+  const key = gridKey(gridX, gridY);
   if (state.foreground.has(key)) return state.foreground.get(key);
   if (state.removed_foreground.has(key)) return null;
 
-  const generationSeed: any = serverWorldGenerationSeed(worldName);
-  const blockType: any = serverGeneratedBlockType(
+  const generationSeed = serverWorldGenerationSeed(worldName);
+  const blockType = serverGeneratedBlockType(
     generationSeed,
     gridX,
     gridY,
@@ -27188,24 +27309,24 @@ function serverDeepCaveAxis(generationSeed: any, x: any, surfaceY: any) {
 }
 
 function shouldServerGenerateCavePocket(generationSeed: any, x: any, y: any, surfaceY: any) {
-  const depth: any = y - surfaceY;
+  const depth = y - surfaceY;
   if (depth < SERVER_CAVE_MIN_DEPTH) return false;
   if (isServerSpawnSafeColumn(x)) return false;
   if (y >= BEDROCK_START_Y - SERVER_CAVE_BOTTOM_SOLID_PADDING) return false;
   if (isServerBottomLavaStoneLayer(y)) return false;
 
   if (depth >= SERVER_SHALLOW_CAVE_START_DEPTH) {
-    const axis: any = serverShallowCaveAxis(generationSeed, x, surfaceY);
-    const distance: any = Math.abs(y - axis);
-    const width: any = 1.2 + (serverCellNoise(generationSeed, x, surfaceY, 1203) * 1.35);
+    const axis = serverShallowCaveAxis(generationSeed, x, surfaceY);
+    const distance = Math.abs(y - axis);
+    const width = 1.2 + (serverCellNoise(generationSeed, x, surfaceY, 1203) * 1.35);
     if (distance <= width && serverCellNoise(generationSeed, x, y, 2281) < 0.90) return true;
     if (distance <= width + 1 && serverCellNoise(generationSeed, x, y, 3359) < 0.22) return true;
   }
 
   if (depth >= SERVER_DEEP_CAVE_START_DEPTH) {
-    const axis: any = serverDeepCaveAxis(generationSeed, x, surfaceY);
-    const distance: any = Math.abs(y - axis);
-    const width: any = 0.9 + (serverCellNoise(generationSeed, x, surfaceY, 3359) * 1.1);
+    const axis = serverDeepCaveAxis(generationSeed, x, surfaceY);
+    const distance = Math.abs(y - axis);
+    const width = 0.9 + (serverCellNoise(generationSeed, x, surfaceY, 3359) * 1.1);
     if (serverCellNoise(generationSeed, surfaceY, y, 2281) > 0.72) {
       if (distance <= width && serverCellNoise(generationSeed, x, y, 401) < 0.85) return true;
       if (distance <= width + 1 && serverCellNoise(generationSeed, x, y, 402) < 0.18) return true;
@@ -27226,8 +27347,8 @@ function serverSurfaceBlockType(generationSeed: any, x: any, y: any, surfaceY: a
     ]);
   }
 
-  const span: any = Math.max(1, serverGenerationMaxSurfaceY() - serverGenerationMinSurfaceY());
-  const flatness: any = Math.max(0, Math.min(1, (surfaceY - serverGenerationMinSurfaceY()) / span));
+  const span = Math.max(1, serverGenerationMaxSurfaceY() - serverGenerationMinSurfaceY());
+  const flatness = Math.max(0, Math.min(1, (surfaceY - serverGenerationMinSurfaceY()) / span));
   if (flatness > 0.73 && serverCellNoise(generationSeed, x, surfaceY, 901) < 0.20) return "sand";
   if (serverCellNoise(generationSeed, surfaceY, x, 902) > 0.90) {
     return serverPickWeightedBlock(generationSeed, x, y, [
@@ -27283,7 +27404,7 @@ function serverGeneratedBlockType(generationSeed: any, x: any, y: any, surfaceY:
   if (y >= BEDROCK_START_Y) return "bedrock";
   if (y < surfaceY) return "";
   if (y === surfaceY) return serverSurfaceBlockType(generationSeed, x, y, surfaceY);
-  const depth: any = y - surfaceY;
+  const depth = y - surfaceY;
   if (isServerBottomLavaStoneLayer(y)) {
     return serverPickWeightedBlock(generationSeed, x, y, [
       { type: "stone", weight: 62 },
@@ -27309,7 +27430,7 @@ function serverGeneratedBlockType(generationSeed: any, x: any, y: any, surfaceY:
 }
 
 function serverMapSet(map: any, x: any, y: any, blockType: any) {
-  const key: any = gridKey(x, y);
+  const key = gridKey(x, y);
   if (blockType === "") {
     map.delete(key);
     return;
@@ -27318,7 +27439,7 @@ function serverMapSet(map: any, x: any, y: any, blockType: any) {
 }
 
 function serverMapSetIfEmpty(map: any, x: any, y: any, blockType: any) {
-  const key: any = gridKey(x, y);
+  const key = gridKey(x, y);
   if (map.has(key)) return false;
   serverMapSet(map, x, y, blockType);
   return true;
@@ -27338,17 +27459,17 @@ function shouldServerPlaceCaveBackground(generationSeed: any, blockType: any, x:
 }
 
 function serverCanGenerateNaturalPond(map: any, surface: any, centerX: any, width: any) {
-  const half: any = Math.floor(width * 0.5);
+  const half = Math.floor(width * 0.5);
   let minSurface: any = 999999;
   let maxSurface: any = -999999;
   for (let x: any = centerX - half; x <= centerX + half; x += 1) {
     if (x <= 2 || x >= WORLD_WIDTH - 3) return false;
     if (isServerSpawnSafeColumn(x)) return false;
-    const surfaceY: any = serverSurfaceYAt(surface, x);
+    const surfaceY = serverSurfaceYAt(surface, x);
     minSurface = Math.min(minSurface, surfaceY);
     maxSurface = Math.max(maxSurface, surfaceY);
-    const top: any = map.get(gridKey(x, surfaceY))?.block_type || "";
-    const below: any = map.get(gridKey(x, surfaceY + 1))?.block_type || "";
+    const top = map.get(gridKey(x, surfaceY))?.block_type || "";
+    const below = map.get(gridKey(x, surfaceY + 1))?.block_type || "";
     if (!["dirt", "sand", "stone", "grass"].includes(top)) return false;
     if (!["dirt", "sand", "stone"].includes(below)) return false;
   }
@@ -27356,23 +27477,23 @@ function serverCanGenerateNaturalPond(map: any, surface: any, centerX: any, widt
 }
 
 function serverCreateNaturalPond(map: any, surface: any, rng: any, centerX: any, width: any, backgroundMap: any = null) {
-  const half: any = Math.floor(width * 0.5);
-  const startX: any = centerX - half;
-  const endX: any = centerX + half;
+  const half = Math.floor(width * 0.5);
+  const startX = centerX - half;
+  const endX = centerX + half;
   let surfaceYForPond: any = -999999;
-  const profileNoise: any = deterministicInt(rng, 0, 2147483646);
+  const profileNoise = deterministicInt(rng, 0, 2147483646);
   for (let x: any = startX; x <= endX; x += 1) {
     surfaceYForPond = Math.max(surfaceYForPond, serverSurfaceYAt(surface, x));
   }
-  const waterSurfaceY: any = surfaceYForPond + 1;
+  const waterSurfaceY = surfaceYForPond + 1;
 
   for (let x: any = startX; x <= endX; x += 1) {
-    const distanceFromCenter: any = Math.abs(x - centerX);
-    const edgeCurve: any = Math.floor(SERVER_POND_EDGE_DEPTH + Math.sin(distanceFromCenter * 0.65 + profileNoise * 0.001));
-    const carveDepth: any = clampInteger(SERVER_POND_CENTER_DEPTH + edgeCurve, SERVER_POND_EDGE_DEPTH, SERVER_POND_CENTER_DEPTH + 2);
+    const distanceFromCenter = Math.abs(x - centerX);
+    const edgeCurve = Math.floor(SERVER_POND_EDGE_DEPTH + Math.sin(distanceFromCenter * 0.65 + profileNoise * 0.001));
+    const carveDepth = clampInteger(SERVER_POND_CENTER_DEPTH + edgeCurve, SERVER_POND_EDGE_DEPTH, SERVER_POND_CENTER_DEPTH + 2);
 
     for (let y: any = serverSurfaceYAt(surface, x); y <= waterSurfaceY + SERVER_POND_CENTER_DEPTH + 1; y += 1) {
-      const localDepth: any = y - waterSurfaceY;
+      const localDepth = y - waterSurfaceY;
       serverMapClear(backgroundMap, x, y);
       if (x === startX || x === endX) {
         serverMapSet(map, x, y, "dirt");
@@ -27386,7 +27507,7 @@ function serverCreateNaturalPond(map: any, surface: any, rng: any, centerX: any,
       if (Math.abs(distanceFromCenter) > 1) {
         localVariation = (0.22 - serverCellNoise(1, x, distanceFromCenter, profileNoise % 1000)) * 1.4;
       }
-      const pondDepth: any = clampInteger(carveDepth + Math.round(localVariation), SERVER_POND_EDGE_DEPTH, SERVER_POND_CENTER_DEPTH + 2);
+      const pondDepth = clampInteger(carveDepth + Math.round(localVariation), SERVER_POND_EDGE_DEPTH, SERVER_POND_CENTER_DEPTH + 2);
       serverMapSet(map, x, y, localDepth < pondDepth ? "water" : "dirt");
     }
   }
@@ -27398,16 +27519,16 @@ function serverCreateNaturalPond(map: any, surface: any, rng: any, centerX: any,
 }
 
 function serverGenerateNaturalPonds(map: any, surface: any, rng: any, backgroundMap: any = null) {
-  const pondCount: any = deterministicInt(rng, SERVER_POND_COUNT_MIN, SERVER_POND_COUNT_MAX);
+  const pondCount = deterministicInt(rng, SERVER_POND_COUNT_MIN, SERVER_POND_COUNT_MAX);
   const usedCenters: any = [];
   let created: any = 0;
   for (let attempt: any = 0; attempt < SERVER_POND_ATTEMPT_LIMIT && created < pondCount; attempt += 1) {
     let width: any = deterministicInt(rng, SERVER_POND_WIDTH_MIN, SERVER_POND_WIDTH_MAX);
     if (width % 2 === 0) width += 1;
-    const centerX: any = deterministicInt(rng, 8, WORLD_WIDTH - 9);
-    const minSpacing: any = Math.max(7, width);
+    const centerX = deterministicInt(rng, 8, WORLD_WIDTH - 9);
+    const minSpacing = Math.max(7, width);
     if (isServerSpawnSafeColumn(centerX)) continue;
-    if (usedCenters.some((usedX) => Math.abs(usedX - centerX) < minSpacing)) continue;
+    if (usedCenters.some((usedX: number) => Math.abs(usedX - centerX) < minSpacing)) continue;
     if (!serverCanGenerateNaturalPond(map, surface, centerX, width)) continue;
     serverCreateNaturalPond(map, surface, rng, centerX, width, backgroundMap);
     usedCenters.push(centerX);
@@ -27417,16 +27538,16 @@ function serverGenerateNaturalPonds(map: any, surface: any, rng: any, background
 
 function serverGenerateSurfaceDecorations(map: any, surface: any, generationSeed: any, backgroundMap: any = null) {
   for (let x: any = 2; x < WORLD_WIDTH - 2; x += 1) {
-    const surfaceY: any = serverSurfaceYAt(surface, x);
-    const key: any = gridKey(x, surfaceY);
-    const surfaceType: any = map.get(key)?.block_type || "";
+    const surfaceY = serverSurfaceYAt(surface, x);
+    const key = gridKey(x, surfaceY);
+    const surfaceType = map.get(key)?.block_type || "";
     if (!["dirt", "sand", "stone"].includes(surfaceType)) continue;
     if (serverCellNoise(generationSeed, x, surfaceY, 7201) > SERVER_SURFACE_DECORATION_CHANCE) continue;
     if (serverCellNoise(generationSeed, Math.trunc(x * SERVER_SURFACE_DECORATION_NOISE_SCALE_X), Math.trunc(surfaceY * SERVER_SURFACE_DECORATION_NOISE_SCALE_Y), 7202) > SERVER_SURFACE_DECORATION_SPACING_GAP_MAX) continue;
 
-    const selectionRoll: any = serverCellNoise(generationSeed, x, surfaceY + 1, 7201);
-    const total: any = SERVER_SURFACE_DECORATION_GRASS_CHANCE + SERVER_SURFACE_DECORATION_ROSE_CHANCE + SERVER_SURFACE_DECORATION_TULIP_CHANCE;
-    const normalized: any = total > 0 ? selectionRoll / total : 1;
+    const selectionRoll = serverCellNoise(generationSeed, x, surfaceY + 1, 7201);
+    const total = SERVER_SURFACE_DECORATION_GRASS_CHANCE + SERVER_SURFACE_DECORATION_ROSE_CHANCE + SERVER_SURFACE_DECORATION_TULIP_CHANCE;
+    const normalized = total > 0 ? selectionRoll / total : 1;
     let decoration: any = "grass";
     if (normalized < (SERVER_SURFACE_DECORATION_TULIP_CHANCE / total)) {
       decoration = "tulip";
@@ -27440,33 +27561,33 @@ function serverGenerateSurfaceDecorations(map: any, surface: any, generationSeed
 
 function serverCreateTree(map: any, surface: any, generationSeed: any, rng: any, x: any, backgroundMap: any = null) {
   if (x <= 1 || x >= WORLD_WIDTH - 2) return false;
-  const surfaceY: any = serverSurfaceYAt(surface, x);
-  const groundType: any = map.get(gridKey(x, surfaceY))?.block_type || "";
+  const surfaceY = serverSurfaceYAt(surface, x);
+  const groundType = map.get(gridKey(x, surfaceY))?.block_type || "";
   if (!["grass", "dirt", "sand", "stone", "rose", "tulip"].includes(groundType)) return false;
   if (Math.abs(serverSurfaceYAt(surface, x - 1) - surfaceY) > 1) return false;
   if (Math.abs(serverSurfaceYAt(surface, x + 1) - surfaceY) > 1) return false;
 
   serverMapSet(map, x, surfaceY, "dirt");
   serverMapClear(backgroundMap, x, surfaceY);
-  const baseY: any = surfaceY - 1;
-  const trunkHeight: any = deterministicInt(rng, SERVER_TREE_MIN_HEIGHT, SERVER_TREE_MAX_HEIGHT);
+  const baseY = surfaceY - 1;
+  const trunkHeight = deterministicInt(rng, SERVER_TREE_MIN_HEIGHT, SERVER_TREE_MAX_HEIGHT);
   let trunkTilt: any = 0;
   if (serverCellNoise(generationSeed, x, surfaceY, 7101) > 0.9) {
-    const tiltNoise: any = serverCellNoise(generationSeed, x + 10, surfaceY, 7102);
+    const tiltNoise = serverCellNoise(generationSeed, x + 10, surfaceY, 7102);
     if (tiltNoise < 0.33) trunkTilt = -1;
     else if (tiltNoise > 0.66) trunkTilt = 1;
   }
 
   const trunkPositions: any = [];
   for (let i: any = 0; i < trunkHeight; i += 1) {
-    const trunkX: any = x + trunkTilt * Math.floor(i / 2);
-    const trunkY: any = baseY - i;
+    const trunkX = x + trunkTilt * Math.floor(i / 2);
+    const trunkY = baseY - i;
     serverMapSetIfEmpty(map, trunkX, trunkY, "wood");
     trunkPositions.push({ x: trunkX, y: trunkY });
   }
 
-  const top: any = trunkPositions[trunkPositions.length - 1];
-  const leafCoreY: any = baseY - trunkHeight;
+  const top = trunkPositions[trunkPositions.length - 1];
+  const leafCoreY = baseY - trunkHeight;
   let leafSpreadX: any = 2;
   if (trunkHeight >= 6) leafSpreadX = 3;
   if (trunkHeight >= 7) leafSpreadX = 4;
@@ -27479,13 +27600,13 @@ function serverCreateTree(map: any, surface: any, generationSeed: any, rng: any,
     rowSpan = clampInteger(rowSpan + Math.round((serverCellNoise(generationSeed, x, leafCoreY + dy, 7401) - 0.5) * 1.2), 2, leafSpreadX + 2);
 
     for (let dx: any = -rowSpan; dx <= rowSpan; dx += 1) {
-      const leafX: any = top.x + dx;
-      const leafY: any = leafCoreY + dy;
+      const leafX = top.x + dx;
+      const leafY = leafCoreY + dy;
       if (!isGridInWorld(leafX, leafY)) continue;
-      const dist: any = Math.abs(dx) + Math.abs(dy);
+      const dist = Math.abs(dx) + Math.abs(dy);
       if (dist > 8) continue;
-      const leafNoise: any = serverCellNoise(generationSeed, leafX, leafY, 7400);
-      const isEdge: any = Math.abs(dx) === rowSpan || dist >= 5;
+      const leafNoise = serverCellNoise(generationSeed, leafX, leafY, 7400);
+      const isEdge = Math.abs(dx) === rowSpan || dist >= 5;
       if (dy < -1 && dist <= 2 && leafNoise < 0.03) continue;
       if (isEdge && leafNoise < 0.28) continue;
       if (dist > 4 && leafNoise < 0.16) continue;
@@ -27506,7 +27627,7 @@ function serverGenerateTrees(map: any, surface: any, generationSeed: any, rng: a
   for (let x: any = 4; x < WORLD_WIDTH - 4; x += 1) {
     if (isServerSpawnSafeColumn(x)) continue;
     if (x - lastTreeX < 3) continue;
-    const surfaceY: any = serverSurfaceYAt(surface, x);
+    const surfaceY = serverSurfaceYAt(surface, x);
     if (serverCellNoise(generationSeed, x, surfaceY, 7001) > SERVER_TREE_SURFACE_NOISE_THRESHOLD) continue;
     if (serverCellNoise(generationSeed, x * 2, surfaceY, 7002) < 0.03) continue;
     if (rng() >= SERVER_TREE_RANDOM_PLACEMENT_CHANCE) continue;
@@ -27517,12 +27638,12 @@ function serverGenerateTrees(map: any, surface: any, generationSeed: any, rng: a
 function applyServerDefaultEntranceGateToGeneratedMaps(worldName: any, state: any, foregroundMap: any, backgroundMap: any, surface: any) {
   if (!foregroundMap || state?.cleared || (state && findEntranceGateInState(state))) return;
 
-  const gateX: any = clampInteger(Math.floor(WORLD_WIDTH * 0.5), 0, WORLD_WIDTH - 1);
-  const surfaceY: any = serverSurfaceYAt(surface, gateX);
-  const gateY: any = getGeneratedEntranceGateGridY(surfaceY, state);
+  const gateX = clampInteger(Math.floor(WORLD_WIDTH * 0.5), 0, WORLD_WIDTH - 1);
+  const surfaceY = serverSurfaceYAt(surface, gateX);
+  const gateY = getGeneratedEntranceGateGridY(surfaceY, state);
   const gatePos: any = { x: gateX, y: gateY };
-  const minX: any = Math.max(1, gateX - 3);
-  const maxX: any = Math.min(WORLD_WIDTH - 2, gateX + 3);
+  const minX = Math.max(1, gateX - 3);
+  const maxX = Math.min(WORLD_WIDTH - 2, gateX + 3);
 
   for (let x: any = minX; x <= maxX; x += 1) {
     for (let y: any = surfaceY - 5; y < surfaceY; y += 1) {
@@ -27555,9 +27676,9 @@ function buildServerGeneratedWorldMaps(worldName: any, state: any) {
 
   const { generationSeed, surface } = buildServerTerrainSurface(worldName);
   for (let x: any = 0; x < WORLD_WIDTH; x += 1) {
-    const surfaceY: any = serverSurfaceYAt(surface, x);
+    const surfaceY = serverSurfaceYAt(surface, x);
     for (let y: any = surfaceY; y < WORLD_HEIGHT; y += 1) {
-      const blockType: any = serverGeneratedBlockType(generationSeed, x, y, surfaceY);
+      const blockType = serverGeneratedBlockType(generationSeed, x, y, surfaceY);
       if (blockType !== "") serverMapSet(foreground, x, y, blockType);
       if (shouldServerPlaceCaveBackground(generationSeed, blockType, x, y, surfaceY)) {
         serverMapSet(background, x, y, "cave_background");
@@ -27565,7 +27686,7 @@ function buildServerGeneratedWorldMaps(worldName: any, state: any) {
     }
   }
 
-  const rng: any = makeDeterministicRng(`generated:${cleanWorld(worldName)}:${generationSeed}`);
+  const rng = makeDeterministicRng(`generated:${cleanWorld(worldName)}:${generationSeed}`);
   serverGenerateNaturalPonds(foreground, surface, rng, background);
   serverGenerateSurfaceDecorations(foreground, surface, generationSeed, background);
   serverGenerateTrees(foreground, surface, generationSeed, rng, background);
@@ -27583,7 +27704,7 @@ function buildServerGeneratedBackgroundMap(worldName: any, state: any) {
 
 function buildEffectiveForegroundMap(worldName: any, state: any, generatedMap: any = null) {
   const map: any = new Map();
-  const baseMap: any = generatedMap || buildServerGeneratedForegroundMap(worldName, state);
+  const baseMap = generatedMap || buildServerGeneratedForegroundMap(worldName, state);
   for (const [key, entry] of baseMap.entries()) {
     map.set(key, { ...entry, source: "generated" });
   }
@@ -27598,7 +27719,7 @@ function buildEffectiveForegroundMap(worldName: any, state: any, generatedMap: a
 
 function buildEffectiveBackgroundMap(worldName: any, state: any, generatedMap: any = null) {
   const map: any = new Map();
-  const baseMap: any = generatedMap || buildServerGeneratedBackgroundMap(worldName, state);
+  const baseMap = generatedMap || buildServerGeneratedBackgroundMap(worldName, state);
   for (const [key, entry] of baseMap.entries()) {
     map.set(key, { ...entry, source: "generated" });
   }
@@ -27612,7 +27733,7 @@ function buildEffectiveBackgroundMap(worldName: any, state: any, generatedMap: a
 }
 
 function getSnowStormIceEventBlock(x: any, y: any) {
-  const roll: any = deterministicTileVariantIndex(x, y, 100, SNOW_STORM_ICE_VARIANT_SALT);
+  const roll = deterministicTileVariantIndex(x, y, 100, SNOW_STORM_ICE_VARIANT_SALT);
   if (roll < 2) return "ice_fossil";
   if (roll < 7) return "ice_block_2";
   return "ice_block";
@@ -27639,32 +27760,32 @@ function getSnowStormEventBlockForOriginal(originalBlockId: any, effectiveMap: a
 
 function getSnowStormBlockTypeAt(effectiveMap: any, x: any, y: any) {
   if (!effectiveMap || !isGridInWorld(x, y)) return "";
-  const entry: any = effectiveMap.get(gridKey(x, y));
+  const entry = effectiveMap.get(gridKey(x, y));
   return clampString(entry?.block_type || "");
 }
 
 function getSnowStormDirtEventBlock(effectiveMap: any, x: any, y: any) {
-  const aboveY: any = Number(y) - 1;
-  const aboveBlockId: any = getSnowStormBlockTypeAt(effectiveMap, x, aboveY);
+  const aboveY = Number(y) - 1;
+  const aboveBlockId = getSnowStormBlockTypeAt(effectiveMap, x, aboveY);
   if (aboveBlockId !== "dirt") return "snow_block";
 
-  const aboveAboveBlockId: any = getSnowStormBlockTypeAt(effectiveMap, x, aboveY - 1);
+  const aboveAboveBlockId = getSnowStormBlockTypeAt(effectiveMap, x, aboveY - 1);
   if (aboveAboveBlockId !== "dirt") return "snow_dirt";
 
   return "";
 }
 
 function isSnowStormTopLeaf(effectiveMap: any, x: any, y: any) {
-  const aboveY: any = Number(y) - 1;
+  const aboveY = Number(y) - 1;
   if (!isGridInWorld(x, aboveY)) return true;
-  const aboveKey: any = gridKey(x, aboveY);
-  const above: any = effectiveMap.get(aboveKey);
+  const aboveKey = gridKey(x, aboveY);
+  const above = effectiveMap.get(aboveKey);
   return clampString(above?.block_type || "") !== "leaf";
 }
 
 function canSpawnSnowStormPileAt(state: any, occupancyMap: any, x: any, y: any) {
   if (!state || !occupancyMap || !isGridInWorld(x, y)) return false;
-  const key: any = gridKey(x, y);
+  const key = gridKey(x, y);
   if (state.foreground.has(key)) return false;
   if (state.seeds.has(key)) return false;
   return !occupancyMap.has(key);
@@ -27695,21 +27816,21 @@ function makeSnowStormWorldChange(worldName: any, tile: any, action: any, source
 }
 
 async function startSnowStormEvent(worldName: any, options: any = {}) {
-  const clean: any = cleanWorld(worldName);
-  const lockKey: any = `${clean}:${SNOW_STORM_EVENT_TYPE}`;
+  const clean = cleanWorld(worldName);
+  const lockKey = `${clean}:${SNOW_STORM_EVENT_TYPE}`;
   if (worldEventActionLocks.has(lockKey)) return { ok: false, reason: "locked" };
   worldEventActionLocks.add(lockKey);
   let previousWorldState: any = null;
 
   try {
-    const state: any = ensureWorldState(clean);
+    const state = ensureWorldState(clean);
     if (hasActiveSnowStormEvent(state)) return { ok: false, reason: "already_active" };
     if (hasSnowRepellentBlock(clean)) return { ok: false, reason: "snow_repellent_active" };
 
     previousWorldState = serializeWorldState(clean);
-    const eventId: any = makeAuditId("snow_storm");
-    const startedAt: any = new Date();
-    const endsAt: any = new Date(startedAt.getTime() + SNOW_STORM_EVENT_DURATION_MS);
+    const eventId = makeAuditId("snow_storm");
+    const startedAt = new Date();
+    const endsAt = new Date(startedAt.getTime() + SNOW_STORM_EVENT_DURATION_MS);
     const changedTiles: any = [];
     const updates: any = [];
     const convertedSnowDirtTiles: any = [];
@@ -27723,8 +27844,8 @@ async function startSnowStormEvent(worldName: any, options: any = {}) {
       piles_spawned: 0,
       capped: false,
     };
-    const effectiveMap: any = buildEffectiveForegroundMap(clean, state);
-    const originalOccupancyMap: any = effectiveMap;
+    const effectiveMap = buildEffectiveForegroundMap(clean, state);
+    const originalOccupancyMap = effectiveMap;
     const occupancyMap: any = new Map();
     for (const [key, entry] of originalOccupancyMap.entries()) {
       occupancyMap.set(key, { ...entry });
@@ -27736,13 +27857,13 @@ async function startSnowStormEvent(worldName: any, options: any = {}) {
         break;
       }
 
-      const originalBlockId: any = clampString(entry?.block_type || "");
+      const originalBlockId = clampString(entry?.block_type || "");
       if (originalBlockId === "") continue;
-      const eventBlockId: any = getSnowStormEventBlockForOriginal(originalBlockId, originalOccupancyMap, entry.x, entry.y);
+      const eventBlockId = getSnowStormEventBlockForOriginal(originalBlockId, originalOccupancyMap, entry.x, entry.y);
       if (eventBlockId === "" || eventBlockId === originalBlockId) continue;
 
-      const key: any = gridKey(entry.x, entry.y);
-      const source: any = clampString(entry.source || "") === "explicit" ? "explicit" : "generated";
+      const key = gridKey(entry.x, entry.y);
+      const source = clampString(entry.source || "") === "explicit" ? "explicit" : "generated";
       state.foreground.set(key, { x: entry.x, y: entry.y, block_type: eventBlockId });
       state.removed_foreground.delete(key);
       state.interactions.delete(key);
@@ -27789,10 +27910,10 @@ async function startSnowStormEvent(worldName: any, options: any = {}) {
       if (clampString(entry?.source || "") !== "generated") continue;
       if (clampString(entry?.block_type || "") !== "water") continue;
 
-      const key: any = gridKey(entry.x, entry.y);
+      const key = gridKey(entry.x, entry.y);
       if (state.foreground.has(key)) continue;
 
-      const eventBlockId: any = getSnowStormIceEventBlock(entry.x, entry.y);
+      const eventBlockId = getSnowStormIceEventBlock(entry.x, entry.y);
       state.foreground.set(key, { x: entry.x, y: entry.y, block_type: eventBlockId });
       state.removed_foreground.delete(key);
       state.interactions.delete(key);
@@ -27821,7 +27942,7 @@ async function startSnowStormEvent(worldName: any, options: any = {}) {
       stats.water_converted += 1;
     }
 
-    const pileRng: any = makeDeterministicRng(`${eventId}:${clean}:pile_of_snow`);
+    const pileRng = makeDeterministicRng(`${eventId}:${clean}:pile_of_snow`);
     for (const snowDirtTile of convertedSnowDirtTiles) {
       if (changedTiles.length >= SNOW_STORM_MAX_CHANGED_TILES) {
         stats.capped = true;
@@ -27829,11 +27950,11 @@ async function startSnowStormEvent(worldName: any, options: any = {}) {
       }
       if (pileRng() >= SNOW_STORM_PILE_OF_SNOW_CHANCE) continue;
 
-      const pileX: any = snowDirtTile.x;
-      const pileY: any = snowDirtTile.y - 1;
+      const pileX = snowDirtTile.x;
+      const pileY = snowDirtTile.y - 1;
       if (!canSpawnSnowStormPileAt(state, occupancyMap, pileX, pileY)) continue;
 
-      const pileKey: any = gridKey(pileX, pileY);
+      const pileKey = gridKey(pileX, pileY);
       state.foreground.set(pileKey, { x: pileX, y: pileY, block_type: "pile_of_snow" });
       state.removed_foreground.delete(pileKey);
       occupancyMap.set(pileKey, { x: pileX, y: pileY, block_type: "pile_of_snow", source: "event_spawn" });
@@ -27867,7 +27988,7 @@ async function startSnowStormEvent(worldName: any, options: any = {}) {
     state.event_ends_at = endsAt.toISOString();
     state.event_changed_tiles = changedTiles;
 
-    const commit: any = await commitWorldEventStateOnly(clean);
+    const commit = await commitWorldEventStateOnly(clean);
     if (!commit.ok) {
       worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
       return { ok: false, reason: commit.reason || "commit_failed", message: commit.message || "" };
@@ -27894,27 +28015,27 @@ async function startSnowStormEvent(worldName: any, options: any = {}) {
     if (previousWorldState != null) {
       worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
     }
-    console.warn("[world_event] snow_storm start exception:", error && error.stack ? error.stack : error);
-    return { ok: false, reason: "exception", message: String(error?.message || error || "unknown") };
+    console.warn("[world_event] snow_storm start exception:", getErrorStack(error));
+    return { ok: false, reason: "exception", message: getErrorMessage(error) };
   } finally {
     worldEventActionLocks.delete(lockKey);
   }
 }
 
 async function endSnowStormEvent(worldName: any, options: any = {}) {
-  const clean: any = cleanWorld(worldName);
-  const lockKey: any = `${clean}:${SNOW_STORM_EVENT_TYPE}`;
+  const clean = cleanWorld(worldName);
+  const lockKey = `${clean}:${SNOW_STORM_EVENT_TYPE}`;
   if (worldEventActionLocks.has(lockKey)) return { ok: false, reason: "locked" };
   worldEventActionLocks.add(lockKey);
   let previousWorldState: any = null;
 
   try {
-    const state: any = ensureWorldState(clean);
+    const state = ensureWorldState(clean);
     if (state.active_event_type !== SNOW_STORM_EVENT_TYPE) return { ok: false, reason: "not_active" };
-    const eventId: any = state.event_id || "";
+    const eventId = state.event_id || "";
     previousWorldState = serializeWorldState(clean);
-    const changedTiles: any = Array.isArray(state.event_changed_tiles) ? state.event_changed_tiles.slice() : [];
-    const endedAt: any = new Date().toISOString();
+    const changedTiles = Array.isArray(state.event_changed_tiles) ? state.event_changed_tiles.slice() : [];
+    const endedAt = new Date().toISOString();
     const updates: any = [];
     const stats: any = {
       reverted: 0,
@@ -27922,22 +28043,22 @@ async function endSnowStormEvent(worldName: any, options: any = {}) {
       removed_generated_overrides: 0,
       skipped_player_changed: 0,
     };
-    const existingTimer: any = worldEventTimers.get(clean);
+    const existingTimer = worldEventTimers.get(clean);
     if (existingTimer) clearTimeout(existingTimer);
     worldEventTimers.delete(clean);
     clearWorldEventCountdownTimers(clean);
 
     for (const rawTile of changedTiles) {
-      const tile: any = normalizeWorldEventTileEntry(rawTile, eventId);
+      const tile = normalizeWorldEventTileEntry(rawTile, eventId);
       if (!tile) continue;
-      const key: any = gridKey(tile.x, tile.y);
-      const currentBlockId: any = clampString(state.foreground.get(key)?.block_type || "");
+      const key = gridKey(tile.x, tile.y);
+      const currentBlockId = clampString(state.foreground.get(key)?.block_type || "");
       if (currentBlockId !== tile.event_block_id) {
         stats.skipped_player_changed += 1;
         continue;
       }
 
-      const wasGeneratedOverride: any = clampString(tile.source || "") === "generated";
+      const wasGeneratedOverride = clampString(tile.source || "") === "generated";
       if (tile.original_block_id !== "") {
         if (wasGeneratedOverride) {
           state.foreground.delete(key);
@@ -27988,7 +28109,7 @@ async function endSnowStormEvent(worldName: any, options: any = {}) {
     }
 
     clearWorldEventState(state);
-    const commit: any = await commitWorldEventStateOnly(clean);
+    const commit = await commitWorldEventStateOnly(clean);
     if (!commit.ok) {
       worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
       scheduleWorldEventEnd(clean);
@@ -28014,17 +28135,17 @@ async function endSnowStormEvent(worldName: any, options: any = {}) {
       worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
       scheduleWorldEventEnd(clean);
     }
-    console.warn("[world_event] snow_storm end exception:", error && error.stack ? error.stack : error);
-    return { ok: false, reason: "exception", message: String(error?.message || error || "unknown") };
+    console.warn("[world_event] snow_storm end exception:", getErrorStack(error));
+    return { ok: false, reason: "exception", message: getErrorMessage(error) };
   } finally {
     worldEventActionLocks.delete(lockKey);
   }
 }
 
 async function handleFrozenTreasureOpen(socket: any, player: any, worldName: any, update: any, requestId: any = "") {
-  const clean: any = cleanWorld(worldName);
-  const key: any = gridKey(update.x, update.y);
-  const lockKey: any = `${clean}:${key}`;
+  const clean = cleanWorld(worldName);
+  const key = gridKey(update.x, update.y);
+  const lockKey = `${clean}:${key}`;
   if (worldFrozenTreasureOpenLocks.has(lockKey)) {
     sendActionRejected(socket, "world_block_update", "That treasure is already opening.");
     return false;
@@ -28032,15 +28153,15 @@ async function handleFrozenTreasureOpen(socket: any, player: any, worldName: any
   worldFrozenTreasureOpenLocks.add(lockKey);
 
   try {
-    const state: any = ensureWorldState(clean);
-    const currentBlock: any = state.foreground.get(key);
+    const state = ensureWorldState(clean);
+    const currentBlock = state.foreground.get(key);
     if (clampString(currentBlock?.block_type || "") !== "frozen_treasure") {
       sendActionRejected(socket, "world_block_update", "That frozen treasure is already open.");
       return false;
     }
 
-    const previousWorldState: any = serializeWorldState(clean);
-    const transactionId: any = makeAuditId("frozen_treasure");
+    const previousWorldState = serializeWorldState(clean);
+    const transactionId = makeAuditId("frozen_treasure");
     const openedUpdate: any = {
       type: "world_block_update",
       action: "place",
@@ -28064,8 +28185,8 @@ async function handleFrozenTreasureOpen(socket: any, player: any, worldName: any
     state.removed_foreground.delete(key);
     clearServerBlockDamage(clean, update);
 
-    const dropPosition: any = getGridCenterPixels(update.x, update.y);
-    const rewardDrop: any = createServerDrop(clean, "snow_block", "block", 1, dropPosition.x, dropPosition.y, SERVER_DROP_PICKUP_DELAY);
+    const dropPosition = getGridCenterPixels(update.x, update.y);
+    const rewardDrop = createServerDrop(clean, "snow_block", "block", 1, dropPosition.x, dropPosition.y, SERVER_DROP_PICKUP_DELAY);
     if (!rewardDrop) {
       worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
       sendActionRejected(socket, "world_block_update", "Could not create the treasure reward.");
@@ -28142,7 +28263,7 @@ async function handleFrozenTreasureOpen(socket: any, player: any, worldName: any
       },
     };
 
-    const commit: any = await commitWorldStateWithBlockChanges(clean, [openChange, cleanupChange, rewardChange]);
+    const commit = await commitWorldStateWithBlockChanges(clean, [openChange, cleanupChange, rewardChange]);
     if (!commit.ok) {
       worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
       sendActionRejected(socket, "world_block_update", commit.message || "PostgreSQL rejected the treasure reward.");
@@ -28173,15 +28294,15 @@ async function handleFrozenTreasureOpen(socket: any, player: any, worldName: any
 
 function loadAccountsFromJson() {
   accounts.clear();
-  const data: any = readJsonFile(ACCOUNTS_SAVE_PATH);
+  const data = readJsonFile(ACCOUNTS_SAVE_PATH);
 
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     return;
   }
 
-  const rawAccounts: any = Array.isArray(data.accounts) ? data.accounts : [];
+  const rawAccounts = Array.isArray(data.accounts) ? data.accounts : [];
   for (const rawAccount of rawAccounts) {
-    const account: any = sanitizeAccountState(rawAccount);
+    const account = sanitizeAccountState(rawAccount);
     if (!account) continue;
     accounts.set(accountKey(account.username), account);
   }
@@ -28190,10 +28311,10 @@ function loadAccountsFromJson() {
 function sanitizeAccountState(rawAccount: any) {
   if (!rawAccount || typeof rawAccount !== "object" || Array.isArray(rawAccount)) return null;
 
-  const username: any = cleanAccountName(rawAccount.username || rawAccount.account_username || rawAccount.name || "");
+  const username = cleanAccountName(rawAccount.username || rawAccount.account_username || rawAccount.name || "");
   if (username === "") return null;
-  const hasEmailVerifiedField: any = Object.prototype.hasOwnProperty.call(rawAccount, "email_verified");
-  const passwordHash: any = String(rawAccount.password_hash || "");
+  const hasEmailVerifiedField = Object.prototype.hasOwnProperty.call(rawAccount, "email_verified");
+  const passwordHash = String(rawAccount.password_hash || "");
 
   return {
     account_id: cleanStableIdentityId(rawAccount.account_id || ""),
@@ -28226,11 +28347,11 @@ function accountKey(username: any) {
 }
 
 function upsertAccount(rawAccount: any) {
-  const incoming: any = sanitizeAccountState(rawAccount);
+  const incoming = sanitizeAccountState(rawAccount);
   if (!incoming) return null;
 
-  const key: any = accountKey(incoming.username);
-  const existing: any = accounts.get(key) || {};
+  const key = accountKey(incoming.username);
+  const existing = accounts.get(key) || {};
   const account: any = {
     account_id: existing.account_id || incoming.account_id || "",
     player_id: existing.player_id || existing.profile_id || incoming.player_id || incoming.profile_id || "",
@@ -28316,10 +28437,10 @@ function sanitizePlayerState(rawState: any, username: any) {
 }
 
 function ensurePlayerState(username: any) {
-  const clean: any = cleanAccountName(username);
+  const clean = cleanAccountName(username);
   if (clean === "") return null;
 
-  const key: any = accountKey(clean);
+  const key = accountKey(clean);
   if (playerStates.has(key)) {
     return playerStates.get(key);
   }
@@ -28328,12 +28449,12 @@ function ensurePlayerState(username: any) {
     return null;
   }
 
-  const data: any = readJsonFile(getPlayerSavePath(clean));
+  const data = readJsonFile(getPlayerSavePath(clean));
   if (!data || typeof data !== "object" || Array.isArray(data)) {
     return null;
   }
 
-  const state: any = sanitizePlayerState(data.player_data || data, clean);
+  const state = sanitizePlayerState(data.player_data || data, clean);
   if (!state) return null;
 
   playerStates.set(key, state);
@@ -28341,7 +28462,7 @@ function ensurePlayerState(username: any) {
 }
 
 function setPlayerState(username: any, state: any) {
-  const clean: any = cleanAccountName(username);
+  const clean = cleanAccountName(username);
   if (clean === "") return;
 
   if (state && typeof state === "object" && !Array.isArray(state)) {
@@ -28351,10 +28472,10 @@ function setPlayerState(username: any, state: any) {
 }
 
 function queuePlayerSave(username: any) {
-  const key: any = accountKey(username);
+  const key = accountKey(username);
   if (key === "") return;
 
-  const existingTimer: any = playerSaveTimers.get(key);
+  const existingTimer = playerSaveTimers.get(key);
   if (existingTimer) clearTimeout(existingTimer);
 
   playerSaveTimers.set(key, setTimeout(() => {
@@ -28364,10 +28485,10 @@ function queuePlayerSave(username: any) {
 }
 
 function savePlayerState(username: any) {
-  const clean: any = cleanAccountName(username);
+  const clean = cleanAccountName(username);
   if (clean === "") return null;
 
-  const state: any = playerStates.get(accountKey(clean));
+  const state = playerStates.get(accountKey(clean));
   if (!state) return null;
   state.inventory_slot_count = resolveInventorySlotCount(state);
   normalizePlayerHotbarState(state);
@@ -28375,7 +28496,7 @@ function savePlayerState(username: any) {
 
   writePlayerStateJsonBackup(clean, state);
   if (postgresStore.isReady()) {
-    const write: any = trackPersistenceWrite(postgresStore.savePlayerState(clean, state), `player state ${clean}`);
+    const write = trackPersistenceWrite(postgresStore.savePlayerState(clean, state), `player state ${clean}`);
     playerSaveWrites.set(accountKey(clean), write);
     return write;
   } else {
@@ -28385,9 +28506,9 @@ function savePlayerState(username: any) {
 }
 
 function triggerPendingWorldSave(worldName: any) {
-  const clean: any = cleanWorld(worldName || "");
+  const clean = cleanWorld(worldName || "");
   if (clean === "") return null;
-  const timer: any = worldSaveTimers.get(clean);
+  const timer = worldSaveTimers.get(clean);
   if (timer) {
     clearTimeout(timer);
     worldSaveTimers.delete(clean);
@@ -28397,10 +28518,10 @@ function triggerPendingWorldSave(worldName: any) {
 }
 
 function triggerPendingPlayerSave(username: any) {
-  const clean: any = cleanAccountName(username || "");
+  const clean = cleanAccountName(username || "");
   if (clean === "") return null;
-  const key: any = accountKey(clean);
-  const timer: any = playerSaveTimers.get(key);
+  const key = accountKey(clean);
+  const timer = playerSaveTimers.get(key);
   if (timer) {
     clearTimeout(timer);
     playerSaveTimers.delete(key);
@@ -28410,15 +28531,15 @@ function triggerPendingPlayerSave(username: any) {
 }
 
 async function flushPendingSessionPersistence(username: any = "", worldName: any = "", reason: any = "session_transition") {
-  const cleanUsername: any = cleanAccountName(username || "");
-  const cleanWorldName: any = String(worldName || "").trim() === "" ? "" : cleanWorld(worldName);
+  const cleanUsername = cleanAccountName(username || "");
+  const cleanWorldName = String(worldName || "").trim() === "" ? "" : cleanWorld(worldName);
   const writes: any = [];
-  const worldWrite: any = cleanWorldName === "" ? null : triggerPendingWorldSave(cleanWorldName);
-  const playerWrite: any = cleanUsername === "" ? null : triggerPendingPlayerSave(cleanUsername);
+  const worldWrite = cleanWorldName === "" ? null : triggerPendingWorldSave(cleanWorldName);
+  const playerWrite = cleanUsername === "" ? null : triggerPendingPlayerSave(cleanUsername);
   if (worldWrite && typeof worldWrite.then === "function") writes.push(worldWrite);
   if (playerWrite && typeof playerWrite.then === "function") writes.push(playerWrite);
 
-  const results: any = writes.length > 0 ? await Promise.allSettled(writes) : [];
+  const results = writes.length > 0 ? await Promise.allSettled(writes) : [];
   if (typeof postgresStore.flushWriteQueue === "function") {
     await postgresStore.flushWriteQueue();
   } else {
@@ -28432,13 +28553,13 @@ async function flushPendingSessionPersistence(username: any = "", worldName: any
   let flushedWriteCount: any = writes.length;
   if (failed) {
     const retryWrites: any = [];
-    const worldRetry: any = cleanWorldName === "" ? null : saveWorldState(cleanWorldName);
-    const playerRetry: any = cleanUsername === "" ? null : savePlayerState(cleanUsername);
+    const worldRetry = cleanWorldName === "" ? null : saveWorldState(cleanWorldName);
+    const playerRetry = cleanUsername === "" ? null : savePlayerState(cleanUsername);
     if (worldRetry && typeof worldRetry.then === "function") retryWrites.push(worldRetry);
     if (playerRetry && typeof playerRetry.then === "function") retryWrites.push(playerRetry);
     flushedWriteCount += retryWrites.length;
 
-    const retryResults: any = retryWrites.length > 0 ? await Promise.allSettled(retryWrites) : [];
+    const retryResults = retryWrites.length > 0 ? await Promise.allSettled(retryWrites) : [];
     if (typeof postgresStore.flushWriteQueue === "function") {
       await postgresStore.flushWriteQueue();
     } else {
@@ -28483,7 +28604,7 @@ function isCoreVisibleEquipmentSlot(slot: any) {
 }
 
 function sanitizeEquipmentSlots(rawSlots: any, username: any = "", stateOverride: any = null) {
-  const state: any = stateOverride || (username !== "" ? ensurePlayerState(username) : null);
+  const state = stateOverride || (username !== "" ? ensurePlayerState(username) : null);
   return PlayerStateHelpers.sanitizeEquipmentSlots(rawSlots, state);
 }
 
@@ -28507,12 +28628,12 @@ function syncPlayerEquipmentSlotsFromState(player: any, state: any, username: an
 }
 
 function cleanIndexedWorldName(value: any) {
-  const raw: any = String(value || "").trim();
+  const raw = String(value || "").trim();
   return raw === "" ? "" : cleanWorld(raw);
 }
 
 function getWorldPlayerIdSet(worldName: any, create: any = false) {
-  const clean: any = cleanWorld(worldName || "START");
+  const clean = cleanWorld(worldName || "START");
   let set: any = worldPlayers.get(clean);
   if (!set && create) {
     set = new Set();
@@ -28522,13 +28643,13 @@ function getWorldPlayerIdSet(worldName: any, create: any = false) {
 }
 
 function removePlayerFromWorldIndex(playerOrId: any, worldName: any = "") {
-  const player: any = playerOrId && typeof playerOrId === "object" ? playerOrId : players.get(String(playerOrId || "").trim());
-  const playerId: any = String(player?.id || playerOrId || "").trim();
+  const player = playerOrId && typeof playerOrId === "object" ? playerOrId : players.get(String(playerOrId || "").trim());
+  const playerId = String(player?.id || playerOrId || "").trim();
   if (playerId === "") return;
 
-  const clean: any = cleanIndexedWorldName(worldName || player?.indexed_world || "");
+  const clean = cleanIndexedWorldName(worldName || player?.indexed_world || "");
   if (clean !== "") {
-    const set: any = worldPlayers.get(clean);
+    const set = worldPlayers.get(clean);
     if (set) {
       set.delete(playerId);
       if (set.size === 0) worldPlayers.delete(clean);
@@ -28548,11 +28669,11 @@ function removePlayerFromWorldIndex(playerOrId: any, worldName: any = "") {
 
 function updatePlayerWorldIndex(player: any) {
   if (!player) return;
-  const playerId: any = String(player.id || "").trim();
+  const playerId = String(player.id || "").trim();
   if (playerId === "") return;
 
-  const previousWorld: any = cleanIndexedWorldName(player.indexed_world || "");
-  const nextWorld: any = player.joined_world ? cleanWorld(player.world || player.current_world || "START") : "";
+  const previousWorld = cleanIndexedWorldName(player.indexed_world || "");
+  const nextWorld = player.joined_world ? cleanWorld(player.world || player.current_world || "START") : "";
   if (previousWorld !== "" && previousWorld !== nextWorld) {
     removePlayerFromWorldIndex(player, previousWorld);
   }
@@ -28571,20 +28692,20 @@ function clearPlayerWorldIndex(playerOrId: any) {
 }
 
 function getWorldPlayerRecords(worldName: any, options: any = {}) {
-  const clean: any = cleanWorld(worldName || "START");
-  const excluded: any = String(options.excludePlayerId || "").trim();
-  const includeSocket: any = options.includeSocket === true;
-  const requireOpenSocket: any = options.requireOpenSocket !== false;
-  const set: any = getWorldPlayerIdSet(clean, false);
+  const clean = cleanWorld(worldName || "START");
+  const excluded = String(options.excludePlayerId || "").trim();
+  const includeSocket = options.includeSocket === true;
+  const requireOpenSocket = options.requireOpenSocket !== false;
+  const set = getWorldPlayerIdSet(clean, false);
   if (!set || set.size === 0) return [];
 
   const records: any = [];
   for (const playerId of Array.from<any>(set)) {
     if (excluded !== "" && playerId === excluded) continue;
 
-    const player: any = players.get(playerId);
-    const socket: any = socketByPlayerId.get(playerId) || null;
-    const stale: any = !player ||
+    const player = players.get(playerId);
+    const socket = socketByPlayerId.get(playerId) || null;
+    const stale = !player ||
       !player.joined_world ||
       cleanWorld(player.world || "START") !== clean ||
       (requireOpenSocket && (!socket || socket.readyState !== WebSocket.OPEN));
@@ -28609,9 +28730,9 @@ function getWorldIndexStatsSnapshot() {
   let largestWorldPopulation: any = 0;
 
   for (const worldName of Array.from<any>(worldPlayers.keys())) {
-    const population: any = getWorldPopulationCount(worldName);
+    const population = getWorldPopulationCount(worldName);
     if (population <= 0) continue;
-    const clean: any = cleanWorld(worldName);
+    const clean = cleanWorld(worldName);
     indexedPlayerCount += population;
     largestWorldPopulation = Math.max(largestWorldPopulation, population);
     worlds.push({
@@ -28620,8 +28741,8 @@ function getWorldIndexStatsSnapshot() {
     });
   }
 
-  worlds.sort((left, right) => {
-    const populationCompare: any = Number(right.players || 0) - Number(left.players || 0);
+  worlds.sort((left: { world: string; players: number }, right: { world: string; players: number }) => {
+    const populationCompare = Number(right.players || 0) - Number(left.players || 0);
     if (populationCompare !== 0) return populationCompare;
     return String(left.world || "").localeCompare(String(right.world || ""));
   });
@@ -28635,7 +28756,7 @@ function getWorldIndexStatsSnapshot() {
 }
 
 function getWorldRouteStatsSnapshot() {
-  const sampleWorlds: any = Array.from<any>(ownedWorldRoutes.values())
+  const sampleWorlds = Array.from<any>(ownedWorldRoutes.values())
     .map((worldName) => cleanIndexedWorldName(worldName))
     .filter(Boolean)
     .sort((left, right) => left.localeCompare(right))
@@ -28665,9 +28786,9 @@ function getWorldRouteStatsSnapshot() {
 }
 
 function warnWorldRouteConflict(label: any, worldName: any, route: any = {}) {
-  const clean: any = cleanWorld(worldName || "START");
-  const now: any = Date.now();
-  const previous: any = Number(worldRouteConflictLogAt.get(clean) || 0);
+  const clean = cleanWorld(worldName || "START");
+  const now = Date.now();
+  const previous = Number(worldRouteConflictLogAt.get(clean) || 0);
   if (now - previous < 10000) return;
   worldRouteStats.conflicts += 1;
 
@@ -28683,9 +28804,9 @@ function warnWorldRouteConflict(label: any, worldName: any, route: any = {}) {
 }
 
 function warnWorldRouteAdmissionMismatch(label: any, worldName: any, route: any = {}) {
-  const clean: any = cleanWorld(worldName || "START");
-  const now: any = Date.now();
-  const previous: any = Number(worldRouteAdmissionMismatchLogAt.get(clean) || 0);
+  const clean = cleanWorld(worldName || "START");
+  const now = Date.now();
+  const previous = Number(worldRouteAdmissionMismatchLogAt.get(clean) || 0);
   if (now - previous < 10000) return;
   worldRouteAdmissionMismatchLogAt.set(clean, now);
   worldRouteStats.admission_mismatches += 1;
@@ -28701,7 +28822,7 @@ function warnWorldRouteAdmissionMismatch(label: any, worldName: any, route: any 
 }
 
 function rejectWorldRouteUnavailable(socket: any, action: any, worldName: any) {
-  const clean: any = cleanWorld(worldName || "START");
+  const clean = cleanWorld(worldName || "START");
   sendActionRejected(socket, action, "World routing is temporarily unavailable.", {
     reason: "world_route_unavailable",
     world: clean,
@@ -28711,9 +28832,9 @@ function rejectWorldRouteUnavailable(socket: any, action: any, worldName: any) {
 }
 
 function rejectWorldRouteAdmissionMismatch(socket: any, player: any, action: any, worldName: any, route: any = {}) {
-  const clean: any = cleanWorld(worldName || "START");
-  const ownerInstanceId: any = String(route.owner_instance_id || "").trim();
-  const redirectWsUrl: any = String(route.ws_url || "").trim();
+  const clean = cleanWorld(worldName || "START");
+  const ownerInstanceId = String(route.owner_instance_id || "").trim();
+  const redirectWsUrl = String(route.ws_url || "").trim();
   if (ownerInstanceId || redirectWsUrl) {
     return rejectWorldRouteRedirect(socket, action, clean, {
       owner_instance_id: ownerInstanceId,
@@ -28733,9 +28854,9 @@ function rejectWorldRouteAdmissionMismatch(socket: any, player: any, action: any
 }
 
 function rejectWorldRouteRedirect(socket: any, action: any, worldName: any, route: any = {}) {
-  const clean: any = cleanWorld(worldName || "START");
-  const ownerInstanceId: any = String(route.owner_instance_id || "").trim();
-  const redirectWsUrl: any = String(route.ws_url || "").trim();
+  const clean = cleanWorld(worldName || "START");
+  const ownerInstanceId = String(route.owner_instance_id || "").trim();
+  const redirectWsUrl = String(route.ws_url || "").trim();
   worldRouteStats.redirects += 1;
   const payload: any = {
     type: "world_route_redirect",
@@ -28762,7 +28883,7 @@ function rejectWorldRouteRedirect(socket: any, action: any, worldName: any, rout
  * @returns {Promise<PixelMania.WorldRouteClaimResult>}
  */
 async function claimWorldRouteForCurrentInstance(worldName: any) {
-  const clean: any = cleanWorld(worldName || "START");
+  const clean = cleanWorld(worldName || "START");
   if (clean === "") {
     return { ok: false, fallback: false, reason: "invalid_world_route", world: clean };
   }
@@ -28778,7 +28899,7 @@ async function claimWorldRouteForCurrentInstance(worldName: any) {
     };
   }
 
-  const route: any = await redisStore.claimWorldRoute(clean, SERVER_INSTANCE_ID, SERVER_INSTANCE_WS_URL, WORLD_ROUTE_TTL_MS);
+  const route = await redisStore.claimWorldRoute(clean, SERVER_INSTANCE_ID, SERVER_INSTANCE_WS_URL, WORLD_ROUTE_TTL_MS);
   if (route.ok) {
     ownedWorldRoutes.add(clean);
     return route;
@@ -28798,12 +28919,12 @@ async function claimWorldRouteForCurrentInstance(worldName: any) {
  * @returns {Promise<PixelMania.WorldRouteActionResult>}
  */
 async function ensureWorldRouteForAction(socket: any, player: any, worldName: any, action: any) {
-  const clean: any = cleanWorld(worldName || player?.world || "START");
+  const clean = cleanWorld(worldName || player?.world || "START");
   worldRouteStats.checks += 1;
   if (WORLD_ROUTE_ENFORCEMENT_ENABLED && !redisStore.isReady()) {
     worldRouteStats.unavailable += 1;
     worldRouteStats.redis_unhealthy += 1;
-    const now: any = Date.now();
+    const now = Date.now();
     if (now - Number(lastWorldRouteRedisUnhealthyWarnAt || 0) >= 15000) {
       lastWorldRouteRedisUnhealthyWarnAt = now;
       console.warn("[redis] world route enforcement requires Redis, but Redis is not ready.", {
@@ -28823,7 +28944,7 @@ async function ensureWorldRouteForAction(socket: any, player: any, worldName: an
       }, "warning");
     }
     if (!REDIS_REQUIRED_FOR_ROUTE_ENFORCEMENT) {
-      const fallbackRoute: any = await claimWorldRouteForCurrentInstance(clean);
+      const fallbackRoute = await claimWorldRouteForCurrentInstance(clean);
       worldRouteStats.bypasses += 1;
       warnWorldRouteConflict(`${action} allowed on local-only routing because REDIS_REQUIRED_FOR_ROUTE_ENFORCEMENT is false`, clean, fallbackRoute);
       return { ok: true, route: fallbackRoute };
@@ -28831,7 +28952,7 @@ async function ensureWorldRouteForAction(socket: any, player: any, worldName: an
     return { ok: rejectWorldRouteUnavailable(socket, action, clean), reason: "world_route_unavailable", world: clean };
   }
 
-  const route: any = await claimWorldRouteForCurrentInstance(clean);
+  const route = await claimWorldRouteForCurrentInstance(clean);
   if (route.ok) {
     worldRouteStats.allowed += 1;
     return { ok: true, route };
@@ -28854,17 +28975,17 @@ async function ensureWorldRouteForAction(socket: any, player: any, worldName: an
 
 async function refreshWorldRouteForPlayer(player: any) {
   if (!player || !player.joined_world) return;
-  const clean: any = cleanWorld(player.world || player.current_world || "START");
+  const clean = cleanWorld(player.world || player.current_world || "START");
   if (clean === "") return;
 
-  const route: any = await claimWorldRouteForCurrentInstance(clean);
+  const route = await claimWorldRouteForCurrentInstance(clean);
   if (!route.ok) {
     warnWorldRouteConflict("presence refresh could not renew local world route", clean, route);
   }
 }
 
 async function releaseOwnedWorldRouteIfEmpty(worldName: any) {
-  const clean: any = cleanIndexedWorldName(worldName || "");
+  const clean = cleanIndexedWorldName(worldName || "");
   if (clean === "") return;
   if (getWorldAdmissionCount(clean) > 0) return;
 
@@ -28874,13 +28995,13 @@ async function releaseOwnedWorldRouteIfEmpty(worldName: any) {
 }
 
 function getWorldPopulationCount(worldName: any, excludePlayerId: any = "") {
-  const clean: any = cleanWorld(worldName || "START");
+  const clean = cleanWorld(worldName || "START");
   return getWorldPlayerRecords(clean, { excludePlayerId }).length;
 }
 
 function getWorldPopulationForBatching(worldName: any) {
-  const clean: any = cleanWorld(worldName || "START");
-  const set: any = getWorldPlayerIdSet(clean, false);
+  const clean = cleanWorld(worldName || "START");
+  const set = getWorldPlayerIdSet(clean, false);
   return set && set.size ? set.size : 0;
 }
 
@@ -28927,9 +29048,9 @@ function buildClientMovementGuidance(worldName: any) {
 }
 
 function getPendingWorldAdmissionCount(worldName: any, excludePlayerId: any = "") {
-  const clean: any = cleanWorld(worldName || "START");
-  const excluded: any = String(excludePlayerId || "").trim();
-  const pending: any = pendingWorldAdmissions.get(clean);
+  const clean = cleanWorld(worldName || "START");
+  const excluded = String(excludePlayerId || "").trim();
+  const pending = pendingWorldAdmissions.get(clean);
   if (!pending || pending.size === 0) return 0;
   let count: any = 0;
   for (const playerId of pending.values()) {
@@ -28940,14 +29061,14 @@ function getPendingWorldAdmissionCount(worldName: any, excludePlayerId: any = ""
 }
 
 function getWorldAdmissionCount(worldName: any, excludePlayerId: any = "") {
-  const clean: any = cleanWorld(worldName || "START");
+  const clean = cleanWorld(worldName || "START");
   return getWorldPopulationCount(clean, excludePlayerId) + getPendingWorldAdmissionCount(clean, excludePlayerId);
 }
 
 function canPlayerJoinWorld(player: any, worldName: any) {
   if (!player) return false;
-  const clean: any = cleanWorld(worldName || "START");
-  const playerId: any = String(player.id || "").trim();
+  const clean = cleanWorld(worldName || "START");
+  const playerId = String(player.id || "").trim();
   if (player.joined_world && cleanWorld(player.world || "START") === clean) {
     return true;
   }
@@ -28961,8 +29082,8 @@ function canPlayerJoinWorld(player: any, worldName: any) {
  */
 function reserveLocalWorldAdmission(player: any, worldName: any) {
   if (!player) return { ok: false, reason: "missing_player" };
-  const clean: any = cleanWorld(worldName || "START");
-  const playerId: any = String(player.id || "").trim();
+  const clean = cleanWorld(worldName || "START");
+  const playerId = String(player.id || "").trim();
   if (playerId === "") return { ok: false, reason: "missing_player_id" };
   if (player.joined_world && cleanWorld(player.world || "START") === clean) {
     return { ok: true, reserved: false, world: clean, player_id: playerId };
@@ -28982,10 +29103,10 @@ function reserveLocalWorldAdmission(player: any, worldName: any) {
 
 function releaseLocalWorldAdmissionReservation(reservation: any) {
   if (!reservation || reservation.local_reserved !== true) return;
-  const clean: any = cleanWorld(reservation.world || "");
-  const playerId: any = String(reservation.player_id || "").trim();
+  const clean = cleanWorld(reservation.world || "");
+  const playerId = String(reservation.player_id || "").trim();
   if (clean === "" || playerId === "") return;
-  const pending: any = pendingWorldAdmissions.get(clean);
+  const pending = pendingWorldAdmissions.get(clean);
   if (!pending) return;
   pending.delete(playerId);
   if (pending.size === 0) pendingWorldAdmissions.delete(clean);
@@ -28993,18 +29114,18 @@ function releaseLocalWorldAdmissionReservation(reservation: any) {
 }
 
 async function releaseRedisWorldAdmission(worldName: any, playerId: any) {
-  const clean: any = cleanIndexedWorldName(worldName || "");
-  const cleanPlayerId: any = String(playerId || "").trim();
+  const clean = cleanIndexedWorldName(worldName || "");
+  const cleanPlayerId = String(playerId || "").trim();
   if (clean === "" || cleanPlayerId === "" || !redisStore.isReady()) return;
   await redisStore.releaseWorldAdmission(clean, cleanPlayerId);
 }
 
 async function releasePlayerWorldAdmission(playerOrId: any, worldName: any = "") {
-  const player: any = playerOrId && typeof playerOrId === "object" ? playerOrId : players.get(String(playerOrId || "").trim());
-  const playerId: any = String(player?.id || playerOrId || "").trim();
+  const player = playerOrId && typeof playerOrId === "object" ? playerOrId : players.get(String(playerOrId || "").trim());
+  const playerId = String(player?.id || playerOrId || "").trim();
   if (playerId === "") return;
 
-  const clean: any = cleanIndexedWorldName(worldName || player?.redis_admission_world || player?.indexed_world || player?.world || "");
+  const clean = cleanIndexedWorldName(worldName || player?.redis_admission_world || player?.indexed_world || player?.world || "");
   if (clean === "") return;
   if (player && cleanIndexedWorldName(player.redis_admission_world || "") === clean) {
     player.redis_admission_world = "";
@@ -29014,11 +29135,11 @@ async function releasePlayerWorldAdmission(playerOrId: any, worldName: any = "")
 
 async function refreshPlayerWorldAdmission(player: any) {
   if (!redisStore.isReady() || !player || !player.joined_world) return;
-  const playerId: any = String(player.id || "").trim();
-  const clean: any = cleanWorld(player.world || player.current_world || "START");
+  const playerId = String(player.id || "").trim();
+  const clean = cleanWorld(player.world || player.current_world || "START");
   if (playerId === "" || clean === "") return;
 
-  const previousWorld: any = cleanIndexedWorldName(player.redis_admission_world || "");
+  const previousWorld = cleanIndexedWorldName(player.redis_admission_world || "");
   if (previousWorld !== "" && previousWorld !== clean) {
     await releaseRedisWorldAdmission(previousWorld, playerId);
     player.redis_admission_world = "";
@@ -29031,7 +29152,7 @@ async function refreshPlayerWorldAdmission(player: any) {
   }
 
   if (!result.ok) {
-    const now: any = Date.now();
+    const now = Date.now();
     if (now - Number(player.last_world_admission_warning_at || 0) > 10000) {
       player.last_world_admission_warning_at = now;
       console.warn("[redis] world admission refresh rejected", {
@@ -29053,8 +29174,8 @@ async function refreshPlayerWorldAdmission(player: any) {
  */
 async function reserveWorldAdmission(player: any, worldName: any, action: any = "join_world") {
   if (!player) return { ok: false, reason: "missing_player" };
-  const clean: any = cleanWorld(worldName || "START");
-  const playerId: any = String(player.id || "").trim();
+  const clean = cleanWorld(worldName || "START");
+  const playerId = String(player.id || "").trim();
   if (playerId === "") return { ok: false, reason: "missing_player_id" };
   if (player.joined_world && cleanWorld(player.world || "START") === clean) {
     await refreshPlayerWorldAdmission(player);
@@ -29065,10 +29186,10 @@ async function reserveWorldAdmission(player: any, worldName: any, action: any = 
   }
 
   if (WORLD_ROUTE_ENFORCEMENT_ENABLED && redisStore.isReady()) {
-    const route: any = await claimWorldRouteForCurrentInstance(clean);
+    const route = await claimWorldRouteForCurrentInstance(clean);
     if (!route.ok || route.owner_instance_id !== SERVER_INSTANCE_ID) {
-      const routeOwner: any = String(route.owner_instance_id || "").trim();
-      const routeWsUrl: any = String(route.ws_url || "").trim();
+      const routeOwner = String(route.owner_instance_id || "").trim();
+      const routeWsUrl = String(route.ws_url || "").trim();
       warnWorldRouteAdmissionMismatch(`${action} route ownership changed after admission check`, clean, {
         ...route,
         action,
@@ -29108,7 +29229,7 @@ async function reserveWorldAdmission(player: any, worldName: any, action: any = 
     }
   }
 
-  const localAdmission: any = reserveLocalWorldAdmission(player, clean);
+  const localAdmission = reserveLocalWorldAdmission(player, clean);
   if (!localAdmission.ok) {
     if (redisAdmission && !redisAdmission.fallback) {
       await releaseRedisWorldAdmission(clean, playerId);
@@ -29138,11 +29259,11 @@ async function commitWorldAdmissionReservation(reservation: any, player: any, pr
   if (!reservation || !reservation.ok) return;
   releaseLocalWorldAdmissionReservation(reservation);
 
-  const clean: any = cleanWorld(reservation.world || "");
-  const playerId: any = String(player?.id || reservation.player_id || "").trim();
+  const clean = cleanWorld(reservation.world || "");
+  const playerId = String(player?.id || reservation.player_id || "").trim();
   if (playerId === "" || clean === "") return;
 
-  const oldRedisWorld: any = cleanIndexedWorldName(previousWorld || player?.redis_admission_world || "");
+  const oldRedisWorld = cleanIndexedWorldName(previousWorld || player?.redis_admission_world || "");
   if (oldRedisWorld !== "" && oldRedisWorld !== clean) {
     await releaseRedisWorldAdmission(oldRedisWorld, playerId);
   }
@@ -29166,9 +29287,9 @@ async function releaseWorldAdmissionReservation(reservation: any) {
 }
 
 function rejectWorldCapacity(socket: any, action: any, worldName: any, playerId: any = "", options: any = {}) {
-  const clean: any = cleanWorld(worldName || "START");
-  const overrideCount: any = Number(options.current_players ?? options.currentPlayers);
-  const currentPlayers: any = Number.isFinite(overrideCount) ? Math.max(0, Math.trunc(overrideCount)) : getWorldAdmissionCount(clean, playerId);
+  const clean = cleanWorld(worldName || "START");
+  const overrideCount = Number(options.current_players ?? options.currentPlayers);
+  const currentPlayers = Number.isFinite(overrideCount) ? Math.max(0, Math.trunc(overrideCount)) : getWorldAdmissionCount(clean, playerId);
   sendActionRejected(socket, action, "That world is full.", {
     reason: "world_full",
     world: clean,
@@ -29191,7 +29312,7 @@ function sendWorldPopulationUpdate(socket: any, worldName: any) {
 }
 
 function broadcastWorldPopulationUpdate(worldName: any) {
-  const clean: any = cleanWorld(worldName || "START");
+  const clean = cleanWorld(worldName || "START");
   broadcastToWorld(clean, buildWorldPopulationUpdatePayload(clean));
 }
 
@@ -29204,7 +29325,7 @@ function isPlayerInterestManagementEnabled() {
 }
 
 function getPlayerInterestSet(receiverPlayerId: any, create: any = false) {
-  const receiverId: any = String(receiverPlayerId || "").trim();
+  const receiverId = String(receiverPlayerId || "").trim();
   if (receiverId === "") return null;
 
   let set: any = playerInterestByReceiver.get(receiverId);
@@ -29216,13 +29337,13 @@ function getPlayerInterestSet(receiverPlayerId: any, create: any = false) {
 }
 
 function isPlayerMarkedInInterest(receiverPlayerId: any, subjectPlayerId: any) {
-  const set: any = getPlayerInterestSet(receiverPlayerId, false);
+  const set = getPlayerInterestSet(receiverPlayerId, false);
   return Boolean(set && set.has(String(subjectPlayerId || "").trim()));
 }
 
 function setPlayerInterestVisible(receiverPlayerId: any, subjectPlayerId: any, visible: any) {
-  const receiverId: any = String(receiverPlayerId || "").trim();
-  const subjectId: any = String(subjectPlayerId || "").trim();
+  const receiverId = String(receiverPlayerId || "").trim();
+  const subjectId = String(subjectPlayerId || "").trim();
   if (receiverId === "" || subjectId === "" || receiverId === subjectId) return;
 
   if (visible) {
@@ -29230,14 +29351,14 @@ function setPlayerInterestVisible(receiverPlayerId: any, subjectPlayerId: any, v
     return;
   }
 
-  const set: any = getPlayerInterestSet(receiverId, false);
+  const set = getPlayerInterestSet(receiverId, false);
   if (!set) return;
   set.delete(subjectId);
   if (set.size === 0) playerInterestByReceiver.delete(receiverId);
 }
 
 function clearPlayerInterestState(playerId: any) {
-  const cleanId: any = String(playerId || "").trim();
+  const cleanId = String(playerId || "").trim();
   if (cleanId === "") return;
 
   playerInterestByReceiver.delete(cleanId);
@@ -29249,7 +29370,7 @@ function clearPlayerInterestState(playerId: any) {
 }
 
 function getDropInterestSet(receiverPlayerId: any, create: any = false) {
-  const receiverId: any = String(receiverPlayerId || "").trim();
+  const receiverId = String(receiverPlayerId || "").trim();
   if (receiverId === "") return null;
 
   let set: any = dropInterestByReceiver.get(receiverId);
@@ -29261,13 +29382,13 @@ function getDropInterestSet(receiverPlayerId: any, create: any = false) {
 }
 
 function isDropMarkedInInterest(receiverPlayerId: any, dropId: any) {
-  const set: any = getDropInterestSet(receiverPlayerId, false);
+  const set = getDropInterestSet(receiverPlayerId, false);
   return Boolean(set && set.has(clampString(dropId || "", MAX_DROP_ID_LENGTH)));
 }
 
 function setDropInterestVisible(receiverPlayerId: any, dropId: any, visible: any) {
-  const receiverId: any = String(receiverPlayerId || "").trim();
-  const cleanDropId: any = clampString(dropId || "", MAX_DROP_ID_LENGTH);
+  const receiverId = String(receiverPlayerId || "").trim();
+  const cleanDropId = clampString(dropId || "", MAX_DROP_ID_LENGTH);
   if (receiverId === "" || cleanDropId === "") return;
 
   if (visible) {
@@ -29275,20 +29396,20 @@ function setDropInterestVisible(receiverPlayerId: any, dropId: any, visible: any
     return;
   }
 
-  const set: any = getDropInterestSet(receiverId, false);
+  const set = getDropInterestSet(receiverId, false);
   if (!set) return;
   set.delete(cleanDropId);
   if (set.size === 0) dropInterestByReceiver.delete(receiverId);
 }
 
 function clearDropInterestStateForReceiver(playerId: any) {
-  const cleanId: any = String(playerId || "").trim();
+  const cleanId = String(playerId || "").trim();
   if (cleanId === "") return;
   dropInterestByReceiver.delete(cleanId);
 }
 
 function clearDropInterestStateForDrop(dropId: any) {
-  const cleanDropId: any = clampString(dropId || "", MAX_DROP_ID_LENGTH);
+  const cleanDropId = clampString(dropId || "", MAX_DROP_ID_LENGTH);
   if (cleanDropId === "") return;
   for (const [receiverId, set] of dropInterestByReceiver.entries()) {
     set.delete(cleanDropId);
@@ -29311,7 +29432,7 @@ function getSquaredDropDistance(player: any, drop: any) {
 function getDropInterestReceiverPosition(receiver: any, worldName: any = "") {
   if (!receiver || !usesTrustedMovementPosition(receiver)) return receiver;
 
-  const trusted: any = getPlayerValidationPosition(receiver, {
+  const trusted = getPlayerValidationPosition(receiver, {
     action: "drop_interest",
     world: cleanWorld(worldName || receiver.world || "START"),
   });
@@ -29322,29 +29443,29 @@ function shouldReceiverSeeDrop(receiver: any, drop: any, worldName: any = "") {
   if (!receiver || !drop) return false;
   if (!receiver.joined_world) return false;
 
-  const clean: any = cleanWorld(worldName || receiver.world || drop.world || "START");
+  const clean = cleanWorld(worldName || receiver.world || drop.world || "START");
   if (cleanWorld(receiver.world || "START") !== clean) return false;
   if (!isDropInterestManagementEnabled()) return true;
 
-  const receiverPosition: any = getDropInterestReceiverPosition(receiver, clean);
-  const distanceSq: any = getSquaredDropDistance(receiverPosition, drop);
+  const receiverPosition = getDropInterestReceiverPosition(receiver, clean);
+  const distanceSq = getSquaredDropDistance(receiverPosition, drop);
   if (distanceSq === null) return true;
 
-  const dropId: any = getDropPublicId(drop);
-  const wasVisible: any = isDropMarkedInInterest(receiver.id, dropId);
-  const radius: any = wasVisible ? DROP_INTEREST_LEAVE_RADIUS_PIXELS : DROP_INTEREST_RADIUS_PIXELS;
+  const dropId = getDropPublicId(drop);
+  const wasVisible = isDropMarkedInInterest(receiver.id, dropId);
+  const radius = wasVisible ? DROP_INTEREST_LEAVE_RADIUS_PIXELS : DROP_INTEREST_RADIUS_PIXELS;
   return distanceSq <= radius * radius;
 }
 
 function getSquaredPlayerDistance(a: any, b: any) {
-  const ax: any = Number(a?.x);
-  const ay: any = Number(a?.y);
-  const bx: any = Number(b?.x);
-  const by: any = Number(b?.y);
+  const ax = Number(a?.x);
+  const ay = Number(a?.y);
+  const bx = Number(b?.x);
+  const by = Number(b?.y);
   if (![ax, ay, bx, by].every(Number.isFinite)) return null;
 
-  const dx: any = ax - bx;
-  const dy: any = ay - by;
+  const dx = ax - bx;
+  const dy = ay - by;
   return dx * dx + dy * dy;
 }
 
@@ -29353,16 +29474,16 @@ function shouldReceiverSeeSubject(receiver: any, subject: any, worldName: any = 
   if (receiver.id === subject.id) return false;
   if (!receiver.joined_world || !subject.joined_world) return false;
 
-  const clean: any = cleanWorld(worldName || receiver.world || subject.world || "START");
+  const clean = cleanWorld(worldName || receiver.world || subject.world || "START");
   if (cleanWorld(receiver.world || "START") !== clean) return false;
   if (cleanWorld(subject.world || "START") !== clean) return false;
   if (!isPlayerInterestManagementEnabled()) return true;
 
-  const distanceSq: any = getSquaredPlayerDistance(receiver, subject);
+  const distanceSq = getSquaredPlayerDistance(receiver, subject);
   if (distanceSq === null) return true;
 
-  const wasVisible: any = isPlayerMarkedInInterest(receiver.id, subject.id);
-  const radius: any = wasVisible ? PLAYER_INTEREST_LEAVE_RADIUS_PIXELS : PLAYER_INTEREST_RADIUS_PIXELS;
+  const wasVisible = isPlayerMarkedInInterest(receiver.id, subject.id);
+  const radius = wasVisible ? PLAYER_INTEREST_LEAVE_RADIUS_PIXELS : PLAYER_INTEREST_RADIUS_PIXELS;
   return distanceSq <= radius * radius;
 }
 
@@ -29390,17 +29511,17 @@ function sendRawPresenceToSocket(socket: any, raw: any, subject: any, worldName:
 
 function supportsPlayerPositionBatch(player: any) {
   if (!PLAYER_POSITION_BATCHING_ENABLED) return false;
-  const comparison: any = compareVersions(player?.client_version || "", PLAYER_POSITION_BATCH_MIN_CLIENT_VERSION);
+  const comparison = compareVersions(player?.client_version || "", PLAYER_POSITION_BATCH_MIN_CLIENT_VERSION);
   return comparison !== null && comparison >= 0;
 }
 
 function queuePlayerPositionBatchPayload(batches: any, socket: any, payload: any, worldName: any = "") {
   if (!batches || !socket || socket.readyState !== WebSocket.OPEN || !payload) return false;
 
-  const receiver: any = players.get(socket.playerId);
+  const receiver = players.get(socket.playerId);
   if (!supportsPlayerPositionBatch(receiver)) return false;
 
-  const receiverId: any = String(socket.playerId || "").trim();
+  const receiverId = String(socket.playerId || "").trim();
   if (receiverId === "") return false;
 
   let batch: any = batches.get(receiverId);
@@ -29437,8 +29558,8 @@ function flushPlayerPositionBatches(batches: any) {
   for (const batch of batches.values()) {
     if (!batch?.socket || batch.socket.readyState !== WebSocket.OPEN) continue;
     if (batch.players.length === 0 && batch.left.length === 0) continue;
-    const profile: any = getAdaptivePlayerPositionBatchProfile(batch.world);
-    const maxItems: any = clampBatchMaxItems(profile.max_items, PLAYER_POSITION_BATCH_MAX_ITEMS);
+    const profile = getAdaptivePlayerPositionBatchProfile(batch.world);
+    const maxItems = clampBatchMaxItems(profile.max_items, PLAYER_POSITION_BATCH_MAX_ITEMS);
 
     let playerIndex: any = 0;
     let leftIndex: any = 0;
@@ -29448,10 +29569,10 @@ function flushPlayerPositionBatches(batches: any) {
         world: batch.world,
       };
 
-      const players: any = batch.players.slice(playerIndex, playerIndex + maxItems);
+      const players = batch.players.slice(playerIndex, playerIndex + maxItems);
       playerIndex += players.length;
       let remainingSlots: any = Math.max(0, maxItems - players.length);
-      const left: any = batch.left.slice(leftIndex, leftIndex + remainingSlots);
+      const left = batch.left.slice(leftIndex, leftIndex + remainingSlots);
       leftIndex += left.length;
 
       if (players.length > 0) payload.players = players;
@@ -29467,7 +29588,7 @@ function flushPlayerPositionBatches(batches: any) {
 
 function broadcastPlayerPresenceToInterestedPlayers(subject: any, payload: any, excludePlayerId: any = "") {
   if (!subject || !payload) return;
-  const clean: any = cleanWorld(payload.world || subject.world || "START");
+  const clean = cleanWorld(payload.world || subject.world || "START");
   if (!isPlayerInterestManagementEnabled()) {
     broadcastToWorld(clean, payload, excludePlayerId);
     return;
@@ -29479,7 +29600,7 @@ function broadcastPlayerPresenceToInterestedPlayers(subject: any, payload: any, 
   } catch (error) {
     console.warn("[broadcast_serialize_error]", {
       world: clean,
-      message: error && error.message ? error.message : String(error),
+      message: getErrorMessage(error),
     });
     return;
   }
@@ -29506,7 +29627,7 @@ function broadcastPlayerPresenceToInterestedPlayers(subject: any, payload: any, 
 
 function queuePlayerPresenceToInterestedPlayers(subject: any, payload: any, excludePlayerId: any = "", batches: any = null) {
   if (!subject || !payload) return;
-  const clean: any = cleanWorld(payload.world || subject.world || "START");
+  const clean = cleanWorld(payload.world || subject.world || "START");
 
   for (const { player: receiver, socket: client } of getWorldPlayerRecords(clean, {
     includeSocket: true,
@@ -29531,13 +29652,13 @@ function syncPlayerInterestForReceiver(socket: any, receiver: any, worldName: an
   if (!receiver || !receiver.joined_world) return;
   if (!isPlayerInterestManagementEnabled()) return;
 
-  const clean: any = cleanWorld(worldName || receiver.world || "START");
+  const clean = cleanWorld(worldName || receiver.world || "START");
   playerNetworkStats.receiver_interest_syncs += 1;
   for (const { player: subject } of getWorldPlayerRecords(clean)) {
     if (subject.id === receiver.id) continue;
 
-    const shouldSee: any = shouldReceiverSeeSubject(receiver, subject, clean);
-    const wasVisible: any = isPlayerMarkedInInterest(receiver.id, subject.id);
+    const shouldSee = shouldReceiverSeeSubject(receiver, subject, clean);
+    const wasVisible = isPlayerMarkedInInterest(receiver.id, subject.id);
     if (shouldSee && !wasVisible) {
       setPlayerInterestVisible(receiver.id, subject.id, true);
       deliverPlayerPresencePayload(socket, buildPublicPlayerPresencePayload("player_position", subject, clean), clean, batches);
@@ -29549,7 +29670,7 @@ function syncPlayerInterestForReceiver(socket: any, receiver: any, worldName: an
 }
 
 function publishPlayerPresenceUpdate(socket: any, player: any, worldName: any, type: any = "player_position", excludePlayerId: any = "") {
-  const clean: any = cleanWorld(worldName || player?.world || "START");
+  const clean = cleanWorld(worldName || player?.world || "START");
   broadcastPlayerPresenceToInterestedPlayers(
     player,
     buildPublicPlayerPresencePayload(type, player, clean),
@@ -29559,8 +29680,8 @@ function publishPlayerPresenceUpdate(socket: any, player: any, worldName: any, t
 }
 
 function broadcastPlayerActionToInterestedPlayers(worldName: any, payload: any, actors: any = []) {
-  const clean: any = cleanWorld(worldName || payload?.world || "START");
-  const actorList: any = Array.isArray(actors) ? actors.filter(Boolean) : [];
+  const clean = cleanWorld(worldName || payload?.world || "START");
+  const actorList = Array.isArray(actors) ? actors.filter(Boolean) : [];
   if (!PLAYER_ACTION_INTEREST_MANAGEMENT_ENABLED || actorList.length === 0) {
     broadcastToWorld(clean, payload);
     return;
@@ -29568,7 +29689,7 @@ function broadcastPlayerActionToInterestedPlayers(worldName: any, payload: any, 
 
   const actorIds: any = new Set(actorList.map((actor) => String(actor?.id || "")).filter((id) => id !== ""));
   for (const { player: receiver, socket: client } of getWorldPlayerRecords(clean, { includeSocket: true })) {
-    const receiverId: any = String(receiver.id || client.playerId || "");
+    const receiverId = String(receiver.id || client.playerId || "");
     let shouldSend: any = actorIds.has(receiverId);
     if (!shouldSend) {
       shouldSend = actorList.some((actor) => shouldReceiverSeeSubject(receiver, actor, clean));
@@ -29586,8 +29707,8 @@ function broadcastPlayerActionToInterestedPlayers(worldName: any, payload: any, 
 
 function getPlayersInWorld(worldName: any, excludePlayerId: any = "", receiverPlayer: any = null) {
   const result: any = [];
-  const clean: any = cleanWorld(worldName || "START");
-  const now: any = Date.now();
+  const clean = cleanWorld(worldName || "START");
+  const now = Date.now();
 
   for (const { player } of getWorldPlayerRecords(clean, { excludePlayerId })) {
     if (receiverPlayer && !shouldReceiverSeeSubject(receiverPlayer, player, clean)) continue;
@@ -29596,11 +29717,11 @@ function getPlayersInWorld(worldName: any, excludePlayerId: any = "", receiverPl
       setPlayerInterestVisible(receiverPlayer.id, player.id, true);
     }
     refreshPlayerFishingPresence(player, clean);
-    const equipmentSlots: any = player.equipment_slots || {};
-    const fishingTargetX: any = Number.isInteger(player.fishing_target_x) ? player.fishing_target_x : -1;
-    const fishingTargetY: any = Number.isInteger(player.fishing_target_y) ? player.fishing_target_y : -1;
-    const fishingActive: any = player.fishing_active === true && isGridInWorld(fishingTargetX, fishingTargetY);
-    const damageFlash: any = getPublicPlayerDamageFlash(player);
+    const equipmentSlots = player.equipment_slots || {};
+    const fishingTargetX = Number.isInteger(player.fishing_target_x) ? player.fishing_target_x : -1;
+    const fishingTargetY = Number.isInteger(player.fishing_target_y) ? player.fishing_target_y : -1;
+    const fishingActive = player.fishing_active === true && isGridInWorld(fishingTargetX, fishingTargetY);
+    const damageFlash = getPublicPlayerDamageFlash(player);
     result.push({
       player_id: player.id,
       ...getPublicPlayerIdentity(player),
@@ -29651,8 +29772,8 @@ function broadcastSystemToWorld(worldName: any, message: any, excludePlayerId: a
 }
 
 function queuePlayerPositionBroadcast(worldName: any, message: any, excludePlayerId: any = "") {
-  const clean: any = cleanWorld(worldName || message?.world || "START");
-  const playerId: any = String(message?.player_id || excludePlayerId || "").trim();
+  const clean = cleanWorld(worldName || message?.world || "START");
+  const playerId = String(message?.player_id || excludePlayerId || "").trim();
   if (!clean || !playerId) return;
 
   let worldQueue: any = pendingPlayerPositionBroadcasts.get(clean);
@@ -29667,10 +29788,10 @@ function queuePlayerPositionBroadcast(worldName: any, message: any, excludePlaye
     message,
   });
   playerNetworkStats.queued_player_position_updates += 1;
-  const profile: any = getAdaptivePlayerPositionBatchProfile(clean);
-  const timerMs: any = Math.max(0, Math.trunc(Number(profile.interval_ms || PLAYER_POSITION_BROADCAST_INTERVAL_MS) || 0));
+  const profile = getAdaptivePlayerPositionBatchProfile(clean);
+  const timerMs = Math.max(0, Math.trunc(Number(profile.interval_ms || PLAYER_POSITION_BROADCAST_INTERVAL_MS) || 0));
   if (timerMs <= 0) {
-    const existingTimer: any = pendingPlayerPositionBroadcastTimers.get(clean);
+    const existingTimer = pendingPlayerPositionBroadcastTimers.get(clean);
     if (existingTimer) {
       clearTimeout(existingTimer);
       pendingPlayerPositionBroadcastTimers.delete(clean);
@@ -29681,7 +29802,7 @@ function queuePlayerPositionBroadcast(worldName: any, message: any, excludePlaye
 
   if (pendingPlayerPositionBroadcastTimers.has(clean)) return;
 
-  const timer: any = setTimeout(() => {
+  const timer = setTimeout(() => {
     pendingPlayerPositionBroadcastTimers.delete(clean);
     flushQueuedPlayerPositionBroadcasts(clean);
   }, timerMs);
@@ -29690,15 +29811,15 @@ function queuePlayerPositionBroadcast(worldName: any, message: any, excludePlaye
 }
 
 function flushQueuedPlayerPositionBroadcasts(worldName: any) {
-  const clean: any = cleanWorld(worldName || "START");
-  const worldQueue: any = pendingPlayerPositionBroadcasts.get(clean);
+  const clean = cleanWorld(worldName || "START");
+  const worldQueue = pendingPlayerPositionBroadcasts.get(clean);
   if (!worldQueue) return;
 
   pendingPlayerPositionBroadcasts.delete(clean);
   const batches: any = new Map();
 
   for (const entry of worldQueue.values()) {
-    const player: any = players.get(entry.playerId);
+    const player = players.get(entry.playerId);
     if (!player || !player.joined_world || cleanWorld(player.world || "START") !== clean) continue;
     queuePlayerPresenceToInterestedPlayers(player, entry.message, entry.excludePlayerId, batches);
     syncPlayerInterestForReceiver(getSocketByPlayerId(entry.playerId), player, clean, batches);
@@ -29730,10 +29851,10 @@ function buildDropInterestCullPayload(drop: any, worldName: any) {
 
 function sendWorldUpdatePayloadsToSocket(socket: any, worldName: any, updates: any) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
-  const safeUpdates: any = Array.isArray(updates) ? updates.filter(Boolean) : [];
+  const safeUpdates = Array.isArray(updates) ? updates.filter(Boolean) : [];
   if (safeUpdates.length === 0) return;
 
-  const receiver: any = players.get(socket.playerId);
+  const receiver = players.get(socket.playerId);
   if (!supportsWorldUpdateBatch(receiver) || safeUpdates.length === 1) {
     for (const update of safeUpdates) {
       sendJson(socket, update);
@@ -29742,11 +29863,11 @@ function sendWorldUpdatePayloadsToSocket(socket: any, worldName: any, updates: a
     return;
   }
 
-  const clean: any = cleanWorld(worldName || receiver?.world || "START");
-  const profile: any = getAdaptiveWorldUpdateBatchProfile(clean);
-  const maxItems: any = clampBatchMaxItems(profile.max_items, WORLD_UPDATE_BATCH_MAX_ITEMS);
+  const clean = cleanWorld(worldName || receiver?.world || "START");
+  const profile = getAdaptiveWorldUpdateBatchProfile(clean);
+  const maxItems = clampBatchMaxItems(profile.max_items, WORLD_UPDATE_BATCH_MAX_ITEMS);
   for (let index: any = 0; index < safeUpdates.length; index += maxItems) {
-    const batchUpdates: any = safeUpdates.slice(index, index + maxItems);
+    const batchUpdates = safeUpdates.slice(index, index + maxItems);
     sendJson(socket, {
       type: "world_update_batch",
       world: clean,
@@ -29758,8 +29879,8 @@ function sendWorldUpdatePayloadsToSocket(socket: any, worldName: any, updates: a
 }
 
 function findDropStateForPayload(worldName: any, payload: any) {
-  const cleanDropId: any = clampString(payload?.drop_id || payload?.id || "", MAX_DROP_ID_LENGTH);
-  const state: any = ensureWorldState(worldName);
+  const cleanDropId = clampString(payload?.drop_id || payload?.id || "", MAX_DROP_ID_LENGTH);
+  const state = ensureWorldState(worldName);
   if (cleanDropId !== "") {
     if (state.drops.has(cleanDropId)) return state.drops.get(cleanDropId);
     for (const drop of state.drops.values()) {
@@ -29771,11 +29892,11 @@ function findDropStateForPayload(worldName: any, payload: any) {
 
 function seedDropInterestForReceiverFromWorldState(receiver: any, worldName: any) {
   if (!isDropInterestManagementEnabled() || !receiver) return;
-  const clean: any = cleanWorld(worldName || receiver.world || "START");
+  const clean = cleanWorld(worldName || receiver.world || "START");
   clearDropInterestStateForReceiver(receiver.id);
-  const state: any = ensureWorldState(clean);
+  const state = ensureWorldState(clean);
   for (const drop of state.drops.values()) {
-    const dropId: any = getDropPublicId(drop);
+    const dropId = getDropPublicId(drop);
     if (dropId !== "" && shouldReceiverSeeDrop(receiver, drop, clean)) {
       setDropInterestVisible(receiver.id, dropId, true);
     }
@@ -29787,8 +29908,8 @@ function syncDropInterestForReceiver(socket: any, receiver: any, worldName: any 
   if (!receiver || !receiver.joined_world) return;
   if (!isDropInterestManagementEnabled()) return;
 
-  const clean: any = cleanWorld(worldName || receiver.world || "START");
-  const now: any = Date.now();
+  const clean = cleanWorld(worldName || receiver.world || "START");
+  const now = Date.now();
   if (!force && DROP_INTEREST_SYNC_INTERVAL_MS > 0 && now - Number(receiver.last_drop_interest_sync_at || 0) < DROP_INTEREST_SYNC_INTERVAL_MS) {
     return;
   }
@@ -29796,23 +29917,23 @@ function syncDropInterestForReceiver(socket: any, receiver: any, worldName: any 
   worldNetworkStats.drop_interest_syncs += 1;
 
   const updates: any = [];
-  const state: any = ensureWorldState(clean);
+  const state = ensureWorldState(clean);
   for (const drop of state.drops.values()) {
-    const dropId: any = getDropPublicId(drop);
+    const dropId = getDropPublicId(drop);
     if (dropId === "") continue;
 
-    const shouldSee: any = shouldReceiverSeeDrop(receiver, drop, clean);
-    const wasVisible: any = isDropMarkedInInterest(receiver.id, dropId);
+    const shouldSee = shouldReceiverSeeDrop(receiver, drop, clean);
+    const wasVisible = isDropMarkedInInterest(receiver.id, dropId);
     if (shouldSee && !wasVisible) {
       setDropInterestVisible(receiver.id, dropId, true);
-      const payload: any = buildDropCreatePayload(drop, clean);
+      const payload = buildDropCreatePayload(drop, clean);
       if (payload) {
         updates.push(payload);
         worldNetworkStats.drop_interest_visible_deliveries += 1;
       }
     } else if (!shouldSee && wasVisible) {
       setDropInterestVisible(receiver.id, dropId, false);
-      const payload: any = buildDropInterestCullPayload(drop, clean);
+      const payload = buildDropInterestCullPayload(drop, clean);
       if (payload) {
         updates.push(payload);
         worldNetworkStats.drop_interest_culls_sent += 1;
@@ -29825,8 +29946,8 @@ function syncDropInterestForReceiver(socket: any, receiver: any, worldName: any 
 
 function noteRequesterDropInterest(player: any, payload: any, worldName: any) {
   if (!isDropInterestManagementEnabled() || !player || !payload || !isDropWorldUpdatePayload(payload)) return;
-  const clean: any = cleanWorld(worldName || payload.world || player.world || "START");
-  const dropId: any = clampString(payload.drop_id || payload.id || "", MAX_DROP_ID_LENGTH);
+  const clean = cleanWorld(worldName || payload.world || player.world || "START");
+  const dropId = clampString(payload.drop_id || payload.id || "", MAX_DROP_ID_LENGTH);
   if (dropId === "") return;
 
   if (isDropRemoveWorldUpdatePayload(payload)) {
@@ -29834,26 +29955,26 @@ function noteRequesterDropInterest(player: any, payload: any, worldName: any) {
     return;
   }
 
-  const drop: any = findDropStateForPayload(clean, payload);
+  const drop = findDropStateForPayload(clean, payload);
   if (shouldReceiverSeeDrop(player, drop, clean)) {
     setDropInterestVisible(player.id, dropId, true);
   }
 }
 
 function deliverDropWorldUpdateToInterestedPlayers(worldName: any, message: any, excludePlayerId: any = "") {
-  const clean: any = cleanWorld(worldName || message?.world || "START");
-  const dropId: any = clampString(message?.drop_id || message?.id || "", MAX_DROP_ID_LENGTH);
+  const clean = cleanWorld(worldName || message?.world || "START");
+  const dropId = clampString(message?.drop_id || message?.id || "", MAX_DROP_ID_LENGTH);
   if (dropId === "") return;
 
-  const isRemove: any = isDropRemoveWorldUpdatePayload(message);
-  const drop: any = isRemove ? message : findDropStateForPayload(clean, message);
+  const isRemove = isDropRemoveWorldUpdatePayload(message);
+  const drop = isRemove ? message : findDropStateForPayload(clean, message);
 
   for (const { player: receiver, socket: client } of getWorldPlayerRecords(clean, {
     includeSocket: true,
     excludePlayerId,
   })) {
 
-    const wasVisible: any = isDropMarkedInInterest(receiver.id, dropId);
+    const wasVisible = isDropMarkedInInterest(receiver.id, dropId);
     if (isRemove) {
       if (!wasVisible) continue;
       setDropInterestVisible(receiver.id, dropId, false);
@@ -29868,7 +29989,7 @@ function deliverDropWorldUpdateToInterestedPlayers(worldName: any, message: any,
       worldNetworkStats.drop_interest_visible_deliveries += 1;
     } else if (wasVisible) {
       setDropInterestVisible(receiver.id, dropId, false);
-      const cullPayload: any = buildDropInterestCullPayload({ ...drop, drop_id: dropId }, clean);
+      const cullPayload = buildDropInterestCullPayload({ ...drop, drop_id: dropId }, clean);
       if (cullPayload) {
         sendJson(client, cullPayload);
         worldNetworkStats.drop_interest_culls_sent += 1;
@@ -29880,7 +30001,7 @@ function deliverDropWorldUpdateToInterestedPlayers(worldName: any, message: any,
 }
 
 function queueWorldUpdateBroadcast(worldName: any, message: any, excludePlayerId: any = "") {
-  const clean: any = cleanWorld(worldName || message?.world || "START");
+  const clean = cleanWorld(worldName || message?.world || "START");
   if (!message || typeof message !== "object" || Array.isArray(message)) {
     broadcastToWorld(clean, message, excludePlayerId);
     return;
@@ -29918,10 +30039,10 @@ function queueWorldUpdateBroadcast(worldName: any, message: any, excludePlayerId
 
   if (pendingWorldUpdateBroadcastTimers.has(clean)) return;
 
-  const profile: any = getAdaptiveWorldUpdateBatchProfile(clean);
-  const timerMs: any = Math.max(0, Math.trunc(Number(profile.interval_ms || WORLD_UPDATE_BATCH_INTERVAL_MS) || 0));
+  const profile = getAdaptiveWorldUpdateBatchProfile(clean);
+  const timerMs = Math.max(0, Math.trunc(Number(profile.interval_ms || WORLD_UPDATE_BATCH_INTERVAL_MS) || 0));
   if (timerMs <= 0) {
-    const existingTimer: any = pendingWorldUpdateBroadcastTimers.get(clean);
+    const existingTimer = pendingWorldUpdateBroadcastTimers.get(clean);
     if (existingTimer) {
       clearTimeout(existingTimer);
       pendingWorldUpdateBroadcastTimers.delete(clean);
@@ -29930,7 +30051,7 @@ function queueWorldUpdateBroadcast(worldName: any, message: any, excludePlayerId
     return;
   }
 
-  const timer: any = setTimeout(() => {
+  const timer = setTimeout(() => {
     pendingWorldUpdateBroadcastTimers.delete(clean);
     flushQueuedWorldUpdateBroadcasts(clean);
   }, timerMs);
@@ -29939,8 +30060,8 @@ function queueWorldUpdateBroadcast(worldName: any, message: any, excludePlayerId
 }
 
 function flushQueuedWorldUpdateBroadcasts(worldName: any) {
-  const clean: any = cleanWorld(worldName || "START");
-  const worldQueue: any = pendingWorldUpdateBroadcasts.get(clean);
+  const clean = cleanWorld(worldName || "START");
+  const worldQueue = pendingWorldUpdateBroadcasts.get(clean);
   if (!worldQueue || worldQueue.length === 0) return;
 
   pendingWorldUpdateBroadcasts.delete(clean);
@@ -29955,8 +30076,8 @@ function flushQueuedWorldUpdateBroadcasts(worldName: any) {
     }
 
     if (updates.length === 0) continue;
-    const profile: any = getAdaptiveWorldUpdateBatchProfile(clean);
-    const maxItems: any = clampBatchMaxItems(profile.max_items, WORLD_UPDATE_BATCH_MAX_ITEMS);
+    const profile = getAdaptiveWorldUpdateBatchProfile(clean);
+    const maxItems = clampBatchMaxItems(profile.max_items, WORLD_UPDATE_BATCH_MAX_ITEMS);
 
     if (!supportsWorldUpdateBatch(receiver)) {
       for (const update of updates) {
@@ -29967,7 +30088,7 @@ function flushQueuedWorldUpdateBroadcasts(worldName: any) {
     }
 
     for (let index: any = 0; index < updates.length; index += maxItems) {
-      const batchUpdates: any = updates.slice(index, index + maxItems);
+      const batchUpdates = updates.slice(index, index + maxItems);
       sendJson(client, {
         type: "world_update_batch",
         world: clean,
@@ -29980,14 +30101,14 @@ function flushQueuedWorldUpdateBroadcasts(worldName: any) {
 }
 
 function broadcastToWorld(worldName: any, message: any, excludePlayerId: any = "") {
-  const clean: any = cleanWorld(worldName || message?.world || "START");
+  const clean = cleanWorld(worldName || message?.world || "START");
   let raw;
   try {
     raw = JSON.stringify(message);
   } catch (error) {
     console.warn("[broadcast_serialize_error]", {
       world: clean,
-      message: error && error.message ? error.message : String(error),
+      message: getErrorMessage(error),
     });
     return;
   }
@@ -30008,7 +30129,7 @@ function broadcastToAuthenticatedPlayers(message: any, excludePlayerId: any = ""
   } catch (error) {
     console.warn("[broadcast_serialize_error]", {
       authenticated: true,
-      message: error && error.message ? error.message : String(error),
+      message: getErrorMessage(error),
     });
     return;
   }
@@ -30017,7 +30138,7 @@ function broadcastToAuthenticatedPlayers(message: any, excludePlayerId: any = ""
     if (client.readyState !== WebSocket.OPEN) continue;
     if (client.playerId === excludePlayerId) continue;
 
-    const player: any = players.get(client.playerId);
+    const player = players.get(client.playerId);
     if (!player || !player.authenticated) continue;
 
     sendRawJsonToSocket(client, raw, "authenticated_broadcast", {

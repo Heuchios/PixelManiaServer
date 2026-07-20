@@ -1770,7 +1770,7 @@ pm2 startOrReload ecosystem.config.js --env production --update-env
 for route_app in pixelmania-a pixelmania-b; do
   if pm2 describe "$route_app" >/dev/null 2>&1; then
     echo "Restarting existing route app $route_app with deployed code..."
-    pm2 restart "$route_app"
+    POSTGRES_AUTO_BOOTSTRAP=false pm2 restart "$route_app" --update-env
   fi
 done
 pm2 save
