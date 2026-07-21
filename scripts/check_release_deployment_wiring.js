@@ -58,7 +58,8 @@ function checkBashSyntax(script, description) {
   const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pixelmania-release-check-"));
   const temporaryScript = path.join(temporaryDirectory, "check.sh");
   try {
-    fs.writeFileSync(temporaryScript, `${script}\n`, "utf8");
+    const normalizedScript = script.replace(/\r\n?/gu, "\n");
+    fs.writeFileSync(temporaryScript, `${normalizedScript}\n`, "utf8");
     const result = childProcess.spawnSync(bash, ["-n", temporaryScript], {
       encoding: "utf8",
       windowsHide: true,
@@ -74,7 +75,9 @@ function checkBashSyntax(script, description) {
 
 assertCheck(deploy.includes("git\" -Arguments @") && deploy.includes("archive\", \"--worktree-attributes\", \"--format=tar.gz"), "deploy packages the exact Git commit with repository attributes");
 assertCheck(/^\*\.sh\s+text\s+eol=lf\s*$/mu.test(gitAttributes), "Git exports shell scripts with LF line endings");
-assertCheck(deploy.includes("Assert-ArchiveShellScriptsUseLf") && deploy.includes("Backend archive contains CRLF shell scripts"), "deploy rejects CRLF shell scripts in the packaged archive");
+assertCheck(/^\*\.ps1\s+text\s+eol=lf\s*$/mu.test(gitAttributes), "Git exports PowerShell scripts with LF line endings");
+assertCheck(deploy.includes("Assert-ArchiveScriptsUseLf") && deploy.includes("Backend archive contains CRLF scripts"), "deploy rejects CRLF scripts in the packaged archive");
+assertCheck(deploymentTestHelpers.includes("readDeploymentCoverage") && deploy.includes("--worktree-attributes"), "release checks use the same attributed archive model as deployment");
 assertCheck(deploy.includes("Assert-CleanBackendCommit"), "deploy refuses a dirty backend worktree");
 assertCheck(deploy.includes("& npm run check:security"), "normal deploy runs the complete local security preflight");
 assertCheck(deploy.includes("Get-FileHash") && deploy.includes("sha256sum -c"), "release archives are SHA-256 verified remotely");

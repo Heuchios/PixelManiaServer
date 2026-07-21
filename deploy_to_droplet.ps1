@@ -125,7 +125,7 @@ function Get-GitText {
   return (($output -join "`n").Trim())
 }
 
-function Assert-ArchiveShellScriptsUseLf {
+function Assert-ArchiveScriptsUseLf {
   param(
     [Parameter(Mandatory = $true)]
     [string]$ArchivePath,
@@ -136,19 +136,22 @@ function Assert-ArchiveShellScriptsUseLf {
   New-Item -ItemType Directory -Path $InspectionRoot -Force | Out-Null
   Invoke-NativeProcess -FileName "tar" -Arguments @("-xzf", $ArchivePath, "-C", $InspectionRoot) -FailureMessage "Backend archive inspection failed"
 
-  $invalidShellScripts = @()
-  foreach ($shellScript in Get-ChildItem -LiteralPath $InspectionRoot -Filter "*.sh" -File -Recurse) {
-    $bytes = [System.IO.File]::ReadAllBytes($shellScript.FullName)
+  $invalidScripts = @()
+  $scripts = Get-ChildItem -LiteralPath $InspectionRoot -File -Recurse | Where-Object {
+    $_.Extension -in @(".sh", ".ps1")
+  }
+  foreach ($script in $scripts) {
+    $bytes = [System.IO.File]::ReadAllBytes($script.FullName)
     if ([Array]::IndexOf($bytes, [byte]13) -ge 0) {
-      $invalidShellScripts += [System.IO.Path]::GetRelativePath($InspectionRoot, $shellScript.FullName)
+      $invalidScripts += [System.IO.Path]::GetRelativePath($InspectionRoot, $script.FullName)
     }
   }
 
-  if ($invalidShellScripts.Count -gt 0) {
-    throw "Backend archive contains CRLF shell scripts: $($invalidShellScripts -join ', '). Ensure .gitattributes contains '*.sh text eol=lf'."
+  if ($invalidScripts.Count -gt 0) {
+    throw "Backend archive contains CRLF scripts: $($invalidScripts -join ', '). Ensure .gitattributes enforces LF for shell and PowerShell files."
   }
 
-  Write-Host "Backend archive shell scripts use LF line endings."
+  Write-Host "Backend archive scripts use LF line endings."
 }
 
 function Get-LocalClientVersion {
@@ -335,7 +338,7 @@ New-Item -ItemType Directory -Path $tempRoot | Out-Null
 try {
   Write-Host "Packaging immutable backend release $ReleaseId from commit $shortCommit..."
   Invoke-NativeProcess -FileName "git" -Arguments @("-C", $PSScriptRoot, "archive", "--worktree-attributes", "--format=tar.gz", "--output=$backendArchive", $commit) -FailureMessage "Backend archive creation failed"
-  Assert-ArchiveShellScriptsUseLf -ArchivePath $backendArchive -InspectionRoot (Join-Path $tempRoot "backend-archive-inspection")
+  Assert-ArchiveScriptsUseLf -ArchivePath $backendArchive -InspectionRoot (Join-Path $tempRoot "backend-archive-inspection")
   Invoke-NativeProcess -FileName "tar" -Arguments (@("-czf", $clientArchive, "-C", $clientRoot) + $clientReleasePaths) -FailureMessage "Client metadata archive creation failed"
 
   $backendHash = (Get-FileHash -LiteralPath $backendArchive -Algorithm SHA256).Hash.ToLowerInvariant()
