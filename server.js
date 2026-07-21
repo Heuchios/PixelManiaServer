@@ -334,7 +334,8 @@ const VEND_LOG_LIMIT = 30;
 const SAFE_BLOCK_TYPE = "safe";
 const MAILBOX_BLOCK_TYPES = new Set(["blue_mail_box", "mail_box"]);
 const BULLETIN_BOARD_BLOCK_TYPE = "bulletin_board";
-const DISPLAY_BLOCK_TYPES = new Set(["display_box", "display_case"]);
+const FISH_HANGER_BLOCK_TYPE = "fish_hanger";
+const DISPLAY_BLOCK_TYPES = new Set(["display_box", "display_case", FISH_HANGER_BLOCK_TYPE]);
 const TACKLE_BOX_BLOCK_TYPE = "tackle_box";
 const DICE_BLOCK_TYPE = "dice_block";
 const CHECKPOINT_BLOCK_TYPE = "checkpoint";
@@ -6894,7 +6895,18 @@ async function prepareSafeBreakInventoryReturn(socket, player, worldName, update
     };
 }
 function isDisplayBlockType(blockType) {
-    return DISPLAY_BLOCK_TYPES.has(clampString(blockType || ""));
+    const clean = clampString(blockType || "");
+    if (DISPLAY_BLOCK_TYPES.has(clean))
+        return true;
+    const definition = ItemDatabase.getItemDefinition(clean);
+    return Boolean(definition && definition.category === "block" && definition.display_block);
+}
+function isFishHangerBlockType(blockType) {
+    const clean = clampString(blockType || "");
+    if (clean === FISH_HANGER_BLOCK_TYPE)
+        return true;
+    const definition = ItemDatabase.getItemDefinition(clean);
+    return Boolean(definition && definition.category === "block" && definition.fish_hanger_block);
 }
 function isTackleBoxBlockType(blockType) {
     const clean = clampString(blockType || "");
@@ -7387,6 +7399,11 @@ async function acquireDisplayMutationLock(socket, player, data, worldName, displ
 async function handleDisplayDeposit(socket, player, data, worldName, display) {
     const itemId = clampString(data.item_id || data.item_type || "");
     const itemCategory = resolveInventoryCategory(itemId, data.item_category || data.category || "");
+    const displayBlockType = getWorldBlockTypeAt(worldName, display.x, display.y);
+    if (isFishHangerBlockType(displayBlockType) && itemCategory !== "fish") {
+        rejectDisplayTransaction(socket, data, "Fish Hangers can only display fish.");
+        return;
+    }
     if (!canStoreItemInDisplay(itemId, itemCategory)) {
         rejectDisplayTransaction(socket, data, "That item cannot be displayed.");
         return;
@@ -13767,6 +13784,26 @@ async function validateBlockUpdateAgainstServerState(socket, player, worldName, 
                     reason: isWorldLocked(worldName) ? "display_owner_required" : "world_lock_required",
                     block_type: update.block_type,
                 });
+                return { ok: false };
+            }
+        }
+        if (isFishHangerBlockType(update.block_type)) {
+            const fishHangerDisplay = getDisplayStateAt(worldName, update.x, update.y, false);
+            const fishHangerSlot = sanitizeDisplaySlot(fishHangerDisplay.slot);
+            if (fishHangerSlot) {
+                clearServerBlockDamage(worldName, update);
+                await handleDisplayWithdraw(socket, player, {
+                    type: "inventory_transaction_request",
+                    action: "display_withdraw",
+                    request_id: requestId,
+                    world: worldName,
+                    x: update.x,
+                    y: update.y,
+                    item_id: fishHangerSlot.item_id,
+                    item_type: fishHangerSlot.item_id,
+                    item_category: fishHangerSlot.item_category,
+                    amount: 1,
+                }, worldName, fishHangerDisplay);
                 return { ok: false };
             }
         }
