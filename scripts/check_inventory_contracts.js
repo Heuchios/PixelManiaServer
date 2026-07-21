@@ -9,7 +9,7 @@ const InventoryContracts = require("../server_inventory_contracts");
 
 const repoRoot = path.join(__dirname, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-const deploySource = fs.readFileSync(path.join(repoRoot, "deploy_to_droplet.ps1"), "utf8");
+const deploySource = require("./release_deployment_test_helpers").readDeploymentCoverage(repoRoot);
 const inventoryContractsSource = fs.readFileSync(path.join(repoRoot, "src", "server_inventory_contracts.ts"), "utf8");
 const inventoryContractsBuildSource = fs.readFileSync(path.join(repoRoot, "scripts", "sync_inventory_contracts_build.js"), "utf8");
 const inventoryContractsBuildConfig = JSON.parse(fs.readFileSync(path.join(repoRoot, "tsconfig.inventory-contracts.json"), "utf8"));

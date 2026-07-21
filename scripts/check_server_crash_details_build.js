@@ -10,7 +10,7 @@ const CrashDetails = require("../server_crash_details");
 
 const repoRoot = path.join(__dirname, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-const deploySource = fs.readFileSync(path.join(repoRoot, "deploy_to_droplet.ps1"), "utf8");
+const deploySource = require("./release_deployment_test_helpers").readDeploymentCoverage(repoRoot);
 const serverSource = fs.readFileSync(path.join(repoRoot, "server.js"), "utf8");
 const crashDetailsSource = fs.readFileSync(path.join(repoRoot, "src", "server_crash_details.ts"), "utf8");
 const crashDetailsBuildSource = fs.readFileSync(path.join(repoRoot, "scripts", "sync_server_crash_details_build.js"), "utf8");

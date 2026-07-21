@@ -10,7 +10,7 @@ const PlayerStateHelpersModule = require("../server_player_state_helpers");
 
 const repoRoot = path.join(__dirname, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-const deploySource = fs.readFileSync(path.join(repoRoot, "deploy_to_droplet.ps1"), "utf8");
+const deploySource = require("./release_deployment_test_helpers").readDeploymentCoverage(repoRoot);
 const serverSource = fs.readFileSync(path.join(repoRoot, "server.js"), "utf8");
 const playerStateSource = fs.readFileSync(path.join(repoRoot, "src", "server_player_state_helpers.ts"), "utf8");
 const buildSource = fs.readFileSync(path.join(repoRoot, "scripts", "sync_server_player_state_helpers_build.js"), "utf8");
@@ -137,6 +137,7 @@ assert.equal(state.equipped_back_item, "wings");
 assert.equal(state.equipped_hat_item, "");
 assert.deepEqual(state.hotbar_items, ["punch", "dirt"]);
 assert.equal(helpers.getInventoryCount(state, "dirt", "block"), 5);
+assert.equal(helpers.getInventoryOccupiedSlotCount(state), 3);
 assert.deepEqual(helpers.sanitizeEquipmentSlots({ hand: "wrench", back: "wings", hat: "crown" }, state), {
   hand: "wrench",
   back: "wings",
@@ -171,6 +172,7 @@ assert.match(packageJson.scripts["check:typescript"], /npm run check:server-play
 assert.deepEqual(buildConfig.include, ["src/server_player_state_helpers.ts"]);
 assert.match(buildSource, /Generated from src\/server_player_state_helpers\.ts/);
 assert.match(playerStateSource, /function createPlayerStateHelpers/);
+assert.match(playerStateSource, /function getInventoryOccupiedSlotCount/);
 assert.match(playerStateSource, /function sanitizePlayerState/);
 assert.match(playerStateSource, /function sanitizeEquipmentSlots/);
 assert.match(generatedSource, /Generated from src\/server_player_state_helpers\.ts/);

@@ -2,7 +2,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 function createServerInventoryEconomyRoutes(deps) {
-    const { BASIC_ITEMS_PACK_TABLE, HAIR_PACK_TABLE, INVENTORY_MAX_SLOT_COUNT, INVENTORY_SLOT_UPGRADE_STEP, ItemDatabase, LURE_PACK_TABLE, MAX_SHOP_PRICE, PRESTIGE_COLOURED_BLOCK_PACK_TABLE, SHOP_CATALOG, addItemToState, buildInventoryDeltaClientPayloads, buildInventoryUpgradePreview, buildPlayerStateForClient, clampInteger, clampString, cleanAccountName, cloneJson, combineRewardEntries, commitPlayerInventoryState, ensureWritablePlayerState, getInventoryCount, handleDisplayTransaction, handleDropInventoryItemTransaction, handleFishMongerTransaction, handleFishingCompleteTransaction, handleFishingStartTransaction, handleSafeTransaction, handleSeedHarvestTransaction, handleSeedPlaceTransaction, handleSeedSpliceTransaction, handleStationRecipeTransaction, handleTrashInventoryItemTransaction, handleVendingTransaction, handleWorldLockConversionTransaction, handleWorldLockGetKeyTransaction, logItemLedgerForState, logRewardLedgers, logShopPurchase, makeAuditId, makeRequestId, requireAuthenticated, resolveInventorySlotCount, rollWeightedReward, sendInventoryTransactionRejected, sendInventoryTransactionResult, sendSystemChatToPlayer, spendItemFromState, tradeByPlayerId, } = deps;
+    const { BASIC_ITEMS_PACK_TABLE, HAIR_PACK_TABLE, INVENTORY_MAX_SLOT_COUNT, INVENTORY_SLOT_UPGRADE_STEP, ItemDatabase, LURE_PACK_TABLE, MAX_SHOP_PRICE, PRESTIGE_COLOURED_BLOCK_PACK_TABLE, SHOP_CATALOG, addItemToState, canAddItemToState, buildInventoryDeltaClientPayloads, buildInventoryUpgradePreview, buildPlayerStateForClient, clampInteger, clampString, cleanAccountName, cloneJson, combineRewardEntries, commitPlayerInventoryState, ensureWritablePlayerState, getInventoryCount, handleDisplayTransaction, handleDropInventoryItemTransaction, handleFishMongerTransaction, handleFishingCompleteTransaction, handleFishingStartTransaction, handleSafeTransaction, handleSeedHarvestTransaction, handleSeedPlaceTransaction, handleSeedSpliceTransaction, handleStationRecipeTransaction, handleTrashInventoryItemTransaction, handleVendingTransaction, handleWorldLockConversionTransaction, handleWorldLockGetKeyTransaction, logItemLedgerForState, logRewardLedgers, logShopPurchase, makeAuditId, makeRequestId, requireAuthenticated, resolveInventorySlotCount, rollWeightedReward, sendInventoryTransactionRejected, sendInventoryTransactionResult, sendSystemChatToPlayer, spendItemFromState, tradeByPlayerId, } = deps;
     const delegatedInventoryActions = new Map([
         ["vend_get_state", handleVendingTransaction],
         ["vend_set_listing", handleVendingTransaction],
@@ -50,6 +50,27 @@ function createServerInventoryEconomyRoutes(deps) {
         if (itemId === "prestige_coloured_block_pack")
             return "Purchased and opened Prestige Coloured Block Pack.";
         return `Purchased ${listing.item_id}.`;
+    }
+    function getShopItemDisplayName(itemId) {
+        const definition = typeof ItemDatabase.getItemDefinition === "function"
+            ? ItemDatabase.getItemDefinition(itemId)
+            : null;
+        const displayName = clampString(definition?.display_name || definition?.name || "");
+        return displayName || itemId;
+    }
+    function getFullPackReward(state, rewardTable) {
+        const checkedRewards = new Set();
+        for (const reward of rewardTable) {
+            const rewardKey = `${reward.item_category}:${reward.item_id}`;
+            if (checkedRewards.has(rewardKey))
+                continue;
+            checkedRewards.add(rewardKey);
+            const stackLimit = ItemDatabase.getStackLimit(reward.item_id);
+            if (getInventoryCount(state, reward.item_id, reward.item_category) >= stackLimit) {
+                return reward;
+            }
+        }
+        return null;
     }
     async function handleInventoryTransactionRequest(socket, player, data) {
         if (!requireAuthenticated(socket, player, "change inventory"))
@@ -219,8 +240,17 @@ function createServerInventoryEconomyRoutes(deps) {
             sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
             return;
         }
+        if (packRewardTable) {
+            const fullReward = getFullPackReward(state, packRewardTable);
+            if (fullReward) {
+                const displayName = getShopItemDisplayName(fullReward.item_id);
+                sendInventoryTransactionRejected(socket, data, `${displayName} is already at full stack. Drop or clear some before buying this pack.`);
+                return;
+            }
+        }
         const beforeState = cloneJson(state);
         const stagedState = cloneJson(state);
+        stagedState.inventory_slot_count = resolveInventorySlotCount(state);
         if (!spendItemFromState(stagedState, "gem", "currency", listing.price)) {
             sendInventoryTransactionRejected(socket, data, "Not enough gems.");
             return;
@@ -229,7 +259,11 @@ function createServerInventoryEconomyRoutes(deps) {
         if (packRewardTable) {
             for (let index = 0; index < listing.pack_size * listing.amount; index += 1) {
                 const reward = rollWeightedReward(packRewardTable);
-                addItemToState(stagedState, reward.item_id, reward.item_category, 1);
+                if (!canAddItemToState(stagedState, reward.item_id, reward.item_category, 1)
+                    || !addItemToState(stagedState, reward.item_id, reward.item_category, 1)) {
+                    sendInventoryTransactionRejected(socket, data, "Inventory full.");
+                    return;
+                }
                 rewards.push({
                     item_id: reward.item_id,
                     item_category: reward.item_category,
@@ -238,7 +272,11 @@ function createServerInventoryEconomyRoutes(deps) {
             }
         }
         else {
-            addItemToState(stagedState, listing.item_id, listing.item_category, listing.amount);
+            if (!canAddItemToState(stagedState, listing.item_id, listing.item_category, listing.amount)
+                || !addItemToState(stagedState, listing.item_id, listing.item_category, listing.amount)) {
+                sendInventoryTransactionRejected(socket, data, "Inventory full.");
+                return;
+            }
             rewards.push({
                 item_id: listing.item_id,
                 item_category: listing.item_category,

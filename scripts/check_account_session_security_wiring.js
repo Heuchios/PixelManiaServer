@@ -49,7 +49,7 @@ const files = {
     ...fromBackend("server_account_session_helpers.js"),
   ]),
   packageJson: readFirst(fromBackend("package.json")),
-  deploy: readFirst(fromBackend("deploy_to_droplet.ps1"), false),
+  deploy: require("./release_deployment_test_helpers").readDeploymentCoverage(path.resolve(__dirname, "..")),
   schema: readFirst(fromBackend("docs/postgres_security_foundation.sql")),
   envExample: readFirst(fromBackend(".env.example"), false),
   rules: readFirst(fromRepoRoot("docs/backend_persistence_rules.md"), false),

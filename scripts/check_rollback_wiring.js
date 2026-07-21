@@ -45,7 +45,7 @@ const files = {
   worldSnapshotTool: readFirst(fromBackend("scripts/world_snapshot_tool.js"), false),
   restoreCheck: readFirst(fromBackend("scripts/postgres_restore_check.sh"), false),
   packageJson: readFirst(fromBackend("package.json")),
-  deploy: readFirst(fromBackend("deploy_to_droplet.ps1"), false),
+  deploy: require("./release_deployment_test_helpers").readDeploymentCoverage(path.resolve(__dirname, "..")),
   schema: readFirst(fromBackend("docs/postgres_security_foundation.sql")),
   rules: readFirst(fromRepoRoot("docs/backend_persistence_rules.md"), false),
   handoff: readFirst(fromRepoRoot("docs/codex_handoff_status.md"), false),

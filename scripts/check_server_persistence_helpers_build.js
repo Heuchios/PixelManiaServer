@@ -12,7 +12,7 @@ const PersistenceHelpers = require("../server_persistence_helpers");
 async function main() {
   const repoRoot = path.join(__dirname, "..");
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-  const deploySource = fs.readFileSync(path.join(repoRoot, "deploy_to_droplet.ps1"), "utf8");
+  const deploySource = require("./release_deployment_test_helpers").readDeploymentCoverage(repoRoot);
   const serverSource = fs.readFileSync(path.join(repoRoot, "server.js"), "utf8");
   const persistenceSource = fs.readFileSync(path.join(repoRoot, "src", "server_persistence_helpers.ts"), "utf8");
   const persistenceBuildSource = fs.readFileSync(path.join(repoRoot, "scripts", "sync_server_persistence_helpers_build.js"), "utf8");

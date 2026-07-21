@@ -7,11 +7,26 @@ function env(name, fallback = "") {
   return value === undefined || value === null || value === "" ? fallback : String(value);
 }
 
+const releaseRoot = env("PIXELMANIA_RELEASE_ROOT");
+const stateRoot = releaseRoot ? path.join(releaseRoot, "shared") : __dirname;
+const deployRoot = releaseRoot ? path.join(releaseRoot, "current") : __dirname;
+const defaultDeployCommand = releaseRoot ? "" : "bash scripts/ops_dashboard_git_deploy.sh";
+const defaultRollbackCommand = releaseRoot
+  ? `bash "${path.join(releaseRoot, "bin", "rollback_release.sh")}" --yes`
+  : "bash scripts/ops_dashboard_git_rollback.sh";
+const defaultGroupedStartCommand = releaseRoot
+  ? "pm2 startOrReload ecosystem.config.js --env production --update-env"
+    + " && PIXELMANIA_BACKEND_ROOT=\"$PIXELMANIA_RELEASE_ROOT/current\""
+    + " ROUTE_PRODUCTION_PM2_CONFIG=\"$PIXELMANIA_RELEASE_ROOT/shared/ecosystem.route-production.config.js\""
+    + " ROUTE_PRODUCTION_QUIET=true bash scripts/start_route_production_instances.sh"
+  : "pm2 startOrReload ecosystem.config.js --env production --update-env && bash scripts/start_route_production_instances.sh";
+
 module.exports = {
   apps: [
     {
       name: "pixelmania-ops",
       script: "ops_dashboard_server.js",
+      cwd: __dirname,
       exec_mode: "fork",
       instances: 1,
       watch: false,
@@ -26,7 +41,7 @@ module.exports = {
         OPS_DASHBOARD_ADMIN_USERNAME: env("OPS_DASHBOARD_ADMIN_USERNAME", "admin"),
         OPS_DASHBOARD_ADMIN_EMAIL: env("OPS_DASHBOARD_ADMIN_EMAIL"),
         OPS_DASHBOARD_ADMIN_PASSWORD_HASH: env("OPS_DASHBOARD_ADMIN_PASSWORD_HASH"),
-        OPS_DASHBOARD_ACCOUNT_FILE: env("OPS_DASHBOARD_ACCOUNT_FILE"),
+        OPS_DASHBOARD_ACCOUNT_FILE: env("OPS_DASHBOARD_ACCOUNT_FILE", path.join(stateRoot, "ops_dashboard_admin.json")),
         OPS_DASHBOARD_SESSION_SECRET: env("OPS_DASHBOARD_SESSION_SECRET"),
         OPS_DASHBOARD_SESSION_TTL_HOURS: env("OPS_DASHBOARD_SESSION_TTL_HOURS", "12"),
         OPS_DASHBOARD_COOKIE_SECURE: env("OPS_DASHBOARD_COOKIE_SECURE", "false"),
@@ -49,19 +64,27 @@ module.exports = {
         OPS_DASHBOARD_ALLOW_CONTROL: env("OPS_DASHBOARD_ALLOW_CONTROL", "false"),
         OPS_DASHBOARD_ALLOWED_ACTIONS: env("OPS_DASHBOARD_ALLOWED_ACTIONS", "restart"),
         OPS_DASHBOARD_RESTART_APPS: env("OPS_DASHBOARD_RESTART_APPS", "pixelmania,pixelmania-a,pixelmania-b"),
-        OPS_DASHBOARD_RESTART_COMMAND: env("OPS_DASHBOARD_RESTART_COMMAND", "pm2 startOrReload ecosystem.config.js --env production --update-env && bash scripts/start_route_production_instances.sh"),
-        OPS_DASHBOARD_START_COMMAND: env("OPS_DASHBOARD_START_COMMAND", "pm2 startOrReload ecosystem.config.js --env production --update-env && bash scripts/start_route_production_instances.sh"),
+        OPS_DASHBOARD_RESTART_COMMAND: releaseRoot
+          ? defaultGroupedStartCommand
+          : env("OPS_DASHBOARD_RESTART_COMMAND", defaultGroupedStartCommand),
+        OPS_DASHBOARD_START_COMMAND: releaseRoot
+          ? defaultGroupedStartCommand
+          : env("OPS_DASHBOARD_START_COMMAND", defaultGroupedStartCommand),
         OPS_DASHBOARD_STOP_COMMAND: env("OPS_DASHBOARD_STOP_COMMAND", "for app in pixelmania pixelmania-a pixelmania-b; do pm2 stop \"$app\" || true; done; pm2 save"),
         OPS_DASHBOARD_ALLOW_STOP_WITH_PLAYERS: env("OPS_DASHBOARD_ALLOW_STOP_WITH_PLAYERS", "false"),
         OPS_DASHBOARD_ALLOW_DEPLOY_WITH_PLAYERS: env("OPS_DASHBOARD_ALLOW_DEPLOY_WITH_PLAYERS", "false"),
         OPS_DASHBOARD_ALLOW_ROLLBACK_WITH_PLAYERS: env("OPS_DASHBOARD_ALLOW_ROLLBACK_WITH_PLAYERS", "false"),
         OPS_DASHBOARD_CONFIRM_ACTIONS: env("OPS_DASHBOARD_CONFIRM_ACTIONS", "stop,deploy,rollback"),
-        OPS_DASHBOARD_DEPLOY_COMMAND: env("OPS_DASHBOARD_DEPLOY_COMMAND", "bash scripts/ops_dashboard_git_deploy.sh"),
-        OPS_DASHBOARD_DEPLOY_CWD: env("OPS_DASHBOARD_DEPLOY_CWD", __dirname),
-        OPS_DASHBOARD_ROLLBACK_COMMAND: env("OPS_DASHBOARD_ROLLBACK_COMMAND", "bash scripts/ops_dashboard_git_rollback.sh"),
-        OPS_DASHBOARD_ROLLBACK_CWD: env("OPS_DASHBOARD_ROLLBACK_CWD", __dirname),
+        OPS_DASHBOARD_DEPLOY_COMMAND: releaseRoot
+          ? ""
+          : env("OPS_DASHBOARD_DEPLOY_COMMAND", defaultDeployCommand),
+        OPS_DASHBOARD_DEPLOY_CWD: env("OPS_DASHBOARD_DEPLOY_CWD", deployRoot),
+        OPS_DASHBOARD_ROLLBACK_COMMAND: releaseRoot
+          ? defaultRollbackCommand
+          : env("OPS_DASHBOARD_ROLLBACK_COMMAND", defaultRollbackCommand),
+        OPS_DASHBOARD_ROLLBACK_CWD: env("OPS_DASHBOARD_ROLLBACK_CWD", deployRoot),
         OPS_DASHBOARD_LOG_FILE: env("OPS_DASHBOARD_LOG_FILE"),
-        OPS_DASHBOARD_AUDIT_LOG_PATH: env("OPS_DASHBOARD_AUDIT_LOG_PATH"),
+        OPS_DASHBOARD_AUDIT_LOG_PATH: env("OPS_DASHBOARD_AUDIT_LOG_PATH", path.join(stateRoot, "ops_dashboard_audit.log")),
       },
       env_production: {
         NODE_ENV: env("NODE_ENV", "production"),

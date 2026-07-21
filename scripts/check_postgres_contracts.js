@@ -9,7 +9,7 @@ const PostgresContracts = require("../postgres_store_contracts");
 
 const repoRoot = path.join(__dirname, "..");
 const postgresSource = fs.readFileSync(path.join(repoRoot, "postgres_store.js"), "utf8");
-const deploySource = fs.readFileSync(path.join(repoRoot, "deploy_to_droplet.ps1"), "utf8");
+const deploySource = require("./release_deployment_test_helpers").readDeploymentCoverage(repoRoot);
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 const postgresContractsSource = fs.readFileSync(path.join(repoRoot, "src", "postgres_store_contracts.ts"), "utf8");
 const postgresContractsBuildSource = fs.readFileSync(path.join(repoRoot, "scripts", "sync_postgres_contracts_build.js"), "utf8");

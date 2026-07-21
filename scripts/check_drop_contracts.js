@@ -9,7 +9,7 @@ const DropContracts = require("../server_drop_contracts");
 
 const repoRoot = path.join(__dirname, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-const deploySource = fs.readFileSync(path.join(repoRoot, "deploy_to_droplet.ps1"), "utf8");
+const deploySource = require("./release_deployment_test_helpers").readDeploymentCoverage(repoRoot);
 const dropContractsSource = fs.readFileSync(path.join(repoRoot, "src", "server_drop_contracts.ts"), "utf8");
 const dropContractsBuildSource = fs.readFileSync(path.join(repoRoot, "scripts", "sync_drop_contracts_build.js"), "utf8");
 const dropContractsBuildConfig = JSON.parse(fs.readFileSync(path.join(repoRoot, "tsconfig.drop-contracts.json"), "utf8"));

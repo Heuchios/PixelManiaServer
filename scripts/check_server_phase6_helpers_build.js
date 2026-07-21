@@ -10,7 +10,7 @@ const Phase6HelpersModule = require("../server_phase6_helpers");
 
 const repoRoot = path.join(__dirname, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-const deploySource = fs.readFileSync(path.join(repoRoot, "deploy_to_droplet.ps1"), "utf8");
+const deploySource = require("./release_deployment_test_helpers").readDeploymentCoverage(repoRoot);
 const serverSource = fs.readFileSync(path.join(repoRoot, "server.js"), "utf8");
 const helperSource = fs.readFileSync(path.join(repoRoot, "src", "server_phase6_helpers.ts"), "utf8");
 const generatedSource = fs.readFileSync(path.join(repoRoot, "server_phase6_helpers.js"), "utf8");

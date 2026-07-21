@@ -43,7 +43,7 @@ const files = {
   auditScript: readFirst(fromBackend("scripts/integrity_hash_audit.js")),
   schema: readFirst(fromBackend("docs/postgres_security_foundation.sql")),
   packageJson: readFirst(fromBackend("package.json")),
-  deploy: readFirst(fromBackend("deploy_to_droplet.ps1"), false),
+  deploy: require("./release_deployment_test_helpers").readDeploymentCoverage(path.resolve(__dirname, "..")),
   rules: readFirst(fromRepoRoot("docs/backend_persistence_rules.md"), false),
   handoff: readFirst(fromRepoRoot("docs/codex_handoff_status.md"), false),
 };

@@ -20,7 +20,9 @@ mkdir -p "$DATA_ROOT/a" "$DATA_ROOT/b"
 cat > "$CONFIG_PATH" <<EOF
 "use strict";
 
-const baseConfig = require("./ecosystem.config.js");
+const path = require("path");
+const root = process.env.PIXELMANIA_BACKEND_ROOT || __dirname;
+const baseConfig = require(path.join(root, "ecosystem.config.js"));
 for (const key of Object.keys(process.env)) {
   if (key.startsWith("OPS_DASHBOARD_")) {
     delete process.env[key];
@@ -61,6 +63,7 @@ module.exports = {
     {
       name: "pixelmania-a",
       script: "server.js",
+      cwd: root,
       exec_mode: "fork",
       instances: 1,
       watch: false,
@@ -78,6 +81,7 @@ module.exports = {
     {
       name: "pixelmania-b",
       script: "server.js",
+      cwd: root,
       exec_mode: "fork",
       instances: 1,
       watch: false,

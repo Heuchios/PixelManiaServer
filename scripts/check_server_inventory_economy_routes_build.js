@@ -10,7 +10,7 @@ const InventoryEconomyRoutesModule = require("../server_inventory_economy_routes
 
 const repoRoot = path.join(__dirname, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-const deploySource = fs.readFileSync(path.join(repoRoot, "deploy_to_droplet.ps1"), "utf8");
+const deploySource = require("./release_deployment_test_helpers").readDeploymentCoverage(repoRoot);
 const serverSource = fs.readFileSync(path.join(repoRoot, "server.js"), "utf8");
 const helperSource = fs.readFileSync(path.join(repoRoot, "src", "server_inventory_economy_routes.ts"), "utf8");
 const generatedSource = fs.readFileSync(path.join(repoRoot, "server_inventory_economy_routes.js"), "utf8");
@@ -104,6 +104,23 @@ function addItemToState(state, itemId, itemCategory, amount) {
 }
 
 /**
+ * @param {Record<string, any>} state
+ * @param {string} itemId
+ * @param {string} itemCategory
+ * @param {number} amount
+ * @returns {boolean}
+ */
+function canAddItemToState(state, itemId, itemCategory, amount) {
+  const current = getInventoryCount(state, itemId, itemCategory);
+  const stackLimit = ItemDatabase.getStackLimit(itemId);
+  if (current + amount > stackLimit) return false;
+  if (itemCategory === "currency" || current > 0) return true;
+
+  const occupiedSlots = Object.values(state.inventory || {}).filter((count) => Number(count) > 0).length;
+  return occupiedSlots < Number(state.inventory_slot_count || 20);
+}
+
+/**
  * @param {Record<string, any>[]} rewards
  * @returns {Record<string, any>[]}
  */
@@ -139,33 +156,53 @@ function captureRewardLedger(...args) {
   rewardLedgers.push(args);
 }
 
+const fillerItemIds = Array.from({ length: 20 }, (_value, index) => `filler_${index + 1}`);
+const validBlockItemIds = new Set([
+  "dirt",
+  "stone",
+  "basic_items_pack",
+  "hairpack",
+  "prestige_coloured_block_pack",
+  ...fillerItemIds,
+]);
+
 /** @type {Record<string, any>} */
 const ItemDatabase = {
-  hasItem: (/** @type {unknown} */ itemId) => ["dirt", "gem"].includes(String(itemId || "")),
+  hasItem: (/** @type {unknown} */ itemId) => validBlockItemIds.has(String(itemId || "")) || itemId === "gem",
   canStoreItemInCategory: (
     /** @type {unknown} */ itemId,
     /** @type {unknown} */ category,
   ) => (
-    (itemId === "dirt" && category === "block")
+    (validBlockItemIds.has(String(itemId || "")) && category === "block")
     || (itemId === "gem" && category === "currency")
   ),
+  getItemDefinition: (/** @type {unknown} */ itemId) => ({
+    display_name: String(itemId || "").split("_").map((part) => part.charAt(0).toUpperCase() + part.slice(1)).join(" "),
+  }),
   getStackLimit: (/** @type {unknown} */ itemId) => itemId === "gem" ? 999999 : 200,
 };
 
 /** @type {any} */
 const routeDeps = {
-  BASIC_ITEMS_PACK_TABLE: [],
-  HAIR_PACK_TABLE: [],
+  BASIC_ITEMS_PACK_TABLE: [{ item_id: "stone", item_category: "block", weight: 1 }],
+  HAIR_PACK_TABLE: [{ item_id: "filler_1", item_category: "block", weight: 1 }],
   INVENTORY_MAX_SLOT_COUNT: 300,
   INVENTORY_SLOT_UPGRADE_STEP: 20,
   ItemDatabase,
   LURE_PACK_TABLE: [],
   MAX_SHOP_PRICE: 999999,
-  PRESTIGE_COLOURED_BLOCK_PACK_TABLE: [],
+  PRESTIGE_COLOURED_BLOCK_PACK_TABLE: [
+    { item_id: "stone", item_category: "block", weight: 1 },
+    { item_id: "filler_1", item_category: "block", weight: 1 },
+  ],
   SHOP_CATALOG: new Map([
     ["dirt", { item_id: "dirt", item_category: "block", amount: 2, price: 5 }],
+    ["basic_items_pack", { item_id: "basic_items_pack", item_category: "block", amount: 1, price: 5, pack_size: 1 }],
+    ["hairpack", { item_id: "hairpack", item_category: "block", amount: 1, price: 5, pack_size: 1 }],
+    ["prestige_coloured_block_pack", { item_id: "prestige_coloured_block_pack", item_category: "block", amount: 1, price: 5, pack_size: 1 }],
   ]),
   addItemToState,
+  canAddItemToState,
   buildInventoryDeltaClientPayloads: (/** @type {Record<string, any>[]} */ deltas) => deltas,
   buildInventoryUpgradePreview: (/** @type {number} */ slots) => ({
     current_slots: slots,
@@ -296,6 +333,64 @@ const routes = InventoryEconomyRoutesModule.createServerInventoryEconomyRoutes(r
   assert.equal(shopLogs.length, 1);
   assert.equal(itemLedgers.length, 1);
   assert.equal(rewardLedgers.length, 1);
+
+  const fullInventory = Object.fromEntries(fillerItemIds.map((itemId) => [itemId, 1]));
+  states.set("uso", {
+    inventory_slot_count: 20,
+    currency_inventory: { gem: 20 },
+    inventory: fullInventory,
+  });
+  const commitsBeforeRejectedPack = commits.length;
+  await routes.handleInventoryTransactionRequest(socket, player, {
+    action: "shop_buy",
+    request_id: "shop-full-pack",
+    item_id: "basic_items_pack",
+    amount: 1,
+    price: 5,
+  });
+  assert.deepEqual(rejections.pop(), {
+    action: "shop_buy",
+    message: "Inventory full.",
+  });
+  assert.equal(commits.length, commitsBeforeRejectedPack);
+  assert.equal(states.get("uso")?.currency_inventory?.gem, 20);
+  assert.equal(states.get("uso")?.inventory?.stone, undefined);
+  assert.equal(states.get("uso")?.inventory_slot_count, 20);
+
+  await routes.handleInventoryTransactionRequest(socket, player, {
+    action: "shop_buy",
+    request_id: "shop-full-stack-pack",
+    item_id: "hairpack",
+    amount: 1,
+    price: 5,
+  });
+  const stackingPackResult = /** @type {Record<string, any>} */ (results.pop());
+  assert.equal(stackingPackResult.ok, true);
+  assert.equal(states.get("uso")?.inventory?.filler_1, 2);
+  assert.equal(states.get("uso")?.currency_inventory?.gem, 15);
+  assert.equal(states.get("uso")?.inventory_slot_count, 20);
+
+  const stateWithFullPackReward = /** @type {Record<string, any>} */ (states.get("uso"));
+  assert.ok(stateWithFullPackReward);
+  delete stateWithFullPackReward.inventory.filler_20;
+  stateWithFullPackReward.inventory.filler_1 = 200;
+  const commitsBeforeFullRewardPack = commits.length;
+  await routes.handleInventoryTransactionRequest(socket, player, {
+    action: "shop_buy",
+    request_id: "shop-full-reward-pack",
+    item_id: "prestige_coloured_block_pack",
+    amount: 1,
+    price: 5,
+  });
+  assert.deepEqual(rejections.pop(), {
+    action: "shop_buy",
+    message: "Filler 1 is already at full stack. Drop or clear some before buying this pack.",
+  });
+  assert.equal(commits.length, commitsBeforeFullRewardPack);
+  assert.equal(states.get("uso")?.currency_inventory?.gem, 15);
+  assert.equal(states.get("uso")?.inventory?.stone, undefined);
+  assert.equal(states.get("uso")?.inventory?.filler_1, 200);
+  assert.equal(states.get("uso")?.inventory_slot_count, 20);
 
   await routes.handleInventoryUpgradePurchase(socket, player, {
     request_id: "upgrade-1",

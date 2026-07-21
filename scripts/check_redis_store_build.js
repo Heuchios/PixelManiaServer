@@ -10,7 +10,7 @@ const RedisStore = require("../redis_store");
 
 const repoRoot = path.join(__dirname, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-const deploySource = fs.readFileSync(path.join(repoRoot, "deploy_to_droplet.ps1"), "utf8");
+const deploySource = require("./release_deployment_test_helpers").readDeploymentCoverage(repoRoot);
 const redisStoreSource = fs.readFileSync(path.join(repoRoot, "src", "redis_store.ts"), "utf8");
 const redisStoreBuildSource = fs.readFileSync(path.join(repoRoot, "scripts", "sync_redis_store_build.js"), "utf8");
 const redisStoreBuildConfig = JSON.parse(fs.readFileSync(path.join(repoRoot, "tsconfig.redis-store.json"), "utf8"));

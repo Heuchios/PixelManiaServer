@@ -9,6 +9,8 @@ function env(name, fallback = "") {
 
 const productionEnv = {
   NODE_ENV: env("NODE_ENV", "production"),
+  PIXELMANIA_RELEASE_ROOT: env("PIXELMANIA_RELEASE_ROOT"),
+  PIXELMANIA_RELEASE_ID: env("PIXELMANIA_RELEASE_ID"),
   HOST: env("HOST", "127.0.0.1"),
   PORT: env("PORT", "8080"),
   PUBLIC_BASE_URL: env("PUBLIC_BASE_URL", "https://api.pixelmaniagame.com"),
@@ -117,6 +119,7 @@ module.exports = {
     {
       name: "pixelmania",
       script: "server.js",
+      cwd: __dirname,
       exec_mode: "fork",
       instances: 1,
       watch: false,

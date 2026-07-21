@@ -10,7 +10,7 @@ const PostgresStore = require("../postgres_store");
 
 const repoRoot = path.join(__dirname, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-const deploySource = fs.readFileSync(path.join(repoRoot, "deploy_to_droplet.ps1"), "utf8");
+const deploySource = require("./release_deployment_test_helpers").readDeploymentCoverage(repoRoot);
 const baseTypeScriptConfig = JSON.parse(fs.readFileSync(path.join(repoRoot, "tsconfig.json"), "utf8"));
 const postgresStoreSource = fs.readFileSync(path.join(repoRoot, "src", "postgres_store.ts"), "utf8");
 const postgresStoreBuildSource = fs.readFileSync(path.join(repoRoot, "scripts", "sync_postgres_store_build.js"), "utf8");

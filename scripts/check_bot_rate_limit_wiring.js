@@ -49,7 +49,7 @@ const files = {
     ...fromBackend("server_account_session_helpers.js"),
   ]),
   packageJson: readFirst(fromBackend("package.json")),
-  deploy: readFirst(fromBackend("deploy_to_droplet.ps1"), false),
+  deploy: require("./release_deployment_test_helpers").readDeploymentCoverage(path.resolve(__dirname, "..")),
   envExample: readFirst(fromBackend(".env.example"), false),
   rules: readFirst(fromRepoRoot("docs/backend_persistence_rules.md"), false),
   handoff: readFirst(fromRepoRoot("docs/codex_handoff_status.md"), false),

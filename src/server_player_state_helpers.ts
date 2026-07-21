@@ -55,6 +55,7 @@ interface PlayerStateHelpers {
   getEquipmentSlotsComparisonKey(slots?: unknown): string;
   getEquipmentSlotsFromPlayerState(state: unknown): JsonRecord;
   getInventoryCount(state: unknown, itemId: unknown, itemCategory?: unknown): number;
+  getInventoryOccupiedSlotCount(state: unknown): number;
   getInventoryUpgradeCostForSlotCount(slotCount: unknown): number;
   getInventoryUpgradeIndexForSlotCount(slotCount: unknown): number;
   getPlayerTitleForLevel(level: unknown): string;
@@ -224,6 +225,35 @@ function createPlayerStateHelpers(config: PlayerStateHelperConfig): PlayerStateH
     const inventory = state[inventoryField];
     if (!isRecord(inventory)) return 0;
     return clampInteger(inventory[cleanItemId] || 0, 0, itemDatabase.getStackLimit(cleanItemId));
+  }
+
+  function getInventoryOccupiedSlotCount(state: unknown): number {
+    if (!isRecord(state)) return 0;
+
+    let occupiedSlots = 0;
+    for (const spec of INVENTORY_FIELDS) {
+      if (spec.category === "currency") continue;
+
+      const inventory = state[spec.field];
+      if (!isRecord(inventory)) continue;
+
+      for (const [rawItemId, rawCount] of Object.entries(inventory)) {
+        const itemId = clampString(rawItemId || "");
+        if (itemId === "" || !itemDatabase.hasItem(itemId)) continue;
+
+        const definition = itemDatabase.getItemDefinition(itemId) || {};
+        if (definition.hidden === true) continue;
+
+        const resolvedCategory = resolveInventoryCategory(itemId, spec.category);
+        if (resolvedCategory !== spec.category) continue;
+        if (!itemDatabase.canStoreItemInCategory(itemId, resolvedCategory)) continue;
+
+        const count = clampInteger(rawCount || 0, 0, itemDatabase.getStackLimit(itemId));
+        if (count > 0) occupiedSlots += 1;
+      }
+    }
+
+    return occupiedSlots;
   }
 
   function isServerHotbarItemAllowed(state: unknown, itemId: unknown, itemCategory: unknown = "", options: JsonRecord = {}): boolean {
@@ -624,6 +654,7 @@ function createPlayerStateHelpers(config: PlayerStateHelperConfig): PlayerStateH
     getEquipmentSlotsComparisonKey,
     getEquipmentSlotsFromPlayerState,
     getInventoryCount,
+    getInventoryOccupiedSlotCount,
     getInventoryUpgradeCostForSlotCount,
     getInventoryUpgradeIndexForSlotCount,
     getPlayerTitleForLevel,

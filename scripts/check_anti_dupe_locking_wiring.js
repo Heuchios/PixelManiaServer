@@ -106,7 +106,7 @@ const files = {
   serverRouteSources: "",
   postgres: readFirst(fromBackend("postgres_store.js")),
   packageJson: readFirst(fromBackend("package.json")),
-  deploy: readFirst(fromBackend("deploy_to_droplet.ps1"), false),
+  deploy: require("./release_deployment_test_helpers").readDeploymentCoverage(path.resolve(__dirname, "..")),
   clientDropManager: readFirst(fromRepoRoot("Scripts/drop_manager.gd"), false),
   rules: readFirst(fromRepoRoot("docs/backend_persistence_rules.md"), false),
   handoff: readFirst(fromRepoRoot("docs/codex_handoff_status.md"), false),
@@ -242,9 +242,9 @@ const checks = [
   },
   {
     name: "production deploy refreshes existing route PM2 apps that can serve pickup traffic",
-    ok: files.deploy.includes("for route_app in pixelmania-a pixelmania-b")
-      && files.deploy.includes('pm2 restart "$route_app"')
-      && files.deploy.includes("Restarting existing route app"),
+    ok: files.deploy.includes("pm2 describe pixelmania-a")
+      && files.deploy.includes('ROUTE_PRODUCTION_PM2_CONFIG="$SHARED_DIR/ecosystem.route-production.config.js"')
+      && files.deploy.includes("bash scripts/start_route_production_instances.sh"),
   },
   {
     name: "PostgreSQL trade finalization locks inventory rows and moves exact tracked item instances",

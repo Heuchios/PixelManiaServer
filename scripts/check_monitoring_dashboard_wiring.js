@@ -42,7 +42,7 @@ const files = {
   adminLookupRoutes: readFirst(fromBackend("server_admin_lookup_routes.js")),
   postgres: readFirst(fromBackend("postgres_store.js")),
   packageJson: readFirst(fromBackend("package.json")),
-  deploy: readFirst(fromBackend("deploy_to_droplet.ps1"), false),
+  deploy: require("./release_deployment_test_helpers").readDeploymentCoverage(path.resolve(__dirname, "..")),
   developerPanel: readFirst(fromRepoRoot("Scripts/developer_panel_ui.gd")),
   networkManager: readFirst(fromRepoRoot("Scripts/network_manager.gd")),
   world: readFirst(fromRepoRoot("Scripts/world.gd")),

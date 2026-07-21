@@ -10,7 +10,7 @@ const Phase11dStandardMovementModule = require("../server_phase11d_standard_move
 
 const repoRoot = path.join(__dirname, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-const deploySource = fs.readFileSync(path.join(repoRoot, "deploy_to_droplet.ps1"), "utf8");
+const deploySource = require("./release_deployment_test_helpers").readDeploymentCoverage(repoRoot);
 const serverSource = fs.readFileSync(path.join(repoRoot, "server.js"), "utf8");
 const routeSource = fs.readFileSync(
   path.join(repoRoot, "src", "server_phase8_final_routes.ts"),

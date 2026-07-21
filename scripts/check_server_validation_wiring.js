@@ -69,7 +69,7 @@ const files = {
   serverPhase8FinalRoutes: readFirst(fromBackend("server_phase8_final_routes.js"), false),
   serverRouteSources: "",
   packageJson: readFirst(fromBackend("package.json")),
-  deploy: readFirst(fromBackend("deploy_to_droplet.ps1"), false),
+  deploy: require("./release_deployment_test_helpers").readDeploymentCoverage(path.resolve(__dirname, "..")),
   rules: readFirst(fromRepoRoot("docs/backend_persistence_rules.md"), false),
   handoff: readFirst(fromRepoRoot("docs/codex_handoff_status.md"), false),
 };

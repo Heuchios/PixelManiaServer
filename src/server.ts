@@ -591,6 +591,7 @@ const SEED_MUTATION_REWARD_TABLE = Object.freeze([
 ]);
 const FISHING_SESSION_TTL_MS = Math.max(10000, Math.trunc(Number(process.env.FISHING_SESSION_TTL_MS) || 90000));
 const MIN_BLOCK_BREAK_INTERVAL_MS = Math.max(50, Math.trunc(Number(process.env.MIN_BLOCK_BREAK_INTERVAL_MS) || 75));
+const MIN_BLOCK_HIT_INTERVAL_MS = Math.max(50, Math.trunc(Number(process.env.MIN_BLOCK_HIT_INTERVAL_MS) || 225));
 const MIN_BLOCK_PLACE_INTERVAL_MS = Math.max(50, Math.trunc(Number(process.env.MIN_BLOCK_PLACE_INTERVAL_MS) || 75));
 const BLOCK_DAMAGE_RESET_MS = Math.max(500, Math.trunc(Number(process.env.BLOCK_DAMAGE_RESET_MS) || 3500));
 const EMAIL_VERIFICATION_TTL_MS = Math.max(5 * 60 * 1000, Math.trunc(Number(process.env.EMAIL_VERIFICATION_TTL_MINUTES) || 60) * 60 * 1000);
@@ -1135,6 +1136,7 @@ function getServerInventoryEconomyRoutes() {
       PRESTIGE_COLOURED_BLOCK_PACK_TABLE,
       SHOP_CATALOG,
       addItemToState,
+      canAddItemToState,
       buildInventoryDeltaClientPayloads,
       buildInventoryUpgradePreview,
       buildPlayerStateForClient,
@@ -14120,6 +14122,31 @@ function validateBlockBreakPace(socket: any, player: any, update: any = null) {
   return true;
 }
 
+function validateBlockHitPace(
+  socket: unknown,
+  player: ServerPacketRecord,
+  update: ServerPacketRecord | null = null,
+) {
+  if (isAdmin(player)) return true;
+
+  const now = Date.now();
+  const lastHitAt = Number(player.last_block_hit_at || 0);
+  if (lastHitAt > 0 && now - lastHitAt < MIN_BLOCK_HIT_INTERVAL_MS) {
+    sendActionRejected(socket, "world_block_update", "Slow down a little.", {
+      reason: "block_hit_rate_limited",
+      cooldown_ms: MIN_BLOCK_HIT_INTERVAL_MS,
+      x: update ? Math.trunc(Number(update.x) || 0) : undefined,
+      y: update ? Math.trunc(Number(update.y) || 0) : undefined,
+      layer: update ? clampString(update.layer || "") : undefined,
+      block_type: update ? clampString(update.block_type || "") : undefined,
+    });
+    return false;
+  }
+
+  player.last_block_hit_at = now;
+  return true;
+}
+
 function validateBlockPlacePace(socket: any, player: any, update: any = null) {
   if (isAdmin(player)) return true;
 
@@ -15034,6 +15061,10 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
       return prepareWaterBucketScoopInventoryReturn(socket, player, worldName, update, requestId, {
         allow_dev_json_fallback: options.allow_dev_json_fallback === true,
       });
+    }
+
+    if (!validateBlockHitPace(socket, player, update)) {
+      return { ok: false };
     }
 
     const damageResult = applyServerBlockDamage(player, worldName, update);
@@ -19078,6 +19109,10 @@ function getInventoryCount(state: any, itemId: any, itemCategory: any) {
   return PlayerStateHelpers.getInventoryCount(state, itemId, itemCategory);
 }
 
+function getInventoryOccupiedSlotCount(state: unknown) {
+  return PlayerStateHelpers.getInventoryOccupiedSlotCount(state);
+}
+
 function canAddItemToState(state: any, itemId: any, itemCategory: any, amount: any) {
   if (!state) return false;
   const cleanItemId = clampString(itemId || "");
@@ -19088,7 +19123,14 @@ function canAddItemToState(state: any, itemId: any, itemCategory: any, amount: a
 
   const stackLimit = ItemDatabase.getStackLimit(cleanItemId);
   const safeAmount = clampInteger(amount || 0, 0, stackLimit);
-  return getInventoryCount(state, cleanItemId, resolvedCategory) + safeAmount <= stackLimit;
+  const currentCount = getInventoryCount(state, cleanItemId, resolvedCategory);
+  if (currentCount + safeAmount > stackLimit) return false;
+  if (safeAmount <= 0 || currentCount > 0 || resolvedCategory === "currency") return true;
+
+  const definition = ItemDatabase.getItemDefinition(cleanItemId) || {};
+  if (definition.hidden === true) return true;
+
+  return getInventoryOccupiedSlotCount(state) < resolveInventorySlotCount(state);
 }
 
 function addItemToState(state: any, itemId: any, itemCategory: any, amount: any) {

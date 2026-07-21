@@ -10,7 +10,7 @@ const ServerEnvConfig = require("../server_env_config");
 
 const repoRoot = path.join(__dirname, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-const deploySource = fs.readFileSync(path.join(repoRoot, "deploy_to_droplet.ps1"), "utf8");
+const deploySource = require("./release_deployment_test_helpers").readDeploymentCoverage(repoRoot);
 const serverSource = fs.readFileSync(path.join(repoRoot, "server.js"), "utf8");
 const envConfigSource = fs.readFileSync(path.join(repoRoot, "src", "server_env_config.ts"), "utf8");
 const envConfigBuildSource = fs.readFileSync(path.join(repoRoot, "scripts", "sync_server_env_config_build.js"), "utf8");

@@ -49,7 +49,7 @@ const files = {
   ecosystem: readFirst(fromBackend("ecosystem.config.js")),
   envExample: readFirst(fromBackend(".env.example"), false),
   packageJson: readFirst(fromBackend("package.json")),
-  deploy: readFirst(fromBackend("deploy_to_droplet.ps1"), false),
+  deploy: require("./release_deployment_test_helpers").readDeploymentCoverage(path.resolve(__dirname, "..")),
   loadTest: readFirst(fromBackend("scripts/staged_ws_load_test.js"), false),
   loadTokenProvisioner: readFirst(fromBackend("scripts/provision_load_tokens.js"), false),
   multiInstanceWorldCapSmoke: readFirst(fromBackend("scripts/multi_instance_world_cap_smoke.js"), false),

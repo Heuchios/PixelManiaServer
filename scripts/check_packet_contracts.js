@@ -9,7 +9,7 @@ const PacketContracts = require("../server_packet_contracts");
 
 const repoRoot = path.join(__dirname, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
-const deploySource = fs.readFileSync(path.join(repoRoot, "deploy_to_droplet.ps1"), "utf8");
+const deploySource = require("./release_deployment_test_helpers").readDeploymentCoverage(repoRoot);
 const packetContractsSource = fs.readFileSync(path.join(repoRoot, "src", "server_packet_contracts.ts"), "utf8");
 const packetContractsBuildSource = fs.readFileSync(path.join(repoRoot, "scripts", "sync_packet_contracts_build.js"), "utf8");
 const packetContractsBuildConfig = JSON.parse(fs.readFileSync(path.join(repoRoot, "tsconfig.packet-contracts.json"), "utf8"));

@@ -506,6 +506,7 @@ function createServerPhase11aRuntime(deps) {
             sendHttpJson(response, 200, {
                 ok: true,
                 service: "PixelManiaServer",
+                release_id: String(process.env.PIXELMANIA_RELEASE_ID || ""),
                 server_client_version: SERVER_CLIENT_VERSION,
                 min_client_version: MIN_CLIENT_VERSION,
                 features: {
