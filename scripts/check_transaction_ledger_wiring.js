@@ -50,11 +50,13 @@ function fromBackend(filename) {
  * @returns {string[]}
  */
 function fromRepoRoot(filename) {
+  const explicitClientRoot = String(process.env.PIXELMANIA_CLIENT_DIR || "").trim();
   const roots = [
+    explicitClientRoot ? path.resolve(process.cwd(), explicitClientRoot) : "",
     process.cwd(),
     path.resolve(process.cwd(), ".."),
     path.resolve(__dirname, "..", ".."),
-  ];
+  ].filter(Boolean);
   /** @type {string[]} */
   const expandedRoots = [];
   for (const root of roots) {

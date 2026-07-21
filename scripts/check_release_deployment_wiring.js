@@ -27,6 +27,13 @@ const ecosystem = read("ecosystem.config.js");
 const opsEcosystem = read("ecosystem.ops.config.js");
 const routeStart = read("scripts/start_route_production_instances.sh");
 const runtime = read("src/server_phase11a_runtime.ts");
+const releaseClientAwareChecks = [
+  read("scripts/check_anti_dupe_locking_wiring.js"),
+  read("scripts/check_monitoring_dashboard_wiring.js"),
+  read("scripts/check_rollback_wiring.js"),
+  read("scripts/check_scale_readiness_wiring.js"),
+  read("scripts/check_transaction_ledger_wiring.js"),
+];
 const deploymentTestHelpers = read("scripts/release_deployment_test_helpers.js");
 const packageJson = JSON.parse(read("package.json"));
 
@@ -88,6 +95,17 @@ assertCheck(deploy.includes("rollback_release.sh\" --yes") && deploy.includes("A
 assertCheck(deploy.includes("Expected public release_id") && runtime.includes("release_id: String(process.env.PIXELMANIA_RELEASE_ID"), "health verification proves the active release ID");
 assertCheck(!/^\s*&\s*scp\b/m.test(deploy), "legacy file-by-file SCP commands are absent");
 assertCheck((deploy.match(/Send-ReleaseArtifact -LocalPath/g) || []).length === 3, "deployment uploads only backend, client, and manifest artifacts");
+assertCheck(
+  deploy.includes('"Scripts/drop_manager.gd"')
+    && deploy.includes('"docs/production_backend_wiring.md"')
+    && deploy.includes('"docs/scale_readiness_10k.md"'),
+  "client release carries gameplay, security, and scale-readiness evidence",
+);
+assertCheck(
+  releaseClientAwareChecks.every((source) => source.includes("process.env.PIXELMANIA_CLIENT_DIR"))
+    && deploy.includes('export PIXELMANIA_CLIENT_DIR="$RELEASE_DIR/_client"'),
+  "client-dependent validation resolves evidence from the isolated release",
+);
 
 const initializeRemote = extractHereString(deploy, "initializeRemote")
   .replaceAll("__REMOTE_DIR__", "PixelManiaServer");

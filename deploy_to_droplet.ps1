@@ -256,6 +256,8 @@ $clientReleasePaths = @(
   "Scripts/save_manager.gd",
   "Scripts/world_state_sync_manager.gd",
   "Data/items/atlas_items.json",
+  "docs/production_backend_wiring.md",
+  "docs/scale_readiness_10k.md",
   "project.godot"
 )
 foreach ($relativePath in $clientReleasePaths) {

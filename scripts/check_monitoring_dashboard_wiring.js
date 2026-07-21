@@ -24,11 +24,13 @@ function fromBackend(filename) {
 }
 
 function fromRepoRoot(filename) {
+  const explicitClientRoot = String(process.env.PIXELMANIA_CLIENT_DIR || "").trim();
   const roots = [
+    explicitClientRoot ? path.resolve(process.cwd(), explicitClientRoot) : "",
     process.cwd(),
     path.resolve(process.cwd(), ".."),
     path.resolve(__dirname, "..", ".."),
-  ];
+  ].filter(Boolean);
   const expandedRoots = [];
   for (const root of roots) {
     expandedRoots.push(root);
