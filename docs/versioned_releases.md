@@ -7,10 +7,10 @@ release is ready.
 
 ## Layout
 
-For the default `RemoteDir` the server layout is:
+For the default `pixelmania` deployment account and `RemoteDir`, the server layout is:
 
 ```text
-~/PixelManiaServer/
+/home/pixelmania/PixelManiaServer/
   bin/rollback_release.sh
   current -> releases/<release-id>
   previous -> releases/<previous-release-id>
@@ -39,6 +39,17 @@ uncommitted working files.
 cd G:\PixelMania\PixelManiaServer
 .\deploy_to_droplet.ps1 68.183.141.114
 ```
+
+The deployer logs in as the unprivileged `pixelmania` account by default. On a
+server that still runs PM2 as root, perform the one-time migration first:
+
+```powershell
+.\migrate_production_to_service_user.ps1 68.183.141.114
+```
+
+The migration refuses to cut over with active players, performs an isolated
+snapshot restore test, enables hourly main-server snapshots, and restores the
+root PM2 processes automatically if the new processes fail health checks.
 
 Useful options:
 
@@ -71,7 +82,7 @@ Swap `current` and `previous`, restart the existing PM2 apps, and verify health:
 The equivalent command on the server is:
 
 ```bash
-bash ~/PixelManiaServer/bin/rollback_release.sh --yes
+bash /home/pixelmania/PixelManiaServer/bin/rollback_release.sh --yes
 ```
 
 If the rollback target fails its health check, the rollback command restores
@@ -82,6 +93,9 @@ the original pointers and starts the original release again.
 - Never edit files under `releases/` or through `current`.
 - Keep secrets only in `shared/.env`; release archives never contain `.env`.
 - Persistent game data remains outside releases through `PIXELMANIA_DATA_DIR`.
+- Run PM2 as `pixelmania`; reserve root SSH for operating-system administration.
+- Keep periodic snapshots enabled only on the main authority process. Route
+  replicas intentionally force their snapshot interval to `0`.
 - A failed activation automatically invokes rollback before the deploy exits.
 - Do not delete the `current` or `previous` target while PM2 is using it.
 - Run `npm run check:release-deploy` after changing deployment or PM2 files.

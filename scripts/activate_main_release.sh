@@ -11,6 +11,10 @@ if [ ! -f "$CONFIG_FILE" ] || [ ! -f "$EXPECTED_SCRIPT" ]; then
   exit 1
 fi
 
+# Prime the daemon before piping jlist into a strict JSON parser. A first PM2
+# invocation can otherwise prepend its startup banner to the JSON response.
+pm2 ping >/dev/null 2>&1
+
 pm2_script_path() {
   pm2 jlist | node -e '
     let input = "";

@@ -2,7 +2,7 @@ param(
   [Parameter(Mandatory = $true, Position = 0)]
   [string]$RemoteIp,
 
-  [string]$RemoteUser = "root",
+  [string]$RemoteUser = "pixelmania",
   [string]$RemoteDir = "PixelManiaServer",
   [string]$SshKeyPath,
   [switch]$Status,

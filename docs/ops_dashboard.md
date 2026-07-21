@@ -89,7 +89,7 @@ If you already generated a token:
 After it finishes, open a tunnel:
 
 ```bash
-ssh -L 9090:127.0.0.1:9090 root@<droplet-ip>
+ssh -L 9090:127.0.0.1:9090 pixelmania@<droplet-ip>
 ```
 
 Then browse to `http://127.0.0.1:9090`.

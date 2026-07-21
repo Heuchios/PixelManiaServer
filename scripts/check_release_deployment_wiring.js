@@ -20,6 +20,10 @@ function assertCheck(condition, message) {
 }
 
 const deploy = read("deploy_to_droplet.ps1");
+const serviceUserMigration = read("migrate_production_to_service_user.ps1");
+const deployOpsDashboard = read("deploy_ops_dashboard_readonly.ps1");
+const enableOpsRestart = read("enable_ops_dashboard_restart_only.ps1");
+const enableOpsControls = read("enable_ops_dashboard_server_controls.ps1");
 const gitAttributes = read(".gitattributes");
 const rollbackPs = read("rollback_release.ps1");
 const rollbackSh = read("scripts/rollback_release.sh");
@@ -27,6 +31,7 @@ const activateMainRelease = read("scripts/activate_main_release.sh");
 const ecosystem = read("ecosystem.config.js");
 const opsEcosystem = read("ecosystem.ops.config.js");
 const routeStart = read("scripts/start_route_production_instances.sh");
+const snapshotRestoreSmoke = read("scripts/check_world_snapshot_restore_smoke.js");
 const runtime = read("src/server_phase11a_runtime.ts");
 const releaseClientAwareChecks = [
   read("scripts/check_anti_dupe_locking_wiring.js"),
@@ -174,6 +179,7 @@ assertCheck(
 );
 assertCheck(
   activateMainRelease.includes("pm_exec_path")
+    && activateMainRelease.includes("pm2 ping >/dev/null 2>&1")
     && activateMainRelease.includes('pm2 delete "$APP_NAME"')
     && activateMainRelease.includes("script_matches_release")
     && activateMainRelease.includes("PIXELMANIA_BACKEND_ROOT"),
@@ -205,9 +211,18 @@ const remoteCommand = extractHereString(deploy, "remoteCommand")
   .replaceAll("__CLIENT_SHA256__", "b".repeat(64))
   .replaceAll("__RUN_REMOTE_FULL_CHECKS__", "0")
   .replaceAll("__RELEASE_ENV_CONTENT__", "PIXELMANIA_RELEASE_ID='release-test'\nPIXELMANIA_RELEASE_ROOT=\"$BASE_DIR\"");
+const serviceUserMigrationCommand = extractHereString(serviceUserMigration, "serviceUserRemoteCommand")
+  .replaceAll("__REMOTE_DIR__", "PixelManiaServer")
+  .replaceAll("__SERVICE_USER__", "pixelmania")
+  .replaceAll("__AUTHORIZED_KEY_B64__", Buffer.from("ssh-ed25519 test pixelmania-deploy").toString("base64"))
+  .replaceAll("__SNAPSHOT_INTERVAL_MINUTES__", "60")
+  .replaceAll("__SNAPSHOT_MAX_WORLDS_PER_CYCLE__", "5")
+  .replaceAll("__ALLOW_ACTIVE_PLAYERS__", "0");
 assertCheck(!/__[_A-Z0-9]+__/u.test(`${initializeRemote}\n${remoteCommand}`), "remote Bash templates have no unresolved placeholders");
+assertCheck(!/__[_A-Z0-9]+__/u.test(serviceUserMigrationCommand), "service-user migration Bash template has no unresolved placeholders");
 checkBashSyntax(initializeRemote, "remote initialization");
 checkBashSyntax(remoteCommand, "remote release activation");
+checkBashSyntax(serviceUserMigrationCommand, "service-user migration");
 checkBashSyntax(activateMainRelease, "main PM2 release activation");
 checkMainActivationBehavior();
 
@@ -231,6 +246,37 @@ assertCheck(
   "ops state remains shared and release mode blocks legacy deploy and rollback overrides",
 );
 assertCheck(routeStart.includes("PIXELMANIA_BACKEND_ROOT") && routeStart.includes("cwd: root"), "route PM2 apps follow the active backend release");
+assertCheck(
+  [deploy, rollbackPs, deployOpsDashboard, enableOpsRestart, enableOpsControls]
+    .every((source) => /\[string\]\$RemoteUser\s*=\s*"pixelmania"/u.test(source)),
+  "production operation wrappers default to the dedicated pixelmania account",
+);
+assertCheck(
+  serviceUserMigration.includes("useradd --create-home")
+    && /run_service\(\) \{[\s\S]*?cd "\$SERVICE_HOME"[\s\S]*?runuser -u "\$SERVICE_USER"/u.test(serviceUserMigration)
+    && serviceUserMigration.includes("pm2 startup systemd")
+    && serviceUserMigration.includes("restore_root_processes")
+    && serviceUserMigration.includes("active_sessions")
+    && serviceUserMigration.includes("indexed_players")
+    && serviceUserMigration.includes("/var/lib/pixelmania-route-production")
+    && serviceUserMigration.includes("/root/.aws")
+    && serviceUserMigration.includes('chown "$SERVICE_USER:$SERVICE_GROUP" "$smoke_root"')
+    && serviceUserMigration.includes('chmod 0750 "$smoke_root"')
+    && serviceUserMigration.includes("run_service pm2 ping >/dev/null 2>&1")
+    && /systemctl disable --now "pm2-\$\{SERVICE_USER\}\.service"[\s\S]*?run_service pm2 delete[\s\S]*?run_service pm2 kill[\s\S]*?root_pm2 restart/u.test(serviceUserMigration)
+    && /run_service pm2 save\s+run_service pm2 kill\s+systemctl reset-failed/u.test(serviceUserMigration)
+    && (serviceUserMigration.match(/wait_for_release_health "\$expected_release"/gu) || []).length === 2
+    && serviceUserMigration.includes("world_snapshot_tool.js"),
+  "service-user migration preserves credentials and data, refuses active traffic, tests restores, and can recover root PM2",
+);
+assertCheck(
+  snapshotRestoreSmoke.includes("Dry run only")
+    && snapshotRestoreSmoke.includes("--apply")
+    && snapshotRestoreSmoke.includes("rollback_jobs.log")
+    && packageJson.scripts["check:snapshot-restore"] === "node scripts/check_world_snapshot_restore_smoke.js"
+    && String(packageJson.scripts["check:security"] || "").includes("check:snapshot-restore"),
+  "security preflight proves isolated snapshot create and restore behavior",
+);
 assertCheck(
   deploymentTestHelpers.includes("readDeploymentCoverage")
     && deploymentTestHelpers.includes("git\", [\"-C\", root, \"ls-files\"")
