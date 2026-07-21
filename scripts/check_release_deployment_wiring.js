@@ -111,6 +111,9 @@ function checkMainActivationBehavior() {
     fs.writeFileSync(fakePm2, `#!/usr/bin/env bash
 set -Eeuo pipefail
 case "\${1:-}" in
+  ping)
+    exit 0
+    ;;
   jlist)
     script_path="$(cat "$FAKE_PM2_STATE" 2>/dev/null || true)"
     node -e 'process.stdout.write(JSON.stringify([{name:"pixelmania",pm2_env:{pm_exec_path:process.argv[1]}}]))' "$script_path"
