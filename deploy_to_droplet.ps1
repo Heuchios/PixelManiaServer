@@ -578,13 +578,16 @@ if ! (
   exit 1
 fi
 
+release_health_body="$(mktemp)"
+release_health_error="$(mktemp)"
+trap 'rm -f "$release_health_body" "$release_health_error"' EXIT
 health_ok=0
 for attempt in $(seq 1 30); do
-  http_code="$(curl -sS "$LOCAL_HEALTH_URL" -o /tmp/pixelmania-release-health.json -w "%{http_code}" 2>/tmp/pixelmania-release-health.err || true)"
+  http_code="$(curl -sS "$LOCAL_HEALTH_URL" -o "$release_health_body" -w "%{http_code}" 2>"$release_health_error" || true)"
   if [ "$http_code" = "200" ]; then
-    active_release="$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(String(p.release_id||""));' /tmp/pixelmania-release-health.json)"
+    active_release="$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(String(p.release_id||""));' "$release_health_body")"
     if [ "$active_release" = "$RELEASE_ID" ]; then
-      cat /tmp/pixelmania-release-health.json
+      cat "$release_health_body"
       health_ok=1
       break
     fi
@@ -597,8 +600,8 @@ done
 
 if [ "$health_ok" != "1" ]; then
   echo "Activation failed; restoring the previous release." >&2
-  cat /tmp/pixelmania-release-health.err 2>/dev/null || true
-  cat /tmp/pixelmania-release-health.json 2>/dev/null || true
+  cat "$release_health_error" 2>/dev/null || true
+  cat "$release_health_body" 2>/dev/null || true
   pm2 logs pixelmania --lines 80 --nostream || true
   "$BASE_DIR/bin/rollback_release.sh" --yes --health-url "$LOCAL_HEALTH_URL" || true
   cleanup_incoming

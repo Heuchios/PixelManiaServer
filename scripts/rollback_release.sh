@@ -147,19 +147,22 @@ activate_current() {
   pm2 save || return 1
 }
 
-wait_for_health() {
-  local attempt http_code active_release expected_release target
+wait_for_health() (
+  local attempt http_code active_release expected_release target health_body health_error
+  health_body="$(mktemp)"
+  health_error="$(mktemp)"
+  trap 'rm -f "$health_body" "$health_error"' EXIT
   target="$(readlink -f "$CURRENT_LINK")"
   expected_release=""
   if [ -f "$target/release.json" ]; then
     expected_release="$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(String(p.release_id||""));' "$target/release.json")"
   fi
   for attempt in $(seq 1 "$HEALTH_ATTEMPTS"); do
-    http_code="$(curl -sS "$HEALTH_URL" -o /tmp/pixelmania-rollback-health.json -w "%{http_code}" 2>/tmp/pixelmania-rollback-health.err || true)"
+    http_code="$(curl -sS "$HEALTH_URL" -o "$health_body" -w "%{http_code}" 2>"$health_error" || true)"
     if [ "$http_code" = "200" ]; then
-      active_release="$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(String(p.release_id||""));' /tmp/pixelmania-rollback-health.json)"
+      active_release="$(node -e 'const fs=require("fs");const p=JSON.parse(fs.readFileSync(process.argv[1],"utf8"));process.stdout.write(String(p.release_id||""));' "$health_body")"
       if [ "$active_release" = "$expected_release" ]; then
-        cat /tmp/pixelmania-rollback-health.json
+        cat "$health_body"
         return 0
       fi
       echo "Rollback health is from release '${active_release:-legacy-root}', waiting for '${expected_release:-legacy-root}'."
@@ -168,10 +171,10 @@ wait_for_health() {
     fi
     sleep 2
   done
-  cat /tmp/pixelmania-rollback-health.err 2>/dev/null || true
-  cat /tmp/pixelmania-rollback-health.json 2>/dev/null || true
+  cat "$health_error" 2>/dev/null || true
+  cat "$health_body" 2>/dev/null || true
   return 1
-}
+)
 
 swap_release_links "$previous_target" "$current_target"
 

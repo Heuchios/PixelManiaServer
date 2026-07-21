@@ -188,6 +188,15 @@ assertCheck(
     && activateMainRelease.includes("PIXELMANIA_BACKEND_ROOT"),
   "main PM2 activation replaces legacy paths and verifies the selected release",
 );
+assertCheck(
+  deploy.includes('release_health_body="$(mktemp)"')
+    && deploy.includes('release_health_error="$(mktemp)"')
+    && rollbackSh.includes('health_body="$(mktemp)"')
+    && rollbackSh.includes('health_error="$(mktemp)"')
+    && !deploy.includes("/tmp/pixelmania-release-health")
+    && !rollbackSh.includes("/tmp/pixelmania-rollback-health"),
+  "deploy and rollback health probes use private temporary files",
+);
 assertCheck(!/^\s*&\s*scp\b/m.test(deploy), "legacy file-by-file SCP commands are absent");
 assertCheck((deploy.match(/Send-ReleaseArtifact -LocalPath/g) || []).length === 3, "deployment uploads only backend, client, and manifest artifacts");
 assertCheck(
