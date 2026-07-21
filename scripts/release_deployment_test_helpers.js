@@ -95,7 +95,7 @@ function readDeploymentCoverage(repoRoot) {
   const deployPath = path.join(repoRoot, "deploy_to_droplet.ps1");
   const deploySource = fs.readFileSync(deployPath, "utf8");
 
-  if (!deploySource.includes("archive\", \"--format=tar.gz")) {
+  if (!deploySource.includes('"archive"') || !deploySource.includes('"--format=tar.gz"')) {
     return deploySource;
   }
 

@@ -125,6 +125,32 @@ function Get-GitText {
   return (($output -join "`n").Trim())
 }
 
+function Assert-ArchiveShellScriptsUseLf {
+  param(
+    [Parameter(Mandatory = $true)]
+    [string]$ArchivePath,
+    [Parameter(Mandatory = $true)]
+    [string]$InspectionRoot
+  )
+
+  New-Item -ItemType Directory -Path $InspectionRoot -Force | Out-Null
+  Invoke-NativeProcess -FileName "tar" -Arguments @("-xzf", $ArchivePath, "-C", $InspectionRoot) -FailureMessage "Backend archive inspection failed"
+
+  $invalidShellScripts = @()
+  foreach ($shellScript in Get-ChildItem -LiteralPath $InspectionRoot -Filter "*.sh" -File -Recurse) {
+    $bytes = [System.IO.File]::ReadAllBytes($shellScript.FullName)
+    if ([Array]::IndexOf($bytes, [byte]13) -ge 0) {
+      $invalidShellScripts += [System.IO.Path]::GetRelativePath($InspectionRoot, $shellScript.FullName)
+    }
+  }
+
+  if ($invalidShellScripts.Count -gt 0) {
+    throw "Backend archive contains CRLF shell scripts: $($invalidShellScripts -join ', '). Ensure .gitattributes contains '*.sh text eol=lf'."
+  }
+
+  Write-Host "Backend archive shell scripts use LF line endings."
+}
+
 function Get-LocalClientVersion {
   param([string]$ClientRoot)
 
@@ -308,7 +334,8 @@ $healthUrl = ("$SmokeApiBase".TrimEnd("/") + "/health")
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
 try {
   Write-Host "Packaging immutable backend release $ReleaseId from commit $shortCommit..."
-  Invoke-NativeProcess -FileName "git" -Arguments @("-C", $PSScriptRoot, "archive", "--format=tar.gz", "--output=$backendArchive", $commit) -FailureMessage "Backend archive creation failed"
+  Invoke-NativeProcess -FileName "git" -Arguments @("-C", $PSScriptRoot, "archive", "--worktree-attributes", "--format=tar.gz", "--output=$backendArchive", $commit) -FailureMessage "Backend archive creation failed"
+  Assert-ArchiveShellScriptsUseLf -ArchivePath $backendArchive -InspectionRoot (Join-Path $tempRoot "backend-archive-inspection")
   Invoke-NativeProcess -FileName "tar" -Arguments (@("-czf", $clientArchive, "-C", $clientRoot) + $clientReleasePaths) -FailureMessage "Client metadata archive creation failed"
 
   $backendHash = (Get-FileHash -LiteralPath $backendArchive -Algorithm SHA256).Hash.ToLowerInvariant()

@@ -20,6 +20,7 @@ function assertCheck(condition, message) {
 }
 
 const deploy = read("deploy_to_droplet.ps1");
+const gitAttributes = read(".gitattributes");
 const rollbackPs = read("rollback_release.ps1");
 const rollbackSh = read("scripts/rollback_release.sh");
 const ecosystem = read("ecosystem.config.js");
@@ -71,7 +72,9 @@ function checkBashSyntax(script, description) {
   }
 }
 
-assertCheck(deploy.includes("git\" -Arguments @") && deploy.includes("archive\", \"--format=tar.gz"), "deploy packages the exact Git commit");
+assertCheck(deploy.includes("git\" -Arguments @") && deploy.includes("archive\", \"--worktree-attributes\", \"--format=tar.gz"), "deploy packages the exact Git commit with repository attributes");
+assertCheck(/^\*\.sh\s+text\s+eol=lf\s*$/mu.test(gitAttributes), "Git exports shell scripts with LF line endings");
+assertCheck(deploy.includes("Assert-ArchiveShellScriptsUseLf") && deploy.includes("Backend archive contains CRLF shell scripts"), "deploy rejects CRLF shell scripts in the packaged archive");
 assertCheck(deploy.includes("Assert-CleanBackendCommit"), "deploy refuses a dirty backend worktree");
 assertCheck(deploy.includes("& npm run check:security"), "normal deploy runs the complete local security preflight");
 assertCheck(deploy.includes("Get-FileHash") && deploy.includes("sha256sum -c"), "release archives are SHA-256 verified remotely");
@@ -114,7 +117,13 @@ assertCheck(
   "ops state remains shared and release mode blocks legacy deploy and rollback overrides",
 );
 assertCheck(routeStart.includes("PIXELMANIA_BACKEND_ROOT") && routeStart.includes("cwd: root"), "route PM2 apps follow the active backend release");
-assertCheck(deploymentTestHelpers.includes("readDeploymentCoverage") && deploymentTestHelpers.includes("git\", [\"-C\", root, \"ls-files\""), "legacy module checks evaluate committed archive coverage");
+assertCheck(
+  deploymentTestHelpers.includes("readDeploymentCoverage")
+    && deploymentTestHelpers.includes("git\", [\"-C\", root, \"ls-files\"")
+    && deploymentTestHelpers.includes("deploySource.includes('\"archive\"')")
+    && deploymentTestHelpers.includes("deploySource.includes('\"--format=tar.gz\"')"),
+  "legacy module checks evaluate committed archive coverage",
+);
 assertCheck(packageJson.scripts && packageJson.scripts["check:release-deploy"] === "node scripts/check_release_deployment_wiring.js", "package exposes the release deployment gate");
 assertCheck(String(packageJson.scripts["check:security"] || "").includes("check:release-deploy"), "security gate includes release deployment wiring");
 
