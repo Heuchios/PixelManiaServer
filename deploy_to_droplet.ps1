@@ -232,6 +232,7 @@ $requiredBackendPaths = @(
   "package-lock.json",
   "ecosystem.config.js",
   "ecosystem.ops.config.js",
+  "scripts/activate_main_release.sh",
   "scripts/rollback_release.sh",
   "scripts/check_release_deployment_wiring.js",
   "scripts/release_deployment_test_helpers.js",
@@ -521,6 +522,7 @@ node --check server.js
 node --check ecosystem.config.js
 node --check ecosystem.ops.config.js
 bash -n scripts/rollback_release.sh
+bash -n scripts/activate_main_release.sh
 bash -n scripts/start_route_production_instances.sh
 npm run check:release-deploy
 npm run check:item-db
@@ -530,6 +532,7 @@ if [ "$RUN_REMOTE_FULL_CHECKS" = "1" ]; then
 fi
 
 install -m 0755 scripts/rollback_release.sh "$BASE_DIR/bin/rollback_release.sh"
+install -m 0755 scripts/activate_main_release.sh "$BASE_DIR/bin/activate_main_release.sh"
 
 if [ -n "$previous_target" ]; then
   atomic_link "$previous_target" "$PREVIOUS_LINK"
@@ -556,8 +559,7 @@ if ! (
   . "$CURRENT_LINK/.release-env"
   set +a
   export PIXELMANIA_RELEASE_ROOT="$BASE_DIR"
-  cd "$CURRENT_LINK"
-  pm2 startOrReload ecosystem.config.js --env production --update-env
+  "$BASE_DIR/bin/activate_main_release.sh" "$CURRENT_LINK"
   if [ "$had_routes" = "1" ]; then
     PIXELMANIA_BACKEND_ROOT="$CURRENT_LINK" \
     PIXELMANIA_RELEASE_ROOT="$BASE_DIR" \

@@ -7,8 +7,10 @@ function env(name, fallback = "") {
   return value === undefined || value === null || value === "" ? fallback : String(value);
 }
 
+const backendRoot = env("PIXELMANIA_BACKEND_ROOT", __dirname);
 const productionEnv = {
   NODE_ENV: env("NODE_ENV", "production"),
+  PIXELMANIA_BACKEND_ROOT: backendRoot,
   PIXELMANIA_RELEASE_ROOT: env("PIXELMANIA_RELEASE_ROOT"),
   PIXELMANIA_RELEASE_ID: env("PIXELMANIA_RELEASE_ID"),
   HOST: env("HOST", "127.0.0.1"),
@@ -119,7 +121,7 @@ module.exports = {
     {
       name: "pixelmania",
       script: "server.js",
-      cwd: __dirname,
+      cwd: backendRoot,
       exec_mode: "fork",
       instances: 1,
       watch: false,

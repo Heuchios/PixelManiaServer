@@ -127,8 +127,13 @@ activate_current() {
     set +a
   fi
 
+  export PIXELMANIA_BACKEND_ROOT="$CURRENT_LINK"
   cd "$CURRENT_LINK" || return 1
-  pm2 startOrReload ecosystem.config.js --env production --update-env || return 1
+  if [ -x "$BASE_DIR/bin/activate_main_release.sh" ]; then
+    "$BASE_DIR/bin/activate_main_release.sh" "$CURRENT_LINK" || return 1
+  else
+    pm2 startOrReload ecosystem.config.js --env production --update-env || return 1
+  fi
   if [ "$had_routes" = "1" ]; then
     PIXELMANIA_BACKEND_ROOT="$CURRENT_LINK" \
     PIXELMANIA_RELEASE_ROOT="$BASE_DIR" \

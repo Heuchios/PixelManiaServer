@@ -23,6 +23,7 @@ const deploy = read("deploy_to_droplet.ps1");
 const gitAttributes = read(".gitattributes");
 const rollbackPs = read("rollback_release.ps1");
 const rollbackSh = read("scripts/rollback_release.sh");
+const activateMainRelease = read("scripts/activate_main_release.sh");
 const ecosystem = read("ecosystem.config.js");
 const opsEcosystem = read("ecosystem.ops.config.js");
 const routeStart = read("scripts/start_route_production_instances.sh");
@@ -80,6 +81,78 @@ function checkBashSyntax(script, description) {
   }
 }
 
+function checkMainActivationBehavior() {
+  if (process.platform === "win32") {
+    console.log("[release-deploy] skip: main PM2 release activation behavior (runs during remote Linux validation)");
+    return;
+  }
+  const bash = findBash();
+  if (!bash) {
+    console.log("[release-deploy] skip: main PM2 release activation behavior (bash unavailable)");
+    return;
+  }
+
+  const temporaryDirectory = fs.mkdtempSync(path.join(os.tmpdir(), "pixelmania-pm2-activation-check-"));
+  const fakeBin = path.join(temporaryDirectory, "bin");
+  const releaseDirectory = path.join(temporaryDirectory, "current");
+  const fakePm2State = path.join(temporaryDirectory, "pm2-script-path");
+  const fakePm2 = path.join(fakeBin, "pm2");
+  try {
+    fs.mkdirSync(fakeBin, { recursive: true });
+    fs.mkdirSync(releaseDirectory, { recursive: true });
+    fs.writeFileSync(path.join(releaseDirectory, "ecosystem.config.js"), "module.exports = { apps: [] };\n", "utf8");
+    fs.writeFileSync(path.join(releaseDirectory, "server.js"), "\"use strict\";\n", "utf8");
+    fs.writeFileSync(fakePm2State, "/legacy/PixelManiaServer/server.js", "utf8");
+    fs.writeFileSync(fakePm2, `#!/usr/bin/env bash
+set -Eeuo pipefail
+case "\${1:-}" in
+  jlist)
+    script_path="$(cat "$FAKE_PM2_STATE" 2>/dev/null || true)"
+    node -e 'process.stdout.write(JSON.stringify([{name:"pixelmania",pm2_env:{pm_exec_path:process.argv[1]}}]))' "$script_path"
+    ;;
+  delete)
+    : > "$FAKE_PM2_STATE"
+    ;;
+  startOrReload)
+    printf '%s/server.js' "$PIXELMANIA_BACKEND_ROOT" > "$FAKE_PM2_STATE"
+    ;;
+  *)
+    exit 2
+    ;;
+esac
+`, "utf8");
+    fs.chmodSync(fakePm2, 0o755);
+
+    const environment = {
+      ...process.env,
+      FAKE_PM2_STATE: fakePm2State,
+      PATH: `${fakeBin}${path.delimiter}${process.env.PATH || ""}`,
+    };
+    const activationScript = path.join(root, "scripts", "activate_main_release.sh");
+    const first = childProcess.spawnSync(bash, [activationScript, releaseDirectory], {
+      encoding: "utf8",
+      env: environment,
+    });
+    assertCheck(
+      first.status === 0
+        && first.stdout.includes("Recreating pixelmania")
+        && fs.readFileSync(fakePm2State, "utf8") === path.join(releaseDirectory, "server.js"),
+      `main PM2 activation adopts the versioned release${first.stderr ? `: ${first.stderr.trim()}` : ""}`,
+    );
+
+    const second = childProcess.spawnSync(bash, [activationScript, releaseDirectory], {
+      encoding: "utf8",
+      env: environment,
+    });
+    assertCheck(
+      second.status === 0 && !second.stdout.includes("Recreating pixelmania"),
+      `subsequent main PM2 activation reloads in place${second.stderr ? `: ${second.stderr.trim()}` : ""}`,
+    );
+  } finally {
+    fs.rmSync(temporaryDirectory, { force: true, recursive: true });
+  }
+}
+
 assertCheck(deploy.includes("git\" -Arguments @") && deploy.includes("archive\", \"--worktree-attributes\", \"--format=tar.gz"), "deploy packages the exact Git commit with repository attributes");
 assertCheck(/^\*\.sh\s+text\s+eol=lf\s*$/mu.test(gitAttributes), "Git exports shell scripts with LF line endings");
 assertCheck(/^\*\.ps1\s+text\s+eol=lf\s*$/mu.test(gitAttributes), "Git exports PowerShell scripts with LF line endings");
@@ -93,6 +166,19 @@ assertCheck(deploy.includes("atomic_link") && deploy.includes('atomic_link "$REL
 assertCheck(deploy.includes("npm ci --omit=dev") && !deploy.includes("npm install --omit=dev"), "production dependencies use deterministic npm ci");
 assertCheck(deploy.includes("rollback_release.sh\" --yes") && deploy.includes("Activation failed; restoring the previous release"), "failed activation invokes automatic rollback");
 assertCheck(deploy.includes("Expected public release_id") && runtime.includes("release_id: String(process.env.PIXELMANIA_RELEASE_ID"), "health verification proves the active release ID");
+assertCheck(
+  deploy.includes('install -m 0755 scripts/activate_main_release.sh "$BASE_DIR/bin/activate_main_release.sh"')
+    && deploy.includes('"$BASE_DIR/bin/activate_main_release.sh" "$CURRENT_LINK"')
+    && rollbackSh.includes('"$BASE_DIR/bin/activate_main_release.sh" "$CURRENT_LINK"'),
+  "deploy and rollback share the main PM2 release activator",
+);
+assertCheck(
+  activateMainRelease.includes("pm_exec_path")
+    && activateMainRelease.includes('pm2 delete "$APP_NAME"')
+    && activateMainRelease.includes("script_matches_release")
+    && activateMainRelease.includes("PIXELMANIA_BACKEND_ROOT"),
+  "main PM2 activation replaces legacy paths and verifies the selected release",
+);
 assertCheck(!/^\s*&\s*scp\b/m.test(deploy), "legacy file-by-file SCP commands are absent");
 assertCheck((deploy.match(/Send-ReleaseArtifact -LocalPath/g) || []).length === 3, "deployment uploads only backend, client, and manifest artifacts");
 assertCheck(
@@ -122,6 +208,8 @@ const remoteCommand = extractHereString(deploy, "remoteCommand")
 assertCheck(!/__[_A-Z0-9]+__/u.test(`${initializeRemote}\n${remoteCommand}`), "remote Bash templates have no unresolved placeholders");
 checkBashSyntax(initializeRemote, "remote initialization");
 checkBashSyntax(remoteCommand, "remote release activation");
+checkBashSyntax(activateMainRelease, "main PM2 release activation");
+checkMainActivationBehavior();
 
 assertCheck(rollbackSh.includes('swap_release_links "$previous_target" "$current_target"'), "rollback atomically swaps current and previous pointers");
 assertCheck(rollbackSh.includes("Rollback target failed health; restoring the original release"), "rollback restores the original pointer if recovery health fails");
@@ -129,7 +217,12 @@ assertCheck(rollbackSh.includes('active_release" = "$expected_release'), "rollba
 assertCheck(rollbackSh.includes("pm2 startOrReload ecosystem.config.js"), "rollback reloads the authoritative PM2 app");
 assertCheck(rollbackPs.includes("bin/rollback_release.sh") && rollbackPs.includes("--status"), "Windows rollback wrapper supports rollback and status");
 
-assertCheck(ecosystem.includes("cwd: __dirname") && ecosystem.includes("PIXELMANIA_RELEASE_ID"), "main PM2 config is release-directory aware");
+assertCheck(
+  ecosystem.includes('env("PIXELMANIA_BACKEND_ROOT", __dirname)')
+    && ecosystem.includes("cwd: backendRoot")
+    && ecosystem.includes("PIXELMANIA_RELEASE_ID"),
+  "main PM2 config follows the active release pointer",
+);
 assertCheck(
   opsEcosystem.includes("stateRoot")
     && opsEcosystem.includes("rollback_release.sh")
