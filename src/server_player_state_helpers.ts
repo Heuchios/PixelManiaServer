@@ -48,6 +48,7 @@ interface PlayerStateHelpers {
   applyProgressionFieldsToState(state: JsonRecord, progression?: unknown): JsonRecord;
   buildInventoryUpgradePreview(slotCount: unknown): JsonRecord;
   buildPlayerStateForClient(state: unknown, options?: JsonRecord): JsonRecord;
+  canRestoreReservedInventorySlot(state: unknown, sourceOccupiedSlots: unknown): boolean;
   clearUnavailableEquipmentInState(state: unknown): boolean;
   createDefaultPlayerState(username: unknown): JsonRecord | null;
   doesStateOwnEquippedItem(state: unknown, itemId: unknown, slot: unknown): boolean;
@@ -254,6 +255,15 @@ function createPlayerStateHelpers(config: PlayerStateHelperConfig): PlayerStateH
     }
 
     return occupiedSlots;
+  }
+
+  function canRestoreReservedInventorySlot(state: unknown, sourceOccupiedSlots: unknown): boolean {
+    if (!isRecord(state)) return false;
+
+    const occupiedSlots = getInventoryOccupiedSlotCount(state);
+    const reservedCeiling = clampInteger(sourceOccupiedSlots, 0, config.maxPlayerInventoryKeys);
+    const allowedOccupiedSlots = Math.max(resolveInventorySlotCount(state), reservedCeiling);
+    return occupiedSlots + 1 <= allowedOccupiedSlots;
   }
 
   function isServerHotbarItemAllowed(state: unknown, itemId: unknown, itemCategory: unknown = "", options: JsonRecord = {}): boolean {
@@ -647,6 +657,7 @@ function createPlayerStateHelpers(config: PlayerStateHelperConfig): PlayerStateH
     applyProgressionFieldsToState,
     buildInventoryUpgradePreview,
     buildPlayerStateForClient,
+    canRestoreReservedInventorySlot,
     clearUnavailableEquipmentInState,
     createDefaultPlayerState,
     doesStateOwnEquippedItem,

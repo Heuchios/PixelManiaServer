@@ -8152,6 +8152,7 @@ async function handleDisplayDeposit(socket: any, player: any, data: any, worldNa
       amount: 1,
       source_transaction_id: displayTransactionId,
       display_transaction_id: displayTransactionId,
+      source_inventory_occupied_slots: getInventoryOccupiedSlotCount(state),
     };
 
     const savedDisplay = setDisplayStateAt(worldName, display);
@@ -8224,8 +8225,9 @@ async function handleDisplayWithdraw(socket: any, player: any, data: any, worldN
       return;
     }
 
-    if (!canAddItemToState(state, slot.item_id, slot.item_category, 1)) {
-      rejectDisplayTransaction(socket, data, "Your inventory cannot hold that item.");
+    const returnCapacity = getDisplayReturnCapacity(state, slot);
+    if (!returnCapacity.ok) {
+      rejectDisplayTransaction(socket, data, returnCapacity.message);
       return;
     }
 
@@ -8316,9 +8318,10 @@ async function prepareDisplayBreakInventoryReturn(socket: any, player: any, worl
     return { ok: false };
   }
 
-  if (!canAddItemToState(state, slot.item_id, slot.item_category, 1)) {
-    sendActionRejected(socket, "world_block_update", "Your inventory cannot hold the display item.", {
-      reason: "insufficient_capacity",
+  const returnCapacity = getDisplayReturnCapacity(state, slot);
+  if (!returnCapacity.ok) {
+    sendActionRejected(socket, "world_block_update", returnCapacity.message, {
+      reason: returnCapacity.reason,
       block_type: update.block_type,
     });
     return { ok: false };
@@ -19217,6 +19220,49 @@ function canAddItemToState(state: any, itemId: any, itemCategory: any, amount: a
   if (definition.hidden === true) return true;
 
   return getInventoryOccupiedSlotCount(state) < resolveInventorySlotCount(state);
+}
+
+function getDisplayReturnCapacity(state: unknown, slot: Record<string, unknown>) {
+  const itemId = clampString(slot?.item_id || slot?.item_type || "");
+  if (!state || itemId === "" || !ItemDatabase.hasItem(itemId)) {
+    return { ok: false, reason: "invalid_item", message: "That displayed item is no longer valid." };
+  }
+
+  const itemCategory = resolveInventoryCategory(itemId, slot?.item_category || "");
+  if (!ItemDatabase.canStoreItemInCategory(itemId, itemCategory)) {
+    return { ok: false, reason: "invalid_category", message: "That displayed item is no longer valid." };
+  }
+
+  const definition = ItemDatabase.getItemDefinition(itemId) || {};
+  const displayName = clampString(definition.display_name || itemId, MAX_ITEM_ID_LENGTH);
+  const stackLimit = ItemDatabase.getStackLimit(itemId);
+  const currentCount = getInventoryCount(state, itemId, itemCategory);
+  if (currentCount + 1 > stackLimit) {
+    return {
+      ok: false,
+      reason: "stack_full",
+      message: `Your ${displayName} stack is full. Clear some before taking it back.`,
+    };
+  }
+
+  if (canAddItemToState(state, itemId, itemCategory, 1)) {
+    return { ok: true, reason: "", message: "" };
+  }
+
+  const occupiedSlots = getInventoryOccupiedSlotCount(state);
+  const rawSourceOccupiedSlots = Number(slot?.source_inventory_occupied_slots);
+  const sourceOccupiedSlots = Number.isFinite(rawSourceOccupiedSlots) && rawSourceOccupiedSlots > 0
+    ? Math.trunc(rawSourceOccupiedSlots)
+    : occupiedSlots + 1;
+  if (PlayerStateHelpers.canRestoreReservedInventorySlot(state, sourceOccupiedSlots)) {
+    return { ok: true, reason: "reserved_display_return", message: "" };
+  }
+
+  return {
+    ok: false,
+    reason: "insufficient_capacity",
+    message: `Your inventory has no free slot for ${displayName}. Clear one slot first.`,
+  };
 }
 
 function addItemToState(state: any, itemId: any, itemCategory: any, amount: any) {

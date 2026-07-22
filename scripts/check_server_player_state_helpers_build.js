@@ -138,6 +138,19 @@ assert.equal(state.equipped_hat_item, "");
 assert.deepEqual(state.hotbar_items, ["punch", "dirt"]);
 assert.equal(helpers.getInventoryCount(state, "dirt", "block"), 5);
 assert.equal(helpers.getInventoryOccupiedSlotCount(state), 3);
+
+const overCapacityState = { inventory_slot_count: 20, inventory: {} };
+for (let index = 0; index < 21; index += 1) {
+  const itemId = `reserved_item_${index}`;
+  definitions[itemId] = { category: "block" };
+  overCapacityState.inventory[itemId] = 1;
+}
+assert.equal(helpers.getInventoryOccupiedSlotCount(overCapacityState), 21);
+overCapacityState.inventory.reserved_item_20 = 0;
+assert.equal(helpers.canRestoreReservedInventorySlot(overCapacityState, 21), true);
+overCapacityState.inventory.replacement_item = 1;
+definitions.replacement_item = { category: "block" };
+assert.equal(helpers.canRestoreReservedInventorySlot(overCapacityState, 21), false);
 assert.deepEqual(helpers.sanitizeEquipmentSlots({ hand: "wrench", back: "wings", hat: "crown" }, state), {
   hand: "wrench",
   back: "wings",
@@ -173,6 +186,7 @@ assert.deepEqual(buildConfig.include, ["src/server_player_state_helpers.ts"]);
 assert.match(buildSource, /Generated from src\/server_player_state_helpers\.ts/);
 assert.match(playerStateSource, /function createPlayerStateHelpers/);
 assert.match(playerStateSource, /function getInventoryOccupiedSlotCount/);
+assert.match(playerStateSource, /function canRestoreReservedInventorySlot/);
 assert.match(playerStateSource, /function sanitizePlayerState/);
 assert.match(playerStateSource, /function sanitizeEquipmentSlots/);
 assert.match(generatedSource, /Generated from src\/server_player_state_helpers\.ts/);

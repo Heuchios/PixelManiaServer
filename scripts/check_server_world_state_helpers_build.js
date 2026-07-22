@@ -486,9 +486,10 @@ assert.equal(safeState.slots.length, 1);
 assert.equal(safeState.slots[0].amount, 5);
 const displayState = helpers.sanitizeDisplayState({
   owner_username: "Uso",
-  slot: { item_id: "dirt", source_transaction_id: "tx_display" },
+  slot: { item_id: "dirt", source_transaction_id: "tx_display", source_inventory_occupied_slots: 64 },
 }, "WORLD", 4, 5);
 assert.equal(displayState.slot.display_transaction_id, "tx_display");
+assert.equal(displayState.slot.source_inventory_occupied_slots, 64);
 assert.equal(helpers.sanitizeDisplaySlot({ item_id: "display_case", amount: 1 }), null);
 assert.equal(helpers.sanitizeMailboxState({ messages: [{ from: "Uso", message: "hello" }, { message: "" }] }, "WORLD", 1, 2).messages[0].from, "USO");
 assert.equal(helpers.sanitizeBulletinBoardState({ messages: [{ player_name: "Uso", message: "posted" }] }, "WORLD", 1, 2).messages[0].username, "USO");

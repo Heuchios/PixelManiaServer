@@ -169,6 +169,14 @@ function createPlayerStateHelpers(config) {
         }
         return occupiedSlots;
     }
+    function canRestoreReservedInventorySlot(state, sourceOccupiedSlots) {
+        if (!isRecord(state))
+            return false;
+        const occupiedSlots = getInventoryOccupiedSlotCount(state);
+        const reservedCeiling = clampInteger(sourceOccupiedSlots, 0, config.maxPlayerInventoryKeys);
+        const allowedOccupiedSlots = Math.max(resolveInventorySlotCount(state), reservedCeiling);
+        return occupiedSlots + 1 <= allowedOccupiedSlots;
+    }
     function isServerHotbarItemAllowed(state, itemId, itemCategory = "", options = {}) {
         const cleanItemId = clampString(itemId || "");
         if (cleanItemId === "")
@@ -522,6 +530,7 @@ function createPlayerStateHelpers(config) {
         applyProgressionFieldsToState,
         buildInventoryUpgradePreview,
         buildPlayerStateForClient,
+        canRestoreReservedInventorySlot,
         clearUnavailableEquipmentInState,
         createDefaultPlayerState,
         doesStateOwnEquippedItem,

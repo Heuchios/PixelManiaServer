@@ -933,6 +933,10 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
       slot.source_transaction_id = sourceTransactionId;
       slot.display_transaction_id = sourceTransactionId;
     }
+    const sourceInventoryOccupiedSlots = clampInteger(rawSlot.source_inventory_occupied_slots || 0, 0, 10000);
+    if (sourceInventoryOccupiedSlots > 0) {
+      slot.source_inventory_occupied_slots = sourceInventoryOccupiedSlots;
+    }
     return slot;
   }
 
