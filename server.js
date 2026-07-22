@@ -439,6 +439,8 @@ const BULLETIN_BOARD_MESSAGE_LIMIT = 30;
 const CCTV_EVENT_LIMIT = 20;
 const SERVER_SEED_GROW_TIME_SECONDS = Math.max(1, Number(process.env.SEED_GROW_TIME_SECONDS) || 8);
 const MATURE_SEED_EXTRA_DROP_CHANCE = Math.max(0, Math.min(1, Number(process.env.MATURE_SEED_EXTRA_DROP_CHANCE) || 0.65));
+const GROWING_TREE_BREAK_HITS_REQUIRED = 3;
+const growingTreeBreakHits = new WeakMap();
 const CONFIGURED_SEED_MUTATION_CHANCE = Number(process.env.SEED_MUTATION_CHANCE);
 const SEED_MUTATION_CHANCE = Math.max(0, Math.min(1, Number.isFinite(CONFIGURED_SEED_MUTATION_CHANCE) ? CONFIGURED_SEED_MUTATION_CHANCE : 0.005));
 const SNOW_STORM_EVENT_TYPE = "snow_storm";
@@ -11146,6 +11148,22 @@ function getSeedConfiguredGrowTime(seedType) {
 function isSeedMature(seed) {
     return getSeedGrowthRemaining(seed) <= 0;
 }
+function registerGrowingTreeBreakHit(seed) {
+    const seedObject = seed;
+    const hitCount = Math.min(GROWING_TREE_BREAK_HITS_REQUIRED, Math.max(0, growingTreeBreakHits.get(seedObject) || 0) + 1);
+    const shouldBreak = hitCount >= GROWING_TREE_BREAK_HITS_REQUIRED;
+    if (shouldBreak) {
+        growingTreeBreakHits.delete(seedObject);
+    }
+    else {
+        growingTreeBreakHits.set(seedObject, hitCount);
+    }
+    return {
+        hit_count: hitCount,
+        hits_required: GROWING_TREE_BREAK_HITS_REQUIRED,
+        should_break: shouldBreak,
+    };
+}
 function serializeSeedForMessage(seed) {
     const growTime = getSeedGrowthRemaining(seed);
     const maxGrowTime = Math.max(1, Number(seed.max_grow_time) || SERVER_SEED_GROW_TIME_SECONDS);
@@ -11406,6 +11424,29 @@ async function handleSeedHarvestTransaction(socket, player, data) {
     const dropPosition = getGridCenterPixels(grid.x, grid.y);
     const drops = [];
     const maturedSeed = isSeedMature(seed);
+    let growingTreeHitCount = 0;
+    if (!maturedSeed) {
+        const breakHit = registerGrowingTreeBreakHit(seed);
+        growingTreeHitCount = breakHit.hit_count;
+        if (!breakHit.should_break) {
+            sendInventoryTransactionResult(socket, {
+                ok: true,
+                request_id: requestId,
+                action: "seed_harvest",
+                message: "",
+                username: player.account_username,
+                seed_removed: false,
+                growing_tree: true,
+                hit_count: breakHit.hit_count,
+                hits_required: breakHit.hits_required,
+                inventory_deltas: [],
+            });
+            return;
+        }
+    }
+    else {
+        growingTreeBreakHits.delete(seed);
+    }
     if (maturedSeed) {
         if (Boolean(seed.mutated)) {
             const validRewardTable = SEED_MUTATION_REWARD_TABLE.filter((entry) => ItemDatabase.hasItem(entry.item_id));
@@ -11497,6 +11538,7 @@ async function handleSeedHarvestTransaction(socket, player, data) {
             seed_type: seed.seed_type,
             mutated: Boolean(seed.mutated),
             reward_count: rewards.length,
+            growing_tree_hit_count: growingTreeHitCount,
         },
         world_state: serializedWorld,
         failure_message: "Server inventory changed. Try again.",
@@ -11523,6 +11565,10 @@ async function handleSeedHarvestTransaction(socket, player, data) {
         action: "seed_harvest",
         message: getProgressionMessage(progression, "Seed-tree harvested."),
         username: player.account_username,
+        seed_removed: true,
+        growing_tree: !maturedSeed,
+        hit_count: growingTreeHitCount,
+        hits_required: maturedSeed ? 1 : GROWING_TREE_BREAK_HITS_REQUIRED,
         rewards,
         progression: buildProgressionPayload(progression),
         inventory_deltas: inventoryDeltas,
