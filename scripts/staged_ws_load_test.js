@@ -72,7 +72,8 @@ Useful knobs:
   --token-offset 0            Start assigning clients at this token row.
   --client-version 1.0.3
   --rate 10                   Position messages per joined client per second.
-  --radius 128                Movement radius in pixels.
+  --radius 3                  Movement radius in pixels. Keeps the first update inside the 4px world-entry guard.
+  --max-rejections 0          Maximum accepted action rejections before the stage fails.
   --stats-ms 5000
 `;
 }
@@ -331,6 +332,13 @@ class LoadClient {
     if (type === "action_rejected") {
       this.runner.stats.rejections += 1;
       if (data.position_correction) this.runner.stats.positionCorrections += 1;
+      this.runner.recordRejection(data.reason || data.message || data.code || "action_rejected");
+      if (this.runner.verbose) {
+        console.warn(
+          `[client ${this.index}] action rejected: reason=${data.reason || ""}`
+          + ` message=${data.message || ""} correction=${Boolean(data.position_correction)}`,
+        );
+      }
       return;
     }
   }
@@ -403,6 +411,7 @@ class LoadRunner {
     this.holdMs = options.holdMs;
     this.rate = options.rate;
     this.radius = options.radius;
+    this.maxRejections = options.maxRejections;
     this.angularSpeed = options.angularSpeed;
     this.statsMs = options.statsMs;
     this.handshakeTimeoutMs = options.handshakeTimeoutMs;
@@ -423,6 +432,7 @@ class LoadRunner {
     this.statsTimer = null;
     this.closeReasons = new Map();
     this.authErrorReasons = new Map();
+    this.rejectionReasons = new Map();
     this.socketErrors = new Map();
     this.stats = {
       opened: 0,
@@ -455,6 +465,10 @@ class LoadRunner {
 
   recordAuthError(reason) {
     this.incrementSummary(this.authErrorReasons, String(reason || "auth_error").trim() || "auth_error");
+  }
+
+  recordRejection(reason) {
+    this.incrementSummary(this.rejectionReasons, String(reason || "action_rejected").trim() || "action_rejected");
   }
 
   recordSocketError(message) {
@@ -504,10 +518,24 @@ class LoadRunner {
     }
 
     await wait(this.holdMs);
+    const activeAtEnd = this.clients.filter((client) => client.ws && client.ws.readyState === WebSocket.OPEN).length;
+    const joinedAtEnd = this.clients.filter((client) => client.joined).length;
+    const result = {
+      ok: activeAtEnd === this.clientsTarget
+        && joinedAtEnd === this.clientsTarget
+        && this.stats.authenticated === this.clientsTarget
+        && this.stats.authErrors === 0
+        && this.stats.updateRequired === 0
+        && this.stats.errors === 0
+        && this.stats.rejections <= this.maxRejections,
+      activeAtEnd,
+      joinedAtEnd,
+    };
     this.shutdown();
     await wait(1000);
     await this.printStats(true);
     writeTokenAccounts(this.tokenOutFile, this.tokenAccounts);
+    return result;
   }
 
   async printStats(final = false) {
@@ -543,15 +571,18 @@ class LoadRunner {
       : "";
     const closeSummary = this.formatSummary(this.closeReasons);
     const authErrorSummary = this.formatSummary(this.authErrorReasons);
+    const rejectionSummary = this.formatSummary(this.rejectionReasons);
     const socketErrorSummary = this.formatSummary(this.socketErrors, 1);
 
     console.log(
       `[load] ${final ? "final " : ""}t=${elapsedSec.toFixed(1)}s active=${active} auth=${this.stats.authenticated} joined=${joined}` +
       ` posOut=${this.stats.positionSent} posRate=${sentRate.toFixed(1)}/s rxRate=${rxRate.toFixed(1)}/s` +
       ` batches=${this.stats.positionBatches} rejections=${this.stats.rejections} corrections=${this.stats.positionCorrections}` +
+      ` worldStates=${this.stats.worldStates}` +
       ` errors=${this.stats.errors} authErrors=${this.stats.authErrors}` +
       `${closeSummary ? ` close=${closeSummary}` : ""}` +
       `${authErrorSummary ? ` authReason=${authErrorSummary}` : ""}` +
+      `${rejectionSummary ? ` rejectReason=${rejectionSummary}` : ""}` +
       `${socketErrorSummary ? ` socketError=${socketErrorSummary}` : ""}` +
       `${tickLag}${pending}${worldPending}`
     );
@@ -612,7 +643,8 @@ async function main() {
     stepMs: parseDurationMs(args["step-ms"] || process.env.PIXELMANIA_LOAD_STEP_MS, 30_000),
     holdMs: parseDurationMs(args["hold-ms"] || process.env.PIXELMANIA_LOAD_HOLD_MS, 120_000),
     rate: parseInteger(args.rate || process.env.PIXELMANIA_LOAD_RATE, 10, 1, 120),
-    radius: parseInteger(args.radius || process.env.PIXELMANIA_LOAD_RADIUS, 128, 0, 1024),
+    radius: parseInteger(args.radius || process.env.PIXELMANIA_LOAD_RADIUS, 3, 0, 1024),
+    maxRejections: parseInteger(args["max-rejections"] || process.env.PIXELMANIA_LOAD_MAX_REJECTIONS, 0, 0, 1_000_000),
     angularSpeed: Number.isFinite(Number(args["angular-speed"] || process.env.PIXELMANIA_LOAD_ANGULAR_SPEED))
       ? Number(args["angular-speed"] || process.env.PIXELMANIA_LOAD_ANGULAR_SPEED)
       : 0.35,
@@ -630,7 +662,18 @@ async function main() {
     tokenOutFile,
   });
 
-  await runner.run();
+  const result = await runner.run();
+  if (!result.ok) {
+    throw new Error(
+      `Load stage did not remain healthy: active=${result.activeAtEnd}/${clients}`
+      + ` joined=${result.joinedAtEnd}/${clients}`
+      + ` authenticated=${runner.stats.authenticated}/${clients}`
+      + ` authErrors=${runner.stats.authErrors}`
+      + ` updateRequired=${runner.stats.updateRequired}`
+      + ` socketErrors=${runner.stats.errors}`
+      + ` rejections=${runner.stats.rejections}/${runner.maxRejections}`,
+    );
+  }
 }
 
 main().catch((error) => {

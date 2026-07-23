@@ -1,9 +1,35 @@
 // Generated from src/server_account_session_helpers.ts. Do not edit by hand.
 "use strict";
 const crypto = require("node:crypto");
+const net = require("node:net");
 const AccountHelpers = require("./server_account_helpers");
 const TextHelpers = require("./server_text_helpers");
 const nodemailer = require("nodemailer");
+function normalizeSocketAddress(value) {
+    let address = String(value || "").trim();
+    if (address.startsWith("::ffff:")) {
+        address = address.slice("::ffff:".length);
+    }
+    return net.isIP(address) ? address : "";
+}
+function firstForwardedAddress(value) {
+    const rawValue = Array.isArray(value) ? value[0] : value;
+    return normalizeSocketAddress(String(rawValue || "").split(",", 1)[0]);
+}
+function isTrustedLoopbackProxy(address) {
+    const normalized = normalizeSocketAddress(address);
+    return normalized === "127.0.0.1" || normalized === "::1";
+}
+function resolveTrustedProxyClientAddress(request) {
+    const peerAddress = normalizeSocketAddress(request?.socket?.remoteAddress);
+    if (!isTrustedLoopbackProxy(peerAddress))
+        return peerAddress;
+    const cloudflareAddress = firstForwardedAddress(request?.headers?.["cf-connecting-ip"]);
+    if (cloudflareAddress)
+        return cloudflareAddress;
+    const forwardedAddress = firstForwardedAddress(request?.headers?.["x-forwarded-for"]);
+    return forwardedAddress || peerAddress;
+}
 function createServerAccountSessionHelpers(deps) {
     const { ACCOUNT_EMAIL_CHANGE_TTL_MS, ACCOUNT_PASSWORD_RESET_TTL_MS, EMAIL_VERIFICATION_TTL_MS, LOGIN_ATTEMPT_LIMIT_ACCOUNT, LOGIN_ATTEMPT_LIMIT_IP, LOGIN_ATTEMPT_WINDOW_MS, MAX_USERNAME_LENGTH, MIN_PASSWORD_LENGTH, MIN_USERNAME_LENGTH, PASSWORD_HASH_ALGORITHM, PASSWORD_SCRYPT_KEYLEN, PASSWORD_SCRYPT_N, PASSWORD_SCRYPT_P, PASSWORD_SCRYPT_R, PUBLIC_BASE_URL, SESSION_REFRESH_TOKEN_TTL_MS, SESSION_TOKEN_TTL_MS, SMTP_FROM, SMTP_HOST, SMTP_PASS, SMTP_PORT, SMTP_SECURE, SMTP_USER, accountKey, accounts, cleanAccountName, cleanEmail, getSocketAddress, getSocketDeviceInfo, getSocketUserAgent, isPostgresAuthoritativeReady, localEmailChangeRequests, localLoginAttemptBuckets, localPasswordResetRequests, logSecurityEvent, makeRequestId, postgresStore, queueAccountsSave, redisStore, sanitizeAccountState, } = deps;
     let mailTransporter = null;
@@ -617,4 +643,6 @@ function createServerAccountSessionHelpers(deps) {
 }
 module.exports = {
     createServerAccountSessionHelpers,
+    normalizeSocketAddress,
+    resolveTrustedProxyClientAddress,
 };

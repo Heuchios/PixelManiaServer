@@ -6,7 +6,14 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 
-const AccountSessionHelpersModule = require("../server_account_session_helpers");
+const AccountSessionHelpersModule = /** @type {{
+ *   createServerAccountSessionHelpers: (deps: Record<string, any>) => Record<string, any>;
+ *   normalizeSocketAddress: (value: unknown) => string;
+ *   resolveTrustedProxyClientAddress: (request: {
+ *     headers?: Record<string, unknown>;
+ *     socket?: { remoteAddress?: unknown };
+ *   } | null | undefined) => string;
+ * }} */ (require("../server_account_session_helpers"));
 
 const repoRoot = path.join(__dirname, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
@@ -16,6 +23,31 @@ const helperSource = fs.readFileSync(path.join(repoRoot, "src", "server_account_
 const generatedSource = fs.readFileSync(path.join(repoRoot, "server_account_session_helpers.js"), "utf8");
 const syncSource = fs.readFileSync(path.join(repoRoot, "scripts", "sync_server_account_session_helpers_build.js"), "utf8");
 const buildConfig = JSON.parse(fs.readFileSync(path.join(repoRoot, "tsconfig.server-account-session-helpers.json"), "utf8"));
+
+assert.equal(AccountSessionHelpersModule.normalizeSocketAddress("::ffff:203.0.113.9"), "203.0.113.9");
+assert.equal(AccountSessionHelpersModule.normalizeSocketAddress("not-an-ip"), "");
+assert.equal(AccountSessionHelpersModule.resolveTrustedProxyClientAddress({
+  socket: { remoteAddress: "198.51.100.7" },
+  headers: { "cf-connecting-ip": "203.0.113.10" },
+}), "198.51.100.7");
+assert.equal(AccountSessionHelpersModule.resolveTrustedProxyClientAddress({
+  socket: { remoteAddress: "127.0.0.1" },
+  headers: {
+    "cf-connecting-ip": "203.0.113.10",
+    "x-forwarded-for": "198.51.100.8, 198.51.100.9",
+  },
+}), "203.0.113.10");
+assert.equal(AccountSessionHelpersModule.resolveTrustedProxyClientAddress({
+  socket: { remoteAddress: "::1" },
+  headers: {
+    "cf-connecting-ip": "invalid",
+    "x-forwarded-for": "198.51.100.8, 198.51.100.9",
+  },
+}), "198.51.100.8");
+assert.equal(AccountSessionHelpersModule.resolveTrustedProxyClientAddress({
+  socket: { remoteAddress: "127.0.0.1" },
+  headers: { "x-forwarded-for": "invalid" },
+}), "127.0.0.1");
 
 /** @type {Map<string, Record<string, any>>} */
 const accounts = new Map();
@@ -184,7 +216,9 @@ const helpers = /** @type {any} */ (AccountSessionHelpersModule.createServerAcco
   assert.match(helperSource, /async function applyPasswordResetToken/);
   assert.match(helperSource, /async function confirmEmailChangeToken/);
   assert.match(helperSource, /async function checkLoginAttemptAllowed/);
+  assert.match(helperSource, /function resolveTrustedProxyClientAddress/);
   assert.match(generatedSource, /Generated from src\/server_account_session_helpers\.ts/);
+  assert.match(generatedSource, /resolveTrustedProxyClientAddress/);
   assert.match(generatedSource, /module\.exports = /);
   assert.deepEqual(buildConfig.include, ["src/server_account_session_helpers.ts"]);
   assert.match(syncSource, /server_account_session_helpers\.js/);
@@ -194,6 +228,9 @@ const helpers = /** @type {any} */ (AccountSessionHelpersModule.createServerAcco
   assert.match(serverSource, /getServerAccountSessionHelpers\(\)\.issueSessionTokens/);
   assert.match(serverSource, /getServerAccountSessionHelpers\(\)\.applyPasswordResetToken/);
   assert.match(serverSource, /getServerAccountSessionHelpers\(\)\.checkLoginAttemptAllowed/);
+  assert.match(serverSource, /resolveTrustedProxyClientAddress\(request\)/);
+  assert.match(serverSource, /normalizeSocketAddress\(/);
+  assert.doesNotMatch(serverSource, /socket\.remoteAddress = String\(request\?\.socket\?\.remoteAddress/);
   assert.doesNotMatch(serverSource, /function parsePasswordHashAlgorithm\(algorithm = ""\) \{\s+const raw = String\(algorithm/);
   assert.doesNotMatch(serverSource, /function issueSessionTokens\(account\) \{\s+const sessionToken/);
   assert.doesNotMatch(serverSource, /async function applyPasswordResetToken\(token, password\) \{\s+const passwordValidation/);

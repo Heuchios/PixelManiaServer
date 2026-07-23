@@ -2533,7 +2533,7 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
   socket.playerId = playerId;
   socketByPlayerId.set(playerId, socket);
   socket.userAgent = String(request?.headers?.["user-agent"] || "");
-  socket.remoteAddress = String(request?.socket?.remoteAddress || "");
+  socket.remoteAddress = ServerAccountSessionHelpersModule.resolveTrustedProxyClientAddress(request);
   socket.rateLimits = new Map();
   socket.rateLimitWarnings = new Map();
   socket.rateLimitSecurityWarnings = new Map();
@@ -16798,7 +16798,9 @@ function isLavaReboundBlockType(blockType: any) {
 }
 
 function getSocketAddress(socket: any) {
-  return String(socket?._socket?.remoteAddress || socket?.remoteAddress || "").replace(/^::ffff:/, "");
+  return ServerAccountSessionHelpersModule.normalizeSocketAddress(
+    socket?.remoteAddress || socket?._socket?.remoteAddress,
+  );
 }
 
 function getSocketUserAgent(socket: any, data: any = {}) {

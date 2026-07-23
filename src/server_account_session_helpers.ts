@@ -1,6 +1,7 @@
 "use strict";
 
 import crypto = require("node:crypto");
+import net = require("node:net");
 
 const AccountHelpers = require("./server_account_helpers") as {
   validateUsername(value: unknown, minUsernameLength?: number, maxUsernameLength?: number): ValidationResult;
@@ -26,6 +27,42 @@ type ValidationResult = {
 };
 
 interface AccountSessionDeps extends PacketRecord {}
+
+type ProxyRequestLike = {
+  headers?: Record<string, unknown>;
+  socket?: {
+    remoteAddress?: unknown;
+  };
+} | null | undefined;
+
+function normalizeSocketAddress(value: unknown): string {
+  let address = String(value || "").trim();
+  if (address.startsWith("::ffff:")) {
+    address = address.slice("::ffff:".length);
+  }
+  return net.isIP(address) ? address : "";
+}
+
+function firstForwardedAddress(value: unknown): string {
+  const rawValue = Array.isArray(value) ? value[0] : value;
+  return normalizeSocketAddress(String(rawValue || "").split(",", 1)[0]);
+}
+
+function isTrustedLoopbackProxy(address: unknown): boolean {
+  const normalized = normalizeSocketAddress(address);
+  return normalized === "127.0.0.1" || normalized === "::1";
+}
+
+function resolveTrustedProxyClientAddress(request: ProxyRequestLike): string {
+  const peerAddress = normalizeSocketAddress(request?.socket?.remoteAddress);
+  if (!isTrustedLoopbackProxy(peerAddress)) return peerAddress;
+
+  const cloudflareAddress = firstForwardedAddress(request?.headers?.["cf-connecting-ip"]);
+  if (cloudflareAddress) return cloudflareAddress;
+
+  const forwardedAddress = firstForwardedAddress(request?.headers?.["x-forwarded-for"]);
+  return forwardedAddress || peerAddress;
+}
 
 function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
   const {
@@ -753,4 +790,6 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
 
 export = {
   createServerAccountSessionHelpers,
+  normalizeSocketAddress,
+  resolveTrustedProxyClientAddress,
 };
