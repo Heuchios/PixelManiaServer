@@ -2904,9 +2904,74 @@ const ITEM_DEFINITIONS = {
     punch_animation: "punch_sword",
     shop_price: 0,
   }),
+  stone_pickaxe: item("tool", {
+    display_name: "Stone Pickaxe",
+    description: "A sturdy stone pickaxe that breaks blocks at normal punch strength.",
+    rarity: "common",
+    texture: "res://Assets/items/swords/stone_pickaxe.png",
+    inventory_icon: "res://Assets/items/swords/stone_pickaxe_icon.png",
+    equipment_slot: "hand",
+    equipable: true,
+    hand_item: true,
+    punch_animation: "punch_sword",
+    instance_tracked: true,
+    shop_price: 0,
+  }),
+  golden_pickaxe: item("tool", {
+    display_name: "Golden Pickaxe",
+    description: "A polished golden pickaxe that breaks blocks at normal punch strength.",
+    rarity: "rare",
+    texture: "res://Assets/items/swords/golden_pickaxe.png",
+    inventory_icon: "res://Assets/items/swords/golden_pickaxe_icon.png",
+    equipment_slot: "hand",
+    equipable: true,
+    hand_item: true,
+    punch_animation: "punch_sword",
+    instance_tracked: true,
+    shop_price: 0,
+  }),
+  emerald_pickaxe: item("tool", {
+    display_name: "Emerald Pickaxe",
+    description: "An emerald pickaxe that breaks blocks at normal punch strength.",
+    rarity: "epic",
+    texture: "res://Assets/items/swords/emerald_pickaxe.png",
+    inventory_icon: "res://Assets/items/swords/emerald_pickaxe_icon.png",
+    equipment_slot: "hand",
+    equipable: true,
+    hand_item: true,
+    punch_animation: "punch_sword",
+    instance_tracked: true,
+    shop_price: 0,
+  }),
+  diamond_pickaxe: item("tool", {
+    display_name: "Diamond Pickaxe",
+    description: "A diamond pickaxe that breaks blocks at normal punch strength.",
+    rarity: "legendary",
+    texture: "res://Assets/items/swords/diamond_pickaxe.png",
+    inventory_icon: "res://Assets/items/swords/diamond_pickaxe_icon.png",
+    equipment_slot: "hand",
+    equipable: true,
+    hand_item: true,
+    punch_animation: "punch_sword",
+    instance_tracked: true,
+    shop_price: 0,
+  }),
+  neptune_pickaxe: item("tool", {
+    display_name: "Neptune Pickaxe",
+    description: "A sea-forged pickaxe that breaks blocks at normal punch strength.",
+    rarity: "legendary",
+    texture: "res://Assets/items/swords/neptune_pickaxe.png",
+    inventory_icon: "res://Assets/items/swords/neptune_pickaxe_icon.png",
+    equipment_slot: "hand",
+    equipable: true,
+    hand_item: true,
+    punch_animation: "punch_sword",
+    instance_tracked: true,
+    shop_price: 0,
+  }),
   void_pickaxe: item("tool", {
     display_name: "Void Pickaxe",
-    description: "A void-forged pickaxe that breaks any breakable block in one hit.",
+    description: "A void-forged pickaxe that reduces the hits needed to break a block by one.",
     rarity: "legendary",
     texture: "res://Assets/items/swords/void_pickaxe.png",
     inventory_icon: "res://Assets/items/swords/void_pickaxe_icon.png",
@@ -2914,7 +2979,7 @@ const ITEM_DEFINITIONS = {
     equipable: true,
     hand_item: true,
     punch_animation: "punch_sword",
-    instant_break: true,
+    break_hit_reduction: 1,
     instance_tracked: true,
     shop_price: 0,
   }),
@@ -3536,10 +3601,6 @@ function getBreakPower(toolId: unknown, blockType = ""): number {
   const definition = getItemDefinition(toolId);
   if (!definition || definition.category !== "tool") return 1;
 
-  if (definition.instant_break === true) {
-    return getBlockHealth(blockType);
-  }
-
   const basePower = Math.max(1, Math.trunc(Number(definition.break_power) || 1));
   const effectiveBlocks = Array.isArray(definition.effective_blocks)
     ? definition.effective_blocks.map(cleanItemId)
@@ -3550,6 +3611,16 @@ function getBreakPower(toolId: unknown, blockType = ""): number {
   }
 
   return basePower;
+}
+
+function getBreakHitReduction(toolId: unknown): number {
+  const definition = getItemDefinition(toolId);
+  if (!definition || definition.category !== "tool") return 0;
+  return Math.max(0, Math.trunc(Number(definition.break_hit_reduction) || 0));
+}
+
+function getRequiredBreakDamage(toolId: unknown, blockType: unknown): number {
+  return Math.max(1, getBlockHealth(blockType) - getBreakHitReduction(toolId));
 }
 
 function isFishingRodItem(itemId: unknown): boolean {
@@ -3592,7 +3663,9 @@ const ServerItemDatabase = {
   getInventoryFieldForItem,
   getItemDefinition,
   getBlockHealth,
+  getBreakHitReduction,
   getBreakPower,
+  getRequiredBreakDamage,
   getPlaceLayer,
   getPlacementCost,
   getSpliceKey,

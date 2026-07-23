@@ -13678,7 +13678,8 @@ function getPlayerBreakPower(player, blockType) {
 function applyServerBlockDamage(player, worldName, update) {
     const key = makeBlockDamageKey(worldName, update);
     const now = Date.now();
-    const requiredDamage = ItemDatabase.getBlockHealth(update.block_type);
+    const handItem = clampString(player?.equipment_slots?.hand || "");
+    const requiredDamage = ItemDatabase.getRequiredBreakDamage(handItem, update.block_type);
     const hitPower = getPlayerBreakPower(player, update.block_type);
     const previous = blockDamage.get(key);
     const currentDamage = previous && now - previous.updatedAt <= BLOCK_DAMAGE_RESET_MS

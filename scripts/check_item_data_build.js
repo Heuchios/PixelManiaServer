@@ -13,6 +13,7 @@ const deploySource = require("./release_deployment_test_helpers").readDeployment
 const buildConfig = JSON.parse(fs.readFileSync(path.join(repoRoot, "tsconfig.item-data.json"), "utf8"));
 const syncSource = fs.readFileSync(path.join(repoRoot, "scripts", "sync_item_data_build.js"), "utf8");
 const itemDatabaseSource = fs.readFileSync(path.join(repoRoot, "src", "server_item_database.ts"), "utf8");
+const serverSource = fs.readFileSync(path.join(repoRoot, "src", "server.ts"), "utf8");
 const atlasDbSource = fs.readFileSync(path.join(repoRoot, "src", "item_atlas_db.ts"), "utf8");
 const atlasDefinitionSource = fs.readFileSync(path.join(repoRoot, "src", "atlas_item_definition.ts"), "utf8");
 
@@ -33,15 +34,39 @@ assert.equal(itemDatabase.hasItem("axe"), false);
 assert.equal(itemDatabase.hasItem("pickaxe"), false);
 assert.equal(itemDatabase.hasItem("shovel"), false);
 assert.equal(itemDatabase.hasItem("furnace"), false);
-assert.equal(itemDatabase.getItemDefinition("void_pickaxe")?.category, "tool");
-assert.equal(itemDatabase.getItemDefinition("void_pickaxe")?.equipment_slot, "hand");
-assert.equal(itemDatabase.getItemDefinition("void_pickaxe")?.instant_break, true);
-assert.equal(itemDatabase.getItemDefinition("void_pickaxe")?.instance_tracked, true);
-assert.equal(
-  itemDatabase.getBreakPower("void_pickaxe", "world_lock"),
-  itemDatabase.getBlockHealth("world_lock"),
-);
-assert.equal(itemDatabase.getBreakPower("void_saber", "world_lock"), 1);
+
+const pickaxeItemIds = [
+  "stone_pickaxe",
+  "golden_pickaxe",
+  "emerald_pickaxe",
+  "diamond_pickaxe",
+  "neptune_pickaxe",
+  "void_pickaxe",
+];
+for (const itemId of pickaxeItemIds) {
+  const definition = itemDatabase.getItemDefinition(itemId);
+  assert.equal(definition?.category, "tool");
+  assert.equal(definition?.equipment_slot, "hand");
+  assert.equal(definition?.hand_item, true);
+  assert.equal(definition?.instance_tracked, true);
+  assert.equal(definition?.texture, `res://Assets/items/swords/${itemId}.png`);
+  assert.equal(definition?.inventory_icon, `res://Assets/items/swords/${itemId}_icon.png`);
+  assert.equal(itemDatabase.getBreakPower(itemId, "world_lock"), 1);
+}
+
+assert.equal(itemDatabase.getBreakHitReduction("void_pickaxe"), 1);
+assert.equal(itemDatabase.getRequiredBreakDamage("void_pickaxe", "world_lock"), 7);
+assert.equal(itemDatabase.getRequiredBreakDamage("void_pickaxe", "dirt"), 2);
+assert.equal(itemDatabase.getRequiredBreakDamage("void_pickaxe", "electric_wire"), 1);
+for (const itemId of pickaxeItemIds.filter((candidate) => candidate !== "void_pickaxe")) {
+  assert.equal(itemDatabase.getBreakHitReduction(itemId), 0);
+  assert.equal(
+    itemDatabase.getRequiredBreakDamage(itemId, "world_lock"),
+    itemDatabase.getBlockHealth("world_lock"),
+  );
+}
+assert.equal(itemDatabase.getRequiredBreakDamage("void_saber", "world_lock"), 8);
+assert.match(serverSource, /const requiredDamage = ItemDatabase\.getRequiredBreakDamage\(handItem, update\.block_type\)/);
 
 assert.equal(
   packageJson.scripts["build:item-data"],
