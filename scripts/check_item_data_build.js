@@ -4,6 +4,7 @@
 
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
+const os = require("node:os");
 const path = require("node:path");
 
 const repoRoot = path.join(__dirname, "..");
@@ -50,6 +51,26 @@ assert.match(syncSource, /Generated from src\/\$\{moduleName\}\.ts/);
 assert.match(itemDatabaseSource, /export = ServerItemDatabase/);
 assert.match(atlasDbSource, /export = ItemAtlasDB/);
 assert.match(atlasDefinitionSource, /export = AtlasItemDefinition/);
+assert.match(atlasDbSource, /process\.env\.PIXELMANIA_CLIENT_DIR/);
+assert.match(atlasDbSource, /path\.join\(__dirname, "_client", "Data", "items", "atlas_items\.json"\)/);
+
+const isolatedReleaseRoot = fs.mkdtempSync(path.join(os.tmpdir(), "pixelmania-item-atlas-release-"));
+try {
+  const isolatedAtlasLoader = path.join(isolatedReleaseRoot, "item_atlas_db.js");
+  const isolatedAtlasPath = path.join(isolatedReleaseRoot, "_client", "Data", "items", "atlas_items.json");
+  fs.mkdirSync(path.dirname(isolatedAtlasPath), { recursive: true });
+  fs.copyFileSync(path.join(repoRoot, "item_atlas_db.js"), isolatedAtlasLoader);
+  fs.writeFileSync(
+    isolatedAtlasPath,
+    JSON.stringify({ items: [{ id: 35, item_key: "donation_box", layer: "foreground" }] }),
+    "utf8",
+  );
+  const isolatedAtlasDb = require(isolatedAtlasLoader);
+  assert.equal(isolatedAtlasDb.getItemIdForKey("donation_box"), 35);
+  assert.equal(isolatedAtlasDb.getItemKey(35), "donation_box");
+} finally {
+  fs.rmSync(isolatedReleaseRoot, { force: true, recursive: true });
+}
 
 assert.match(deploySource, /src\/server_item_database\.ts/);
 assert.match(deploySource, /src\/item_atlas_db\.ts/);

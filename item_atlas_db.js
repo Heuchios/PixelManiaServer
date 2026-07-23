@@ -4,6 +4,10 @@ const fs = require("node:fs");
 const path = require("node:path");
 const ATLAS_ITEMS_PATHS = [
     process.env.PIXELMANIA_ATLAS_ITEMS_PATH || "",
+    process.env.PIXELMANIA_CLIENT_DIR
+        ? path.join(process.env.PIXELMANIA_CLIENT_DIR, "Data", "items", "atlas_items.json")
+        : "",
+    path.join(__dirname, "_client", "Data", "items", "atlas_items.json"),
     path.join(__dirname, "Data", "items", "atlas_items.json"),
     path.join(__dirname, "..", "Data", "items", "atlas_items.json"),
     path.join(__dirname, "..", "pixel-mania", "Data", "items", "atlas_items.json"),
