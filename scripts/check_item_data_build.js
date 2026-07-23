@@ -33,6 +33,15 @@ assert.equal(itemDatabase.hasItem("axe"), false);
 assert.equal(itemDatabase.hasItem("pickaxe"), false);
 assert.equal(itemDatabase.hasItem("shovel"), false);
 assert.equal(itemDatabase.hasItem("furnace"), false);
+assert.equal(itemDatabase.getItemDefinition("void_pickaxe")?.category, "tool");
+assert.equal(itemDatabase.getItemDefinition("void_pickaxe")?.equipment_slot, "hand");
+assert.equal(itemDatabase.getItemDefinition("void_pickaxe")?.instant_break, true);
+assert.equal(itemDatabase.getItemDefinition("void_pickaxe")?.instance_tracked, true);
+assert.equal(
+  itemDatabase.getBreakPower("void_pickaxe", "world_lock"),
+  itemDatabase.getBlockHealth("world_lock"),
+);
+assert.equal(itemDatabase.getBreakPower("void_saber", "world_lock"), 1);
 
 assert.equal(
   packageJson.scripts["build:item-data"],

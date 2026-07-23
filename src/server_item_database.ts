@@ -2904,6 +2904,20 @@ const ITEM_DEFINITIONS = {
     punch_animation: "punch_sword",
     shop_price: 0,
   }),
+  void_pickaxe: item("tool", {
+    display_name: "Void Pickaxe",
+    description: "A void-forged pickaxe that breaks any breakable block in one hit.",
+    rarity: "legendary",
+    texture: "res://Assets/items/swords/void_pickaxe.png",
+    inventory_icon: "res://Assets/items/swords/void_pickaxe_icon.png",
+    equipment_slot: "hand",
+    equipable: true,
+    hand_item: true,
+    punch_animation: "punch_sword",
+    instant_break: true,
+    instance_tracked: true,
+    shop_price: 0,
+  }),
   electric_tool: item("tool", {
     display_name: "Electric Tool",
     rarity: "rare",
@@ -3521,6 +3535,10 @@ function getBlockHealth(itemId: unknown): number {
 function getBreakPower(toolId: unknown, blockType = ""): number {
   const definition = getItemDefinition(toolId);
   if (!definition || definition.category !== "tool") return 1;
+
+  if (definition.instant_break === true) {
+    return getBlockHealth(blockType);
+  }
 
   const basePower = Math.max(1, Math.trunc(Number(definition.break_power) || 1));
   const effectiveBlocks = Array.isArray(definition.effective_blocks)
