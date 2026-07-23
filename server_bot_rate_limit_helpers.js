@@ -40,6 +40,9 @@ function createServerBotRateLimitTables(deps = {}) {
         seed_place: makeBotRateLimitConfig("INVENTORY_SEED_PLACE", 60, 1000),
         seed_splice: makeBotRateLimitConfig("INVENTORY_SEED_SPLICE", 60, 1000),
         seed_harvest: makeBotRateLimitConfig("INVENTORY_SEED_HARVEST", 50, 1000),
+        donation_box_donate: makeBotRateLimitConfig("INVENTORY_DONATION_BOX_DONATE", 12, 1000),
+        donation_box_retrieve: makeBotRateLimitConfig("INVENTORY_DONATION_BOX_RETRIEVE", 12, 1000),
+        donation_box_retrieve_all: makeBotRateLimitConfig("INVENTORY_DONATION_BOX_RETRIEVE_ALL", 4, 1000),
     });
     const messageRateLimits = {
         login: { limit: 10, windowMs: 10000 },

@@ -80,6 +80,14 @@ function createServerWorldInteractionPayloadHelpers(config) {
         safe.operation = config.clampString(safePayload.operation || "").toLowerCase();
         return safe;
     }
+    function sanitizeDonationBoxPayloadForClient(payload = {}, worldName = "", receiverPlayer = null) {
+        const safePayload = copyRecord(payload);
+        const rawState = getRecordState(safePayload);
+        const safe = config.serializeDonationBoxStateForClient(rawState, receiverPlayer);
+        safe.type = config.clampString(safePayload.type || "world_interaction_update") || "world_interaction_update";
+        safe.world = config.cleanWorld(safePayload.world || safe.world || worldName);
+        return safe;
+    }
     function sanitizeOilRefineryPayloadForClient(safe, worldName) {
         const oilPayload = config.makeOilRefineryStatePayload(worldName || safe.world || "START", safe);
         const operation = config.clampString(safe.operation || "").toLowerCase();
@@ -151,6 +159,9 @@ function createServerWorldInteractionPayloadHelpers(config) {
         if (action === "bulletin_board_state") {
             return sanitizeBulletinBoardPayloadForClient(safe, worldName, receiverPlayer);
         }
+        if (action === "donation_box_state") {
+            return sanitizeDonationBoxPayloadForClient(safe, worldName, receiverPlayer);
+        }
         if (action === "oil_refinery_state")
             return sanitizeOilRefineryPayloadForClient(safe, worldName);
         if (action === "battery_charger_state")
@@ -164,6 +175,7 @@ function createServerWorldInteractionPayloadHelpers(config) {
         sanitizeChickenPayloadForClient,
         sanitizeCowPayloadForClient,
         sanitizeDuckPayloadForClient,
+        sanitizeDonationBoxPayloadForClient,
         sanitizeTackleBoxPayloadForClient,
         sanitizeWorldInteractionPayloadForClient,
     };

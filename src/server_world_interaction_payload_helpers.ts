@@ -21,6 +21,7 @@ interface WorldInteractionPayloadHelpersConfig {
   serializeCowStateForClient(cow: unknown): JsonRecord;
   serializeDuckStateForClient(duck: unknown): JsonRecord;
   serializeBulletinBoardStateForClient(board: unknown, receiverPlayer?: unknown): JsonRecord;
+  serializeDonationBoxStateForClient(box: unknown, receiverPlayer?: unknown): JsonRecord;
   makeOilRefineryStatePayload(worldName: unknown, oilState: unknown, extra?: JsonRecord): JsonRecord;
   makeBatteryChargerStatePayload(worldName: unknown, chargerState: unknown, extra?: JsonRecord): JsonRecord;
   ensureWorldState(worldName: unknown): unknown;
@@ -166,6 +167,19 @@ function createServerWorldInteractionPayloadHelpers(config: WorldInteractionPayl
     return safe;
   }
 
+  function sanitizeDonationBoxPayloadForClient(
+    payload: unknown = {},
+    worldName: unknown = "",
+    receiverPlayer: unknown = null
+  ): JsonRecord {
+    const safePayload = copyRecord(payload);
+    const rawState = getRecordState(safePayload);
+    const safe = config.serializeDonationBoxStateForClient(rawState, receiverPlayer);
+    safe.type = config.clampString(safePayload.type || "world_interaction_update") || "world_interaction_update";
+    safe.world = config.cleanWorld(safePayload.world || safe.world || worldName);
+    return safe;
+  }
+
   function sanitizeOilRefineryPayloadForClient(safe: JsonRecord, worldName: unknown): JsonRecord {
     const oilPayload = config.makeOilRefineryStatePayload(worldName || safe.world || "START", safe);
     const operation = config.clampString(safe.operation || "").toLowerCase();
@@ -243,6 +257,9 @@ function createServerWorldInteractionPayloadHelpers(config: WorldInteractionPayl
     if (action === "bulletin_board_state") {
       return sanitizeBulletinBoardPayloadForClient(safe, worldName, receiverPlayer);
     }
+    if (action === "donation_box_state") {
+      return sanitizeDonationBoxPayloadForClient(safe, worldName, receiverPlayer);
+    }
     if (action === "oil_refinery_state") return sanitizeOilRefineryPayloadForClient(safe, worldName);
     if (action === "battery_charger_state") return sanitizeBatteryChargerPayloadForClient(safe, worldName);
     if (action !== "door_state") return safe;
@@ -254,6 +271,7 @@ function createServerWorldInteractionPayloadHelpers(config: WorldInteractionPayl
     sanitizeChickenPayloadForClient,
     sanitizeCowPayloadForClient,
     sanitizeDuckPayloadForClient,
+    sanitizeDonationBoxPayloadForClient,
     sanitizeTackleBoxPayloadForClient,
     sanitizeWorldInteractionPayloadForClient,
   };

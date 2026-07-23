@@ -86,6 +86,46 @@ interface ServerSaleRecord extends ServerPacketRecord {
   sell_value: number;
 }
 
+interface ServerDonationBoxTransactionOptions {
+  inventory_deltas?: unknown[];
+}
+
+interface ServerDonationBoxEntry extends ServerPacketRecord {
+  donation_id: string;
+  donor_username: string;
+  donor_name: string;
+  donor_account_id: string;
+  donor_player_id: string;
+  item_id: string;
+  item_category: string;
+  amount: number;
+  donated_at: string;
+}
+
+interface ServerDonationBoxState extends ServerPacketRecord, ServerGridPoint {
+  action: "donation_box_state";
+  world: string;
+  owner_username: string;
+  owner_name: string;
+  owner_account_id: string;
+  owner_player_id: string;
+  donations: ServerDonationBoxEntry[];
+  updated_at: string;
+}
+
+interface ServerDonationBoxClientState extends ServerPacketRecord, ServerGridPoint {
+  action: "donation_box_state";
+  world: string;
+  owner_username: string;
+  owner_name: string;
+  donations: ServerDonationBoxEntry[];
+  donation_count: number;
+  max_donations: number;
+  has_donations: boolean;
+  can_manage: boolean;
+  can_donate: boolean;
+}
+
 interface ServerKilledTargetRecord {
   playerId: string;
   username: string;
@@ -431,6 +471,7 @@ const VEND_BLOCK_SOLD = "vend_sold";
 const VEND_BLOCK_TYPES: any = new Set([VEND_BLOCK_EMPTY, VEND_BLOCK_PENDING, VEND_BLOCK_SOLD]);
 const VEND_LOG_LIMIT = 30;
 const SAFE_BLOCK_TYPE = "safe";
+const DONATION_BOX_BLOCK_TYPE = "donation_box";
 const MAILBOX_BLOCK_TYPES: any = new Set(["blue_mail_box", "mail_box"]);
 const BULLETIN_BOARD_BLOCK_TYPE = "bulletin_board";
 const FISH_HANGER_BLOCK_TYPE = "fish_hanger";
@@ -533,6 +574,7 @@ const BATTERY_CHARGER_OUTPUT_CAPACITY = 200;
 const BATTERY_CHARGER_TICK_MS = 5000;
 const BATTERY_CHARGER_MAX_ELAPSED_MS_PER_TICK = 5 * 60 * 1000;
 const SAFE_SLOT_COUNT = 10;
+const DONATION_BOX_SLOT_COUNT = 30;
 const MAILBOX_MESSAGE_LIMIT = 20;
 const BULLETIN_BOARD_MESSAGE_LIMIT = 30;
 const CCTV_EVENT_LIMIT = 20;
@@ -707,7 +749,7 @@ const WORLD_LOCK_BLOCK_TYPE = "world_lock";
 const SUPER_WORLD_LOCK_BLOCK_TYPE = "super_world_lock";
 const WORLD_LOCK_KEY_ITEM_TYPE = "world_lock_key";
 const WORLD_LOCK_KEY_ITEM_CATEGORY = "material";
-const WORLD_LOCK_KEY_STORAGE_BLOCK_MESSAGE = 'remove items from "safe" "vend" "display" before trading the world';
+const WORLD_LOCK_KEY_STORAGE_BLOCK_MESSAGE = 'remove items from "safe" "vend" "display" "donation box" before trading the world';
 function traceWorldLockKeyFlow(stage: any, details: any = {}) {
   console.log("[world-lock-key]", stage, details);
 }
@@ -872,6 +914,7 @@ const WorldStateHelpers = WorldStateHelpersModule.createWorldStateHelpers({
   maxBulletinBoardMessageLength: MAX_BULLETIN_BOARD_MESSAGE_LENGTH,
   vendLogLimit: VEND_LOG_LIMIT,
   safeSlotCount: SAFE_SLOT_COUNT,
+  donationBoxSlotCount: DONATION_BOX_SLOT_COUNT,
   mailboxMessageLimit: MAILBOX_MESSAGE_LIMIT,
   bulletinBoardMessageLimit: BULLETIN_BOARD_MESSAGE_LIMIT,
   tackleBoxCooldownMs: TACKLE_BOX_COOLDOWN_MS,
@@ -900,6 +943,7 @@ const WorldStateHelpers = WorldStateHelpersModule.createWorldStateHelpers({
   electricalSignalModes: ELECTRICAL_SIGNAL_MODES,
   electricalGeneratorMaxWatts: ELECTRICAL_GENERATOR_MAX_WATTS,
   safeBlockType: SAFE_BLOCK_TYPE,
+  donationBoxBlockType: DONATION_BOX_BLOCK_TYPE,
   worldLockKeyItemType: WORLD_LOCK_KEY_ITEM_TYPE,
   oilRefineryOutputCapacity: OIL_REFINERY_OUTPUT_CAPACITY,
   oilRefineryBatteryInputCapacity: OIL_REFINERY_BATTERY_INPUT_CAPACITY,
@@ -958,6 +1002,7 @@ const ServerWorldInteractionPayloadHelpers = ServerWorldInteractionPayloadHelper
   serializeCowStateForClient,
   serializeDuckStateForClient,
   serializeBulletinBoardStateForClient,
+  serializeDonationBoxStateForClient,
   makeOilRefineryStatePayload,
   makeBatteryChargerStatePayload,
   ensureWorldState,
@@ -1152,6 +1197,7 @@ function getServerInventoryEconomyRoutes() {
       ensureWritablePlayerState,
       getInventoryCount,
       handleDisplayTransaction,
+      handleDonationBoxTransaction,
       handleDropInventoryItemTransaction,
       handleFishMongerTransaction,
       handleFishingCompleteTransaction,
@@ -1351,6 +1397,7 @@ function getServerPhase8WorldActionRoutes() {
       initializeChickenOnPlace,
       initializeCowOnPlace,
       initializeDisplayOwnerOnPlace,
+      initializeDonationBoxOwnerOnPlace,
       initializeDuckOnPlace,
       initializeSafeOwnerOnPlace,
       initializeTackleBoxOnPlace,
@@ -1362,6 +1409,7 @@ function getServerPhase8WorldActionRoutes() {
       isChickenBlockType,
       isCowBlockType,
       isDisplayBlockType,
+      isDonationBoxBlockType,
       isDuckBlockType,
       isElectricalDeviceBlockOnLayer,
       isFishMongerBreakAttempt,
@@ -5835,7 +5883,7 @@ function getWorldLockProtectedStorageBlocks(worldName: any) {
 
   for (const block of state.foreground.values()) {
     const blockType = clampString(block?.block_type || "");
-    if (isVendBlockType(blockType) || isSafeBlockType(blockType) || isDisplayBlockType(blockType) || isFishMongerBlockType(blockType)) {
+    if (isVendBlockType(blockType) || isSafeBlockType(blockType) || isDonationBoxBlockType(blockType) || isDisplayBlockType(blockType) || isFishMongerBlockType(blockType)) {
       protectedBlocks.push(block);
     }
   }
@@ -5904,6 +5952,16 @@ function getWorldLockKeyStorageBlockers(worldName: any) {
         (slot: ServerPacketRecord | null) => slot && Number(slot.amount || 0) > 0,
       )) {
         blockers.add("safe");
+      }
+      continue;
+    }
+
+    if (isDonationBoxBlockType(blockType)) {
+      const box = getDonationBoxStateAt(worldName, x, y, false);
+      if (Array.isArray(box.donations) && box.donations.some(
+        (entry: ServerPacketRecord | null) => entry && Number(entry.amount || 0) > 0,
+      )) {
+        blockers.add("donation box");
       }
       continue;
     }
@@ -7555,6 +7613,596 @@ async function prepareSafeBreakInventoryReturn(socket: any, player: any, worldNa
     inventoryDeltas: Array.isArray(commit.deltas) ? commit.deltas : [],
     postgres_committed: commit.postgres_committed,
     message: "Returned safe contents.",
+  };
+}
+
+function isDonationBoxBlockType(blockType: unknown) {
+  return clampString(blockType || "") === DONATION_BOX_BLOCK_TYPE;
+}
+
+function makeEmptyDonationBoxState(worldName: unknown, x: unknown, y: unknown): ServerDonationBoxState {
+  return {
+    action: "donation_box_state",
+    world: cleanWorld(worldName),
+    x: Math.trunc(Number(x) || 0),
+    y: Math.trunc(Number(y) || 0),
+    owner_username: "",
+    owner_name: "",
+    owner_account_id: "",
+    owner_player_id: "",
+    donations: [],
+    updated_at: new Date().toISOString(),
+  };
+}
+
+function canStoreItemInDonationBox(itemId: unknown, itemCategory: unknown) {
+  const cleanItemId = clampString(itemId || "");
+  if (cleanItemId === "" || !ItemDatabase.hasItem(cleanItemId)) return false;
+  if (cleanItemId === "punch" || cleanItemId === DONATION_BOX_BLOCK_TYPE || cleanItemId === WORLD_LOCK_KEY_ITEM_TYPE) return false;
+
+  const definition = ItemDatabase.getItemDefinition(cleanItemId);
+  if (!definition || definition.hidden || definition.tradeable === false) return false;
+
+  const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
+  if (resolvedCategory === "" || resolvedCategory === "currency") return false;
+  return ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory);
+}
+
+/** @returns {PixelMania.DonationBoxEntry | null} */
+function sanitizeDonationBoxEntry(rawEntry: unknown): ServerDonationBoxEntry | null {
+  return WorldStateHelpers.sanitizeDonationBoxEntry(rawEntry);
+}
+
+/** @returns {PixelMania.DonationBoxState} */
+function sanitizeDonationBoxState(rawEntry: unknown, worldName: unknown, x: unknown, y: unknown): ServerDonationBoxState {
+  return WorldStateHelpers.sanitizeDonationBoxState(rawEntry, worldName, x, y);
+}
+
+/** @returns {PixelMania.DonationBoxClientState} */
+function serializeDonationBoxStateForClient(box: Partial<ServerDonationBoxState> | null, player: ServerPacketRecord | null = null): ServerDonationBoxClientState {
+  const cleanBox = sanitizeDonationBoxState(box, box?.world || "", box?.x || 0, box?.y || 0);
+  const canManage = canPlayerManageDonationBox(player, cleanBox, cleanBox.world);
+  return {
+    action: "donation_box_state",
+    world: cleanWorld(cleanBox.world || ""),
+    x: cleanBox.x,
+    y: cleanBox.y,
+    owner_username: cleanBox.owner_username,
+    owner_name: cleanBox.owner_name,
+    donations: canManage ? cleanBox.donations.map((entry: ServerDonationBoxEntry) => ({ ...entry })) : [],
+    donation_count: cleanBox.donations.length,
+    max_donations: DONATION_BOX_SLOT_COUNT,
+    has_donations: cleanBox.donations.length > 0,
+    can_manage: canManage,
+    can_donate: Boolean(player && player.authenticated),
+  };
+}
+
+function canPlayerPlaceDonationBox(player: ServerPacketRecord, worldName: unknown) {
+  return isWorldLocked(worldName) && isPlayerWorldOwner(player, worldName);
+}
+
+function canPlayerManageDonationBox(player: ServerPacketRecord | null, box: Partial<ServerDonationBoxState> | null, worldName: unknown = "") {
+  if (!player || !player.authenticated) return false;
+  const cleanWorldName = cleanWorld(worldName || box?.world || "");
+  return isWorldLocked(cleanWorldName) && isPlayerWorldOwner(player, cleanWorldName);
+}
+
+function canPlayerBreakDonationBox(player: ServerPacketRecord, worldName: unknown, update: ServerPacketRecord) {
+  if (!player || !player.authenticated) return false;
+  if (!update || (update.action !== "break" && update.action !== "hit") || update.layer === "background") return false;
+
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(update.x, update.y));
+  if (!block || !isDonationBoxBlockType(block.block_type)) return false;
+  return isWorldLocked(worldName) && isPlayerWorldOwner(player, worldName);
+}
+
+function getDonationBoxStateAt(worldName: unknown, x: unknown, y: unknown, createIfMissing = false): ServerDonationBoxState {
+  const state = ensureWorldState(worldName);
+  const key = gridKey(x, y);
+  const existing = state.interactions.get(key);
+  if (existing && existing.action === "donation_box_state") {
+    const box = sanitizeDonationBoxState(existing, worldName, x, y);
+    state.interactions.set(key, box);
+    return box;
+  }
+
+  const empty = makeEmptyDonationBoxState(worldName, x, y);
+  if (createIfMissing) state.interactions.set(key, empty);
+  return empty;
+}
+
+function setDonationBoxStateAt(worldName: unknown, box: ServerDonationBoxState): ServerDonationBoxState {
+  const state = ensureWorldState(worldName);
+  const cleanBox = sanitizeDonationBoxState(box, worldName, box.x, box.y);
+  cleanBox.updated_at = new Date().toISOString();
+  state.interactions.set(gridKey(cleanBox.x, cleanBox.y), cleanBox);
+  return cleanBox;
+}
+
+function applyDonationBoxOwnerIdentity(box: ServerDonationBoxState, player: ServerPacketRecord) {
+  if (!box || !player || !player.authenticated) return box;
+  const identity = getPlayerLockIdentity(player);
+  const accountUsername = clampString(player.account_username || "");
+  box.owner_username = accountUsername;
+  box.owner_name = accountUsername.toUpperCase();
+  box.owner_account_id = identity.owner_account_id || "";
+  box.owner_player_id = identity.owner_player_id || "";
+  return box;
+}
+
+function initializeDonationBoxOwnerOnPlace(worldName: unknown, update: ServerPacketRecord, player: ServerPacketRecord) {
+  if (!player || !player.authenticated) return;
+  const box = applyDonationBoxOwnerIdentity(makeEmptyDonationBoxState(worldName, update.x, update.y), player);
+  setDonationBoxStateAt(worldName, box);
+}
+
+function sendDonationBoxVisualStateUpdateToWorld(worldName: unknown, box: ServerDonationBoxState) {
+  const cleanBox = sanitizeDonationBoxState(box, worldName, box?.x || 0, box?.y || 0);
+  queueWorldUpdateBroadcast(worldName, {
+    type: "world_interaction_update",
+    action: "donation_box_visual_state",
+    world: cleanWorld(worldName),
+    x: cleanBox.x,
+    y: cleanBox.y,
+    donation_count: cleanBox.donations.length,
+    has_donations: cleanBox.donations.length > 0,
+  });
+}
+
+function hasDonationBoxBlockAt(worldName: unknown, x: unknown, y: unknown) {
+  const state = ensureWorldState(worldName);
+  const block = state.foreground.get(gridKey(x, y));
+  return Boolean(block && isDonationBoxBlockType(block.block_type));
+}
+
+function validateDonationBoxAccess(socket: unknown, player: ServerPacketRecord, data: ServerPacketRecord, worldName: unknown, grid: ServerGridPoint | null) {
+  if (!grid) {
+    sendInventoryTransactionRejected(socket, data, "Donation Box position is missing.");
+    return false;
+  }
+  if (!isPlayerNearGrid(player, grid.x, grid.y)) {
+    sendInventoryTransactionRejected(socket, data, "Too far away from that Donation Box.");
+    return false;
+  }
+  if (!hasDonationBoxBlockAt(worldName, grid.x, grid.y)) {
+    sendInventoryTransactionRejected(socket, data, "That is not a Donation Box.");
+    return false;
+  }
+  return true;
+}
+
+function sendDonationBoxTransactionResult(socket: unknown, data: ServerPacketRecord, player: ServerPacketRecord, box: ServerDonationBoxState | null, ok: boolean, message: string, options: ServerDonationBoxTransactionOptions = {}) {
+  const response: ServerPacketRecord = {
+    ok,
+    request_id: makeRequestId(data),
+    action: String(data.action || ""),
+    message,
+    username: player?.account_username || "",
+    donation_box_state: box ? serializeDonationBoxStateForClient(box, player) : {},
+  };
+  if (Array.isArray(options.inventory_deltas) && options.inventory_deltas.length > 0) {
+    response.inventory_deltas = options.inventory_deltas;
+  }
+  sendInventoryTransactionResult(socket, response);
+}
+
+function rejectDonationBoxTransaction(socket: unknown, data: ServerPacketRecord, message: string) {
+  sendInventoryTransactionResult(socket, {
+    ok: false,
+    request_id: makeRequestId(data),
+    action: String(data.action || ""),
+    message,
+    donation_box_state: {},
+  });
+}
+
+async function acquireDonationBoxMutationLock(socket: unknown, player: ServerPacketRecord, data: ServerPacketRecord, worldName: unknown, box: ServerDonationBoxState) {
+  const actionKey = getWorldBlockActionLockResource(worldName, {
+    action: "donation_box_transaction",
+    layer: "foreground",
+    x: box.x,
+    y: box.y,
+  });
+  const boxLock = await acquireLiveActionLock(worldBlockActionLocks, "world_block", actionKey, player.id);
+  if (!boxLock.acquired) {
+    rejectDonationBoxTransaction(socket, data, "That Donation Box is busy.");
+    return null;
+  }
+  return boxLock;
+}
+
+async function handleDonationBoxTransaction(socket: unknown, player: ServerPacketRecord, data: ServerPacketRecord) {
+  const action = String(data.action || "").trim();
+  const worldName = getTransactionWorldName(player, data);
+  if (!requireSameWorld(socket, player, worldName, "use that Donation Box")) return;
+  if (await rejectIfWorldBanned(socket, player, worldName, "donation_box")) return;
+
+  const grid: ServerGridPoint | null = getTransactionGrid(data);
+  if (!validateDonationBoxAccess(socket, player, data, worldName, grid)) return;
+  if (!grid) return;
+  if (!isWorldLocked(worldName)) {
+    rejectDonationBoxTransaction(socket, data, "Lock the world before using Donation Boxes.");
+    return;
+  }
+
+  const box = getDonationBoxStateAt(worldName, grid.x, grid.y, false);
+  if (canPlayerManageDonationBox(player, box, worldName)) applyDonationBoxOwnerIdentity(box, player);
+
+  if (action === "donation_box_get_state") {
+    sendDonationBoxTransactionResult(socket, data, player, box, true, "");
+    return;
+  }
+
+  if (tradeByPlayerId.has(player.id)) {
+    rejectDonationBoxTransaction(socket, data, "Finish or cancel your trade before using a Donation Box.");
+    return;
+  }
+
+  if (action === "donation_box_donate") {
+    await handleDonationBoxDonate(socket, player, data, worldName, box);
+    return;
+  }
+
+  if (!canPlayerManageDonationBox(player, box, worldName)) {
+    rejectDonationBoxTransaction(socket, data, "Only the world owner can retrieve donations.");
+    return;
+  }
+  if (action === "donation_box_retrieve") {
+    await handleDonationBoxRetrieve(socket, player, data, worldName, box, false);
+    return;
+  }
+  if (action === "donation_box_retrieve_all") {
+    await handleDonationBoxRetrieve(socket, player, data, worldName, box, true);
+    return;
+  }
+  rejectDonationBoxTransaction(socket, data, "Unknown Donation Box action.");
+}
+
+async function handleDonationBoxDonate(socket: unknown, player: ServerPacketRecord, data: ServerPacketRecord, worldName: unknown, box: ServerDonationBoxState) {
+  const itemId = clampString(data.item_id || data.item_type || "");
+  const itemCategory = resolveInventoryCategory(itemId, data.item_category || data.category || "");
+  const amount = clampInteger(data.amount || 0, 1, ItemDatabase.getStackLimit(itemId));
+  if (!canStoreItemInDonationBox(itemId, itemCategory)) {
+    rejectDonationBoxTransaction(socket, data, "That item cannot be donated.");
+    return;
+  }
+
+  const boxLock = await acquireDonationBoxMutationLock(socket, player, data, worldName, box);
+  if (!boxLock) return;
+  try {
+    if (!hasDonationBoxBlockAt(worldName, box.x, box.y)) {
+      rejectDonationBoxTransaction(socket, data, "That Donation Box is no longer there.");
+      return;
+    }
+    const currentBox = getDonationBoxStateAt(worldName, box.x, box.y, true);
+    if (currentBox.donations.length >= DONATION_BOX_SLOT_COUNT) {
+      rejectDonationBoxTransaction(socket, data, "That Donation Box is full.");
+      return;
+    }
+
+    const state = ensureWritablePlayerState(player.account_username);
+    if (!state) {
+      rejectDonationBoxTransaction(socket, data, "Could not load your server inventory.");
+      return;
+    }
+    if (getInventoryCount(state, itemId, itemCategory) < amount) {
+      rejectDonationBoxTransaction(socket, data, `Not enough ${itemId}.`);
+      return;
+    }
+
+    const beforeState = cloneJson(state);
+    const stagedState = cloneJson(state);
+    if (!spendItemFromState(stagedState, itemId, itemCategory, amount)) {
+      rejectDonationBoxTransaction(socket, data, "Server inventory changed. Try again.");
+      return;
+    }
+
+    const donationId = makeAuditId("donation");
+    const donorIdentity = getPlayerLockIdentity(player);
+    const accountUsername = clampString(player.account_username || "");
+    const donation: ServerDonationBoxEntry = {
+      donation_id: donationId,
+      donor_username: accountUsername,
+      donor_name: accountUsername.toUpperCase(),
+      donor_account_id: donorIdentity.owner_account_id || "",
+      donor_player_id: donorIdentity.owner_player_id || "",
+      item_id: itemId,
+      item_category: itemCategory,
+      amount,
+      donated_at: new Date().toISOString(),
+    };
+    const originalBox = cloneJson(currentBox);
+    currentBox.donations.push(donation);
+    const savedBox = setDonationBoxStateAt(worldName, currentBox);
+    const serializedWorld = serializeWorldState(worldName);
+    const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+      source: "donation_box",
+      action: "donation_box_donate",
+      reason: "donation_box_donate",
+      request_id: makeRequestId(data),
+      world: worldName,
+      metadata: { transaction_id: donationId, donation_id: donationId, x: box.x, y: box.y, item_id: itemId, item_category: itemCategory },
+      world_state: serializedWorld,
+      failure_message: "Server inventory changed. Try again.",
+    });
+    if (!commit.ok) {
+      setDonationBoxStateAt(worldName, originalBox);
+      rejectDonationBoxTransaction(socket, data, commit.message);
+      return;
+    }
+
+    const committedState = commit.state;
+    persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
+    logWorldChange(socket, player, {
+      source_type: "donation_box_transaction",
+      source_id: donationId,
+      world: worldName,
+      action: "donation_box_donate",
+      x: box.x,
+      y: box.y,
+      block_type: DONATION_BOX_BLOCK_TYPE,
+      details: { donation_id: donationId, donor_username: player.account_username, item_id: itemId, item_category: itemCategory, amount },
+    });
+    logItemLedgerForState(socket, player, player.account_username, committedState, itemId, itemCategory, -amount, "donation_box_donate", donationId, "donation_box_donate", worldName, {
+      donation_id: donationId,
+      transaction_id: donationId,
+      x: box.x,
+      y: box.y,
+    }, { skipPostgres: commit.postgres_committed });
+    sendDonationBoxVisualStateUpdateToWorld(worldName, savedBox);
+    sendDonationBoxTransactionResult(socket, data, player, savedBox, true, `Donated ${itemId} x${amount}.`, {
+      inventory_deltas: buildInventoryDeltaClientPayloads(commit.deltas, committedState),
+    });
+  } finally {
+    releaseLiveActionLock(boxLock);
+  }
+}
+
+function getDonationBoxEntriesForRetrieve(box: ServerDonationBoxState, data: ServerPacketRecord, retrieveAll: boolean): ServerDonationBoxEntry[] {
+  const donations = box.donations
+    .map((entry: unknown) => sanitizeDonationBoxEntry(entry))
+    .filter((entry: ServerDonationBoxEntry | null): entry is ServerDonationBoxEntry => entry !== null);
+  if (retrieveAll) return donations;
+  const donationId = clampString(data.donation_id || data.id || "", 128);
+  if (donationId === "") return [];
+  const entry = donations.find((candidate: ServerDonationBoxEntry) => candidate.donation_id === donationId);
+  return entry ? [entry] : [];
+}
+
+async function handleDonationBoxRetrieve(socket: unknown, player: ServerPacketRecord, data: ServerPacketRecord, worldName: unknown, box: ServerDonationBoxState, retrieveAll: boolean) {
+  const boxLock = await acquireDonationBoxMutationLock(socket, player, data, worldName, box);
+  if (!boxLock) return;
+  try {
+    if (!hasDonationBoxBlockAt(worldName, box.x, box.y)) {
+      rejectDonationBoxTransaction(socket, data, "That Donation Box is no longer there.");
+      return;
+    }
+    const currentBox = getDonationBoxStateAt(worldName, box.x, box.y, true);
+    if (!canPlayerManageDonationBox(player, currentBox, worldName)) {
+      rejectDonationBoxTransaction(socket, data, "Only the world owner can retrieve donations.");
+      return;
+    }
+    applyDonationBoxOwnerIdentity(currentBox, player);
+    const entries: ServerDonationBoxEntry[] = getDonationBoxEntriesForRetrieve(currentBox, data, retrieveAll);
+    if (entries.length === 0) {
+      rejectDonationBoxTransaction(socket, data, retrieveAll ? "There are no donations to retrieve." : "That donation is no longer available.");
+      return;
+    }
+
+    const state = ensureWritablePlayerState(player.account_username);
+    if (!state) {
+      rejectDonationBoxTransaction(socket, data, "Could not load your server inventory.");
+      return;
+    }
+    const beforeState = cloneJson(state);
+    const stagedState = cloneJson(state);
+    for (const entry of entries) {
+      if (!canAddItemToState(stagedState, entry.item_id, entry.item_category, entry.amount) ||
+          !addItemToState(stagedState, entry.item_id, entry.item_category, entry.amount)) {
+        rejectDonationBoxTransaction(socket, data, "Your inventory cannot hold all selected donations.");
+        return;
+      }
+    }
+
+    const originalBox = cloneJson(currentBox);
+    const retrievedIds = new Set(entries.map((entry) => entry.donation_id));
+    currentBox.donations = currentBox.donations.filter((entry: ServerDonationBoxEntry) => !retrievedIds.has(clampString(entry.donation_id || "", 128)));
+    const savedBox = setDonationBoxStateAt(worldName, currentBox);
+    const transactionId = makeAuditId(retrieveAll ? "donation_all" : "donation_get");
+    const serializedWorld = serializeWorldState(worldName);
+    const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+      source: "donation_box",
+      action: retrieveAll ? "donation_box_retrieve_all" : "donation_box_retrieve",
+      reason: "donation_box_retrieve",
+      request_id: makeRequestId(data),
+      world: worldName,
+      metadata: { transaction_id: transactionId, x: box.x, y: box.y, returned_entries: entries },
+      world_state: serializedWorld,
+      failure_message: "Server inventory changed. Try again.",
+    });
+    if (!commit.ok) {
+      setDonationBoxStateAt(worldName, originalBox);
+      rejectDonationBoxTransaction(socket, data, commit.message);
+      return;
+    }
+
+    const committedState = commit.state;
+    persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
+    logWorldChange(socket, player, {
+      source_type: "donation_box_transaction",
+      source_id: transactionId,
+      world: worldName,
+      action: retrieveAll ? "donation_box_retrieve_all" : "donation_box_retrieve",
+      x: box.x,
+      y: box.y,
+      block_type: DONATION_BOX_BLOCK_TYPE,
+      details: { entry_count: entries.length, returned_entries: entries },
+    });
+    for (const entry of entries) {
+      logItemLedgerForState(socket, player, player.account_username, committedState, entry.item_id, entry.item_category, entry.amount, "donation_box_retrieve", transactionId, "donation_box_retrieve", worldName, {
+        donation_id: entry.donation_id,
+        donor_username: entry.donor_username,
+        source_transaction_id: entry.donation_id,
+        x: box.x,
+        y: box.y,
+      }, { skipPostgres: commit.postgres_committed });
+    }
+    sendDonationBoxVisualStateUpdateToWorld(worldName, savedBox);
+    const message = retrieveAll ? `Retrieved ${entries.length} donation${entries.length === 1 ? "" : "s"}.` : `Retrieved ${entries[0].item_id} x${entries[0].amount}.`;
+    sendDonationBoxTransactionResult(socket, data, player, savedBox, true, message, {
+      inventory_deltas: buildInventoryDeltaClientPayloads(commit.deltas, committedState),
+    });
+  } finally {
+    releaseLiveActionLock(boxLock);
+  }
+}
+
+async function prepareDonationBoxBreakInventoryReturn(socket: unknown, player: ServerPacketRecord, worldName: unknown, update: ServerPacketRecord) {
+  const box = getDonationBoxStateAt(worldName, update.x, update.y, false);
+  const entries: ServerDonationBoxEntry[] = box.donations
+    .map((entry: unknown) => sanitizeDonationBoxEntry(entry))
+    .filter((entry: ServerDonationBoxEntry | null): entry is ServerDonationBoxEntry => entry !== null);
+  if (entries.length === 0) return { ok: true, playerState: null, message: "" };
+  if (!canPlayerManageDonationBox(player, box, worldName)) {
+    sendActionRejected(socket, "world_block_update", "Only the world owner can break this Donation Box.", {
+      reason: "donation_box_owner_required",
+      block_type: update.block_type,
+    });
+    return { ok: false };
+  }
+
+  const state = ensureWritablePlayerState(player.account_username);
+  if (!state) {
+    sendActionRejected(socket, "world_block_update", "Could not load your server inventory.", {
+      reason: "inventory_unavailable",
+      block_type: update.block_type,
+    });
+    return { ok: false };
+  }
+
+  const beforeState = cloneJson(state);
+  const stagedState = cloneJson(state);
+  const originalBox = cloneJson(box);
+  for (const entry of entries) {
+    if (!canAddItemToState(stagedState, entry.item_id, entry.item_category, entry.amount) ||
+        !addItemToState(stagedState, entry.item_id, entry.item_category, entry.amount)) {
+      sendActionRejected(socket, "world_block_update", "Your inventory cannot hold the Donation Box contents.", {
+        reason: "insufficient_capacity",
+        block_type: update.block_type,
+      });
+      return { ok: false };
+    }
+  }
+
+  const rollbackWorldState = serializeWorldState(worldName);
+  box.donations = [];
+  setDonationBoxStateAt(worldName, box);
+  const transactionId = makeAuditId("donation_break");
+  const worldChange = buildWorldObjectChangeEntry(
+    socket,
+    player,
+    worldName,
+    {
+      type: "world_interaction_update",
+      source_type: "donation_box_break_return",
+      source_id: transactionId,
+      action: "donation_box_break_return",
+      x: box.x,
+      y: box.y,
+      block_type: DONATION_BOX_BLOCK_TYPE,
+      object_type: "donation_box",
+      state: box,
+    },
+    originalBox,
+    box,
+    transactionId,
+    { entry_count: entries.length, returned_entries: entries }
+  );
+  const metadata: ServerPacketRecord = { transaction_id: transactionId, x: box.x, y: box.y, returned_entries: entries };
+  if (isPostgresAuthoritativeReady()) {
+    return {
+      ok: true,
+      playerState: stagedState,
+      inventoryDeltas: buildInventoryDeltasBetweenStates(beforeState, stagedState),
+      deferred_inventory_commit: InventoryContracts.buildDeferredInventoryCommit({
+        username: player.account_username,
+        beforeState,
+        afterState: stagedState,
+        options: {
+          source: "donation_box",
+          action: "donation_box_break_return",
+          reason: "donation_box_break_return",
+          request_id: "",
+          world: worldName,
+          metadata,
+          failure_message: "Server inventory changed. Try again.",
+        },
+      }),
+      rollbackWorldState,
+      worldChanges: [worldChange],
+      postCommitLogs: {
+        itemLedgerEntries: entries.map((entry: ServerDonationBoxEntry) => ({
+          item_id: entry.item_id,
+          item_category: entry.item_category,
+          amount: entry.amount,
+          source_type: "donation_box_break_return",
+          source_id: transactionId,
+          reason: "donation_box_break_return",
+          details: { donation_id: entry.donation_id, donor_username: entry.donor_username, source_transaction_id: entry.donation_id, x: box.x, y: box.y },
+        })),
+      },
+      message: "Returned Donation Box contents.",
+    };
+  }
+
+  const serializedWorld = serializeWorldState(worldName);
+  const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
+    source: "donation_box",
+    action: "donation_box_break_return",
+    reason: "donation_box_break_return",
+    request_id: "",
+    world: worldName,
+    metadata,
+    world_state: serializedWorld,
+    failure_message: "Server inventory changed. Try again.",
+  });
+  if (!commit.ok) {
+    setDonationBoxStateAt(worldName, originalBox);
+    sendActionRejected(socket, "world_block_update", commit.message, {
+      reason: commit.reason || "inventory_commit_failed",
+      block_type: update.block_type,
+    });
+    return { ok: false };
+  }
+  const committedState = commit.state;
+  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
+  logWorldChange(socket, player, {
+    source_type: "donation_box_break_return",
+    source_id: transactionId,
+    world: worldName,
+    action: "donation_box_break_return",
+    x: box.x,
+    y: box.y,
+    block_type: DONATION_BOX_BLOCK_TYPE,
+    details: { entry_count: entries.length, returned_entries: entries },
+  });
+  for (const entry of entries) {
+    logItemLedgerForState(socket, player, player.account_username, committedState, entry.item_id, entry.item_category, entry.amount, "donation_box_break_return", transactionId, "donation_box_break_return", worldName, {
+      donation_id: entry.donation_id,
+      donor_username: entry.donor_username,
+      source_transaction_id: entry.donation_id,
+      x: box.x,
+      y: box.y,
+    }, { skipPostgres: commit.postgres_committed });
+  }
+  return {
+    ok: true,
+    playerState: committedState,
+    inventoryDeltas: Array.isArray(commit.deltas) ? commit.deltas : [],
+    postgres_committed: commit.postgres_committed,
+    message: "Returned Donation Box contents.",
   };
 }
 
@@ -12953,6 +13601,7 @@ function isPersistentInteractionBlockType(blockType: any) {
     || isToggleBlockType(blockType)
     || isBulletinBoardBlockType(blockType)
     || isDisplayBlockType(blockType)
+    || isDonationBoxBlockType(blockType)
     || MAILBOX_BLOCK_TYPES.has(clampString(blockType || ""))
     || isTackleBoxBlockType(blockType)
     || isChickenBlockType(blockType)
@@ -15054,7 +15703,7 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
     }
 
     if (isWorldLockBlockType(update.block_type) && hasWorldLockProtectedStorageBlocks(worldName)) {
-      sendActionRejected(socket, "world_block_update", "Remove all Safes, vending machines, Fish Mongers, and displays before breaking the World Lock.", {
+      sendActionRejected(socket, "world_block_update", "Remove all Safes, Donation Boxes, vending machines, Fish Mongers, and displays before breaking the World Lock.", {
         reason: "protected_storage_blocks",
         block_type: update.block_type,
       });
@@ -15080,6 +15729,7 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
 
     const isVendBreak = isVendBlockType(update.block_type);
     const isSafeBreak = isSafeBlockType(update.block_type);
+    const isDonationBoxBreak = isDonationBoxBlockType(update.block_type);
     const isDisplayBreak = isDisplayBlockType(update.block_type);
     const isFishMongerBreak = isFishMongerBlockType(update.block_type);
 
@@ -15105,6 +15755,16 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
       if (!canPlayerBreakSafe(player, worldName, update)) {
         sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can break safes." : "Lock the world before breaking safes.", {
           reason: isWorldLocked(worldName) ? "safe_owner_required" : "world_lock_required",
+          block_type: update.block_type,
+        });
+        return { ok: false };
+      }
+    }
+
+    if (isDonationBoxBreak) {
+      if (!canPlayerBreakDonationBox(player, worldName, update)) {
+        sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can break Donation Boxes." : "Lock the world before breaking Donation Boxes.", {
+          reason: isWorldLocked(worldName) ? "donation_box_owner_required" : "world_lock_required",
           block_type: update.block_type,
         });
         return { ok: false };
@@ -15221,6 +15881,21 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
         worldChanges: Array.isArray(safeReturn.worldChanges) ? safeReturn.worldChanges : [],
         postCommitLogs: safeReturn.postCommitLogs || null,
         message: safeReturn.message || "",
+      };
+    }
+    if (isDonationBoxBreak) {
+      const donationReturn = await prepareDonationBoxBreakInventoryReturn(socket, player, worldName, update);
+      if (!donationReturn.ok) return { ok: false };
+      return {
+        ok: true,
+        playerState: donationReturn.playerState || null,
+        inventoryDeltas: Array.isArray(donationReturn.inventoryDeltas) ? donationReturn.inventoryDeltas : [],
+        postgres_committed: donationReturn.postgres_committed,
+        deferred_inventory_commit: donationReturn.deferred_inventory_commit || null,
+        rollbackWorldState: donationReturn.rollbackWorldState || null,
+        worldChanges: Array.isArray(donationReturn.worldChanges) ? donationReturn.worldChanges : [],
+        postCommitLogs: donationReturn.postCommitLogs || null,
+        message: donationReturn.message || "",
       };
     }
     if (isDisplayBreak) {
@@ -15378,6 +16053,14 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
   if (isSafeBlockType(update.block_type) && !canPlayerPlaceSafe(player, worldName)) {
     sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can place safes." : "Lock this world before placing safes.", {
       reason: isWorldLocked(worldName) ? "safe_owner_required" : "world_lock_required",
+      block_type: update.block_type,
+    });
+    return { ok: false };
+  }
+
+  if (isDonationBoxBlockType(update.block_type) && !canPlayerPlaceDonationBox(player, worldName)) {
+    sendActionRejected(socket, "world_block_update", isWorldLocked(worldName) ? "Only the world owner can place Donation Boxes." : "Lock this world before placing Donation Boxes.", {
+      reason: isWorldLocked(worldName) ? "donation_box_owner_required" : "world_lock_required",
       block_type: update.block_type,
     });
     return { ok: false };
@@ -15650,7 +16333,7 @@ function prepareWorldLockStateUpdate(socket: any, player: any, worldName: any, u
   }
 
   if (currentLock.is_locked && !nextLock.is_locked && hasWorldLockProtectedStorageBlocks(worldName)) {
-    sendActionRejected(socket, "world_lock_state", "Remove all Safes, vending machines, Fish Mongers, and displays before unlocking the World Lock.");
+    sendActionRejected(socket, "world_lock_state", "Remove all Safes, Donation Boxes, vending machines, Fish Mongers, and displays before unlocking the World Lock.");
     return false;
   }
 
@@ -23892,6 +24575,7 @@ function isProtectedEntranceSupportBlock(blockType: any) {
   return (
     isWorldLockBlockType(clean) ||
     clean === SAFE_BLOCK_TYPE ||
+    clean === DONATION_BOX_BLOCK_TYPE ||
     isDisplayBlockType(clean) ||
     isMailboxBlockType(clean) ||
     clean === FISH_MONGER_BLOCK_TYPE ||

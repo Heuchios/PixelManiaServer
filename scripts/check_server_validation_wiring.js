@@ -105,6 +105,7 @@ const checks = [
     name: "world-based inventory actions consistently enforce world bans",
     ok: files.server.includes('rejectIfWorldBanned(socket, player, worldName, "vending")')
       && files.server.includes('rejectIfWorldBanned(socket, player, worldName, "safe")')
+      && files.server.includes('rejectIfWorldBanned(socket, player, worldName, "donation_box")')
       && files.server.includes('rejectIfWorldBanned(socket, player, worldName, "station_recipe")')
       && files.server.includes('rejectIfWorldBanned(socket, player, worldName, "fishing_start")')
       && files.server.includes('rejectIfWorldBanned(socket, player, session.world, "fishing_complete")')
@@ -136,9 +137,11 @@ const checks = [
     name: "storage-block break returns are deferred into the block/world commit",
     ok: files.server.includes("async function prepareVendBreakInventoryReturn")
       && files.server.includes("async function prepareSafeBreakInventoryReturn")
+      && files.server.includes("async function prepareDonationBoxBreakInventoryReturn")
       && files.server.includes("async function prepareDisplayBreakInventoryReturn")
       && files.server.includes("action: \"vending_break_return\"")
       && files.server.includes("action: \"safe_break_return\"")
+      && files.server.includes("action: \"donation_box_break_return\"")
       && files.server.includes("action: \"display_break_return\"")
       && files.server.includes("rollbackWorldState")
       && files.server.includes("worldChanges: [vendBreakWorldChange]")
@@ -154,6 +157,23 @@ const checks = [
       && files.server.includes("const worldSafeActionLocks = new Set()")
       && files.server.includes("async function acquireSafeMutationLock")
       && files.server.includes("acquireLiveActionLock(worldSafeActionLocks, \"safe\""),
+  },
+  {
+    name: "donation boxes keep public donations private and serialize inventory, world, and break mutations",
+    ok: files.serverInventoryEconomyRoutes.includes('"donation_box_get_state"')
+      && files.serverInventoryEconomyRoutes.includes('"donation_box_donate"')
+      && files.serverInventoryEconomyRoutes.includes('"donation_box_retrieve"')
+      && files.serverInventoryEconomyRoutes.includes('"donation_box_retrieve_all"')
+      && files.server.includes("function validateDonationBoxAccess")
+      && files.server.includes("function canStoreItemInDonationBox")
+      && files.server.includes("function canPlayerManageDonationBox")
+      && files.server.includes("donations: canManage ? cleanBox.donations.map")
+      && files.server.includes('action: "donation_box_visual_state"')
+      && files.server.includes("getWorldBlockActionLockResource(worldName")
+      && files.server.includes('acquireLiveActionLock(worldBlockActionLocks, "world_block"')
+      && files.server.includes('source: "donation_box"')
+      && files.server.includes("world_state: serializedWorld")
+      && files.server.includes("async function prepareDonationBoxBreakInventoryReturn"),
   },
   {
     name: "shop, station, fishing, fish monger, drops, and seeds validate server item data and capacity",

@@ -96,6 +96,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
     initializeChickenOnPlace,
     initializeCowOnPlace,
     initializeDisplayOwnerOnPlace,
+    initializeDonationBoxOwnerOnPlace,
     initializeDuckOnPlace,
     initializeSafeOwnerOnPlace,
     initializeTackleBoxOnPlace,
@@ -107,6 +108,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
     isChickenBlockType,
     isCowBlockType,
     isDisplayBlockType,
+    isDonationBoxBlockType,
     isDuckBlockType,
     isElectricalDeviceBlockOnLayer,
     isFishMongerBreakAttempt,
@@ -519,6 +521,9 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
           }
           if (update.action === "place" && isSafeBlockType(update.block_type)) {
             initializeSafeOwnerOnPlace(worldName, update, player);
+          }
+          if (update.action === "place" && isDonationBoxBlockType(update.block_type)) {
+            initializeDonationBoxOwnerOnPlace(worldName, update, player);
           }
           if (update.action === "place" && isDisplayBlockType(update.block_type)) {
             initializeDisplayOwnerOnPlace(worldName, update, player);

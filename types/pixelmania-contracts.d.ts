@@ -827,6 +827,43 @@ declare namespace PixelMania {
     can_manage: boolean;
   }
 
+  interface DonationBoxEntry {
+    donation_id: string;
+    donor_username: string;
+    donor_name: string;
+    donor_account_id: string;
+    donor_player_id: string;
+    item_id: ItemId;
+    item_category: string;
+    amount: number;
+    donated_at: string;
+  }
+
+  interface DonationBoxState extends TilePosition {
+    action: "donation_box_state";
+    world: WorldName;
+    owner_username: string;
+    owner_name: string;
+    owner_account_id: string;
+    owner_player_id: string;
+    donations: DonationBoxEntry[];
+    updated_at: string;
+    [key: string]: unknown;
+  }
+
+  interface DonationBoxClientState extends TilePosition {
+    action: "donation_box_state";
+    world: WorldName;
+    owner_username: string;
+    owner_name: string;
+    donations: DonationBoxEntry[];
+    donation_count: number;
+    max_donations: number;
+    has_donations: boolean;
+    can_manage: boolean;
+    can_donate: boolean;
+  }
+
   interface MailboxMessage {
     from: string;
     message: string;

@@ -38,6 +38,7 @@ type ReleasePlan = {
   location: string;
   metadata_action: string;
   metadata_transaction_id: string;
+  source_owner_username: string;
   amount: number;
 };
 type TradeOfferEntry = {
@@ -101,7 +102,7 @@ const ITEM_INSTANCE_TRACKED_CATEGORIES = new Set(["tool", "back", "hat", "hair",
 const ITEM_INSTANCE_ACTIVE_STATE = "active";
 const ITEM_INSTANCE_RETIRED_STATE = "consumed";
 const ITEM_INSTANCE_STATES = new Set(["active", "consumed", "traded", "destroyed", "dropped", "locked"]);
-const ITEM_INSTANCE_LOCATIONS = new Set(["inventory", "vending", "trade", "world_drop", "safe", "display", "shop", "admin", "system", "unknown"]);
+const ITEM_INSTANCE_LOCATIONS = new Set(["inventory", "vending", "trade", "world_drop", "safe", "donation_box", "display", "shop", "admin", "system", "unknown"]);
 const ITEM_INSTANCE_EVENT_TYPES = new Set(["created", "reconciled", "owner_changed", "location_changed", "state_changed", "updated", "retired"]);
 const ITEM_INSTANCE_RECONCILE_MAX_PER_ITEM = 250;
 const ITEM_INSTANCE_VAGUE_CREATION_SOURCES = new Set(["", "system", "unknown", "item_ledger", "inventory_delta", "update"]);
@@ -128,6 +129,11 @@ const WORLD_OBJECT_CHANGE_ACTIONS = new Set([
   "safe_deposit",
   "safe_withdraw",
   "safe_break_return",
+  "donation_box_state",
+  "donation_box_donate",
+  "donation_box_retrieve",
+  "donation_box_retrieve_all",
+  "donation_box_break_return",
   "mailbox_state",
   "bulletin_board_state",
   "display_state",
@@ -6998,6 +7004,7 @@ class PostgresStore {
     if (label.includes("vending") || label.includes("vend")) return { state: "locked", location: "vending" };
     if (label.includes("trade")) return { state: "traded", location: "trade" };
     if (label.includes("safe")) return { state: "locked", location: "safe" };
+    if (label.includes("donation_box") || label.includes("donation box")) return { state: "locked", location: "donation_box" };
     if (label.includes("display")) return { state: "locked", location: "display" };
     if (label.includes("drop")) return { state: "dropped", location: "world_drop" };
     if (label.includes("trash") || label.includes("destroy")) return { state: "destroyed", location: "unknown" };
@@ -7076,7 +7083,8 @@ class PostgresStore {
         location: string,
         metadataAction: string,
         metadataTransactionId: string,
-        planAmount: number
+        planAmount: number,
+        sourceOwnerUsername: string = ""
       ) => {
         const cleanLocation = cleanName(location || "").toLowerCase();
         if (!ITEM_INSTANCE_LOCATIONS.has(cleanLocation)) return;
@@ -7088,6 +7096,7 @@ class PostgresStore {
           location: cleanLocation,
           metadata_action: cleanAction,
           metadata_transaction_id: cleanTransactionId,
+          source_owner_username: cleanName(sourceOwnerUsername || ""),
           amount: cleanAmount,
         });
       };
@@ -7126,6 +7135,31 @@ class PostgresStore {
         );
       } else if (strict && label.includes("safe") && (label.includes("withdraw") || label.includes("break_return"))) {
         addReleasePlan("safe", "safe_deposit", entryDetails.source_transaction_id || "", amount);
+      } else if (strict && (label.includes("donation_box") || label.includes("donation box")) && (label.includes("retrieve") || label.includes("break_return"))) {
+        const returnedEntries = Array.isArray(entryDetails.returned_entries) ? entryDetails.returned_entries : [];
+        for (const rawReturnedEntry of returnedEntries) {
+          const returnedEntry = toObject(rawReturnedEntry);
+          const returnedItemType = cleanName(returnedEntry.item_id || returnedEntry.item_type || "");
+          const returnedItemCategory = resolveItemCategory(returnedItemType, returnedEntry.item_category || returnedEntry.category || "");
+          const returnedAmount = Math.max(0, toInt(returnedEntry.amount, 0));
+          if (returnedItemType !== itemType || returnedItemCategory !== itemCategory || returnedAmount <= 0) continue;
+          addReleasePlan(
+            "donation_box",
+            "donation_box_donate",
+            returnedEntry.donation_id || returnedEntry.source_transaction_id || "",
+            returnedAmount,
+            returnedEntry.donor_username || returnedEntry.source_owner_username || ""
+          );
+        }
+        if (releasePlans.length === 0 && cleanName(entryDetails.donor_username || "") !== "") {
+          addReleasePlan(
+            "donation_box",
+            "donation_box_donate",
+            entryDetails.donation_id || entryDetails.source_transaction_id || "",
+            amount,
+            entryDetails.donor_username || ""
+          );
+        }
       } else if (strict && label.includes("display") && (label.includes("withdraw") || label.includes("break_return"))) {
         const sourceTransactionId = cleanName(entryDetails.source_transaction_id || entryDetails.display_transaction_id || "");
         if (sourceTransactionId !== "") {
@@ -7136,6 +7170,21 @@ class PostgresStore {
       if (releasePlans.length > 0) {
         const releasedInstances: ItemInstanceMovement[] = [];
         for (const plan of releasePlans) {
+          let lockedOwnerPlayerId = playerId;
+          if (plan.source_owner_username !== "") {
+            const sourceOwnerPlayerId = await this.lookupPlayerIdByUsername(client, plan.source_owner_username);
+            if (!sourceOwnerPlayerId) {
+              return {
+                ok: false,
+                tracked: true,
+                reason: "donation_source_owner_not_found",
+                item_type: itemType,
+                item_category: itemCategory,
+                source_owner_username: plan.source_owner_username,
+              };
+            }
+            lockedOwnerPlayerId = sourceOwnerPlayerId;
+          }
           const lockedRows = await client.query(
             `
             SELECT item_instance_id, owner_player_id, world_id, state, current_location, public_item_instance_id
@@ -7156,7 +7205,7 @@ class PostgresStore {
              LIMIT $7
              FOR UPDATE
             `,
-            [playerId, itemType, itemCategory, plan.location, plan.metadata_action, plan.metadata_transaction_id, plan.amount]
+            [lockedOwnerPlayerId, itemType, itemCategory, plan.location, plan.metadata_action, plan.metadata_transaction_id, plan.amount]
           );
 
           if ((lockedRows.rowCount ?? 0) < plan.amount) {
@@ -7181,6 +7230,7 @@ class PostgresStore {
                      current_location = 'inventory',
                      world_id = COALESCE($2, world_id),
                      metadata = metadata || $3::jsonb,
+                     owner_player_id = $4,
                      updated_at = now()
                WHERE item_instance_id = $1
               `,
@@ -7196,6 +7246,7 @@ class PostgresStore {
                   release_action: plan.metadata_action,
                   details: safeJson(e.details),
                 }),
+                playerId,
               ]
             );
             releasedInstances.push({
@@ -7207,14 +7258,14 @@ class PostgresStore {
               state: ITEM_INSTANCE_ACTIVE_STATE,
               previous_location: cleanName(row.current_location || plan.location),
               current_location: "inventory",
-              owner_player_id: row.owner_player_id,
+              owner_player_id: playerId,
             });
 
             await this.recordItemInstanceEvent(client, {
               item_instance_id: row.item_instance_id,
-              event_type: "state_changed",
+              event_type: row.owner_player_id === playerId ? "state_changed" : "owner_changed",
               from_player_id: row.owner_player_id,
-              to_player_id: row.owner_player_id,
+              to_player_id: playerId,
               from_location: row.current_location || plan.location,
               to_location: "inventory",
               world_id: worldId || row.world_id,

@@ -2,7 +2,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 function createServerInventoryEconomyRoutes(deps) {
-    const { BASIC_ITEMS_PACK_TABLE, HAIR_PACK_TABLE, INVENTORY_MAX_SLOT_COUNT, INVENTORY_SLOT_UPGRADE_STEP, ItemDatabase, LURE_PACK_TABLE, MAX_SHOP_PRICE, PRESTIGE_COLOURED_BLOCK_PACK_TABLE, SHOP_CATALOG, addItemToState, canAddItemToState, buildInventoryDeltaClientPayloads, buildInventoryUpgradePreview, buildPlayerStateForClient, clampInteger, clampString, cleanAccountName, cloneJson, combineRewardEntries, commitPlayerInventoryState, ensureWritablePlayerState, getInventoryCount, handleDisplayTransaction, handleDropInventoryItemTransaction, handleFishMongerTransaction, handleFishingCompleteTransaction, handleFishingStartTransaction, handleSafeTransaction, handleSeedHarvestTransaction, handleSeedPlaceTransaction, handleSeedSpliceTransaction, handleStationRecipeTransaction, handleTrashInventoryItemTransaction, handleVendingTransaction, handleWorldLockConversionTransaction, handleWorldLockGetKeyTransaction, logItemLedgerForState, logRewardLedgers, logShopPurchase, makeAuditId, makeRequestId, requireAuthenticated, resolveInventorySlotCount, rollWeightedReward, sendInventoryTransactionRejected, sendInventoryTransactionResult, sendSystemChatToPlayer, spendItemFromState, tradeByPlayerId, } = deps;
+    const { BASIC_ITEMS_PACK_TABLE, HAIR_PACK_TABLE, INVENTORY_MAX_SLOT_COUNT, INVENTORY_SLOT_UPGRADE_STEP, ItemDatabase, LURE_PACK_TABLE, MAX_SHOP_PRICE, PRESTIGE_COLOURED_BLOCK_PACK_TABLE, SHOP_CATALOG, addItemToState, canAddItemToState, buildInventoryDeltaClientPayloads, buildInventoryUpgradePreview, buildPlayerStateForClient, clampInteger, clampString, cleanAccountName, cloneJson, combineRewardEntries, commitPlayerInventoryState, ensureWritablePlayerState, getInventoryCount, handleDisplayTransaction, handleDonationBoxTransaction, handleDropInventoryItemTransaction, handleFishMongerTransaction, handleFishingCompleteTransaction, handleFishingStartTransaction, handleSafeTransaction, handleSeedHarvestTransaction, handleSeedPlaceTransaction, handleSeedSpliceTransaction, handleStationRecipeTransaction, handleTrashInventoryItemTransaction, handleVendingTransaction, handleWorldLockConversionTransaction, handleWorldLockGetKeyTransaction, logItemLedgerForState, logRewardLedgers, logShopPurchase, makeAuditId, makeRequestId, requireAuthenticated, resolveInventorySlotCount, rollWeightedReward, sendInventoryTransactionRejected, sendInventoryTransactionResult, sendSystemChatToPlayer, spendItemFromState, tradeByPlayerId, } = deps;
     const delegatedInventoryActions = new Map([
         ["vend_get_state", handleVendingTransaction],
         ["vend_set_listing", handleVendingTransaction],
@@ -12,6 +12,10 @@ function createServerInventoryEconomyRoutes(deps) {
         ["safe_get_state", handleSafeTransaction],
         ["safe_deposit", handleSafeTransaction],
         ["safe_withdraw", handleSafeTransaction],
+        ["donation_box_get_state", handleDonationBoxTransaction],
+        ["donation_box_donate", handleDonationBoxTransaction],
+        ["donation_box_retrieve", handleDonationBoxTransaction],
+        ["donation_box_retrieve_all", handleDonationBoxTransaction],
         ["display_get_state", handleDisplayTransaction],
         ["display_deposit", handleDisplayTransaction],
         ["display_withdraw", handleDisplayTransaction],

@@ -676,6 +676,80 @@ function createWorldStateHelpers(config) {
         safe.slots = slots.slice(0, config.safeSlotCount);
         return safe;
     }
+    function canStoreItemInDonationBox(itemId, itemCategory) {
+        const cleanItemId = clampString(itemId || "");
+        if (cleanItemId === "" || !itemDatabase.hasItem(cleanItemId))
+            return false;
+        if (cleanItemId === "punch" || cleanItemId === config.donationBoxBlockType || cleanItemId === config.worldLockKeyItemType)
+            return false;
+        const definition = itemDatabase.getItemDefinition(cleanItemId);
+        if (!definition || definition.hidden || definition.tradeable === false)
+            return false;
+        const resolvedCategory = resolveInventoryCategory(cleanItemId, String(itemCategory || ""));
+        if (resolvedCategory === "" || resolvedCategory === "currency")
+            return false;
+        return itemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory);
+    }
+    function makeEmptyDonationBoxState(worldName, x, y) {
+        return {
+            action: "donation_box_state",
+            world: cleanWorld(worldName),
+            x: Math.trunc(Number(x) || 0),
+            y: Math.trunc(Number(y) || 0),
+            owner_username: "",
+            owner_name: "",
+            owner_account_id: "",
+            owner_player_id: "",
+            donations: [],
+            updated_at: new Date().toISOString(),
+        };
+    }
+    function sanitizeDonationBoxEntry(rawEntry) {
+        if (!isRecord(rawEntry))
+            return null;
+        const donationId = clampString(rawEntry.donation_id || rawEntry.id || "", 128);
+        const donorUsername = cleanAccountName(rawEntry.donor_username || rawEntry.donor_name || "");
+        const itemId = clampString(rawEntry.item_id || rawEntry.item_type || rawEntry.item || "");
+        if (donationId === "" || donorUsername === "" || !canStoreItemInDonationBox(itemId, rawEntry.item_category || rawEntry.category || ""))
+            return null;
+        const itemCategory = resolveInventoryCategory(itemId, rawEntry.item_category || rawEntry.category || "");
+        const amount = clampInteger(rawEntry.amount || 0, 1, getStackLimit(itemId));
+        if (amount <= 0)
+            return null;
+        return {
+            donation_id: donationId,
+            donor_username: donorUsername,
+            donor_name: donorUsername.toUpperCase(),
+            donor_account_id: clampString(rawEntry.donor_account_id || "", 128),
+            donor_player_id: clampString(rawEntry.donor_player_id || rawEntry.donor_profile_id || "", 128),
+            item_id: itemId,
+            item_category: itemCategory,
+            amount,
+            donated_at: String(rawEntry.donated_at || rawEntry.created_at || new Date().toISOString()),
+        };
+    }
+    function sanitizeDonationBoxState(rawEntry, worldName, x, y) {
+        const box = makeEmptyDonationBoxState(worldName, x, y);
+        if (!isRecord(rawEntry))
+            return box;
+        box.owner_username = cleanAccountName(rawEntry.owner_username || rawEntry.owner_name || "");
+        box.owner_name = box.owner_username.toUpperCase();
+        box.owner_account_id = clampString(rawEntry.owner_account_id || "", 128);
+        box.owner_player_id = clampString(rawEntry.owner_player_id || rawEntry.owner_profile_id || "", 128);
+        box.updated_at = String(rawEntry.updated_at || box.updated_at);
+        const rawDonations = Array.isArray(rawEntry.donations) ? rawEntry.donations : [];
+        const donations = [];
+        const seenIds = new Set();
+        for (const rawDonation of rawDonations) {
+            const donation = sanitizeDonationBoxEntry(rawDonation);
+            if (!donation || seenIds.has(String(donation.donation_id)))
+                continue;
+            seenIds.add(String(donation.donation_id));
+            donations.push(donation);
+        }
+        box.donations = donations.slice(0, config.donationBoxSlotCount);
+        return box;
+    }
     function canStoreItemInDisplay(itemId, itemCategory) {
         const cleanItemId = clampString(itemId || "");
         if (cleanItemId === "" || !itemDatabase.hasItem(cleanItemId))
@@ -1535,6 +1609,9 @@ function createWorldStateHelpers(config) {
             else if (action === "safe_state") {
                 target.set(key, sanitizeSafeState(rawEntry, rawEntry.world || worldName, grid.x, grid.y));
             }
+            else if (action === "donation_box_state") {
+                target.set(key, sanitizeDonationBoxState(rawEntry, rawEntry.world || worldName, grid.x, grid.y));
+            }
             else if (action === "mailbox_state") {
                 target.set(key, sanitizeMailboxState(rawEntry, rawEntry.world || worldName, grid.x, grid.y));
             }
@@ -1850,6 +1927,8 @@ function createWorldStateHelpers(config) {
         sanitizeDiceState,
         sanitizeDisplaySlot,
         sanitizeDisplayState,
+        sanitizeDonationBoxEntry,
+        sanitizeDonationBoxState,
         sanitizeDropCreate,
         sanitizeDropPickup,
         sanitizeDropUpdate,
