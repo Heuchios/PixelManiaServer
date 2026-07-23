@@ -113,6 +113,7 @@ interface WorldStateHelpers {
   addBedrockFloorEntries(target: Map<unknown, unknown>): void;
   applyInteractionUpdateToWorldState(worldName: unknown, update: JsonRecord): void;
   cleanDropIdList(rawIds: unknown, maxIds?: number): string[];
+  compactWorldLayerEntriesForNetwork(rawEntries: unknown): JsonRecord;
   createEmptyWorldState(): JsonRecord;
   deserializeWorldState(worldName: unknown, data: unknown): JsonRecord;
   getDropStackGridFromDrop(drop: unknown): GridPosition | null;
@@ -2127,6 +2128,32 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
     });
   }
 
+  function compactWorldLayerEntriesForNetwork(rawEntries: unknown): JsonRecord {
+    const entries = rawEntries instanceof Map
+      ? Array.from(rawEntries.values())
+      : (Array.isArray(rawEntries) ? rawEntries : []);
+    const compact: JsonRecord = {};
+
+    for (const rawEntry of entries) {
+      if (!isRecord(rawEntry)) continue;
+      const x = Math.trunc(Number(rawEntry.x));
+      const y = Math.trunc(Number(rawEntry.y));
+      if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+
+      const value: JsonRecord = { ...rawEntry };
+      delete value.x;
+      delete value.y;
+
+      const itemId = Math.trunc(Number(value.item_id) || 0);
+      const hasOnlyIdentityFields = Object.keys(value).every((key) => key === "block_type" || key === "item_id");
+      compact[`${x},${y}`] = itemId > 0 && hasOnlyIdentityFields
+        ? itemId
+        : value;
+    }
+
+    return compact;
+  }
+
   function serializeWorldState(worldName: unknown): JsonRecord {
     const state = config.ensureWorldState(worldName);
 
@@ -2166,6 +2193,7 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
     addBedrockFloorEntries,
     applyInteractionUpdateToWorldState,
     cleanDropIdList,
+    compactWorldLayerEntriesForNetwork,
     createEmptyWorldState,
     deserializeWorldState,
     getDropStackGridFromDrop,

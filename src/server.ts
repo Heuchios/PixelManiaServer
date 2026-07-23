@@ -142,6 +142,7 @@ type ServerWebSocket = import("ws").WebSocket & {
   rateLimitSecurityWarnings?: Map<unknown, unknown>;
   authRequiredNotices?: Map<unknown, unknown>;
   inboundMessageQueue?: Promise<void>;
+  closeCleanupStarted?: boolean;
 };
 
 interface ServerRouteContext {
@@ -2028,6 +2029,11 @@ const playerNetworkStats: any = {
   outbound_packet_type_stats: {},
   message_rate_limit_rejections: 0,
   bot_rate_limit_rejections: 0,
+  rate_limit_checks_by_bucket: {},
+  rate_limit_rejections_by_bucket: {},
+  rate_limit_checks_by_subject_kind: {},
+  rate_limit_rejections_by_subject_kind: {},
+  rate_limit_store_fallback_allows: 0,
   idempotency_duplicates: 0,
   idempotency_db_failures: 0,
 };
@@ -2535,6 +2541,7 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
     account_id: "",
     profile_id: "",
     authenticated: false,
+    disconnected: false,
     role: "player",
     world: "START",
     current_world: "START",
@@ -2636,10 +2643,12 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
       if (!data || typeof data !== "object" || Array.isArray(data)) return;
 
       const player = players.get(playerId);
-      if (!player) return;
+      if (!player || player.disconnected) return;
 
       if (!(await checkMessageRateLimit(socket, player, String(data.type || "unknown"), data))) return;
+      if (player.disconnected) return;
       if (!(await checkBotActionRateLimit(socket, player, String(data.type || "unknown"), data))) return;
+      if (player.disconnected) return;
 
       const clientVersion = getClientVersion(data);
       if (!isClientVersionAllowed(clientVersion)) {
@@ -2669,19 +2678,55 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
   });
 
   socket.on("close", () => {
-    void (async () => {
-      await Promise.resolve(socket.inboundMessageQueue).catch((error: unknown) => {
-        console.warn("[socket_message_queue] disconnect drain failed:", getErrorMessage(error));
-      });
+    if (socket.closeCleanupStarted) return;
+    socket.closeCleanupStarted = true;
 
+    void (async () => {
       const player = players.get(playerId);
       const closedUsername = player ? player.account_username : "";
       const closedWorld = player && player.joined_world ? cleanWorld(player.world || "START") : "";
+
       if (player) {
+        player.disconnected = true;
         cancelActiveTradeForPlayer(playerId, "Trade canceled because a player disconnected.");
         activeFishingSessions.delete(playerId);
         clearPlayerFishingPresence(player);
         clearNetfoxTrustedPlayerState(player);
+        if (player.joined_world) {
+          clearPlayerWorldIndex(player);
+          broadcastToWorld(player.world, buildPublicPlayerPresencePayload("player_left", player, player.world), playerId);
+          broadcastSystemToWorld(player.world, `${player.name} left ${player.world}`, playerId);
+        }
+      }
+
+      players.delete(playerId);
+      socketByPlayerId.delete(playerId);
+      clearPlayerInterestState(playerId);
+      if (closedWorld !== "") {
+        broadcastWorldPopulationUpdate(closedWorld);
+      }
+      if (closedUsername) {
+        notifyOnlineFriendsOfFriendState(closedUsername);
+      }
+
+      await Promise.resolve(socket.inboundMessageQueue).catch((error: unknown) => {
+        console.warn("[socket_message_queue] disconnect drain failed:", getErrorMessage(error));
+      });
+
+      if (player) {
+        const reindexedWorld = cleanIndexedWorldName(player.indexed_world || "");
+        cancelActiveTradeForPlayer(playerId, "Trade canceled because a player disconnected.");
+        activeFishingSessions.delete(playerId);
+        clearPlayerFishingPresence(player);
+        clearNetfoxTrustedPlayerState(player);
+        clearPlayerWorldIndex(player);
+        players.delete(playerId);
+        socketByPlayerId.delete(playerId);
+        clearPlayerInterestState(playerId);
+        if (reindexedWorld !== "") {
+          broadcastToWorld(reindexedWorld, buildPublicPlayerPresencePayload("player_left", player, reindexedWorld), playerId);
+          broadcastWorldPopulationUpdate(reindexedWorld);
+        }
 
         if (player.joined_world) {
           try {
@@ -2707,7 +2752,6 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
         markAccountSeen(player.account_username);
         releaseActiveAccountSession(player);
         if (player.joined_world) {
-          clearPlayerWorldIndex(player);
           await releasePlayerWorldAdmission(player, player.world).catch((error) => {
             console.warn("[redis] world admission disconnect cleanup failed:", error.message);
           });
@@ -2717,19 +2761,7 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
           await appendCctvWorldEvent(player.world, player, "leave", { reason: "disconnect" }).catch((error) => {
             console.warn("[cctv] failed to record disconnect:", error.message);
           });
-          broadcastToWorld(player.world, buildPublicPlayerPresencePayload("player_left", player, player.world), playerId);
-          broadcastSystemToWorld(player.world, `${player.name} left ${player.world}`, playerId);
         }
-      }
-
-      players.delete(playerId);
-      socketByPlayerId.delete(playerId);
-      clearPlayerInterestState(playerId);
-      if (closedWorld !== "") {
-        broadcastWorldPopulationUpdate(closedWorld);
-      }
-      if (closedUsername) {
-        notifyOnlineFriendsOfFriendState(closedUsername);
       }
     })().catch((error) => {
       console.warn("[socket_close_cleanup_error]", error.message);
@@ -27556,10 +27588,15 @@ function buildWorldStateMessage(worldName: any, extraMessageData: any = {}) {
 
   return {
     type: "world_state",
+    world_state_encoding: "grid_dictionary_v1",
     world: clean,
     cleared: Boolean(state.cleared),
-    foreground: getEffectiveForegroundBlocksForState(state, clean, generatedMaps.foreground),
-    background: getEffectiveBackgroundBlocksForState(state, clean, generatedMaps.background),
+    foreground: WorldStateHelpers.compactWorldLayerEntriesForNetwork(
+      getEffectiveForegroundBlocksForState(state, clean, generatedMaps.foreground)
+    ),
+    background: WorldStateHelpers.compactWorldLayerEntriesForNetwork(
+      getEffectiveBackgroundBlocksForState(state, clean, generatedMaps.background)
+    ),
     removed_foreground: state.cleared ? [] : Array.from<any>(state.removed_foreground.values()),
     removed_background: state.cleared ? [] : Array.from<any>(state.removed_background.values()),
     seeds: Array.from<any>(state.seeds.values()).map(serializeSeedForMessage),

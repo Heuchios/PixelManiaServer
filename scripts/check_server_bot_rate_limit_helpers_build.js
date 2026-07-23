@@ -49,9 +49,15 @@ const sentPayloads = [];
 const deniedPayloads = [];
 /** @type {Array<any>} */
 const securityEvents = [];
+/** @type {Record<string, any>} */
 const playerNetworkStats = {
   bot_rate_limit_rejections: 0,
   message_rate_limit_rejections: 0,
+  rate_limit_checks_by_bucket: {},
+  rate_limit_rejections_by_bucket: {},
+  rate_limit_checks_by_subject_kind: {},
+  rate_limit_rejections_by_subject_kind: {},
+  rate_limit_store_fallback_allows: 0,
 };
 
 const messageRouterHelpers = {
@@ -130,12 +136,19 @@ const helpers = BotRateLimitHelpersModule.createServerBotRateLimitHelpers(deps);
   assert.equal(await helpers.checkMessageRateLimit(socket, player, "chat", { type: "chat", request_id: "m1" }), true);
   assert.equal(await helpers.checkMessageRateLimit(socket, player, "chat", { type: "chat", request_id: "m2" }), false);
   assert.equal(playerNetworkStats.message_rate_limit_rejections, 1);
+  assert.equal(playerNetworkStats.rate_limit_checks_by_bucket["message:chat"], 2);
+  assert.equal(playerNetworkStats.rate_limit_rejections_by_bucket["message:chat"], 1);
+  assert.equal(playerNetworkStats.rate_limit_checks_by_subject_kind.account, 2);
+  assert.equal(playerNetworkStats.rate_limit_rejections_by_subject_kind.account, 1);
+  assert.equal(playerNetworkStats.rate_limit_store_fallback_allows, 1);
   assert.equal(sentPayloads.at(-1).type, "rate_limited");
 
   assert.equal(helpers.getBotRateLimitAction("world_block_update", { action: "place" }), "block_place");
   assert.equal(await helpers.checkBotActionRateLimit(socket, player, "chat", { type: "chat", request_id: "b1" }), true);
   assert.equal(await helpers.checkBotActionRateLimit(socket, player, "chat", { type: "chat", request_id: "b2" }), false);
   assert.equal(playerNetworkStats.bot_rate_limit_rejections, 1);
+  assert.equal(playerNetworkStats.rate_limit_checks_by_bucket["bot:chat_message"], 2);
+  assert.equal(playerNetworkStats.rate_limit_rejections_by_bucket["bot:chat_message"], 1);
   assert.equal(securityEvents.at(-1).event, "rate_limit_exceeded");
   assert.equal(securityEvents.at(-1).severity, "warning");
 
@@ -157,12 +170,16 @@ const helpers = BotRateLimitHelpersModule.createServerBotRateLimitHelpers(deps);
   });
   assert.equal(await redisHelpers.consumeScopedRateLimit({ playerId: "p2", readyState: 1 }, { account_username: "" }, "bot", "chat_message", { limit: 1, windowMs: 1000 }, { type: "chat" }, { logSecurityEvent: true }), false);
   assert.equal(playerNetworkStats.bot_rate_limit_rejections, 2);
+  assert.equal(playerNetworkStats.rate_limit_checks_by_subject_kind.ip, 1);
+  assert.equal(playerNetworkStats.rate_limit_rejections_by_subject_kind.ip, 1);
 
   assert.match(helperSource, /function createServerBotRateLimitTables/);
   assert.match(helperSource, /makeBotRateLimitConfig\("BOT_BLOCK_PLACE"/);
   assert.match(helperSource, /RATE_LIMIT_NOTIFICATION_COOLDOWN_MS = 3000/);
   assert.match(helperSource, /function createServerBotRateLimitHelpers/);
   assert.match(helperSource, /async function consumeScopedRateLimit/);
+  assert.match(helperSource, /rate_limit_rejections_by_bucket/);
+  assert.match(helperSource, /rate_limit_checks_by_subject_kind/);
   assert.match(helperSource, /messageRouterHelpers\.getMessageRateLimitDecision/);
   assert.match(helperSource, /messageRouterHelpers\.getBotRateLimitDecision/);
   assert.match(generatedSource, /Generated from src\/server_bot_rate_limit_helpers\.ts/);

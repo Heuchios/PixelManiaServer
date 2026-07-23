@@ -10,6 +10,16 @@ function getErrorMessage(error: any): string {
   return error && error.message ? String(error.message) : String(error);
 }
 
+function copyCounterRecord(value: unknown): Record<string, number> {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+  const result: Record<string, number> = {};
+  for (const [key, rawCount] of Object.entries(value as Record<string, unknown>)) {
+    const count = Math.max(0, Math.trunc(Number(rawCount) || 0));
+    if (count > 0) result[String(key)] = count;
+  }
+  return result;
+}
+
 function isBrokenStdIoError(error: unknown): boolean {
   const value = error as { code?: unknown; message?: unknown } | null;
   const code = String(value?.code || "");
@@ -333,6 +343,11 @@ function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
       outbound_send_failures: Number(playerNetworkStats.outbound_send_failures || 0),
       message_rate_limit_rejections: Number(playerNetworkStats.message_rate_limit_rejections || 0),
       bot_rate_limit_rejections: Number(playerNetworkStats.bot_rate_limit_rejections || 0),
+      rate_limit_checks_by_bucket: copyCounterRecord(playerNetworkStats.rate_limit_checks_by_bucket),
+      rate_limit_rejections_by_bucket: copyCounterRecord(playerNetworkStats.rate_limit_rejections_by_bucket),
+      rate_limit_checks_by_subject_kind: copyCounterRecord(playerNetworkStats.rate_limit_checks_by_subject_kind),
+      rate_limit_rejections_by_subject_kind: copyCounterRecord(playerNetworkStats.rate_limit_rejections_by_subject_kind),
+      rate_limit_store_fallback_allows: Number(playerNetworkStats.rate_limit_store_fallback_allows || 0),
       idempotency_duplicates: Number(playerNetworkStats.idempotency_duplicates || 0),
       idempotency_db_failures: Number(playerNetworkStats.idempotency_db_failures || 0),
       active_interest_receivers: playerInterestByReceiver.size,

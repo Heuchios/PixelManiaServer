@@ -1865,6 +1865,29 @@ function createWorldStateHelpers(config) {
             actionPosition,
         });
     }
+    function compactWorldLayerEntriesForNetwork(rawEntries) {
+        const entries = rawEntries instanceof Map
+            ? Array.from(rawEntries.values())
+            : (Array.isArray(rawEntries) ? rawEntries : []);
+        const compact = {};
+        for (const rawEntry of entries) {
+            if (!isRecord(rawEntry))
+                continue;
+            const x = Math.trunc(Number(rawEntry.x));
+            const y = Math.trunc(Number(rawEntry.y));
+            if (!Number.isFinite(x) || !Number.isFinite(y))
+                continue;
+            const value = { ...rawEntry };
+            delete value.x;
+            delete value.y;
+            const itemId = Math.trunc(Number(value.item_id) || 0);
+            const hasOnlyIdentityFields = Object.keys(value).every((key) => key === "block_type" || key === "item_id");
+            compact[`${x},${y}`] = itemId > 0 && hasOnlyIdentityFields
+                ? itemId
+                : value;
+        }
+        return compact;
+    }
     function serializeWorldState(worldName) {
         const state = config.ensureWorldState(worldName);
         return {
@@ -1898,6 +1921,7 @@ function createWorldStateHelpers(config) {
         addBedrockFloorEntries,
         applyInteractionUpdateToWorldState,
         cleanDropIdList,
+        compactWorldLayerEntriesForNetwork,
         createEmptyWorldState,
         deserializeWorldState,
         getDropStackGridFromDrop,

@@ -53,11 +53,18 @@ function boolArg(value) {
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
 }
 
+function parseCsvList(value) {
+  return String(value || "")
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter((entry) => entry !== "");
+}
+
 function usage() {
   return `
 Usage:
   npm run load:staged -- --url ws://127.0.0.1:8080 --dev-login --clients 100 --step 25 --step-ms 30s --hold-ms 2m --world LOAD_TEST
-  npm run load:staged -- --url wss://api.pixelmaniagame.com/ws --token-file ./load_tokens.json --clients 100 --step 25 --step-ms 30s --hold-ms 2m
+  npm run load:staged -- --urls wss://api.pixelmaniagame.com/ws-a,wss://api.pixelmaniagame.com/ws-b --worlds LOAD_A,LOAD_B --token-file ./load_tokens.json --clients 250 --step 25 --step-ms 30s --hold-ms 5m
 
 Auth modes:
   --dev-login                 Local/staging only. Requires server dev backend login to be enabled.
@@ -67,13 +74,18 @@ Token file rows:
   { "username": "load001", "session_token": "...", "refresh_token": "..." }
 
 Useful knobs:
-  --health-url <url>          Defaults to /health derived from --url.
+  --url <url>                 Single-route mode.
+  --world <name>              Single-route world.
+  --urls <url-a,url-b>        Multi-route mode. Clients are assigned round-robin.
+  --worlds <world-a,world-b>  Required with --urls. Worlds must be distinct so route ownership does not redirect.
+  --health-url <url>          Defaults to /health in single-route mode; disabled by default in multi-route mode.
   --token-out-file <file>     Defaults to <token-file>.next.json.
   --token-offset 0            Start assigning clients at this token row.
   --client-version 1.0.3
   --rate 10                   Position messages per joined client per second.
   --radius 3                  Movement radius in pixels. Keeps the first update inside the 4px world-entry guard.
   --max-rejections 0          Maximum accepted action rejections before the stage fails.
+  --max-rate-limited 0        Maximum accepted rate_limited responses before the stage fails.
   --stats-ms 5000
 `;
 }
@@ -161,23 +173,35 @@ class LoadClient {
     this.runner = runner;
     this.index = index;
     this.tokenRow = tokenRow;
+    this.routeIndex = index % runner.routes.length;
+    this.route = runner.routes[this.routeIndex];
+    this.routeClientIndex = Math.floor(index / runner.routes.length);
+    this.routeUrl = this.route.url;
+    this.world = this.route.world;
     this.username = tokenRow?.username || `${runner.usernamePrefix}${String(index + 1).padStart(5, "0")}`;
     this.ws = null;
     this.connected = false;
     this.authenticated = false;
     this.joined = false;
-    this.spawnX = runner.spawnX + (index % runner.spawnColumns) * runner.spawnSpacing;
-    this.spawnY = runner.spawnY + Math.floor(index / runner.spawnColumns) * runner.spawnSpacing;
+    this.spawnX = runner.spawnX + (this.routeClientIndex % runner.spawnColumns) * runner.spawnSpacing;
+    this.spawnY = runner.spawnY + Math.floor(this.routeClientIndex / runner.spawnColumns) * runner.spawnSpacing;
     this.facing = 1;
     this.movementTimer = null;
     this.openedAt = 0;
     this.messagesReceived = 0;
     this.bytesReceived = 0;
     this.bytesSent = 0;
+    this.authErrorCount = 0;
+    this.updateRequiredCount = 0;
+    this.rejectionCount = 0;
+    this.rateLimitedCount = 0;
+    this.routeRedirectCount = 0;
+    this.abnormalCloseCount = 0;
+    this.socketErrorCount = 0;
   }
 
   connect() {
-    const ws = new WebSocket(this.runner.url, {
+    const ws = new WebSocket(this.routeUrl, {
       perMessageDeflate: false,
       handshakeTimeout: this.runner.handshakeTimeoutMs,
     });
@@ -194,31 +218,42 @@ class LoadClient {
       this.messagesReceived += 1;
       this.runner.stats.messagesReceived += 1;
       const rawText = raw.toString();
-      this.bytesReceived += Buffer.byteLength(rawText);
-      this.runner.stats.bytesReceived += Buffer.byteLength(rawText);
+      const messageBytes = Buffer.byteLength(rawText);
+      this.bytesReceived += messageBytes;
+      this.runner.stats.bytesReceived += messageBytes;
       let data;
       try {
         data = JSON.parse(rawText);
       } catch (_error) {
         return;
       }
-      this.handleMessage(data);
+      this.handleMessage(data, messageBytes);
     });
 
     ws.on("close", (code, reason) => {
+      const closePhase = this.joined
+        ? "joined"
+        : (this.authenticated ? "authenticated" : (this.connected ? "connected" : "opening"));
+      const intentional = this.runner.shuttingDown && Number(code) === 1000;
       this.connected = false;
       this.joined = false;
       this.runner.stats.closed += 1;
+      if (!intentional) this.abnormalCloseCount += 1;
       const reasonText = Buffer.isBuffer(reason) ? reason.toString("utf8") : String(reason || "");
-      this.runner.recordClose(code, reasonText);
+      this.runner.recordClose(code, reasonText, {
+        closePhase,
+        intentional,
+        lifetimeMs: this.openedAt > 0 ? Date.now() - this.openedAt : 0,
+      });
       this.stopMovement();
     });
 
     ws.on("error", (error) => {
       this.runner.stats.errors += 1;
+      this.socketErrorCount += 1;
       this.runner.recordSocketError(error.message || "socket_error");
       if (this.runner.verbose) {
-        console.warn(`[client ${this.index}] socket error: ${error.message}`);
+        console.warn(`[client ${this.index} route=${this.routeIndex}] socket error: ${error.message}`);
       }
     });
   }
@@ -244,7 +279,7 @@ class LoadClient {
         type: "dev_backend_login",
         request_id: makeRequestId("dev-login", this.index),
         username: this.username,
-        world: this.runner.world,
+        world: this.world,
         movement_mode: "WEBSOCKET",
         dev_login: true,
       });
@@ -264,7 +299,7 @@ class LoadClient {
     this.send(payload);
   }
 
-  handleMessage(data) {
+  handleMessage(data, messageBytes = 0) {
     const type = String(data.type || "");
     if (type === "account_auth_ok" && data.ok !== false) {
       this.authenticated = true;
@@ -278,17 +313,18 @@ class LoadClient {
         request_id: makeRequestId("join", this.index),
         username: this.username,
         session_token: this.tokenRow?.session_token || String(data.session_token || ""),
-        world: this.runner.world,
+        world: this.world,
       });
       return;
     }
 
     if (type === "account_auth_error") {
       this.runner.stats.authErrors += 1;
+      this.authErrorCount += 1;
       this.runner.recordAuthError(data.reason || data.message || "auth_error");
       if (this.runner.verbose) {
         const source = this.tokenRow ? ` tokenRow=${this.tokenRow.index} username=${this.username}` : ` username=${this.username}`;
-        console.warn(`[client ${this.index}] auth error:${source} message=${data.message || "unknown"} reason=${data.reason || "unknown"}`);
+        console.warn(`[client ${this.index} route=${this.routeIndex}] auth error:${source} message=${data.message || "unknown"} reason=${data.reason || "unknown"}`);
       }
       this.close();
       return;
@@ -296,7 +332,8 @@ class LoadClient {
 
     if (type === "client_update_required") {
       this.runner.stats.updateRequired += 1;
-      console.warn(`[client ${this.index}] update required: ${data.message || ""}`);
+      this.updateRequiredCount += 1;
+      console.warn(`[client ${this.index} route=${this.routeIndex}] update required: ${data.message || ""}`);
       this.close();
       return;
     }
@@ -314,6 +351,14 @@ class LoadClient {
 
     if (type === "world_state") {
       this.runner.stats.worldStates += 1;
+      this.runner.stats.worldStateBytesTotal += Math.max(0, Math.trunc(Number(messageBytes) || 0));
+      this.runner.stats.worldStateBytesMax = Math.max(
+        this.runner.stats.worldStateBytesMax,
+        Math.max(0, Math.trunc(Number(messageBytes) || 0)),
+      );
+      if (String(data.world_state_encoding || "") === "grid_dictionary_v1") {
+        this.runner.stats.worldStateCompact += 1;
+      }
       return;
     }
 
@@ -329,15 +374,40 @@ class LoadClient {
       return;
     }
 
+    if (type === "world_route_redirect") {
+      this.runner.stats.routeRedirects += 1;
+      this.routeRedirectCount += 1;
+      this.runner.recordRouteRedirect(data.redirect_ws_url || data.owner_instance_id || "unknown");
+      if (this.runner.verbose) {
+        console.warn(
+          `[client ${this.index} route=${this.routeIndex}] unexpected world route redirect:`
+          + ` world=${this.world} target=${data.redirect_ws_url || "unknown"}`,
+        );
+      }
+      this.close("route_redirect");
+      return;
+    }
+
     if (type === "action_rejected") {
       this.runner.stats.rejections += 1;
+      this.rejectionCount += 1;
       if (data.position_correction) this.runner.stats.positionCorrections += 1;
       this.runner.recordRejection(data.reason || data.message || data.code || "action_rejected");
       if (this.runner.verbose) {
         console.warn(
-          `[client ${this.index}] action rejected: reason=${data.reason || ""}`
+          `[client ${this.index} route=${this.routeIndex}] action rejected: reason=${data.reason || ""}`
           + ` message=${data.message || ""} correction=${Boolean(data.position_correction)}`,
         );
+      }
+      return;
+    }
+
+    if (type === "rate_limited") {
+      this.runner.stats.rateLimited += 1;
+      this.rateLimitedCount += 1;
+      this.runner.recordRateLimited(data.action || data.bucket || data.reason || "unknown");
+      if (this.runner.verbose) {
+        console.warn(`[client ${this.index} route=${this.routeIndex}] rate limited: bucket=${data.action || data.bucket || "unknown"}`);
       }
       return;
     }
@@ -366,7 +436,7 @@ class LoadClient {
       x,
       y,
       facing: this.facing,
-      world: this.runner.world,
+      world: this.world,
       animation_state: "walk",
       velocity_x: -Math.sin(phase) * this.runner.radius * this.runner.angularSpeed,
       velocity_y: 0,
@@ -393,17 +463,18 @@ class LoadClient {
     this.movementTimer = null;
   }
 
-  close() {
+  close(reason = "load_complete") {
     this.stopMovement();
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.close();
+    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.close(1000, reason);
   }
 }
 
 class LoadRunner {
   constructor(options) {
-    this.url = options.url;
+    this.routes = options.routes;
+    this.url = this.routes[0].url;
     this.healthUrl = options.healthUrl;
-    this.world = options.world;
+    this.world = this.routes[0].world;
     this.clientVersion = options.clientVersion;
     this.clientsTarget = options.clientsTarget;
     this.step = options.step;
@@ -412,6 +483,7 @@ class LoadRunner {
     this.rate = options.rate;
     this.radius = options.radius;
     this.maxRejections = options.maxRejections;
+    this.maxRateLimited = options.maxRateLimited;
     this.angularSpeed = options.angularSpeed;
     this.statsMs = options.statsMs;
     this.handshakeTimeoutMs = options.handshakeTimeoutMs;
@@ -429,10 +501,15 @@ class LoadRunner {
     this.startedAt = Date.now();
     this.lastStats = null;
     this.lastHealth = null;
+    this.healthBaseline = null;
     this.statsTimer = null;
+    this.shuttingDown = false;
     this.closeReasons = new Map();
+    this.closePhases = new Map();
     this.authErrorReasons = new Map();
     this.rejectionReasons = new Map();
+    this.rateLimitedBuckets = new Map();
+    this.routeRedirectTargets = new Map();
     this.socketErrors = new Map();
     this.stats = {
       opened: 0,
@@ -443,6 +520,9 @@ class LoadRunner {
       authErrors: 0,
       updateRequired: 0,
       rejections: 0,
+      rateLimited: 0,
+      routeRedirects: 0,
+      abnormalCloses: 0,
       positionCorrections: 0,
       messagesSent: 0,
       messagesReceived: 0,
@@ -453,14 +533,23 @@ class LoadRunner {
       positionItems: 0,
       leftItems: 0,
       worldStates: 0,
+      worldStateCompact: 0,
+      worldStateBytesTotal: 0,
+      worldStateBytesMax: 0,
     };
   }
 
-  recordClose(code, reason) {
+  recordClose(code, reason, details = {}) {
     const cleanCode = Math.trunc(Number(code) || 0);
     const cleanReason = String(reason || "").trim();
     const key = cleanReason === "" ? String(cleanCode) : `${cleanCode}:${cleanReason}`;
     this.incrementSummary(this.closeReasons, key);
+    if (!details.intentional) {
+      this.stats.abnormalCloses += 1;
+      const phase = String(details.closePhase || "unknown");
+      const lifetimeBucket = Number(details.lifetimeMs || 0) < 10_000 ? "<10s" : ">=10s";
+      this.incrementSummary(this.closePhases, `${phase}:${lifetimeBucket}`);
+    }
   }
 
   recordAuthError(reason) {
@@ -469,6 +558,14 @@ class LoadRunner {
 
   recordRejection(reason) {
     this.incrementSummary(this.rejectionReasons, String(reason || "action_rejected").trim() || "action_rejected");
+  }
+
+  recordRateLimited(bucket) {
+    this.incrementSummary(this.rateLimitedBuckets, String(bucket || "unknown").trim() || "unknown");
+  }
+
+  recordRouteRedirect(target) {
+    this.incrementSummary(this.routeRedirectTargets, String(target || "unknown").trim() || "unknown");
   }
 
   recordSocketError(message) {
@@ -488,15 +585,71 @@ class LoadRunner {
       .join(",");
   }
 
+  formatCounterDelta(current, baseline, limit = 3) {
+    const currentRecord = current && typeof current === "object" && !Array.isArray(current) ? current : {};
+    const baselineRecord = baseline && typeof baseline === "object" && !Array.isArray(baseline) ? baseline : {};
+    const deltas = new Map();
+    for (const [key, rawValue] of Object.entries(currentRecord)) {
+      const delta = Math.max(0, Number(rawValue || 0) - Number(baselineRecord[key] || 0));
+      if (delta > 0) deltas.set(key, delta);
+    }
+    return this.formatSummary(deltas, limit);
+  }
+
+  getRouteTarget(routeIndex) {
+    return Math.floor((this.clientsTarget + this.routes.length - 1 - routeIndex) / this.routes.length);
+  }
+
+  getRouteSummaries() {
+    return this.routes.map((route, routeIndex) => {
+      const clients = this.clients.filter((client) => client.routeIndex === routeIndex);
+      return {
+        routeIndex,
+        url: route.url,
+        world: route.world,
+        target: this.getRouteTarget(routeIndex),
+        opened: clients.filter((client) => client.openedAt > 0).length,
+        authenticated: clients.filter((client) => client.authenticated).length,
+        joined: clients.filter((client) => client.joined).length,
+        active: clients.filter((client) => client.ws && client.ws.readyState === WebSocket.OPEN).length,
+        authErrors: clients.reduce((sum, client) => sum + client.authErrorCount, 0),
+        updateRequired: clients.reduce((sum, client) => sum + client.updateRequiredCount, 0),
+        rejections: clients.reduce((sum, client) => sum + client.rejectionCount, 0),
+        rateLimited: clients.reduce((sum, client) => sum + client.rateLimitedCount, 0),
+        routeRedirects: clients.reduce((sum, client) => sum + client.routeRedirectCount, 0),
+        abnormalCloses: clients.reduce((sum, client) => sum + client.abnormalCloseCount, 0),
+        socketErrors: clients.reduce((sum, client) => sum + client.socketErrorCount, 0),
+      };
+    });
+  }
+
+  formatRouteProgress(routeSummaries = this.getRouteSummaries()) {
+    return routeSummaries
+      .map((summary) => (
+        `r${summary.routeIndex}`
+        + `[active=${summary.active}/${summary.target}`
+        + ` auth=${summary.authenticated}/${summary.target}`
+        + ` joined=${summary.joined}/${summary.target}`
+        + ` redirect=${summary.routeRedirects}]`
+      ))
+      .join(" ");
+  }
+
   async run() {
     console.log("[load] staged PixelMania WebSocket load test");
-    console.log(`[load] url=${this.url} health=${this.healthUrl || "(disabled)"} world=${this.world} clients=${this.clientsTarget} step=${this.step} stepMs=${this.stepMs} holdMs=${this.holdMs} rate=${this.rate}/s`);
+    console.log(`[load] routes=${this.routes.length} health=${this.healthUrl || "(disabled)"} clients=${this.clientsTarget} step=${this.step} stepMs=${this.stepMs} holdMs=${this.holdMs} rate=${this.rate}/s`);
+    this.routes.forEach((route, routeIndex) => {
+      console.log(`[load] route[${routeIndex}] url=${route.url} world=${route.world} target=${this.getRouteTarget(routeIndex)}`);
+    });
     if (!this.devLogin) {
       const firstToken = this.tokenAccounts[this.tokenOffset];
       const lastToken = this.tokenAccounts[this.tokenOffset + this.clientsTarget - 1];
       console.log(`[load] token rows offset=${this.tokenOffset} first=${firstToken?.username || "(missing)"} last=${lastToken?.username || "(missing)"}`);
     }
     this.startedAt = Date.now();
+    if (this.healthUrl) {
+      this.healthBaseline = await getJson(this.healthUrl);
+    }
     this.statsTimer = setInterval(() => this.printStats(), this.statsMs);
     if (typeof this.statsTimer.unref === "function") this.statsTimer.unref();
 
@@ -518,22 +671,51 @@ class LoadRunner {
     }
 
     await wait(this.holdMs);
-    const activeAtEnd = this.clients.filter((client) => client.ws && client.ws.readyState === WebSocket.OPEN).length;
-    const joinedAtEnd = this.clients.filter((client) => client.joined).length;
+    await this.printStats(true);
+    const routeSummaries = this.getRouteSummaries();
+    const activeAtEnd = routeSummaries.reduce((sum, summary) => sum + summary.active, 0);
+    const joinedAtEnd = routeSummaries.reduce((sum, summary) => sum + summary.joined, 0);
+    const routesHealthy = routeSummaries.every((summary) => (
+      summary.active === summary.target
+      && summary.authenticated === summary.target
+      && summary.joined === summary.target
+      && summary.authErrors === 0
+      && summary.updateRequired === 0
+      && summary.socketErrors === 0
+      && summary.abnormalCloses === 0
+      && summary.routeRedirects === 0
+    ));
     const result = {
-      ok: activeAtEnd === this.clientsTarget
+      ok: routesHealthy
+        && activeAtEnd === this.clientsTarget
         && joinedAtEnd === this.clientsTarget
         && this.stats.authenticated === this.clientsTarget
         && this.stats.authErrors === 0
         && this.stats.updateRequired === 0
         && this.stats.errors === 0
-        && this.stats.rejections <= this.maxRejections,
+        && this.stats.rejections <= this.maxRejections
+        && this.stats.rateLimited <= this.maxRateLimited
+        && this.stats.routeRedirects === 0
+        && this.stats.abnormalCloses === 0,
       activeAtEnd,
       joinedAtEnd,
+      routeSummaries,
     };
+    for (const summary of routeSummaries) {
+      console.log(
+        `[load] route[${summary.routeIndex}] final`
+        + ` active=${summary.active}/${summary.target}`
+        + ` auth=${summary.authenticated}/${summary.target}`
+        + ` joined=${summary.joined}/${summary.target}`
+        + ` errors=${summary.socketErrors}`
+        + ` abnormalCloses=${summary.abnormalCloses}`
+        + ` rejections=${summary.rejections}`
+        + ` rateLimited=${summary.rateLimited}`
+        + ` redirects=${summary.routeRedirects}`,
+      );
+    }
     this.shutdown();
     await wait(1000);
-    await this.printStats(true);
     writeTokenAccounts(this.tokenOutFile, this.tokenAccounts);
     return result;
   }
@@ -557,9 +739,11 @@ class LoadRunner {
 
     const health = this.lastHealth?.payload || {};
     const persistence = health.persistence || {};
-    const playerNetwork = persistence.player_network || {};
-    const worldNetwork = persistence.world_network || {};
-    const tick = persistence.server_tick || {};
+    const baselinePersistence = this.healthBaseline?.persistence || {};
+    const playerNetwork = persistence.player_network || health.player_network || {};
+    const baselinePlayerNetwork = baselinePersistence.player_network || this.healthBaseline?.player_network || {};
+    const worldNetwork = persistence.world_network || health.world_network || {};
+    const tick = persistence.server_tick || health.server_tick || {};
     const tickLag = tick.max_lag_ms !== undefined
       ? ` tickMax=${tick.max_lag_ms}ms`
       : (tick.last_lag_ms !== undefined ? ` tickLag=${tick.last_lag_ms}ms` : "");
@@ -572,19 +756,37 @@ class LoadRunner {
     const closeSummary = this.formatSummary(this.closeReasons);
     const authErrorSummary = this.formatSummary(this.authErrorReasons);
     const rejectionSummary = this.formatSummary(this.rejectionReasons);
+    const rateLimitedSummary = this.formatSummary(this.rateLimitedBuckets, 3);
+    const routeRedirectSummary = this.formatSummary(this.routeRedirectTargets, 2);
+    const closePhaseSummary = this.formatSummary(this.closePhases, 3);
     const socketErrorSummary = this.formatSummary(this.socketErrors, 1);
+    const serverRateLimitSummary = this.formatCounterDelta(
+      playerNetwork.rate_limit_rejections_by_bucket,
+      baselinePlayerNetwork.rate_limit_rejections_by_bucket,
+      3,
+    );
+    const worldStateAverageBytes = this.stats.worldStates > 0
+      ? Math.round(this.stats.worldStateBytesTotal / this.stats.worldStates)
+      : 0;
 
     console.log(
       `[load] ${final ? "final " : ""}t=${elapsedSec.toFixed(1)}s active=${active} auth=${this.stats.authenticated} joined=${joined}` +
       ` posOut=${this.stats.positionSent} posRate=${sentRate.toFixed(1)}/s rxRate=${rxRate.toFixed(1)}/s` +
-      ` batches=${this.stats.positionBatches} rejections=${this.stats.rejections} corrections=${this.stats.positionCorrections}` +
-      ` worldStates=${this.stats.worldStates}` +
+      ` batches=${this.stats.positionBatches} rejections=${this.stats.rejections} rateLimited=${this.stats.rateLimited}` +
+      ` redirects=${this.stats.routeRedirects} corrections=${this.stats.positionCorrections}` +
+      ` worldStates=${this.stats.worldStates} compact=${this.stats.worldStateCompact}` +
+      ` worldStateAvg=${worldStateAverageBytes}B worldStateMax=${this.stats.worldStateBytesMax}B` +
       ` errors=${this.stats.errors} authErrors=${this.stats.authErrors}` +
       `${closeSummary ? ` close=${closeSummary}` : ""}` +
+      `${closePhaseSummary ? ` unexpectedClose=${closePhaseSummary}` : ""}` +
       `${authErrorSummary ? ` authReason=${authErrorSummary}` : ""}` +
       `${rejectionSummary ? ` rejectReason=${rejectionSummary}` : ""}` +
+      `${rateLimitedSummary ? ` rateBucket=${rateLimitedSummary}` : ""}` +
+      `${routeRedirectSummary ? ` redirectTarget=${routeRedirectSummary}` : ""}` +
+      `${serverRateLimitSummary ? ` serverRateDelta=${serverRateLimitSummary}` : ""}` +
       `${socketErrorSummary ? ` socketError=${socketErrorSummary}` : ""}` +
-      `${tickLag}${pending}${worldPending}`
+      `${tickLag}${pending}${worldPending}` +
+      ` routes=${this.formatRouteProgress()}`
     );
 
     this.lastStats = { at: now, ...this.stats };
@@ -593,6 +795,7 @@ class LoadRunner {
   shutdown() {
     if (this.statsTimer) clearInterval(this.statsTimer);
     this.statsTimer = null;
+    this.shuttingDown = true;
     for (const client of this.clients) client.close();
   }
 }
@@ -608,11 +811,49 @@ async function main() {
     return;
   }
 
-  const url = String(args.url || process.env.PIXELMANIA_LOAD_WS_URL || "ws://127.0.0.1:8080").trim();
+  const configuredUrls = args.urls || process.env.PIXELMANIA_LOAD_WS_URLS;
+  const singleUrl = String(args.url || process.env.PIXELMANIA_LOAD_WS_URL || "ws://127.0.0.1:8080").trim();
+  const urls = configuredUrls ? parseCsvList(configuredUrls) : [singleUrl];
+  if (urls.length === 0) {
+    throw new Error("At least one WebSocket URL is required. Use --url for one route or --urls for multiple routes.");
+  }
+  for (const routeUrl of urls) {
+    let parsedUrl;
+    try {
+      parsedUrl = new URL(routeUrl);
+    } catch (_error) {
+      throw new Error(`Invalid WebSocket URL: ${routeUrl}`);
+    }
+    if (!["ws:", "wss:"].includes(parsedUrl.protocol)) {
+      throw new Error(`WebSocket URL must use ws:// or wss://: ${routeUrl}`);
+    }
+  }
+  if (urls.length > 1 && new Set(urls).size !== urls.length) {
+    throw new Error("Multi-route load tests require distinct values in --urls.");
+  }
+
+  const configuredWorlds = args.worlds || process.env.PIXELMANIA_LOAD_WORLDS;
+  const singleWorld = String(args.world || process.env.PIXELMANIA_LOAD_WORLD || "LOAD_TEST").trim().toUpperCase();
+  const worlds = (configuredWorlds ? parseCsvList(configuredWorlds) : [singleWorld])
+    .map((world) => world.toUpperCase());
+  if (worlds.length !== urls.length) {
+    throw new Error(`Route/world mismatch: received ${urls.length} URL(s) and ${worlds.length} world(s). Provide one distinct --worlds entry for every --urls entry.`);
+  }
+  if (worlds.some((world) => world === "")) {
+    throw new Error("Load-test world names must not be empty.");
+  }
+  if (urls.length > 1 && new Set(worlds).size !== worlds.length) {
+    throw new Error("Multi-route load tests require distinct worlds so Redis world ownership does not redirect clients between workers.");
+  }
+
+  const routes = urls.map((routeUrl, routeIndex) => ({
+    url: routeUrl,
+    world: worlds[routeIndex],
+  }));
   const devLogin = boolArg(args["dev-login"] || process.env.PIXELMANIA_LOAD_DEV_LOGIN);
   const tokenFile = args["token-file"] ? String(args["token-file"]) : "";
   const tokenAccounts = readTokenAccounts(tokenFile);
-  const likelyLive = /api\.pixelmaniagame\.com/i.test(url);
+  const likelyLive = urls.some((routeUrl) => /api\.pixelmaniagame\.com/i.test(routeUrl));
 
   if (devLogin && likelyLive && !boolArg(args["allow-live-dev-login"])) {
     throw new Error("Refusing --dev-login against api.pixelmaniagame.com. Use staging/local dev login, or pass a production-style --token-file with disposable test accounts.");
@@ -632,11 +873,14 @@ async function main() {
   const tokenOutFile = args["token-out-file"]
     ? String(args["token-out-file"])
     : (tokenFile ? `${tokenFile.replace(/\.json$/i, "")}.next.json` : "");
+  const explicitHealthUrl = args["health-url"] || process.env.PIXELMANIA_LOAD_HEALTH_URL;
+  const healthUrl = explicitHealthUrl
+    ? String(explicitHealthUrl).trim()
+    : (routes.length === 1 ? deriveHealthUrl(routes[0].url) : "");
 
   const runner = new LoadRunner({
-    url,
-    healthUrl: String(args["health-url"] || process.env.PIXELMANIA_LOAD_HEALTH_URL || deriveHealthUrl(url)),
-    world: String(args.world || process.env.PIXELMANIA_LOAD_WORLD || "LOAD_TEST").trim().toUpperCase(),
+    routes,
+    healthUrl,
     clientVersion: String(args["client-version"] || process.env.PIXELMANIA_LOAD_CLIENT_VERSION || "1.0.3"),
     clientsTarget: clients,
     step: parseInteger(args.step || process.env.PIXELMANIA_LOAD_STEP, 25, 1, clients),
@@ -645,6 +889,7 @@ async function main() {
     rate: parseInteger(args.rate || process.env.PIXELMANIA_LOAD_RATE, 10, 1, 120),
     radius: parseInteger(args.radius || process.env.PIXELMANIA_LOAD_RADIUS, 3, 0, 1024),
     maxRejections: parseInteger(args["max-rejections"] || process.env.PIXELMANIA_LOAD_MAX_REJECTIONS, 0, 0, 1_000_000),
+    maxRateLimited: parseInteger(args["max-rate-limited"] || process.env.PIXELMANIA_LOAD_MAX_RATE_LIMITED, 0, 0, 1_000_000),
     angularSpeed: Number.isFinite(Number(args["angular-speed"] || process.env.PIXELMANIA_LOAD_ANGULAR_SPEED))
       ? Number(args["angular-speed"] || process.env.PIXELMANIA_LOAD_ANGULAR_SPEED)
       : 0.35,
@@ -664,6 +909,7 @@ async function main() {
 
   const result = await runner.run();
   if (!result.ok) {
+    const routeVerdict = runner.formatRouteProgress(result.routeSummaries);
     throw new Error(
       `Load stage did not remain healthy: active=${result.activeAtEnd}/${clients}`
       + ` joined=${result.joinedAtEnd}/${clients}`
@@ -671,7 +917,11 @@ async function main() {
       + ` authErrors=${runner.stats.authErrors}`
       + ` updateRequired=${runner.stats.updateRequired}`
       + ` socketErrors=${runner.stats.errors}`
-      + ` rejections=${runner.stats.rejections}/${runner.maxRejections}`,
+      + ` unexpectedCloses=${runner.stats.abnormalCloses}`
+      + ` rejections=${runner.stats.rejections}/${runner.maxRejections}`
+      + ` rateLimited=${runner.stats.rateLimited}/${runner.maxRateLimited}`
+      + ` redirects=${runner.stats.routeRedirects}`
+      + ` routes=${routeVerdict}`,
     );
   }
 }

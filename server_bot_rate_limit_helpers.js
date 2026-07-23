@@ -124,6 +124,25 @@ function createServerBotRateLimitHelpers(deps) {
             return `ip:${ip}`;
         return `socket:${socket?.playerId || "unknown"}`;
     }
+    function getRateLimitSubjectKind(subject) {
+        const cleanSubject = String(subject || "").trim().toLowerCase();
+        if (cleanSubject.startsWith("account:"))
+            return "account";
+        if (cleanSubject.startsWith("ip:"))
+            return "ip";
+        return "socket";
+    }
+    function incrementCounterRecord(statsKey, counterKey) {
+        const counters = isRecord(deps.playerNetworkStats[statsKey])
+            ? deps.playerNetworkStats[statsKey]
+            : {};
+        counters[counterKey] = Number(counters[counterKey] || 0) + 1;
+        deps.playerNetworkStats[statsKey] = counters;
+    }
+    function recordRateLimitCheck(scope, bucketKey, subjectKind) {
+        incrementCounterRecord("rate_limit_checks_by_bucket", `${scope}:${bucketKey}`);
+        incrementCounterRecord("rate_limit_checks_by_subject_kind", subjectKind);
+    }
     function notifyRateLimited(socket, bucketKey, data = null) {
         const cleanBucketKey = String(bucketKey || "unknown").trim().toLowerCase() || "unknown";
         const raw = toRecord(data);
@@ -159,13 +178,19 @@ function createServerBotRateLimitHelpers(deps) {
         const safeLimits = cleanRateLimitConfig(limits, defaultRateLimit);
         const cleanScope = String(scope || "message").trim().toLowerCase() || "message";
         const cleanBucketKey = String(bucketKey || "unknown").trim().toLowerCase() || "unknown";
+        const subject = getRateLimitSubject(socket, player);
+        const subjectKind = getRateLimitSubjectKind(subject);
+        recordRateLimitCheck(cleanScope, cleanBucketKey, subjectKind);
         if (typeof deps.redisStore?.isReady === "function" && deps.redisStore.isReady() && typeof deps.redisStore.checkRateLimit === "function") {
-            const subject = getRateLimitSubject(socket, player);
             const result = await deps.redisStore.checkRateLimit(`${cleanScope}:${cleanBucketKey}`, subject, safeLimits.limit, safeLimits.windowMs);
             if (result.allowed) {
+                if (result.fallback) {
+                    deps.playerNetworkStats.rate_limit_store_fallback_allows =
+                        Number(deps.playerNetworkStats.rate_limit_store_fallback_allows || 0) + 1;
+                }
                 return true;
             }
-            recordRateLimitRejection(cleanScope);
+            recordRateLimitRejection(cleanScope, cleanBucketKey, subjectKind);
             notifyRateLimited(socket, cleanBucketKey, data);
             if (options.logSecurityEvent) {
                 logRateLimitSecurityEvent(socket, player, cleanScope, cleanBucketKey, safeLimits, result, data);
@@ -186,9 +211,11 @@ function createServerBotRateLimitHelpers(deps) {
         bucket.count = Math.trunc(Number(bucket.count) || 0) + 1;
         rateLimits.set(localBucketKey, bucket);
         if (bucket.count <= safeLimits.limit) {
+            deps.playerNetworkStats.rate_limit_store_fallback_allows =
+                Number(deps.playerNetworkStats.rate_limit_store_fallback_allows || 0) + 1;
             return true;
         }
-        recordRateLimitRejection(cleanScope);
+        recordRateLimitRejection(cleanScope, cleanBucketKey, subjectKind);
         notifyRateLimited(socket, cleanBucketKey, data);
         if (options.logSecurityEvent) {
             logRateLimitSecurityEvent(socket, player, cleanScope, cleanBucketKey, safeLimits, {
@@ -200,9 +227,11 @@ function createServerBotRateLimitHelpers(deps) {
         }
         return false;
     }
-    function recordRateLimitRejection(scope) {
+    function recordRateLimitRejection(scope, bucketKey, subjectKind) {
         const key = scope === "bot" ? "bot_rate_limit_rejections" : "message_rate_limit_rejections";
         deps.playerNetworkStats[key] = Number(deps.playerNetworkStats[key] || 0) + 1;
+        incrementCounterRecord("rate_limit_rejections_by_bucket", `${scope}:${bucketKey}`);
+        incrementCounterRecord("rate_limit_rejections_by_subject_kind", subjectKind);
     }
     async function checkMessageRateLimit(socket, player, messageType, data = null) {
         const decision = deps.messageRouterHelpers.getMessageRateLimitDecision(messageType, data);

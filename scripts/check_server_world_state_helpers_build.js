@@ -612,6 +612,24 @@ assert.deepEqual(
   helpers.sanitizeBulkDropPickup({ drop_id: "drop_a", bulk_pickup_same_tile: true }, "WORLD", { id: "p1", name: "Uso" }).drop_ids,
   ["drop_a", "drop_b"]
 );
+const verboseWorldLayer = [
+  { x: 1, y: 2, block_type: "dirt", item_id: 100 },
+  { x: 3, y: 4, block_type: "door", item_id: 200, door_id: "entry", locked: true },
+  { x: 5, y: 6, block_type: "bedrock" },
+];
+const compactWorldLayer = helpers.compactWorldLayerEntriesForNetwork(verboseWorldLayer);
+assert.equal(compactWorldLayer["1,2"], 100);
+assert.deepEqual(compactWorldLayer["3,4"], {
+  block_type: "door",
+  item_id: 200,
+  door_id: "entry",
+  locked: true,
+});
+assert.deepEqual(compactWorldLayer["5,6"], { block_type: "bedrock" });
+assert.ok(
+  Buffer.byteLength(JSON.stringify(compactWorldLayer)) < Buffer.byteLength(JSON.stringify(verboseWorldLayer)),
+  "dictionary world layers must be smaller than verbose arrays",
+);
 assert.equal(helpers.serializeWorldState("WORLD").world_state_version, 1);
 
 assert.equal(
@@ -649,6 +667,7 @@ assert.match(helperSource, /function normalizeWorldEventTileEntry/);
 assert.match(helperSource, /function loadWorldEventStateIntoState/);
 assert.match(helperSource, /function loadInteractionsIntoMap/);
 assert.match(helperSource, /function loadDropsIntoMap/);
+assert.match(helperSource, /function compactWorldLayerEntriesForNetwork/);
 assert.match(helperSource, /function serializeWorldState/);
 assert.match(generatedSource, /Generated from src\/server_world_state_helpers\.ts/);
 assert.match(generatedSource, /module\.exports = \{/);
@@ -675,6 +694,8 @@ assert.match(serverSource, /WorldStateHelpers\.normalizeWorldEventTileEntry/);
 assert.match(serverSource, /WorldStateHelpers\.loadWorldEventStateIntoState/);
 assert.match(serverSource, /WorldStateHelpers\.loadInteractionsIntoMap/);
 assert.match(serverSource, /WorldStateHelpers\.loadDropsIntoMap/);
+assert.match(serverSource, /WorldStateHelpers\.compactWorldLayerEntriesForNetwork/);
+assert.match(serverSource, /world_state_encoding: "grid_dictionary_v1"/);
 assert.match(serverSource, /WorldStateHelpers\.serializeWorldState/);
 assert.match(deploySource, /server_world_state_helpers\.js/);
 assert.match(deploySource, /src\/server_world_state_helpers\.ts/);

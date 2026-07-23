@@ -33,6 +33,38 @@ async function main() {
     count: 0,
     resetInMs: 1000,
   });
+
+  /** @type {string[][]} */
+  const redisCommands = [];
+  const enabledStore = new RedisStore({
+    enabled: true,
+    keyPrefix: "Pixel Test",
+    logger: () => {},
+  });
+  enabledStore.client = {
+    isOpen: true,
+    connect: async () => undefined,
+    quit: async () => undefined,
+    on: () => undefined,
+    sendCommand: async (/** @type {string[]} */ command) => {
+      redisCommands.push(command);
+      return [2, 875];
+    },
+  };
+  enabledStore.ready = true;
+  assert.deepEqual(await enabledStore.checkRateLimit("message:player_position", "account:load001", 150, 1000), {
+    allowed: true,
+    fallback: false,
+    count: 2,
+    resetInMs: 875,
+  });
+  assert.equal(redisCommands.length, 1);
+  assert.equal(redisCommands[0][0], "EVAL");
+  assert.equal(redisCommands[0][2], "1");
+  assert.equal(redisCommands[0][3], "pixel_test:rate:message:player_position:account:load001");
+  assert.equal(redisCommands[0][4], "1000");
+  assert.match(redisCommands[0][1], /count == 1 or ttl < 0/);
+  assert.match(redisCommands[0][1], /PEXPIRE/);
   assert.deepEqual(await store.acquireLock("scope", "resource", 1000, "owner"), {
     acquired: true,
     fallback: true,
@@ -81,6 +113,8 @@ async function main() {
   assert.deepEqual(redisStoreBuildConfig.include, ["src/redis_store.ts"]);
   assert.match(redisStoreBuildSource, /Generated from src\/redis_store\.ts/);
   assert.match(redisStoreSource, /type RedisRecord = Record<string, unknown>/);
+  assert.match(redisStoreSource, /RATE_LIMIT_INCREMENT_SCRIPT/);
+  assert.match(redisStoreSource, /"EVAL"/);
   assert.match(redisStoreSource, /export = RedisStore/);
   assert.match(generatedSource, /Generated from src\/redis_store\.ts/);
   assert.match(generatedSource, /module\.exports = RedisStore/);

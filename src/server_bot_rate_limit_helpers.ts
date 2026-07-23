@@ -194,6 +194,26 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
     return `socket:${socket?.playerId || "unknown"}`;
   }
 
+  function getRateLimitSubjectKind(subject: unknown): "account" | "ip" | "socket" {
+    const cleanSubject = String(subject || "").trim().toLowerCase();
+    if (cleanSubject.startsWith("account:")) return "account";
+    if (cleanSubject.startsWith("ip:")) return "ip";
+    return "socket";
+  }
+
+  function incrementCounterRecord(statsKey: string, counterKey: string): void {
+    const counters = isRecord(deps.playerNetworkStats[statsKey])
+      ? deps.playerNetworkStats[statsKey]
+      : {};
+    counters[counterKey] = Number(counters[counterKey] || 0) + 1;
+    deps.playerNetworkStats[statsKey] = counters;
+  }
+
+  function recordRateLimitCheck(scope: string, bucketKey: string, subjectKind: string): void {
+    incrementCounterRecord("rate_limit_checks_by_bucket", `${scope}:${bucketKey}`);
+    incrementCounterRecord("rate_limit_checks_by_subject_kind", subjectKind);
+  }
+
   function notifyRateLimited(socket: PacketRecord, bucketKey: unknown, data: unknown = null): void {
     const cleanBucketKey = String(bucketKey || "unknown").trim().toLowerCase() || "unknown";
     const raw = toRecord(data);
@@ -268,15 +288,21 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
     const safeLimits = cleanRateLimitConfig(limits, defaultRateLimit);
     const cleanScope = String(scope || "message").trim().toLowerCase() || "message";
     const cleanBucketKey = String(bucketKey || "unknown").trim().toLowerCase() || "unknown";
+    const subject = getRateLimitSubject(socket, player);
+    const subjectKind = getRateLimitSubjectKind(subject);
+    recordRateLimitCheck(cleanScope, cleanBucketKey, subjectKind);
 
     if (typeof deps.redisStore?.isReady === "function" && deps.redisStore.isReady() && typeof deps.redisStore.checkRateLimit === "function") {
-      const subject = getRateLimitSubject(socket, player);
       const result = await deps.redisStore.checkRateLimit(`${cleanScope}:${cleanBucketKey}`, subject, safeLimits.limit, safeLimits.windowMs);
       if (result.allowed) {
+        if (result.fallback) {
+          deps.playerNetworkStats.rate_limit_store_fallback_allows =
+            Number(deps.playerNetworkStats.rate_limit_store_fallback_allows || 0) + 1;
+        }
         return true;
       }
 
-      recordRateLimitRejection(cleanScope);
+      recordRateLimitRejection(cleanScope, cleanBucketKey, subjectKind);
       notifyRateLimited(socket, cleanBucketKey, data);
       if (options.logSecurityEvent) {
         logRateLimitSecurityEvent(socket, player, cleanScope, cleanBucketKey, safeLimits, result, data);
@@ -301,10 +327,12 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
     rateLimits.set(localBucketKey, bucket);
 
     if (bucket.count <= safeLimits.limit) {
+      deps.playerNetworkStats.rate_limit_store_fallback_allows =
+        Number(deps.playerNetworkStats.rate_limit_store_fallback_allows || 0) + 1;
       return true;
     }
 
-    recordRateLimitRejection(cleanScope);
+    recordRateLimitRejection(cleanScope, cleanBucketKey, subjectKind);
     notifyRateLimited(socket, cleanBucketKey, data);
     if (options.logSecurityEvent) {
       logRateLimitSecurityEvent(socket, player, cleanScope, cleanBucketKey, safeLimits, {
@@ -317,9 +345,11 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
     return false;
   }
 
-  function recordRateLimitRejection(scope: string): void {
+  function recordRateLimitRejection(scope: string, bucketKey: string, subjectKind: string): void {
     const key = scope === "bot" ? "bot_rate_limit_rejections" : "message_rate_limit_rejections";
     deps.playerNetworkStats[key] = Number(deps.playerNetworkStats[key] || 0) + 1;
+    incrementCounterRecord("rate_limit_rejections_by_bucket", `${scope}:${bucketKey}`);
+    incrementCounterRecord("rate_limit_rejections_by_subject_kind", subjectKind);
   }
 
   async function checkMessageRateLimit(socket: PacketRecord, player: PacketRecord | null | undefined, messageType: unknown, data: unknown = null): Promise<boolean> {

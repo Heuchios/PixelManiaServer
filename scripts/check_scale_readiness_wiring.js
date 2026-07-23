@@ -58,6 +58,7 @@ const files = {
   multiplayerScalingSmoke: readFirst(fromBackend("scripts/multiplayer_scaling_smoke.js"), false),
   world: readFirst(fromRepoRoot("Scripts/world.gd"), false),
   networkManager: readFirst(fromRepoRoot("Scripts/network_manager.gd"), false),
+  worldStateSyncManager: readFirst(fromRepoRoot("Scripts/world_state_sync_manager.gd"), false),
   blockManager: readFirst(fromRepoRoot("Scripts/block_manager.gd"), false),
   tilemapRenderer: readFirst(fromRepoRoot("Scripts/world_tilemap_renderer.gd"), false),
   developerPanel: readFirst(fromRepoRoot("Scripts/developer_panel_ui.gd"), false),
@@ -72,6 +73,9 @@ const serverAndSessionRouteSources = [
   files.phase8FinalRoutes,
 ].filter(Boolean).join("\n");
 const runtimeHealthSources = [files.server, files.phase11aRuntime].filter(Boolean).join("\n");
+const closeHandlerIndex = files.server.indexOf('socket.on("close"');
+const closePlayerDeleteIndex = files.server.indexOf("players.delete(playerId)", closeHandlerIndex);
+const closeQueueDrainIndex = files.server.indexOf("await Promise.resolve(socket.inboundMessageQueue)", closeHandlerIndex);
 
 const checks = [
   {
@@ -104,6 +108,13 @@ const checks = [
       && files.server.includes("receiver_player: player")
       && files.server.includes("clearDropInterestStateForReceiver(receiver.id)")
       && files.server.includes("shouldReceiverSeeDrop(receiver, drop, clean)"),
+  },
+  {
+    name: "late-join world state uses the client's compact dictionary encoding",
+    ok: files.server.includes('world_state_encoding: "grid_dictionary_v1"')
+      && files.server.includes("WorldStateHelpers.compactWorldLayerEntriesForNetwork")
+      && files.worldStateSyncManager.includes("func _normalize_world_layer_entries")
+      && files.worldStateSyncManager.includes("if raw_layer is Dictionary"),
   },
   {
     name: "high-frequency pickup response uses inventory deltas instead of full player state",
@@ -223,6 +234,22 @@ const checks = [
       && runtimeHealthSources.includes("world_network: getWorldNetworkStatsSnapshot()"),
   },
   {
+    name: "rate-limit health telemetry identifies buckets and subject kinds without identities",
+    ok: runtimeHealthSources.includes("rate_limit_checks_by_bucket")
+      && runtimeHealthSources.includes("rate_limit_rejections_by_bucket")
+      && runtimeHealthSources.includes("rate_limit_checks_by_subject_kind")
+      && runtimeHealthSources.includes("rate_limit_rejections_by_subject_kind")
+      && runtimeHealthSources.includes("rate_limit_store_fallback_allows"),
+  },
+  {
+    name: "disconnect cleanup removes logical presence before draining queued messages",
+    ok: closeHandlerIndex >= 0
+      && files.server.includes("socket.closeCleanupStarted")
+      && files.server.includes("player.disconnected = true")
+      && closePlayerDeleteIndex > closeHandlerIndex
+      && closeQueueDrainIndex > closePlayerDeleteIndex,
+  },
+  {
     name: "rate limits and server-side validation remain in the deployment gate",
     ok: files.packageJson.includes("check:server-validation")
       && files.packageJson.includes("check:anti-dupe")
@@ -254,6 +281,15 @@ const checks = [
       && files.loadTest.includes("Refusing --dev-login against api.pixelmaniagame.com")
       && files.loadTest.includes("account_token_login")
       && files.loadTest.includes("player_position")
+      && files.loadTest.includes('type === "rate_limited"')
+      && files.loadTest.includes("max-rate-limited")
+      && files.loadTest.includes("--urls <url-a,url-b>")
+      && files.loadTest.includes("--worlds <world-a,world-b>")
+      && files.loadTest.includes('type === "world_route_redirect"')
+      && files.loadTest.includes("getRouteSummaries()")
+      && files.loadTest.includes("Multi-route load tests require distinct worlds")
+      && files.loadTest.includes("worldStateBytesMax")
+      && files.loadTest.includes("abnormalCloses")
       && files.scaleReadinessDoc.includes("npm run load:staged"),
   },
   {

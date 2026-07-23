@@ -69,6 +69,11 @@ const playerNetworkStats = {
   inbound_messages_oversize_rejected: 0,
   inbound_packet_type_stats: {},
   outbound_packet_type_stats: {},
+  rate_limit_checks_by_bucket: { "message:player_position": 12, empty: 0 },
+  rate_limit_rejections_by_bucket: { "message:player_position": 2 },
+  rate_limit_checks_by_subject_kind: { account: 12 },
+  rate_limit_rejections_by_subject_kind: { account: 2 },
+  rate_limit_store_fallback_allows: 1,
 };
 const serverTickStats = ServerRuntimeStats.createServerTickStats(1000);
 const worldNetworkStats = {
@@ -268,9 +273,15 @@ assert.equal(runtime.getActiveDropInterestLinkCount(), 1);
 assert.equal(runtime.getWorldNetworkStatsSnapshot().active_drop_interest_receivers, 1);
 
 runtime.recordPacketTypeSize("inbound", "PLAYER_POSITION", 64);
-const networkSnapshot = runtime.getPlayerNetworkStatsSnapshot();
+const networkSnapshot = /** @type {Record<string, any>} */ (runtime.getPlayerNetworkStatsSnapshot());
 assert.equal(networkSnapshot.inbound_messages_received, 2);
 assert.equal(networkSnapshot.inbound_packet_type_stats.player_position.count, 1);
+assert.equal(networkSnapshot.rate_limit_checks_by_bucket["message:player_position"], 12);
+assert.equal(networkSnapshot.rate_limit_rejections_by_bucket["message:player_position"], 2);
+assert.equal(networkSnapshot.rate_limit_checks_by_subject_kind.account, 12);
+assert.equal(networkSnapshot.rate_limit_rejections_by_subject_kind.account, 2);
+assert.equal(networkSnapshot.rate_limit_store_fallback_allows, 1);
+assert.equal(Object.hasOwn(networkSnapshot.rate_limit_checks_by_bucket, "empty"), false);
 
 runtime.writeCrashReport("phase11a_test", { detail: "ok" });
 assert.equal(crashWrites.length, 1);

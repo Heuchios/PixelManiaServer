@@ -6,6 +6,15 @@ import crypto = require("node:crypto");
 const DEFAULT_SCAN_COUNT = 200;
 const HEALTH_CACHE_TTL_MS = 5000;
 const LOCK_TTL_SAMPLE_LIMIT = 16;
+const RATE_LIMIT_INCREMENT_SCRIPT = [
+  "local count = redis.call('INCR', KEYS[1])",
+  "local ttl = redis.call('PTTL', KEYS[1])",
+  "if count == 1 or ttl < 0 then",
+  "  redis.call('PEXPIRE', KEYS[1], ARGV[1])",
+  "  ttl = tonumber(ARGV[1])",
+  "end",
+  "return {count, ttl}",
+].join("\n");
 
 type RedisRecord = Record<string, unknown>;
 type RedisHealthSnapshot = PixelMania.RedisHealthSnapshot;
@@ -456,12 +465,16 @@ class RedisStore {
     const key = this.key("rate", scope, subject);
 
     try {
-      const count = Math.max(0, toInt(await this.client!.sendCommand(["INCR", key]), 0));
-      let ttl = toInt(await this.client!.sendCommand(["PTTL", key]), -1);
-      if (count === 1 || ttl < 0) {
-        await this.client!.sendCommand(["PEXPIRE", key, String(safeWindowMs)]);
-        ttl = safeWindowMs;
-      }
+      const result = await this.client!.sendCommand([
+        "EVAL",
+        RATE_LIMIT_INCREMENT_SCRIPT,
+        "1",
+        key,
+        String(safeWindowMs),
+      ]);
+      const values = Array.isArray(result) ? result : [];
+      const count = Math.max(0, toInt(values[0], 0));
+      const ttl = toInt(values[1], safeWindowMs);
       return {
         allowed: count <= safeLimit,
         fallback: false,
