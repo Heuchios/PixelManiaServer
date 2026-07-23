@@ -139,7 +139,10 @@ assert.deepEqual(state.hotbar_items, ["punch", "dirt"]);
 assert.equal(helpers.getInventoryCount(state, "dirt", "block"), 5);
 assert.equal(helpers.getInventoryOccupiedSlotCount(state), 3);
 
-const overCapacityState = { inventory_slot_count: 20, inventory: {} };
+const overCapacityState = {
+  inventory_slot_count: 20,
+  inventory: /** @type {Record<string, number>} */ ({}),
+};
 for (let index = 0; index < 21; index += 1) {
   const itemId = `reserved_item_${index}`;
   definitions[itemId] = { category: "block" };
