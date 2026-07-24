@@ -16241,6 +16241,8 @@ function getAuditActor(socket, player, usernameOverride = "") {
     return {
         actor_username: username,
         actor_role: username !== "" ? getAccountRole(username) : "unknown",
+        actor_account_id: cleanStableIdentityId(player?.account_id || ""),
+        actor_player_id: cleanStableIdentityId(player?.profile_id || player?.player_id || ""),
         player_id: String(player?.id || ""),
         ip: getSocketAddress(socket),
         world: player?.world ? cleanWorld(player.world) : "",

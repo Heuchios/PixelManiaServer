@@ -55,6 +55,21 @@ function parseDurationMs(value, fallback) {
   return Math.max(0, Math.trunc(amount));
 }
 
+function summarizeLatency(values) {
+  const sorted = values
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value) && value >= 0)
+    .sort((a, b) => a - b);
+  if (sorted.length === 0) return { count: 0, p50: 0, p95: 0, max: 0 };
+  const percentile = (ratio) => sorted[Math.min(sorted.length - 1, Math.ceil(sorted.length * ratio) - 1)];
+  return {
+    count: sorted.length,
+    p50: Math.round(percentile(0.5)),
+    p95: Math.round(percentile(0.95)),
+    max: Math.round(sorted[sorted.length - 1]),
+  };
+}
+
 function boolArg(value) {
   if (value === true) return true;
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
@@ -296,6 +311,11 @@ class LoadClient {
     this.maximumPositionSendsPerSecond = 0;
     this.openedAt = 0;
     this.authSentAt = 0;
+    this.authenticatedAt = 0;
+    this.joinedAt = 0;
+    this.authLatencyMs = null;
+    this.joinLatencyMs = null;
+    this.readyLatencyMs = null;
     this.messagesReceived = 0;
     this.bytesReceived = 0;
     this.bytesSent = 0;
@@ -432,6 +452,8 @@ class LoadClient {
     if (type === "account_auth_ok" && data.ok !== false) {
       if (this.authenticated) return;
       this.authenticated = true;
+      this.authenticatedAt = Date.now();
+      this.authLatencyMs = this.authSentAt > 0 ? this.authenticatedAt - this.authSentAt : null;
       this.runner.stats.authenticated += 1;
       if (this.tokenRow) {
         this.tokenRow.session_token = String(data.session_token || this.tokenRow.session_token || "");
@@ -470,6 +492,9 @@ class LoadClient {
     if (type === "join_world_ok") {
       if (this.joined) return;
       this.joined = true;
+      this.joinedAt = Date.now();
+      this.joinLatencyMs = this.authenticatedAt > 0 ? this.joinedAt - this.authenticatedAt : null;
+      this.readyLatencyMs = this.authSentAt > 0 ? this.joinedAt - this.authSentAt : null;
       this.runner.stats.joined += 1;
       const sx = Number(data.spawn_x);
       const sy = Number(data.spawn_y);
@@ -1049,6 +1074,21 @@ class LoadRunner {
     return this.formatSummary(deltas, limit);
   }
 
+  getLatencySummaries(clients = this.clients) {
+    return {
+      auth: summarizeLatency(clients.map((client) => client.authLatencyMs)),
+      join: summarizeLatency(clients.map((client) => client.joinLatencyMs)),
+      ready: summarizeLatency(clients.map((client) => client.readyLatencyMs)),
+    };
+  }
+
+  formatLatencySummaries(summaries = this.getLatencySummaries()) {
+    const format = (name, value) => (
+      `${name}[n=${value.count} p50=${value.p50}ms p95=${value.p95}ms max=${value.max}ms]`
+    );
+    return `${format("auth", summaries.auth)} ${format("join", summaries.join)} ${format("ready", summaries.ready)}`;
+  }
+
   getRouteTarget(routeIndex) {
     return Math.floor((this.clientsTarget + this.routes.length - 1 - routeIndex) / this.routes.length);
   }
@@ -1072,6 +1112,7 @@ class LoadRunner {
         routeRedirects: clients.reduce((sum, client) => sum + client.routeRedirectCount, 0),
         abnormalCloses: clients.reduce((sum, client) => sum + client.abnormalCloseCount, 0),
         socketErrors: clients.reduce((sum, client) => sum + client.socketErrorCount, 0),
+        latency: this.getLatencySummaries(clients),
       };
     });
   }
@@ -1165,6 +1206,7 @@ class LoadRunner {
         activeAtEnd,
         joinedAtEnd,
         routeSummaries,
+        latency: this.getLatencySummaries(),
       };
       this.lastResult = result;
       for (const summary of routeSummaries) {
@@ -1177,7 +1219,8 @@ class LoadRunner {
           + ` abnormalCloses=${summary.abnormalCloses}`
           + ` rejections=${summary.rejections}`
           + ` rateLimited=${summary.rateLimited}`
-          + ` redirects=${summary.routeRedirects}`,
+          + ` redirects=${summary.routeRedirects}`
+          + ` latency=${this.formatLatencySummaries(summary.latency)}`,
         );
       }
       return result;
@@ -1241,6 +1284,7 @@ class LoadRunner {
     const worldStateAverageBytes = this.stats.worldStates > 0
       ? Math.round(this.stats.worldStateBytesTotal / this.stats.worldStates)
       : 0;
+    const latencySummary = this.formatLatencySummaries();
 
     console.log(
       `[load] ${final ? "final " : ""}t=${elapsedSec.toFixed(1)}s active=${active} auth=${this.stats.authenticated} joined=${joined}` +
@@ -1260,6 +1304,7 @@ class LoadRunner {
       `${routeRedirectSummary ? ` redirectTarget=${routeRedirectSummary}` : ""}` +
       `${serverRateLimitSummary ? ` serverRateDelta=${serverRateLimitSummary}` : ""}` +
       `${socketErrorSummary ? ` socketError=${socketErrorSummary}` : ""}` +
+      ` latency=${latencySummary}` +
       `${tickLag}${pending}${worldPending}` +
       ` routes=${this.formatRouteProgress()}`
     );

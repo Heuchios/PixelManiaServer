@@ -89,11 +89,15 @@ function createServerAccountAuthRoutes(deps: AccountAuthDeps) {
     } finally {
       const durationMs = Date.now() - startedAt;
       if (durationMs >= authSlowStageMs) {
+        const postgresPool = postgresStore?.db;
         console.warn("[auth] slow authentication stage", JSON.stringify({
           stage,
           duration_ms: durationMs,
           socket_open: isAuthSocketOpen(socket),
           postgres_write_queue_depth: Number(postgresStore?.writeQueueDepth || 0),
+          postgres_pool_total: Number(postgresPool?.totalCount || 0),
+          postgres_pool_idle: Number(postgresPool?.idleCount || 0),
+          postgres_pool_waiting: Number(postgresPool?.waitingCount || 0),
         }));
       }
     }
@@ -733,6 +737,9 @@ function createServerAccountAuthRoutes(deps: AccountAuthDeps) {
     let previousSessionExpiresAt = String(account?.session_token_expires_at || "");
     let previousRefreshHash = cleanAccountName(account?.refresh_token_hash || "");
     let previousRefreshExpiresAt = String(account?.refresh_token_expires_at || "");
+    let validatedAccountId = "";
+    let validatedSessionId = "";
+    let validatedTokenFamily = "";
 
     if (isPostgresAuthoritativeReady()) {
       const validation = await runAuthStage(socket, "token_login_session_validation", () => (
@@ -760,6 +767,9 @@ function createServerAccountAuthRoutes(deps: AccountAuthDeps) {
       account = accounts.get(accountKey(validatedAccount.username)) || validatedAccount;
       Object.assign(account, validatedAccount);
       accounts.set(accountKey(account.username), account);
+      validatedAccountId = cleanAccountName(validation.account_id || validatedAccount.account_id || "");
+      validatedSessionId = cleanAccountName(validation.session_id || "");
+      validatedTokenFamily = cleanAccountName(validation.token_family || "");
       previousSessionHash = cleanAccountName(account.session_token_hash || validation.session_token_hash || "");
       previousSessionExpiresAt = String(account.session_token_expires_at || validation.expires_at || "");
       previousRefreshHash = cleanAccountName(account.refresh_token_hash || validation.refresh_token_hash || "");
@@ -806,10 +816,14 @@ function createServerAccountAuthRoutes(deps: AccountAuthDeps) {
           userAgent: getSocketUserAgent(socket, data),
           deviceInfo: getSocketDeviceInfo(socket, data),
           rotatedFromTokenHash: tokenHash,
+          rotatedFromSessionId: validatedSessionId,
+          tokenFamily: validatedTokenFamily,
+          accountId: validatedAccountId || account.account_id,
           sessionMode: ACCOUNT_ONE_ACTIVE_SESSION ? "one_active" : "multi_session",
           concurrent: true,
           revokeRotatedToken: true,
           revokeOtherSessions: ACCOUNT_ONE_ACTIVE_SESSION,
+          touchLogin: true,
           shouldContinue: () => isAuthSocketOpen(socket),
         })
       ));
@@ -839,7 +853,9 @@ function createServerAccountAuthRoutes(deps: AccountAuthDeps) {
       return;
     }
 
-    postgresStore.mirrorAccount(account, { touchLogin: true });
+    if (!isPostgresAuthoritativeReady()) {
+      postgresStore.mirrorAccount(account, { touchLogin: true });
+    }
     recordLoginAttempt(socket, player, account.username, usingRefreshToken ? "refresh_token_login" : "token_login", true, "success", data);
     sendAuthOk(socket, requestId, "token_login", account, nextTokens);
     sendFriendState(socket, account.username, requestId);

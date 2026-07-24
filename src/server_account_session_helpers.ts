@@ -739,6 +739,8 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
     const details = {
       action: String(action || "login"),
       username: cleanAccountName(username || ""),
+      account_id: cleanAccountName(player?.account_id || ""),
+      player_id: cleanAccountName(player?.profile_id || player?.player_id || ""),
       ip: getSocketAddress(socket),
       user_agent: getSocketUserAgent(socket, data),
       device_info: getSocketDeviceInfo(socket, data),

@@ -261,6 +261,7 @@ const socket = {};
   /** @type {Record<string, any>[]} */
   const authoritativeSaveOptions = [];
   let legacyRevokeCalls = 0;
+  const authoritativeMirrorCountBefore = events.mirroredAccounts.length;
   const authoritativeRoutes = AccountAuthRoutesModule.createServerAccountAuthRoutes({
     ...deps,
     accounts: authoritativeAccounts,
@@ -269,6 +270,10 @@ const socket = {};
       ...deps.postgresStore,
       validateSessionToken: async () => ({
         ok: true,
+        account_id: "f0fe9c8d-f024-4c7d-9cab-cb4cf6f8e247",
+        player_id: "a9c73de5-9418-4a94-a47b-f0bfc1a8dbce",
+        session_id: "7634c622-78e7-48ec-a6e6-ae49eb111a13",
+        token_family: "5cac9292-da2f-4859-a828-fc278a16a06d",
         account: { ...authoritativeAccount },
         session_token_hash: authoritativeAccount.session_token_hash,
         refresh_token_hash: authoritativeAccount.refresh_token_hash,
@@ -301,8 +306,13 @@ const socket = {};
   assert.equal(savedOptions.concurrent, true);
   assert.equal(savedOptions.revokeRotatedToken, true);
   assert.equal(savedOptions.revokeOtherSessions, true);
+  assert.equal(savedOptions.accountId, "f0fe9c8d-f024-4c7d-9cab-cb4cf6f8e247");
+  assert.equal(savedOptions.rotatedFromSessionId, "7634c622-78e7-48ec-a6e6-ae49eb111a13");
+  assert.equal(savedOptions.tokenFamily, "5cac9292-da2f-4859-a828-fc278a16a06d");
+  assert.equal(savedOptions.touchLogin, true);
   assert.equal(savedOptions.shouldContinue(), true);
   assert.equal(legacyRevokeCalls, 0);
+  assert.equal(events.mirroredAccounts.length, authoritativeMirrorCountBefore);
 
   let disconnectedIssueCalls = 0;
   let disconnectedSaveCalls = 0;
@@ -364,6 +374,9 @@ const socket = {};
   assert.match(helperSource, /function isAuthSocketOpen/);
   assert.match(helperSource, /token_login_session_rotation/);
   assert.match(helperSource, /revokeRotatedToken: true/);
+  assert.match(helperSource, /rotatedFromSessionId: validatedSessionId/);
+  assert.match(helperSource, /accountId: validatedAccountId \|\| account\.account_id/);
+  assert.match(helperSource, /touchLogin: true/);
   assert.match(helperSource, /shouldContinue: \(\) => isAuthSocketOpen\(socket\)/);
   assert.match(helperSource, /Backend dev login authenticated/);
   assert.match(generatedSource, /Generated from src\/server_account_auth_routes\.ts/);

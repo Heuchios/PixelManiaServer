@@ -5520,9 +5520,16 @@ class PostgresStore {
         const deviceInfo = safeJson(details.deviceInfo || details.device_info || {});
         const sessionMode = cleanName(details.sessionMode || details.session_mode || "one_active") || "one_active";
         const rotatedFromTokenHash = cleanName(details.rotatedFromTokenHash || details.rotated_from_token_hash || "");
+        const requestedAccountId = cleanName(details.accountId || details.account_id || "");
+        const accountIdHint = isUuid(requestedAccountId) ? requestedAccountId : "";
+        const requestedRotatedSessionId = cleanName(details.rotatedFromSessionId || details.rotated_from_session_id || "");
+        const rotatedFromSessionIdHint = isUuid(requestedRotatedSessionId) ? requestedRotatedSessionId : "";
+        const requestedTokenFamily = cleanName(details.tokenFamily || details.token_family || "");
+        const tokenFamilyHint = isUuid(requestedTokenFamily) ? requestedTokenFamily : "";
         const concurrent = details.concurrent === true;
         const revokeRotatedToken = details.revokeRotatedToken === true || details.revoke_rotated_token === true;
         const revokeOtherSessions = details.revokeOtherSessions === true || details.revoke_other_sessions === true;
+        const touchLogin = details.touchLogin === true || details.touch_login === true;
         if (sessionHash === "")
             return { ok: false, reason: "missing_session_hash" };
         try {
@@ -5530,18 +5537,21 @@ class PostgresStore {
             const runTransaction = (work) => (concurrent ? this.withTransactionNow(work) : this.withTransaction(work));
             await runTransaction(async (client) => {
                 assertPostgresOperationCanContinue(details);
-                const playerId = await this.ensurePlayerIdentity(client, username, email, role);
-                if (!playerId)
-                    return;
+                let accountId = accountIdHint;
+                if (accountId === "") {
+                    const playerId = await this.ensurePlayerIdentity(client, username, email, role);
+                    if (!playerId)
+                        throw new Error("session account identity unavailable");
+                    assertPostgresOperationCanContinue(details);
+                    const accountResult = await client.query(`SELECT account_id FROM ${this.table("accounts")} WHERE lower(username::text) = lower($1) LIMIT 1`, [username]);
+                    accountId = cleanName(accountResult.rows[0]?.account_id || "");
+                }
+                if (!isUuid(accountId))
+                    throw new Error("session account identity unavailable");
                 assertPostgresOperationCanContinue(details);
-                const accountResult = await client.query(`SELECT account_id FROM ${this.table("accounts")} WHERE lower(username::text) = lower($1) LIMIT 1`, [username]);
-                const accountId = accountResult.rows[0]?.account_id;
-                if (!accountId)
-                    return;
-                assertPostgresOperationCanContinue(details);
-                let rotatedFromSessionId = null;
-                let tokenFamily = null;
-                if (rotatedFromTokenHash !== "") {
+                let rotatedFromSessionId = rotatedFromSessionIdHint || null;
+                let tokenFamily = tokenFamilyHint || null;
+                if (rotatedFromTokenHash !== "" && (!rotatedFromSessionId || !tokenFamily)) {
                     const rotatedResult = await client.query(`
             SELECT session_id, token_family
               FROM ${this.table("sessions")}
@@ -5549,8 +5559,8 @@ class PostgresStore {
                 OR refresh_token_hash = $1
              LIMIT 1
             `, [rotatedFromTokenHash]);
-                    rotatedFromSessionId = rotatedResult.rows[0]?.session_id || null;
-                    tokenFamily = rotatedResult.rows[0]?.token_family || null;
+                    rotatedFromSessionId = rotatedFromSessionId || rotatedResult.rows[0]?.session_id || null;
+                    tokenFamily = tokenFamily || rotatedResult.rows[0]?.token_family || null;
                 }
                 assertPostgresOperationCanContinue(details);
                 await client.query(`
@@ -5611,7 +5621,32 @@ class PostgresStore {
                     refreshExpiresAt,
                 ]);
                 assertPostgresOperationCanContinue(details);
-                if (revokeRotatedToken
+                if (touchLogin) {
+                    await client.query(`
+            UPDATE ${this.table("accounts")}
+               SET last_login_at = now(),
+                   updated_at = now()
+             WHERE account_id = $1
+            `, [accountId]);
+                    assertPostgresOperationCanContinue(details);
+                }
+                if (revokeOtherSessions) {
+                    await client.query(`
+            UPDATE ${this.table("sessions")}
+               SET revoked_at = now(),
+                   revoked_reason = CASE
+                     WHEN $3 <> ''
+                      AND (session_token_hash = $3 OR refresh_token_hash = $3)
+                       THEN 'rotated'
+                     ELSE 'one_active_session'
+                   END
+             WHERE account_id = $1
+               AND session_token_hash <> $2
+               AND revoked_at IS NULL
+            `, [accountId, sessionHash, rotatedFromTokenHash]);
+                    assertPostgresOperationCanContinue(details);
+                }
+                else if (revokeRotatedToken
                     && rotatedFromTokenHash !== ""
                     && rotatedFromTokenHash !== sessionHash
                     && rotatedFromTokenHash !== refreshHash) {
@@ -5629,20 +5664,10 @@ class PostgresStore {
             `, [accountId, rotatedFromTokenHash, sessionHash]);
                     assertPostgresOperationCanContinue(details);
                 }
-                if (revokeOtherSessions) {
-                    await client.query(`
-            UPDATE ${this.table("sessions")}
-               SET revoked_at = now(),
-                   revoked_reason = 'one_active_session'
-             WHERE account_id = $1
-               AND session_token_hash <> $2
-               AND revoked_at IS NULL
-            `, [accountId, sessionHash]);
-                    assertPostgresOperationCanContinue(details);
-                }
             });
             return {
                 ok: true,
+                account_id: accountIdHint || undefined,
                 username,
                 session_token_hash: sessionHash,
                 refresh_token_hash: refreshHash,
@@ -5681,6 +5706,8 @@ class PostgresStore {
                 assertPostgresOperationCanContinue(details);
                 const result = await client.query(`
           SELECT
+            a.account_id::text AS account_id,
+            p.player_id::text AS player_id,
             a.username::text AS username,
             a.email::text AS email,
             a.password_salt,
@@ -5707,6 +5734,7 @@ class PostgresStore {
             END AS matched_token_kind
           FROM ${this.table("sessions")} s
           JOIN ${this.table("accounts")} a ON a.account_id = s.account_id
+          LEFT JOIN ${this.table("players")} p ON p.account_id = a.account_id
           WHERE lower(a.username::text) = lower($1)
             AND (
               s.session_token_hash = $2
@@ -5742,6 +5770,9 @@ class PostgresStore {
                 const refreshExpiresAt = normalizeOptionalTimestamp(row.refresh_expires_at) || "";
                 const account = {
                     ...accountState,
+                    account_id: cleanName(row.account_id || accountState.account_id || ""),
+                    player_id: cleanName(row.player_id || accountState.player_id || accountState.profile_id || ""),
+                    profile_id: cleanName(row.player_id || accountState.profile_id || accountState.player_id || ""),
                     username: cleanName(accountState.username || row.username),
                     email: cleanName(accountState.email || row.email),
                     password_salt: cleanName(accountState.password_salt || row.password_salt || ""),
@@ -5761,6 +5792,8 @@ class PostgresStore {
                 };
                 return {
                     ok: true,
+                    account_id: cleanName(row.account_id || ""),
+                    player_id: cleanName(row.player_id || ""),
                     username: account.username,
                     session_id: cleanName(row.session_id || ""),
                     session_token_hash: cleanName(row.session_token_hash || ""),
@@ -9918,11 +9951,8 @@ class PostgresStore {
         this.runDetached("record login attempt", async () => {
             await this.withTransaction(async (client) => {
                 const username = cleanName(e.username || e.account_username || "");
-                let accountId = null;
-                if (username !== "") {
-                    const accountResult = await client.query(`SELECT account_id FROM ${this.table("accounts")} WHERE lower(username::text) = lower($1) LIMIT 1`, [username]);
-                    accountId = accountResult.rows[0]?.account_id || null;
-                }
+                const requestedAccountId = cleanName(e.account_id || e.actor_account_id || "");
+                const accountId = isUuid(requestedAccountId) ? requestedAccountId : null;
                 await client.query(`
           INSERT INTO ${this.table("account_login_attempts")} (
             account_id,
@@ -9937,7 +9967,15 @@ class PostgresStore {
             created_at
           )
           VALUES (
-            $1,
+            COALESCE(
+              $1::uuid,
+              (
+                SELECT account_id
+                  FROM ${this.table("accounts")}
+                 WHERE lower(username::text) = lower($2)
+                 LIMIT 1
+              )
+            ),
             COALESCE(NULLIF($2, ''), ''),
             COALESCE(NULLIF($3, ''), 'login'),
             $4,
@@ -10107,10 +10145,18 @@ class PostgresStore {
         const e = toObject(entry);
         this.runDetached("mirror security event", async () => {
             await this.withTransaction(async (client) => {
-                let playerId = null;
-                let accountId = null;
+                const requestedPlayerId = cleanName(e.actor_player_id || e.actor_profile_id || "");
+                const requestedAccountId = cleanName(e.actor_account_id || "");
+                let playerId = isUuid(requestedPlayerId) ? requestedPlayerId : null;
+                let accountId = isUuid(requestedAccountId) ? requestedAccountId : null;
                 const username = cleanName(e.actor_username || "");
-                if (username !== "") {
+                if (!playerId && accountId) {
+                    playerId = await this.lookupPlayerIdByAccountId(client, accountId);
+                }
+                if (!accountId && playerId) {
+                    accountId = await this.lookupAccountIdByPlayerId(client, playerId);
+                }
+                if ((!playerId || !accountId) && username !== "") {
                     playerId = await this.ensurePlayerIdentity(client, username, "", cleanName(e.actor_role || "player"));
                     const accountResult = await client.query(`SELECT account_id FROM ${this.table("accounts")} WHERE username = $1 LIMIT 1`, [username]);
                     accountId = accountResult.rows[0]?.account_id || null;

@@ -103,6 +103,13 @@ assert.match(postgresStoreSource, /function assertPostgresOperationCanContinue/)
 assert.match(postgresStoreSource, /concurrent \? this\.withTransactionNow\(work\) : this\.withTransaction\(work\)/);
 assert.match(postgresStoreSource, /revokeRotatedToken/);
 assert.match(postgresStoreSource, /revokeOtherSessions/);
+assert.match(postgresStoreSource, /const accountIdHint = isUuid\(requestedAccountId\)/);
+assert.match(postgresStoreSource, /const rotatedFromSessionIdHint = isUuid\(requestedRotatedSessionId\)/);
+assert.match(postgresStoreSource, /const tokenFamilyHint = isUuid\(requestedTokenFamily\)/);
+assert.match(postgresStoreSource, /revoked_reason = CASE/);
+assert.match(postgresStoreSource, /a\.account_id::text AS account_id/);
+assert.match(postgresStoreSource, /p\.player_id::text AS player_id/);
+assert.match(postgresStoreSource, /e\.account_id \|\| e\.actor_account_id/);
 assert.match(postgresStoreSource, /PIXELMANIA_OPERATION_ABORTED/);
 assert.match(generatedSource, /Generated from src\/postgres_store\.ts/);
 assert.match(generatedSource, /module\.exports = PostgresStore/);
