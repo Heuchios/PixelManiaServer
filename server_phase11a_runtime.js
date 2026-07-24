@@ -194,6 +194,9 @@ function createServerPhase11aRuntime(deps) {
             rate_limit_checks_by_subject_kind: copyCounterRecord(playerNetworkStats.rate_limit_checks_by_subject_kind),
             rate_limit_rejections_by_subject_kind: copyCounterRecord(playerNetworkStats.rate_limit_rejections_by_subject_kind),
             rate_limit_store_fallback_allows: Number(playerNetworkStats.rate_limit_store_fallback_allows || 0),
+            rate_limit_last_rejection: playerNetworkStats.rate_limit_last_rejection
+                ? { ...playerNetworkStats.rate_limit_last_rejection }
+                : null,
             idempotency_duplicates: Number(playerNetworkStats.idempotency_duplicates || 0),
             idempotency_db_failures: Number(playerNetworkStats.idempotency_db_failures || 0),
             active_interest_receivers: playerInterestByReceiver.size,

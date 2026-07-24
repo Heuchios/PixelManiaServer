@@ -74,6 +74,19 @@ const playerNetworkStats = {
   rate_limit_checks_by_subject_kind: { account: 12 },
   rate_limit_rejections_by_subject_kind: { account: 2 },
   rate_limit_store_fallback_allows: 1,
+  rate_limit_last_rejection: {
+    at: "2026-07-19T00:00:01.000Z",
+    scope: "message",
+    bucket: "player_position",
+    subject_kind: "socket",
+    store: "socket_token_bucket",
+    count: 301,
+    limit: 150,
+    window_ms: 1000,
+    capacity: 300,
+    available_tokens: 0.25,
+    reset_in_ms: 5,
+  },
 };
 const serverTickStats = ServerRuntimeStats.createServerTickStats(1000);
 const worldNetworkStats = {
@@ -281,6 +294,8 @@ assert.equal(networkSnapshot.rate_limit_rejections_by_bucket["message:player_pos
 assert.equal(networkSnapshot.rate_limit_checks_by_subject_kind.account, 12);
 assert.equal(networkSnapshot.rate_limit_rejections_by_subject_kind.account, 2);
 assert.equal(networkSnapshot.rate_limit_store_fallback_allows, 1);
+assert.equal(networkSnapshot.rate_limit_last_rejection.store, "socket_token_bucket");
+assert.equal(networkSnapshot.rate_limit_last_rejection.capacity, 300);
 assert.equal(Object.hasOwn(networkSnapshot.rate_limit_checks_by_bucket, "empty"), false);
 
 runtime.writeCrashReport("phase11a_test", { detail: "ok" });

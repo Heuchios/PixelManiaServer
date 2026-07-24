@@ -100,9 +100,10 @@ const checks = [
       && files.botRateLimitHelpers.includes("localBucketKey = `${cleanScope}:${cleanBucketKey}`"),
   },
   {
-    name: "high-frequency player movement uses an intentional per-socket bucket",
-    ok: files.botRateLimitHelpers.includes('decision.bucketKey === "player_position" ? { store: "socket" } : {}')
+    name: "high-frequency player movement uses an intentional burst-tolerant per-socket bucket",
+    ok: files.botRateLimitHelpers.includes('decision.bucketKey === "player_position" ? { store: "socket", burstMultiplier: 2 } : {}')
       && files.botRateLimitHelpers.includes('const socketStore = options.store === "socket"')
+      && files.botRateLimitHelpers.includes('store: "socket_token_bucket"')
       && files.botRateLimitHelpers.includes("if (!socketStore && typeof deps.redisStore"),
   },
   {

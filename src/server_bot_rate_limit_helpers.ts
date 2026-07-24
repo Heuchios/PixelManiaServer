@@ -38,6 +38,7 @@ interface RedisStoreLike {
 }
 
 interface ConsumeRateLimitOptions {
+  burstMultiplier?: number;
   logSecurityEvent?: boolean;
   store?: "distributed" | "socket";
 }
@@ -223,6 +224,22 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
     incrementCounterRecord("rate_limit_checks_by_subject_kind", subjectKind);
   }
 
+  function recordRateLimitRejectionDetails(details: PacketRecord): void {
+    deps.playerNetworkStats.rate_limit_last_rejection = {
+      at: new Date(Number(details.now) || Date.now()).toISOString(),
+      scope: String(details.scope || "message"),
+      bucket: String(details.bucket || "unknown"),
+      subject_kind: String(details.subjectKind || "socket"),
+      store: String(details.store || "unknown"),
+      count: Math.max(0, Math.trunc(Number(details.count) || 0)),
+      limit: Math.max(1, Math.trunc(Number(details.limit) || 1)),
+      window_ms: Math.max(100, Math.trunc(Number(details.windowMs) || 1000)),
+      capacity: Math.max(1, Math.trunc(Number(details.capacity) || Number(details.limit) || 1)),
+      available_tokens: Math.max(0, Number(Number(details.availableTokens || 0).toFixed(3))),
+      reset_in_ms: Math.max(0, Math.trunc(Number(details.resetInMs) || 0)),
+    };
+  }
+
   function notifyRateLimited(socket: PacketRecord, bucketKey: unknown, data: unknown = null): void {
     const cleanBucketKey = String(bucketKey || "unknown").trim().toLowerCase() || "unknown";
     const raw = toRecord(data);
@@ -316,6 +333,18 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
       }
 
       recordRateLimitRejection(cleanScope, cleanBucketKey, subjectKind);
+      recordRateLimitRejectionDetails({
+        now: Date.now(),
+        scope: cleanScope,
+        bucket: cleanBucketKey,
+        subjectKind,
+        store: "distributed",
+        count: result.count,
+        limit: safeLimits.limit,
+        windowMs: safeLimits.windowMs,
+        capacity: safeLimits.limit,
+        resetInMs: result.resetInMs,
+      });
       notifyRateLimited(socket, cleanBucketKey, data);
       if (options.logSecurityEvent) {
         logRateLimitSecurityEvent(socket, player, cleanScope, cleanBucketKey, safeLimits, result, data, subject);
@@ -326,6 +355,63 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
     const now = Date.now();
     const localBucketKey = `${cleanScope}:${cleanBucketKey}`;
     const rateLimits = ensureSocketMap(socket, "rateLimits");
+
+    if (socketStore) {
+      const burstMultiplier = Math.max(1, Math.min(4, Number(options.burstMultiplier) || 1));
+      const capacity = Math.max(safeLimits.limit, Math.trunc(safeLimits.limit * burstMultiplier));
+      const refillPerMs = safeLimits.limit / safeLimits.windowMs;
+      const previousBucket = toRecord(rateLimits.get(localBucketKey));
+      const previousTokens = Number(previousBucket.tokens);
+      const lastRefillAt = Number(previousBucket.lastRefillAt);
+      const elapsedMs = Number.isFinite(lastRefillAt)
+        ? Math.max(0, now - lastRefillAt)
+        : 0;
+      const tokensBeforeRefill = Number.isFinite(previousTokens)
+        ? Math.max(0, previousTokens)
+        : capacity;
+      const availableTokens = Math.min(capacity, tokensBeforeRefill + elapsedMs * refillPerMs);
+      const tokenBucket = {
+        tokens: availableTokens,
+        lastRefillAt: now,
+      };
+
+      if (availableTokens >= 1) {
+        tokenBucket.tokens = availableTokens - 1;
+        rateLimits.set(localBucketKey, tokenBucket);
+        return true;
+      }
+
+      rateLimits.set(localBucketKey, tokenBucket);
+      const resetInMs = Math.max(1, Math.ceil((1 - availableTokens) / refillPerMs));
+      recordRateLimitRejection(cleanScope, cleanBucketKey, subjectKind);
+      recordRateLimitRejectionDetails({
+        now,
+        scope: cleanScope,
+        bucket: cleanBucketKey,
+        subjectKind,
+        store: "socket_token_bucket",
+        count: capacity + 1,
+        limit: safeLimits.limit,
+        windowMs: safeLimits.windowMs,
+        capacity,
+        availableTokens,
+        resetInMs,
+      });
+      notifyRateLimited(socket, cleanBucketKey, data);
+      if (options.logSecurityEvent) {
+        logRateLimitSecurityEvent(socket, player, cleanScope, cleanBucketKey, safeLimits, {
+          allowed: false,
+          fallback: false,
+          store: "socket_token_bucket",
+          count: capacity + 1,
+          capacity,
+          availableTokens,
+          resetInMs,
+        }, data, subject);
+      }
+      return false;
+    }
+
     const bucket = rateLimits.get(localBucketKey) || {
       count: 0,
       resetAt: now + safeLimits.windowMs,
@@ -348,6 +434,18 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
     }
 
     recordRateLimitRejection(cleanScope, cleanBucketKey, subjectKind);
+    recordRateLimitRejectionDetails({
+      now,
+      scope: cleanScope,
+      bucket: cleanBucketKey,
+      subjectKind,
+      store: "local_fallback",
+      count: bucket.count,
+      limit: safeLimits.limit,
+      windowMs: safeLimits.windowMs,
+      capacity: safeLimits.limit,
+      resetInMs: Math.max(0, Number(bucket.resetAt || now) - now),
+    });
     notifyRateLimited(socket, cleanBucketKey, data);
     if (options.logSecurityEvent) {
       logRateLimitSecurityEvent(socket, player, cleanScope, cleanBucketKey, safeLimits, {
@@ -377,7 +475,7 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
       decision.bucketKey,
       decision.limits,
       data,
-      decision.bucketKey === "player_position" ? { store: "socket" } : {}
+      decision.bucketKey === "player_position" ? { store: "socket", burstMultiplier: 2 } : {}
     );
   }
 
