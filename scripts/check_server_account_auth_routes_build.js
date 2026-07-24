@@ -247,6 +247,103 @@ const socket = {};
   assert.equal(events.authOk.at(-1).tokens.refreshToken, "refresh-2");
   assert.ok(events.loginAttempts.some((entry) => entry.action === "refresh_token_login" && entry.ok === true));
 
+  const authoritativeAccount = {
+    ...account,
+    username: "typed",
+    email: "typed@example.test",
+    email_verified: true,
+    session_token_hash: "hash:authoritative-session",
+    session_token_expires_at: "2099-01-01T00:00:00.000Z",
+    refresh_token_hash: "hash:authoritative-refresh",
+    refresh_token_expires_at: "2099-01-02T00:00:00.000Z",
+  };
+  const authoritativeAccounts = new Map([["typed", authoritativeAccount]]);
+  /** @type {Record<string, any>[]} */
+  const authoritativeSaveOptions = [];
+  let legacyRevokeCalls = 0;
+  const authoritativeRoutes = AccountAuthRoutesModule.createServerAccountAuthRoutes({
+    ...deps,
+    accounts: authoritativeAccounts,
+    isPostgresAuthoritativeReady: () => true,
+    postgresStore: {
+      ...deps.postgresStore,
+      validateSessionToken: async () => ({
+        ok: true,
+        account: { ...authoritativeAccount },
+        session_token_hash: authoritativeAccount.session_token_hash,
+        refresh_token_hash: authoritativeAccount.refresh_token_hash,
+        expires_at: authoritativeAccount.session_token_expires_at,
+        refresh_expires_at: authoritativeAccount.refresh_token_expires_at,
+      }),
+      saveSession: async (/** @type {Record<string, any>} */ _account, /** @type {Record<string, any>} */ options) => {
+        authoritativeSaveOptions.push(options);
+        return { ok: true };
+      },
+      revokeOtherSessionsForUsername: async () => {
+        legacyRevokeCalls += 1;
+        return { ok: true };
+      },
+      revokeSessionByTokenHash: async () => {
+        legacyRevokeCalls += 1;
+        return { ok: true };
+      },
+    },
+  });
+  const authoritativeSocket = { readyState: 1 };
+  await authoritativeRoutes.handleAccountTokenLogin(authoritativeSocket, { id: "p-authoritative" }, {
+    request_id: "token-authoritative",
+    username: "typed",
+    refresh_token: "authoritative-refresh",
+  });
+  assert.equal(events.authOk.at(-1).username, "typed");
+  const savedOptions = authoritativeSaveOptions.at(-1);
+  assert.ok(savedOptions);
+  assert.equal(savedOptions.concurrent, true);
+  assert.equal(savedOptions.revokeRotatedToken, true);
+  assert.equal(savedOptions.revokeOtherSessions, true);
+  assert.equal(savedOptions.shouldContinue(), true);
+  assert.equal(legacyRevokeCalls, 0);
+
+  let disconnectedIssueCalls = 0;
+  let disconnectedSaveCalls = 0;
+  const disconnectedSocket = { readyState: 1 };
+  const authOkBeforeDisconnect = events.authOk.length;
+  const authErrorsBeforeDisconnect = events.authErrors.length;
+  const disconnectedRoutes = AccountAuthRoutesModule.createServerAccountAuthRoutes({
+    ...deps,
+    accounts: new Map([["typed", { ...authoritativeAccount }]]),
+    isPostgresAuthoritativeReady: () => true,
+    issueSessionTokens: () => {
+      disconnectedIssueCalls += 1;
+      return { sessionToken: "unused", refreshToken: "unused" };
+    },
+    postgresStore: {
+      ...deps.postgresStore,
+      validateSessionToken: async () => {
+        disconnectedSocket.readyState = 3;
+        return {
+          ok: true,
+          account: { ...authoritativeAccount },
+          session_token_hash: authoritativeAccount.session_token_hash,
+          refresh_token_hash: authoritativeAccount.refresh_token_hash,
+        };
+      },
+      saveSession: async () => {
+        disconnectedSaveCalls += 1;
+        return { ok: true };
+      },
+    },
+  });
+  await disconnectedRoutes.handleAccountTokenLogin(disconnectedSocket, { id: "p-disconnected" }, {
+    request_id: "token-disconnected",
+    username: "typed",
+    refresh_token: "authoritative-refresh",
+  });
+  assert.equal(disconnectedIssueCalls, 0);
+  assert.equal(disconnectedSaveCalls, 0);
+  assert.equal(events.authOk.length, authOkBeforeDisconnect);
+  assert.equal(events.authErrors.length, authErrorsBeforeDisconnect);
+
   const devPlayer = /** @type {Record<string, any>} */ ({ id: "p-dev" });
   await routes.handleDevBackendLogin(socket, devPlayer, {
     request_id: "dev-1",
@@ -264,6 +361,10 @@ const socket = {};
   assert.match(helperSource, /async function handleAccountRegister/);
   assert.match(helperSource, /async function handleAccountTokenLogin/);
   assert.match(helperSource, /data\.refresh_token \|\| data\.session_token/);
+  assert.match(helperSource, /function isAuthSocketOpen/);
+  assert.match(helperSource, /token_login_session_rotation/);
+  assert.match(helperSource, /revokeRotatedToken: true/);
+  assert.match(helperSource, /shouldContinue: \(\) => isAuthSocketOpen\(socket\)/);
   assert.match(helperSource, /Backend dev login authenticated/);
   assert.match(generatedSource, /Generated from src\/server_account_auth_routes\.ts/);
   assert.match(generatedSource, /module\.exports = \{/);

@@ -191,6 +191,26 @@ function isRetryablePostgresError(error: unknown): boolean {
     || message.includes("could not serialize access due to concurrent update");
 }
 
+function postgresOperationCanContinue(details: any): boolean {
+  if (typeof details?.shouldContinue !== "function") return true;
+  try {
+    return details.shouldContinue() !== false;
+  } catch {
+    return false;
+  }
+}
+
+function assertPostgresOperationCanContinue(details: any): void {
+  if (postgresOperationCanContinue(details)) return;
+  const error = new Error("PostgreSQL operation aborted because its requester disconnected") as PostgresError;
+  error.code = "PIXELMANIA_OPERATION_ABORTED";
+  throw error;
+}
+
+function isPostgresOperationAborted(error: unknown): boolean {
+  return getErrorCode(error) === "PIXELMANIA_OPERATION_ABORTED";
+}
+
 function makeTrackedItemMovementError(result: any = {}) {
   const reason = cleanName(result.reason || "tracked_item_instance_movement_failed");
   const error: any = new Error(cleanName(result.message || reason) || "tracked_item_instance_movement_failed");
@@ -6018,12 +6038,21 @@ class PostgresStore {
     const deviceInfo = safeJson(details.deviceInfo || details.device_info || {});
     const sessionMode = cleanName(details.sessionMode || details.session_mode || "one_active") || "one_active";
     const rotatedFromTokenHash = cleanName(details.rotatedFromTokenHash || details.rotated_from_token_hash || "");
+    const concurrent = details.concurrent === true;
+    const revokeRotatedToken = details.revokeRotatedToken === true || details.revoke_rotated_token === true;
+    const revokeOtherSessions = details.revokeOtherSessions === true || details.revoke_other_sessions === true;
     if (sessionHash === "") return { ok: false, reason: "missing_session_hash" };
 
     try {
-      await this.withTransaction(async (client) => {
+      assertPostgresOperationCanContinue(details);
+      const runTransaction = <T>(work: TransactionWork<T>) => (
+        concurrent ? this.withTransactionNow(work) : this.withTransaction(work)
+      );
+      await runTransaction(async (client) => {
+        assertPostgresOperationCanContinue(details);
         const playerId = await this.ensurePlayerIdentity(client, username, email, role);
         if (!playerId) return;
+        assertPostgresOperationCanContinue(details);
 
         const accountResult = await client.query(
           `SELECT account_id FROM ${this.table("accounts")} WHERE lower(username::text) = lower($1) LIMIT 1`,
@@ -6031,6 +6060,7 @@ class PostgresStore {
         );
         const accountId = accountResult.rows[0]?.account_id;
         if (!accountId) return;
+        assertPostgresOperationCanContinue(details);
 
         let rotatedFromSessionId = null;
         let tokenFamily = null;
@@ -6048,6 +6078,7 @@ class PostgresStore {
           rotatedFromSessionId = rotatedResult.rows[0]?.session_id || null;
           tokenFamily = rotatedResult.rows[0]?.token_family || null;
         }
+        assertPostgresOperationCanContinue(details);
 
         await client.query(
           `
@@ -6109,6 +6140,46 @@ class PostgresStore {
             refreshExpiresAt,
           ]
         );
+        assertPostgresOperationCanContinue(details);
+
+        if (
+          revokeRotatedToken
+          && rotatedFromTokenHash !== ""
+          && rotatedFromTokenHash !== sessionHash
+          && rotatedFromTokenHash !== refreshHash
+        ) {
+          await client.query(
+            `
+            UPDATE ${this.table("sessions")}
+               SET revoked_at = now(),
+                   revoked_reason = 'rotated'
+             WHERE account_id = $1
+               AND (
+                 session_token_hash = $2
+                 OR refresh_token_hash = $2
+               )
+               AND session_token_hash <> $3
+               AND revoked_at IS NULL
+            `,
+            [accountId, rotatedFromTokenHash, sessionHash]
+          );
+          assertPostgresOperationCanContinue(details);
+        }
+
+        if (revokeOtherSessions) {
+          await client.query(
+            `
+            UPDATE ${this.table("sessions")}
+               SET revoked_at = now(),
+                   revoked_reason = 'one_active_session'
+             WHERE account_id = $1
+               AND session_token_hash <> $2
+               AND revoked_at IS NULL
+            `,
+            [accountId, sessionHash]
+          );
+          assertPostgresOperationCanContinue(details);
+        }
       });
 
       return {
@@ -6120,6 +6191,9 @@ class PostgresStore {
         refresh_expires_at: normalizeOptionalTimestamp(refreshExpiresAt),
       };
     } catch (error) {
+      if (isPostgresOperationAborted(error)) {
+        return { ok: false, reason: "aborted" };
+      }
       this.logger("[postgres] session save failed:", getErrorMessage(error));
       return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
@@ -6141,9 +6215,15 @@ class PostgresStore {
     const userAgent = cleanName(details.userAgent || "");
     const deviceInfo = safeJson(details.deviceInfo || details.device_info || {});
     const requestedTokenKind = cleanName(details.tokenKind || details.token_kind || "session_or_refresh");
+    const concurrent = details.concurrent === true;
 
     try {
-      return await this.withTransaction(async (client) => {
+      assertPostgresOperationCanContinue(details);
+      const runTransaction = <T>(work: TransactionWork<T>) => (
+        concurrent ? this.withTransactionNow(work) : this.withTransaction(work)
+      );
+      return await runTransaction(async (client) => {
+        assertPostgresOperationCanContinue(details);
         const result = await client.query(
           `
           SELECT
@@ -6194,6 +6274,7 @@ class PostgresStore {
         if (requestedTokenKind === "refresh" && cleanName(row.matched_token_kind || "") !== "refresh") {
           return { ok: false, reason: "invalid_refresh_token" };
         }
+        assertPostgresOperationCanContinue(details);
 
         await client.query(
           `
@@ -6207,6 +6288,7 @@ class PostgresStore {
           `,
           [cleanSessionHash, ipAddress, userAgent, JSON.stringify(deviceInfo)]
         );
+        assertPostgresOperationCanContinue(details);
 
         const accountState = toObject(row.account_state);
         const expiresAt = normalizeOptionalTimestamp(row.session_token_expires_at) || "";
@@ -6245,6 +6327,9 @@ class PostgresStore {
         };
       });
     } catch (error) {
+      if (isPostgresOperationAborted(error)) {
+        return { ok: false, reason: "aborted" };
+      }
       this.logger("[postgres] session validation failed:", getErrorMessage(error));
       return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }

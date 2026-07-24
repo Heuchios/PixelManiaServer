@@ -3,6 +3,30 @@
 Object.defineProperty(exports, "__esModule", { value: true });
 function createServerAccountAuthRoutes(deps) {
     const { ACCOUNT_EMAIL_CHANGE_TTL_MS, ACCOUNT_ONE_ACTIVE_SESSION, ACCOUNT_PASSWORD_RESET_TTL_MS, DEV_BACKEND_LOGIN_ALLOWED, POSTGRES_AUTHORITATIVE, POSTGRES_ENABLED, PUNISHMENT_SCOPE_GLOBAL, accountKey, accounts, activatePlayerAccount, checkLoginAttemptAllowed, clampString, cleanAccountName, cleanEmail, cleanWorld, createDefaultPlayerState, ensurePlayerState, findAccountByEmail, formatPunishmentBlockMessage, getAccountRole, getBlockingPunishment, getSocketAddress, getSocketDeviceInfo, getSocketUserAgent, hasActiveEmailVerificationToken, hasPassword, isAccountEmailVerified, isPostgresAuthoritativeReady, isRefreshTokenValid, isSessionTokenValid, issueSessionTokens, localEmailChangeRequests, localPasswordResetRequests, logSecurityEvent, makeEmailVerificationToken, makePasswordHash, makeRequestId, makeSecureToken, makeTokenHash, notifyOnlineFriendsOfFriendState, normalizePlayerHotbarState, playerStates, postgresStore, publicPunishmentPayload, queueAccountsSave, queueEmailChangeEmail, queuePasswordResetEmail, queueVerificationEmail, recordLoginAttempt, refreshAccountFromPostgres, sanitizeAccountNameArray, sanitizeAccountState, sanitizeMovementMode, savePlayerState, sendAccountActionOk, sendAuthError, sendAuthOk, sendFriendState, sendVerificationRequired, updatePlayerWorldIndex, validateEmail, validatePassword, validateUsername, verifyPassword, } = deps;
+    const authSlowStageMs = Math.max(250, Number(deps.AUTH_SLOW_STAGE_MS || 1000));
+    function isAuthSocketOpen(socket) {
+        if (!socket || typeof socket !== "object")
+            return true;
+        const readyState = socket.readyState;
+        return typeof readyState !== "number" || readyState === 1;
+    }
+    async function runAuthStage(socket, stage, work) {
+        const startedAt = Date.now();
+        try {
+            return await work();
+        }
+        finally {
+            const durationMs = Date.now() - startedAt;
+            if (durationMs >= authSlowStageMs) {
+                console.warn("[auth] slow authentication stage", JSON.stringify({
+                    stage,
+                    duration_ms: durationMs,
+                    socket_open: isAuthSocketOpen(socket),
+                    postgres_write_queue_depth: Number(postgresStore?.writeQueueDepth || 0),
+                }));
+            }
+        }
+    }
     async function handleAccountRegister(socket, player, data) {
         const requestId = makeRequestId(data);
         const usernameValidation = validateUsername(data.username);
@@ -426,7 +450,9 @@ function createServerAccountAuthRoutes(deps) {
             fail("Enter your username.", "missing_username");
             return;
         }
-        const rateLimit = await checkLoginAttemptAllowed(socket, username, "login");
+        const rateLimit = await runAuthStage(socket, "password_login_rate_limit", () => (checkLoginAttemptAllowed(socket, username, "login")));
+        if (!isAuthSocketOpen(socket))
+            return;
         if (!rateLimit.ok) {
             fail(`Too many login attempts. Try again in ${rateLimit.retry_after_seconds}s.`, "rate_limited", {
                 retry_after_seconds: rateLimit.retry_after_seconds,
@@ -438,8 +464,10 @@ function createServerAccountAuthRoutes(deps) {
             fail("Enter your email address.", "missing_email");
             return;
         }
-        let account = await refreshAccountFromPostgres(username)
+        let account = await runAuthStage(socket, "password_login_account_refresh", () => (refreshAccountFromPostgres(username)))
             || accounts.get(accountKey(username));
+        if (!isAuthSocketOpen(socket))
+            return;
         if (!account || !hasPassword(account)) {
             fail("Username not found.", "username_not_found");
             return;
@@ -476,9 +504,11 @@ function createServerAccountAuthRoutes(deps) {
             });
             return;
         }
-        const loginPunishment = await getBlockingPunishment(account.username, ["ban", "lockout"], {
+        const loginPunishment = await runAuthStage(socket, "password_login_punishment", () => (getBlockingPunishment(account.username, ["ban", "lockout"], {
             scope: PUNISHMENT_SCOPE_GLOBAL,
-        });
+        })));
+        if (!isAuthSocketOpen(socket))
+            return;
         if (loginPunishment) {
             fail(formatPunishmentBlockMessage("login", loginPunishment), "punishment_blocked", {
                 punishment: publicPunishmentPayload(loginPunishment),
@@ -497,30 +527,23 @@ function createServerAccountAuthRoutes(deps) {
         const previousRefreshExpiresAt = String(account.refresh_token_expires_at || "");
         const tokens = issueSessionTokens(account);
         if (isPostgresAuthoritativeReady()) {
-            if (ACCOUNT_ONE_ACTIVE_SESSION) {
-                const revokeResult = await postgresStore.revokeSessionsForUsername(account.username);
-                if (!revokeResult.ok) {
-                    account.session_token_hash = previousSessionHash;
-                    account.session_token_expires_at = previousSessionExpiresAt;
-                    account.refresh_token_hash = previousRefreshHash;
-                    account.refresh_token_expires_at = previousRefreshExpiresAt;
-                    queueAccountsSave();
-                    fail("Could not rotate your saved login. Try again.", "session_revoke_failed");
-                    return;
-                }
-            }
-            const sessionResult = await postgresStore.saveSession(account, {
+            const sessionResult = await runAuthStage(socket, "password_login_session_save", () => (postgresStore.saveSession(account, {
                 ip: getSocketAddress(socket),
                 userAgent: getSocketUserAgent(socket, data),
                 deviceInfo: getSocketDeviceInfo(socket, data),
                 sessionMode: ACCOUNT_ONE_ACTIVE_SESSION ? "one_active" : "multi_session",
-            });
+                concurrent: true,
+                revokeOtherSessions: ACCOUNT_ONE_ACTIVE_SESSION,
+                shouldContinue: () => isAuthSocketOpen(socket),
+            })));
             if (!sessionResult.ok) {
-                account.session_token_hash = "";
-                account.session_token_expires_at = "";
-                account.refresh_token_hash = "";
-                account.refresh_token_expires_at = "";
+                account.session_token_hash = previousSessionHash;
+                account.session_token_expires_at = previousSessionExpiresAt;
+                account.refresh_token_hash = previousRefreshHash;
+                account.refresh_token_expires_at = previousRefreshExpiresAt;
                 queueAccountsSave();
+                if (sessionResult.reason === "aborted" || !isAuthSocketOpen(socket))
+                    return;
                 fail("Could not create your saved login session. Try again.", "session_create_failed");
                 return;
             }
@@ -533,6 +556,8 @@ function createServerAccountAuthRoutes(deps) {
                 sessionMode: ACCOUNT_ONE_ACTIVE_SESSION ? "one_active" : "multi_session",
             });
         }
+        if (!isAuthSocketOpen(socket))
+            return;
         const activation = activatePlayerAccount(socket, player, account, { replaceExisting: true });
         if (!activation.ok) {
             fail(activation.message, "activation_failed");
@@ -558,7 +583,9 @@ function createServerAccountAuthRoutes(deps) {
             fail("Saved login expired. Sign on again.", "missing_token");
             return;
         }
-        const rateLimit = await checkLoginAttemptAllowed(socket, username, usingRefreshToken ? "refresh_token_login" : "token_login");
+        const rateLimit = await runAuthStage(socket, "token_login_rate_limit", () => (checkLoginAttemptAllowed(socket, username, usingRefreshToken ? "refresh_token_login" : "token_login")));
+        if (!isAuthSocketOpen(socket))
+            return;
         if (!rateLimit.ok) {
             fail(`Too many login attempts. Try again in ${rateLimit.retry_after_seconds}s.`, "rate_limited", {
                 retry_after_seconds: rateLimit.retry_after_seconds,
@@ -573,12 +600,16 @@ function createServerAccountAuthRoutes(deps) {
         let previousRefreshHash = cleanAccountName(account?.refresh_token_hash || "");
         let previousRefreshExpiresAt = String(account?.refresh_token_expires_at || "");
         if (isPostgresAuthoritativeReady()) {
-            const validation = await postgresStore.validateSessionToken(username, tokenHash, {
+            const validation = await runAuthStage(socket, "token_login_session_validation", () => (postgresStore.validateSessionToken(username, tokenHash, {
                 ip: getSocketAddress(socket),
                 userAgent: getSocketUserAgent(socket, data),
                 deviceInfo: getSocketDeviceInfo(socket, data),
                 tokenKind: usingRefreshToken ? "refresh" : "session_or_refresh",
-            });
+                concurrent: true,
+                shouldContinue: () => isAuthSocketOpen(socket),
+            })));
+            if (validation.reason === "aborted" || !isAuthSocketOpen(socket))
+                return;
             if (!validation.ok) {
                 fail("Saved login expired. Sign on again.", validation.reason || "invalid_or_expired");
                 return;
@@ -591,7 +622,7 @@ function createServerAccountAuthRoutes(deps) {
             account = accounts.get(accountKey(validatedAccount.username)) || validatedAccount;
             Object.assign(account, validatedAccount);
             accounts.set(accountKey(account.username), account);
-            previousSessionHash = tokenHash;
+            previousSessionHash = cleanAccountName(account.session_token_hash || validation.session_token_hash || "");
             previousSessionExpiresAt = String(account.session_token_expires_at || validation.expires_at || "");
             previousRefreshHash = cleanAccountName(account.refresh_token_hash || validation.refresh_token_hash || "");
             previousRefreshExpiresAt = String(account.refresh_token_expires_at || validation.refresh_expires_at || "");
@@ -607,9 +638,11 @@ function createServerAccountAuthRoutes(deps) {
             });
             return;
         }
-        const loginPunishment = await getBlockingPunishment(account.username, ["ban", "lockout"], {
+        const loginPunishment = await runAuthStage(socket, "token_login_punishment", () => (getBlockingPunishment(account.username, ["ban", "lockout"], {
             scope: PUNISHMENT_SCOPE_GLOBAL,
-        });
+        })));
+        if (!isAuthSocketOpen(socket))
+            return;
         if (loginPunishment) {
             fail(formatPunishmentBlockMessage("login", loginPunishment), "punishment_blocked", {
                 punishment: publicPunishmentPayload(loginPunishment),
@@ -621,30 +654,32 @@ function createServerAccountAuthRoutes(deps) {
             }, "warning");
             return;
         }
+        if (!isAuthSocketOpen(socket))
+            return;
         account.last_seen_at = new Date().toISOString();
         const nextTokens = issueSessionTokens(account);
         if (isPostgresAuthoritativeReady()) {
-            const sessionResult = await postgresStore.saveSession(account, {
+            const sessionResult = await runAuthStage(socket, "token_login_session_rotation", () => (postgresStore.saveSession(account, {
                 ip: getSocketAddress(socket),
                 userAgent: getSocketUserAgent(socket, data),
                 deviceInfo: getSocketDeviceInfo(socket, data),
                 rotatedFromTokenHash: tokenHash,
                 sessionMode: ACCOUNT_ONE_ACTIVE_SESSION ? "one_active" : "multi_session",
-            });
+                concurrent: true,
+                revokeRotatedToken: true,
+                revokeOtherSessions: ACCOUNT_ONE_ACTIVE_SESSION,
+                shouldContinue: () => isAuthSocketOpen(socket),
+            })));
             if (!sessionResult.ok) {
                 account.session_token_hash = previousSessionHash;
                 account.session_token_expires_at = previousSessionExpiresAt;
                 account.refresh_token_hash = previousRefreshHash;
                 account.refresh_token_expires_at = previousRefreshExpiresAt;
                 queueAccountsSave();
+                if (sessionResult.reason === "aborted" || !isAuthSocketOpen(socket))
+                    return;
                 fail("Could not refresh your saved login. Sign on again.", "session_refresh_failed");
                 return;
-            }
-            if (tokenHash !== "" && tokenHash !== account.session_token_hash && tokenHash !== account.refresh_token_hash) {
-                await postgresStore.revokeSessionByTokenHash(tokenHash, "rotated");
-            }
-            if (ACCOUNT_ONE_ACTIVE_SESSION) {
-                await postgresStore.revokeOtherSessionsForUsername(account.username, account.session_token_hash, "one_active_session");
             }
         }
         else {
@@ -655,6 +690,8 @@ function createServerAccountAuthRoutes(deps) {
                 sessionMode: ACCOUNT_ONE_ACTIVE_SESSION ? "one_active" : "multi_session",
             });
         }
+        if (!isAuthSocketOpen(socket))
+            return;
         const activation = activatePlayerAccount(socket, player, account, { replaceExisting: true });
         if (!activation.ok) {
             fail(activation.message, "activation_failed");

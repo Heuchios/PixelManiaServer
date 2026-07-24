@@ -79,10 +79,14 @@ const checks = [
       && accountAuthSource.includes("refresh_token"),
   },
   {
-    name: "token login accepts refresh tokens and rotates old tokens",
+    name: "token login accepts refresh tokens and rotates sessions atomically",
     ok: accountAuthSource.includes("data.refresh_token || data.session_token")
       && accountAuthSource.includes("usingRefreshToken")
-      && accountAuthSource.includes("revokeSessionByTokenHash(tokenHash, \"rotated\")")
+      && accountAuthSource.includes("revokeRotatedToken: true")
+      && accountAuthSource.includes("revokeOtherSessions: ACCOUNT_ONE_ACTIVE_SESSION")
+      && accountAuthSource.includes("shouldContinue: () => isAuthSocketOpen(socket)")
+      && files.postgres.includes("revokeRotatedToken")
+      && files.postgres.includes("assertPostgresOperationCanContinue(details)")
       && accountAuthSource.includes("recordLoginAttempt(socket, player, account.username, usingRefreshToken ? \"refresh_token_login\" : \"token_login\", true"),
   },
   {
