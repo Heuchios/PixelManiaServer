@@ -6,6 +6,12 @@ const https = require("https");
 const path = require("path");
 const WebSocket = require("ws");
 
+const LIVE_TOKEN_AUTH_LIMIT = 8;
+const LIVE_TOKEN_AUTH_WINDOW_MS = 15_000;
+const LIVE_TOKEN_AUTH_SPACING_MS = 2_000;
+const DEFAULT_TOKEN_POOL_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const DEFAULT_MAX_CLIENTS_PER_WORLD = 50;
+
 function parseArgs(argv) {
   const args = {};
   for (let i = 0; i < argv.length; i += 1) {
@@ -38,11 +44,12 @@ function parseDurationMs(value, fallback) {
   if (value === undefined || value === null || value === "") return fallback;
   if (typeof value === "number") return Math.max(0, Math.trunc(value));
   const clean = String(value).trim().toLowerCase();
-  const match = clean.match(/^(\d+(?:\.\d+)?)(ms|s|m)?$/);
+  const match = clean.match(/^(\d+(?:\.\d+)?)(ms|s|m|h)?$/);
   if (!match) return fallback;
   const amount = Number(match[1]);
   if (!Number.isFinite(amount)) return fallback;
   const unit = match[2] || "ms";
+  if (unit === "h") return Math.max(0, Math.trunc(amount * 60 * 60_000));
   if (unit === "m") return Math.max(0, Math.trunc(amount * 60_000));
   if (unit === "s") return Math.max(0, Math.trunc(amount * 1_000));
   return Math.max(0, Math.trunc(amount));
@@ -60,11 +67,44 @@ function parseCsvList(value) {
     .filter((entry) => entry !== "");
 }
 
+function buildRoutes(urls, worlds) {
+  if (!Array.isArray(urls) || urls.length === 0) {
+    throw new Error("At least one WebSocket URL is required.");
+  }
+  if (!Array.isArray(worlds) || worlds.length < urls.length) {
+    throw new Error(
+      `Route/world mismatch: received ${urls.length} URL(s) and ${worlds?.length || 0} world(s).`
+      + " Provide at least one distinct --worlds entry for every --urls entry; extra worlds are distributed round-robin across the URLs.",
+    );
+  }
+  if (new Set(worlds).size !== worlds.length) {
+    throw new Error("Multi-route load tests require distinct worlds so Redis world ownership does not redirect clients between workers.");
+  }
+  return worlds.map((world, index) => ({
+    url: urls[index % urls.length],
+    world,
+  }));
+}
+
+function validateWorldCapacityPlan(clients, routes, maxClientsPerWorld) {
+  const routeCount = Array.isArray(routes) ? routes.length : 0;
+  const cleanLimit = Math.max(1, Math.trunc(Number(maxClientsPerWorld) || DEFAULT_MAX_CLIENTS_PER_WORLD));
+  const largestWorldTarget = routeCount > 0 ? Math.ceil(Math.max(0, Number(clients) || 0) / routeCount) : 0;
+  if (largestWorldTarget > cleanLimit) {
+    const minimumWorlds = Math.ceil(Math.max(0, Number(clients) || 0) / cleanLimit);
+    throw new Error(
+      `Impossible world-cap plan: ${clients} clients across ${routeCount} world(s) requires up to ${largestWorldTarget} clients per world,`
+      + ` but the configured cap is ${cleanLimit}. Provide at least ${minimumWorlds} distinct --worlds entries.`,
+    );
+  }
+  return largestWorldTarget;
+}
+
 function usage() {
   return `
 Usage:
   npm run load:staged -- --url ws://127.0.0.1:8080 --dev-login --clients 100 --step 25 --step-ms 30s --hold-ms 2m --world LOAD_TEST
-  npm run load:staged -- --urls wss://api.pixelmaniagame.com/ws-a,wss://api.pixelmaniagame.com/ws-b --worlds LOAD_A,LOAD_B --token-file ./load_tokens.json --clients 250 --step 25 --step-ms 30s --hold-ms 5m
+  npm run load:staged -- --urls wss://api.pixelmaniagame.com/ws-a,wss://api.pixelmaniagame.com/ws-b --worlds LOAD_A1,LOAD_B1,LOAD_A2,LOAD_B2,LOAD_A3,LOAD_B3 --token-file ./load_tokens.json --clients 250 --step 25 --step-ms 30s --hold-ms 5m
 
 Auth modes:
   --dev-login                 Local/staging only. Requires server dev backend login to be enabled.
@@ -77,10 +117,16 @@ Useful knobs:
   --url <url>                 Single-route mode.
   --world <name>              Single-route world.
   --urls <url-a,url-b>        Multi-route mode. Clients are assigned round-robin.
-  --worlds <world-a,world-b>  Required with --urls. Worlds must be distinct so route ownership does not redirect.
+  --worlds <world-a,...>      At least one distinct world per URL. Extra worlds cycle across URLs.
+  --max-clients-per-world 50  Refuse a stage that exceeds the authoritative world capacity.
   --health-url <url>          Defaults to /health in single-route mode; disabled by default in multi-route mode.
   --token-out-file <file>     Defaults to <token-file>.next.json.
   --token-offset 0            Start assigning clients at this token row.
+  --auth-spacing-ms 2s        Live token logins are paced below the shared 8-per-15s pre-auth limit.
+  --auth-timeout-ms 20s       Abort when an opened client does not authenticate in time.
+  --max-token-age 24h         Reject old live token pools. Provision a fresh pool for each stage.
+  --allow-live-auth-burst     Explicitly bypass the live authentication pacing guard.
+  --allow-unsafe-token-file   Explicitly accept stale, failed, or unverified token-pool metadata.
   --client-version 1.0.3
   --rate 10                   Position messages per joined client per second.
   --radius 3                  Movement radius in pixels. Keeps the first update inside the 4px world-entry guard.
@@ -103,8 +149,15 @@ function deriveHealthUrl(wsUrl) {
   }
 }
 
-function readTokenAccounts(tokenFile) {
-  if (!tokenFile) return [];
+function readTokenPool(tokenFile) {
+  if (!tokenFile) {
+    return {
+      accounts: [],
+      metadata: {},
+      fullPath: "",
+      modifiedAtMs: 0,
+    };
+  }
   const fullPath = path.resolve(tokenFile);
   if (!fs.existsSync(fullPath)) {
     throw new Error(`Token file not found: ${fullPath}. Use --dev-login for local/staging, or create this JSON file with disposable verified test account tokens.`);
@@ -112,19 +165,67 @@ function readTokenAccounts(tokenFile) {
   const raw = fs.readFileSync(fullPath, "utf8");
   const parsed = JSON.parse(raw);
   const rows = Array.isArray(parsed) ? parsed : (Array.isArray(parsed.accounts) ? parsed.accounts : []);
-  return rows.map((row, index) => ({
+  const accounts = rows.map((row, index) => ({
     index,
     username: String(row.username || row.account_username || row.name || "").trim(),
     session_token: String(row.session_token || row.token || "").trim(),
     refresh_token: String(row.refresh_token || "").trim(),
   })).filter((row) => row.username !== "" && (row.session_token !== "" || row.refresh_token !== ""));
+  const metadata = parsed && typeof parsed === "object" && !Array.isArray(parsed)
+    ? Object.fromEntries(Object.entries(parsed).filter(([key]) => key !== "accounts"))
+    : {};
+  return {
+    accounts,
+    metadata,
+    fullPath,
+    modifiedAtMs: fs.statSync(fullPath).mtimeMs,
+  };
 }
 
-function writeTokenAccounts(tokenOutFile, accounts) {
+function writeTokenAccounts(tokenOutFile, accounts, metadata = {}) {
   if (!tokenOutFile || !Array.isArray(accounts) || accounts.length === 0) return;
   const fullPath = path.resolve(tokenOutFile);
-  fs.writeFileSync(fullPath, `${JSON.stringify({ accounts }, null, 2)}\n`, "utf8");
+  const temporaryPath = `${fullPath}.tmp-${process.pid}`;
+  const envelope = {
+    ...metadata,
+    updated_at: new Date().toISOString(),
+    count: accounts.length,
+    accounts,
+  };
+  fs.writeFileSync(temporaryPath, `${JSON.stringify(envelope, null, 2)}\n`, "utf8");
+  if (fs.existsSync(fullPath)) fs.rmSync(fullPath, { force: true });
+  fs.renameSync(temporaryPath, fullPath);
   console.log(`[load] wrote rotated token pool: ${fullPath}`);
+}
+
+function validateLiveTokenPool(tokenPool, options = {}) {
+  if (!options.likelyLive || options.devLogin || options.allowUnsafeTokenFile) return;
+
+  const metadata = tokenPool?.metadata || {};
+  const lastRun = metadata.last_run && typeof metadata.last_run === "object"
+    ? metadata.last_run
+    : null;
+  if (lastRun && lastRun.ok === false) {
+    throw new Error(
+      "Refusing a token pool produced by a failed load stage. Provision fresh tokens, or pass --allow-unsafe-token-file only for deliberate recovery work.",
+    );
+  }
+
+  const provenanceValue = metadata.updated_at || metadata.generated_at || "";
+  const provenanceAt = Date.parse(String(provenanceValue || ""));
+  if (!Number.isFinite(provenanceAt)) {
+    throw new Error(
+      "Refusing an unverified live token pool with no generated_at/updated_at metadata. Provision fresh tokens before the production stage.",
+    );
+  }
+
+  const maxAgeMs = Math.max(60_000, Number(options.maxAgeMs) || DEFAULT_TOKEN_POOL_MAX_AGE_MS);
+  const ageMs = Math.max(0, Date.now() - provenanceAt);
+  if (ageMs > maxAgeMs) {
+    throw new Error(
+      `Refusing a stale live token pool (${Math.round(ageMs / 60_000)} minutes old; limit=${Math.round(maxAgeMs / 60_000)} minutes). Provision fresh tokens before the production stage.`,
+    );
+  }
 }
 
 function getJson(url, timeoutMs = 4000) {
@@ -188,6 +289,7 @@ class LoadClient {
     this.facing = 1;
     this.movementTimer = null;
     this.openedAt = 0;
+    this.authSentAt = 0;
     this.messagesReceived = 0;
     this.bytesReceived = 0;
     this.bytesSent = 0;
@@ -211,7 +313,10 @@ class LoadClient {
       this.connected = true;
       this.openedAt = Date.now();
       this.runner.stats.opened += 1;
-      this.sendAuth();
+      void this.sendAuth().catch((error) => {
+        this.runner.recordFatalError(error);
+        this.close("auth_schedule_failed");
+      });
     });
 
     ws.on("message", (raw) => {
@@ -273,7 +378,11 @@ class LoadClient {
     return true;
   }
 
-  sendAuth() {
+  async sendAuth() {
+    const permitted = await this.runner.acquireAuthPermit();
+    if (!permitted || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+    this.authSentAt = Date.now();
+
     if (this.runner.devLogin) {
       this.send({
         type: "dev_backend_login",
@@ -302,6 +411,7 @@ class LoadClient {
   handleMessage(data, messageBytes = 0) {
     const type = String(data.type || "");
     if (type === "account_auth_ok" && data.ok !== false) {
+      if (this.authenticated) return;
       this.authenticated = true;
       this.runner.stats.authenticated += 1;
       if (this.tokenRow) {
@@ -339,6 +449,7 @@ class LoadClient {
     }
 
     if (type === "join_world_ok") {
+      if (this.joined) return;
       this.joined = true;
       this.runner.stats.joined += 1;
       const sx = Number(data.spawn_x);
@@ -487,6 +598,8 @@ class LoadRunner {
     this.angularSpeed = options.angularSpeed;
     this.statsMs = options.statsMs;
     this.handshakeTimeoutMs = options.handshakeTimeoutMs;
+    this.authSpacingMs = options.authSpacingMs;
+    this.authTimeoutMs = options.authTimeoutMs;
     this.devLogin = options.devLogin;
     this.verbose = options.verbose;
     this.usernamePrefix = options.usernamePrefix;
@@ -497,6 +610,7 @@ class LoadRunner {
     this.tokenAccounts = options.tokenAccounts;
     this.tokenOffset = options.tokenOffset;
     this.tokenOutFile = options.tokenOutFile;
+    this.tokenPoolMetadata = options.tokenPoolMetadata || {};
     this.clients = [];
     this.startedAt = Date.now();
     this.lastStats = null;
@@ -504,6 +618,11 @@ class LoadRunner {
     this.healthBaseline = null;
     this.statsTimer = null;
     this.shuttingDown = false;
+    this.fatalError = null;
+    this.lastResult = null;
+    this.tokenPoolPersisted = false;
+    this.authPermitQueue = Promise.resolve();
+    this.authPermitTimestamps = [];
     this.closeReasons = new Map();
     this.closePhases = new Map();
     this.authErrorReasons = new Map();
@@ -576,6 +695,131 @@ class LoadRunner {
     map.set(key, (map.get(key) || 0) + 1);
   }
 
+  recordFatalError(error) {
+    if (!this.fatalError) {
+      this.fatalError = error instanceof Error ? error : new Error(String(error || "unknown load-runner error"));
+    }
+  }
+
+  async acquireAuthPermit() {
+    let releasePermit;
+    const previousPermit = this.authPermitQueue;
+    this.authPermitQueue = new Promise((resolve) => {
+      releasePermit = resolve;
+    });
+    await previousPermit;
+
+    try {
+      if (this.shuttingDown) return false;
+      if (this.authSpacingMs <= 0) return true;
+
+      while (!this.shuttingDown) {
+        const now = Date.now();
+        this.authPermitTimestamps = this.authPermitTimestamps
+          .filter((timestamp) => now - timestamp < LIVE_TOKEN_AUTH_WINDOW_MS);
+        const lastTimestamp = this.authPermitTimestamps[this.authPermitTimestamps.length - 1] || 0;
+        const spacingDelay = Math.max(0, lastTimestamp + this.authSpacingMs - now);
+        const windowDelay = this.authPermitTimestamps.length >= LIVE_TOKEN_AUTH_LIMIT
+          ? Math.max(0, this.authPermitTimestamps[0] + LIVE_TOKEN_AUTH_WINDOW_MS + 50 - now)
+          : 0;
+        const delayMs = Math.max(spacingDelay, windowDelay);
+        if (delayMs <= 0) {
+          this.authPermitTimestamps.push(Date.now());
+          return true;
+        }
+        await wait(Math.min(delayMs, 250));
+      }
+      return false;
+    } finally {
+      releasePermit();
+    }
+  }
+
+  getFailFastReason() {
+    if (this.fatalError) return this.fatalError.message;
+    if (this.stats.authErrors > 0) {
+      return `authentication failed (${this.stats.authErrors}; reasons=${this.formatSummary(this.authErrorReasons, 3) || "unknown"})`;
+    }
+    if (this.stats.updateRequired > 0) {
+      return `client protocol update required (${this.stats.updateRequired})`;
+    }
+    if (this.stats.rateLimited > this.maxRateLimited) {
+      return `rate-limit threshold exceeded (${this.stats.rateLimited}/${this.maxRateLimited}; buckets=${this.formatSummary(this.rateLimitedBuckets, 3) || "unknown"})`;
+    }
+    if (this.stats.routeRedirects > 0) {
+      return `unexpected route redirect (${this.stats.routeRedirects}; targets=${this.formatSummary(this.routeRedirectTargets, 3) || "unknown"})`;
+    }
+    if (this.stats.errors > 0) {
+      return `WebSocket error detected (${this.stats.errors}; errors=${this.formatSummary(this.socketErrors, 2) || "unknown"})`;
+    }
+    if (this.stats.abnormalCloses > 0) {
+      return `unexpected WebSocket close (${this.stats.abnormalCloses}; phases=${this.formatSummary(this.closePhases, 3) || "unknown"})`;
+    }
+    if (this.stats.rejections > this.maxRejections) {
+      return `action-rejection threshold exceeded (${this.stats.rejections}/${this.maxRejections}; reasons=${this.formatSummary(this.rejectionReasons, 3) || "unknown"})`;
+    }
+
+    const now = Date.now();
+    const timedOutClient = this.clients.find((client) => (
+      client.connected
+      && !client.authenticated
+      && client.authSentAt > 0
+      && now - client.authSentAt > this.authTimeoutMs
+    ));
+    if (timedOutClient) {
+      return `client ${timedOutClient.index} authentication timed out after ${this.authTimeoutMs}ms`;
+    }
+    return "";
+  }
+
+  async waitWithHealth(durationMs, phase) {
+    const deadline = Date.now() + Math.max(0, durationMs);
+    while (true) {
+      const failureReason = this.getFailFastReason();
+      if (failureReason) throw new Error(`Aborting during ${phase}: ${failureReason}`);
+      const remainingMs = deadline - Date.now();
+      if (remainingMs <= 0) return;
+      await wait(Math.min(250, remainingMs));
+    }
+  }
+
+  persistTokenPool(ok, reason = "") {
+    if (this.tokenPoolPersisted || this.devLogin || !this.tokenOutFile || this.tokenAccounts.length === 0) return;
+    this.tokenPoolPersisted = true;
+
+    const completedAt = new Date().toISOString();
+    const metadata = {
+      ...this.tokenPoolMetadata,
+      last_run: {
+        completed_at: completedAt,
+        ok: Boolean(ok),
+        reason: String(reason || (ok ? "stage passed" : "stage failed")),
+        clients_target: this.clientsTarget,
+        authenticated: this.stats.authenticated,
+        joined: this.stats.joined,
+        auth_errors: this.stats.authErrors,
+        rate_limited: this.stats.rateLimited,
+        redirects: this.stats.routeRedirects,
+        routes: this.routes.map((route) => ({ url: route.url, world: route.world })),
+      },
+    };
+
+    if (ok) {
+      writeTokenAccounts(this.tokenOutFile, this.tokenAccounts, metadata);
+      return;
+    }
+
+    if (this.stats.authenticated <= 0) {
+      console.warn("[load] failed before any token rotation; source and output token pools were left unchanged.");
+      return;
+    }
+
+    const failedSuffix = completedAt.replace(/[:.]/g, "-");
+    const failedPath = `${this.tokenOutFile}.failed-${failedSuffix}.json`;
+    writeTokenAccounts(failedPath, this.tokenAccounts, metadata);
+    console.warn(`[load] failed after partial token rotation; recovery tokens were quarantined at ${path.resolve(failedPath)}.`);
+  }
+
   formatSummary(map, limit = 2) {
     if (!map || map.size === 0) return "";
     return Array.from(map.entries())
@@ -637,7 +881,7 @@ class LoadRunner {
 
   async run() {
     console.log("[load] staged PixelMania WebSocket load test");
-    console.log(`[load] routes=${this.routes.length} health=${this.healthUrl || "(disabled)"} clients=${this.clientsTarget} step=${this.step} stepMs=${this.stepMs} holdMs=${this.holdMs} rate=${this.rate}/s`);
+    console.log(`[load] routes=${this.routes.length} health=${this.healthUrl || "(disabled)"} clients=${this.clientsTarget} step=${this.step} stepMs=${this.stepMs} holdMs=${this.holdMs} rate=${this.rate}/s authSpacingMs=${this.authSpacingMs}`);
     this.routes.forEach((route, routeIndex) => {
       console.log(`[load] route[${routeIndex}] url=${route.url} world=${route.world} target=${this.getRouteTarget(routeIndex)}`);
     });
@@ -646,78 +890,97 @@ class LoadRunner {
       const lastToken = this.tokenAccounts[this.tokenOffset + this.clientsTarget - 1];
       console.log(`[load] token rows offset=${this.tokenOffset} first=${firstToken?.username || "(missing)"} last=${lastToken?.username || "(missing)"}`);
     }
-    this.startedAt = Date.now();
-    if (this.healthUrl) {
-      this.healthBaseline = await getJson(this.healthUrl);
-    }
-    this.statsTimer = setInterval(() => this.printStats(), this.statsMs);
-    if (typeof this.statsTimer.unref === "function") this.statsTimer.unref();
-
-    let launched = 0;
-    while (launched < this.clientsTarget) {
-      const batchSize = Math.min(this.step, this.clientsTarget - launched);
-      for (let i = 0; i < batchSize; i += 1) {
-        const index = launched + i;
-        const tokenRow = this.tokenAccounts[this.tokenOffset + index] || null;
-        const client = new LoadClient(this, index, tokenRow);
-        this.clients.push(client);
-        client.connect();
+    let failureReason = "";
+    try {
+      this.startedAt = Date.now();
+      if (this.healthUrl) {
+        this.healthBaseline = await getJson(this.healthUrl);
       }
-      launched += batchSize;
-      console.log(`[load] launched ${launched}/${this.clientsTarget}`);
-      if (launched < this.clientsTarget) {
-        await wait(this.stepMs);
-      }
-    }
+      this.statsTimer = setInterval(() => {
+        void this.printStats().catch((error) => this.recordFatalError(error));
+      }, this.statsMs);
+      if (typeof this.statsTimer.unref === "function") this.statsTimer.unref();
 
-    await wait(this.holdMs);
-    await this.printStats(true);
-    const routeSummaries = this.getRouteSummaries();
-    const activeAtEnd = routeSummaries.reduce((sum, summary) => sum + summary.active, 0);
-    const joinedAtEnd = routeSummaries.reduce((sum, summary) => sum + summary.joined, 0);
-    const routesHealthy = routeSummaries.every((summary) => (
-      summary.active === summary.target
-      && summary.authenticated === summary.target
-      && summary.joined === summary.target
-      && summary.authErrors === 0
-      && summary.updateRequired === 0
-      && summary.socketErrors === 0
-      && summary.abnormalCloses === 0
-      && summary.routeRedirects === 0
-    ));
-    const result = {
-      ok: routesHealthy
-        && activeAtEnd === this.clientsTarget
-        && joinedAtEnd === this.clientsTarget
-        && this.stats.authenticated === this.clientsTarget
-        && this.stats.authErrors === 0
-        && this.stats.updateRequired === 0
-        && this.stats.errors === 0
-        && this.stats.rejections <= this.maxRejections
-        && this.stats.rateLimited <= this.maxRateLimited
-        && this.stats.routeRedirects === 0
-        && this.stats.abnormalCloses === 0,
-      activeAtEnd,
-      joinedAtEnd,
-      routeSummaries,
-    };
-    for (const summary of routeSummaries) {
-      console.log(
-        `[load] route[${summary.routeIndex}] final`
-        + ` active=${summary.active}/${summary.target}`
-        + ` auth=${summary.authenticated}/${summary.target}`
-        + ` joined=${summary.joined}/${summary.target}`
-        + ` errors=${summary.socketErrors}`
-        + ` abnormalCloses=${summary.abnormalCloses}`
-        + ` rejections=${summary.rejections}`
-        + ` rateLimited=${summary.rateLimited}`
-        + ` redirects=${summary.routeRedirects}`,
+      let launched = 0;
+      let nextLaunchAt = Date.now();
+      while (launched < this.clientsTarget) {
+        const batchStartedAt = Date.now();
+        const batchSize = Math.min(this.step, this.clientsTarget - launched);
+        for (let i = 0; i < batchSize; i += 1) {
+          const launchDelayMs = Math.max(0, nextLaunchAt - Date.now());
+          await this.waitWithHealth(launchDelayMs, "authentication ramp");
+          const index = launched + i;
+          const tokenRow = this.tokenAccounts[this.tokenOffset + index] || null;
+          const client = new LoadClient(this, index, tokenRow);
+          this.clients.push(client);
+          client.connect();
+          nextLaunchAt = Date.now() + this.authSpacingMs;
+        }
+        launched += batchSize;
+        console.log(`[load] launched ${launched}/${this.clientsTarget}`);
+        if (launched < this.clientsTarget) {
+          const nextBatchAt = Math.max(batchStartedAt + this.stepMs, nextLaunchAt);
+          await this.waitWithHealth(Math.max(0, nextBatchAt - Date.now()), "ramp pause");
+        }
+      }
+
+      await this.waitWithHealth(this.holdMs, "hold");
+      await this.printStats(true);
+      const routeSummaries = this.getRouteSummaries();
+      const activeAtEnd = routeSummaries.reduce((sum, summary) => sum + summary.active, 0);
+      const joinedAtEnd = routeSummaries.reduce((sum, summary) => sum + summary.joined, 0);
+      const routesHealthy = routeSummaries.every((summary) => (
+        summary.active === summary.target
+        && summary.authenticated === summary.target
+        && summary.joined === summary.target
+        && summary.authErrors === 0
+        && summary.updateRequired === 0
+        && summary.socketErrors === 0
+        && summary.abnormalCloses === 0
+        && summary.routeRedirects === 0
+      ));
+      const result = {
+        ok: routesHealthy
+          && activeAtEnd === this.clientsTarget
+          && joinedAtEnd === this.clientsTarget
+          && this.stats.authenticated === this.clientsTarget
+          && this.stats.authErrors === 0
+          && this.stats.updateRequired === 0
+          && this.stats.errors === 0
+          && this.stats.rejections <= this.maxRejections
+          && this.stats.rateLimited <= this.maxRateLimited
+          && this.stats.routeRedirects === 0
+          && this.stats.abnormalCloses === 0,
+        activeAtEnd,
+        joinedAtEnd,
+        routeSummaries,
+      };
+      this.lastResult = result;
+      for (const summary of routeSummaries) {
+        console.log(
+          `[load] route[${summary.routeIndex}] final`
+          + ` active=${summary.active}/${summary.target}`
+          + ` auth=${summary.authenticated}/${summary.target}`
+          + ` joined=${summary.joined}/${summary.target}`
+          + ` errors=${summary.socketErrors}`
+          + ` abnormalCloses=${summary.abnormalCloses}`
+          + ` rejections=${summary.rejections}`
+          + ` rateLimited=${summary.rateLimited}`
+          + ` redirects=${summary.routeRedirects}`,
+        );
+      }
+      return result;
+    } catch (error) {
+      failureReason = error instanceof Error ? error.message : String(error || "load stage failed");
+      throw error;
+    } finally {
+      this.shutdown();
+      await wait(1000);
+      this.persistTokenPool(
+        this.lastResult?.ok === true,
+        failureReason || (this.lastResult?.ok ? "stage passed" : "final health gate failed"),
       );
     }
-    this.shutdown();
-    await wait(1000);
-    writeTokenAccounts(this.tokenOutFile, this.tokenAccounts);
-    return result;
   }
 
   async printStats(final = false) {
@@ -793,9 +1056,10 @@ class LoadRunner {
   }
 
   shutdown() {
+    if (this.shuttingDown) return;
+    this.shuttingDown = true;
     if (this.statsTimer) clearInterval(this.statsTimer);
     this.statsTimer = null;
-    this.shuttingDown = true;
     for (const client of this.clients) client.close();
   }
 }
@@ -836,28 +1100,31 @@ async function main() {
   const singleWorld = String(args.world || process.env.PIXELMANIA_LOAD_WORLD || "LOAD_TEST").trim().toUpperCase();
   const worlds = (configuredWorlds ? parseCsvList(configuredWorlds) : [singleWorld])
     .map((world) => world.toUpperCase());
-  if (worlds.length !== urls.length) {
-    throw new Error(`Route/world mismatch: received ${urls.length} URL(s) and ${worlds.length} world(s). Provide one distinct --worlds entry for every --urls entry.`);
-  }
   if (worlds.some((world) => world === "")) {
     throw new Error("Load-test world names must not be empty.");
   }
-  if (urls.length > 1 && new Set(worlds).size !== worlds.length) {
-    throw new Error("Multi-route load tests require distinct worlds so Redis world ownership does not redirect clients between workers.");
-  }
-
-  const routes = urls.map((routeUrl, routeIndex) => ({
-    url: routeUrl,
-    world: worlds[routeIndex],
-  }));
+  const routes = buildRoutes(urls, worlds);
   const devLogin = boolArg(args["dev-login"] || process.env.PIXELMANIA_LOAD_DEV_LOGIN);
   const tokenFile = args["token-file"] ? String(args["token-file"]) : "";
-  const tokenAccounts = readTokenAccounts(tokenFile);
+  const tokenPool = readTokenPool(tokenFile);
+  const tokenAccounts = tokenPool.accounts;
   const likelyLive = urls.some((routeUrl) => /api\.pixelmaniagame\.com/i.test(routeUrl));
+  const allowUnsafeTokenFile = boolArg(args["allow-unsafe-token-file"]);
+  const maxTokenAgeMs = parseDurationMs(
+    args["max-token-age"] || process.env.PIXELMANIA_LOAD_MAX_TOKEN_AGE,
+    DEFAULT_TOKEN_POOL_MAX_AGE_MS,
+  );
 
   if (devLogin && likelyLive && !boolArg(args["allow-live-dev-login"])) {
     throw new Error("Refusing --dev-login against api.pixelmaniagame.com. Use staging/local dev login, or pass a production-style --token-file with disposable test accounts.");
   }
+
+  validateLiveTokenPool(tokenPool, {
+    likelyLive,
+    devLogin,
+    allowUnsafeTokenFile,
+    maxAgeMs: maxTokenAgeMs,
+  });
 
   if (!devLogin && tokenAccounts.length === 0) {
     console.error(usage());
@@ -865,6 +1132,13 @@ async function main() {
   }
 
   const clients = parseInteger(args.clients || process.env.PIXELMANIA_LOAD_CLIENTS, 100, 1, 100_000);
+  const maxClientsPerWorld = parseInteger(
+    args["max-clients-per-world"] || process.env.PIXELMANIA_LOAD_MAX_CLIENTS_PER_WORLD,
+    DEFAULT_MAX_CLIENTS_PER_WORLD,
+    1,
+    100_000,
+  );
+  validateWorldCapacityPlan(clients, routes, maxClientsPerWorld);
   const tokenOffset = parseInteger(args["token-offset"] || process.env.PIXELMANIA_LOAD_TOKEN_OFFSET, 0, 0, 100_000);
   if (!devLogin && tokenAccounts.length - tokenOffset < clients) {
     throw new Error(`Token file has ${tokenAccounts.length} account(s), offset=${tokenOffset}, but --clients=${clients}.`);
@@ -873,6 +1147,34 @@ async function main() {
   const tokenOutFile = args["token-out-file"]
     ? String(args["token-out-file"])
     : (tokenFile ? `${tokenFile.replace(/\.json$/i, "")}.next.json` : "");
+  if (
+    likelyLive
+    && !devLogin
+    && tokenPool.fullPath
+    && tokenOutFile
+    && path.resolve(tokenOutFile).toLowerCase() === tokenPool.fullPath.toLowerCase()
+    && !allowUnsafeTokenFile
+  ) {
+    throw new Error("Refusing to overwrite the source token pool during a live load test. Use a distinct --token-out-file.");
+  }
+
+  const defaultAuthSpacingMs = likelyLive && !devLogin ? LIVE_TOKEN_AUTH_SPACING_MS : 0;
+  const authSpacingMs = parseDurationMs(
+    args["auth-spacing-ms"] || process.env.PIXELMANIA_LOAD_AUTH_SPACING_MS,
+    defaultAuthSpacingMs,
+  );
+  if (
+    likelyLive
+    && !devLogin
+    && authSpacingMs < LIVE_TOKEN_AUTH_SPACING_MS
+    && !boolArg(args["allow-live-auth-burst"])
+  ) {
+    throw new Error(
+      `Live account_token_login is limited to ${LIVE_TOKEN_AUTH_LIMIT} attempts per ${LIVE_TOKEN_AUTH_WINDOW_MS / 1000}s per pre-auth IP.`
+      + ` Use --auth-spacing-ms ${LIVE_TOKEN_AUTH_SPACING_MS}ms or explicitly pass --allow-live-auth-burst.`,
+    );
+  }
+
   const explicitHealthUrl = args["health-url"] || process.env.PIXELMANIA_LOAD_HEALTH_URL;
   const healthUrl = explicitHealthUrl
     ? String(explicitHealthUrl).trim()
@@ -895,6 +1197,11 @@ async function main() {
       : 0.35,
     statsMs: parseDurationMs(args["stats-ms"] || process.env.PIXELMANIA_LOAD_STATS_MS, 5_000),
     handshakeTimeoutMs: parseDurationMs(args["handshake-timeout-ms"] || process.env.PIXELMANIA_LOAD_HANDSHAKE_TIMEOUT_MS, 10_000),
+    authSpacingMs,
+    authTimeoutMs: Math.max(
+      1_000,
+      parseDurationMs(args["auth-timeout-ms"] || process.env.PIXELMANIA_LOAD_AUTH_TIMEOUT_MS, 20_000),
+    ),
     devLogin,
     verbose: boolArg(args.verbose || process.env.PIXELMANIA_LOAD_VERBOSE),
     usernamePrefix: String(args["username-prefix"] || process.env.PIXELMANIA_LOAD_USERNAME_PREFIX || "LoadTest_"),
@@ -905,9 +1212,29 @@ async function main() {
     tokenAccounts,
     tokenOffset,
     tokenOutFile,
+    tokenPoolMetadata: tokenPool.metadata,
   });
 
-  const result = await runner.run();
+  const handleSignal = (signal) => {
+    const reason = `interrupted by ${signal}`;
+    console.error(`[load] ${reason}; closing clients.`);
+    process.exitCode = 130;
+    runner.recordFatalError(new Error(reason));
+    runner.shutdown();
+    runner.persistTokenPool(false, reason);
+  };
+  const handleSigint = () => handleSignal("SIGINT");
+  const handleSigterm = () => handleSignal("SIGTERM");
+  process.once("SIGINT", handleSigint);
+  process.once("SIGTERM", handleSigterm);
+
+  let result;
+  try {
+    result = await runner.run();
+  } finally {
+    process.removeListener("SIGINT", handleSigint);
+    process.removeListener("SIGTERM", handleSigterm);
+  }
   if (!result.ok) {
     const routeVerdict = runner.formatRouteProgress(result.routeSummaries);
     throw new Error(
@@ -926,7 +1253,26 @@ async function main() {
   }
 }
 
-main().catch((error) => {
-  console.error(`[load] failed: ${error.message}`);
-  process.exit(1);
-});
+if (require.main === module) {
+  main().catch((error) => {
+    console.error(`[load] failed: ${error.message}`);
+    if (!process.exitCode) process.exitCode = 1;
+  });
+}
+
+module.exports = {
+  DEFAULT_MAX_CLIENTS_PER_WORLD,
+  DEFAULT_TOKEN_POOL_MAX_AGE_MS,
+  LIVE_TOKEN_AUTH_LIMIT,
+  LIVE_TOKEN_AUTH_SPACING_MS,
+  LIVE_TOKEN_AUTH_WINDOW_MS,
+  LoadRunner,
+  boolArg,
+  buildRoutes,
+  parseDurationMs,
+  parseInteger,
+  readTokenPool,
+  validateLiveTokenPool,
+  validateWorldCapacityPlan,
+  writeTokenAccounts,
+};

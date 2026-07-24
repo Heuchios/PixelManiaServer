@@ -91,6 +91,9 @@ const checks = [
       && files.postgres.includes("recordLoginAttempt(entry = {})")
       && files.accountSessionHelpers.includes("checkLoginAttemptAllowed")
       && files.server.includes("LOGIN_ATTEMPT_LIMIT_ACCOUNT")
+      && files.server.includes("TOKEN_LOGIN_ATTEMPT_LIMIT_IP")
+      && files.accountSessionHelpers.includes("auth:token")
+      && files.accountSessionHelpers.includes("refresh_token_login")
       && accountAuthSource.includes("recordLoginAttempt(socket, player, username, \"login\", false"),
   },
   {

@@ -509,6 +509,8 @@ const ACCOUNT_ONE_ACTIVE_SESSION = String(process.env.ACCOUNT_ONE_ACTIVE_SESSION
 const LOGIN_ATTEMPT_LIMIT_IP = Math.max(3, Math.trunc(Number(process.env.LOGIN_ATTEMPT_LIMIT_IP) || 20));
 const LOGIN_ATTEMPT_LIMIT_ACCOUNT = Math.max(3, Math.trunc(Number(process.env.LOGIN_ATTEMPT_LIMIT_ACCOUNT) || 10));
 const LOGIN_ATTEMPT_WINDOW_MS = Math.max(30 * 1000, Math.trunc(Number(process.env.LOGIN_ATTEMPT_WINDOW_SECONDS) || 300) * 1000);
+const TOKEN_LOGIN_ATTEMPT_LIMIT_IP = Math.max(LOGIN_ATTEMPT_LIMIT_IP, Math.trunc(Number(process.env.TOKEN_LOGIN_ATTEMPT_LIMIT_IP) || 200));
+const TOKEN_LOGIN_ATTEMPT_LIMIT_ACCOUNT = Math.max(LOGIN_ATTEMPT_LIMIT_ACCOUNT, Math.trunc(Number(process.env.TOKEN_LOGIN_ATTEMPT_LIMIT_ACCOUNT) || 20));
 const PASSWORD_SCRYPT_N = Math.max(16384, Math.trunc(Number(process.env.PASSWORD_SCRYPT_N) || 16384));
 const PASSWORD_SCRYPT_R = Math.max(8, Math.trunc(Number(process.env.PASSWORD_SCRYPT_R) || 8));
 const PASSWORD_SCRYPT_P = Math.max(1, Math.trunc(Number(process.env.PASSWORD_SCRYPT_P) || 1));
@@ -1582,6 +1584,8 @@ function getServerAccountSessionHelpers() {
             LOGIN_ATTEMPT_LIMIT_ACCOUNT,
             LOGIN_ATTEMPT_LIMIT_IP,
             LOGIN_ATTEMPT_WINDOW_MS,
+            TOKEN_LOGIN_ATTEMPT_LIMIT_ACCOUNT,
+            TOKEN_LOGIN_ATTEMPT_LIMIT_IP,
             MAX_USERNAME_LENGTH,
             MIN_PASSWORD_LENGTH,
             MIN_USERNAME_LENGTH,

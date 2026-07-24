@@ -72,6 +72,8 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
     LOGIN_ATTEMPT_LIMIT_ACCOUNT,
     LOGIN_ATTEMPT_LIMIT_IP,
     LOGIN_ATTEMPT_WINDOW_MS,
+    TOKEN_LOGIN_ATTEMPT_LIMIT_ACCOUNT,
+    TOKEN_LOGIN_ATTEMPT_LIMIT_IP,
     MAX_USERNAME_LENGTH,
     MIN_PASSWORD_LENGTH,
     MIN_USERNAME_LENGTH,
@@ -696,16 +698,20 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
   async function checkLoginAttemptAllowed(socket: PacketRecord | null | undefined, username: unknown, action = "login"): Promise<ValidationResult> {
     const subject = getLoginAttemptSubject(socket, String(username || ""));
     const checks: PacketRecord[] = [];
+    const isTokenLogin = action === "refresh_token_login" || action === "token_login";
+    const scopePrefix = isTokenLogin ? "auth:token" : "auth:login";
+    const ipLimit = isTokenLogin ? TOKEN_LOGIN_ATTEMPT_LIMIT_IP : LOGIN_ATTEMPT_LIMIT_IP;
+    const accountLimit = isTokenLogin ? TOKEN_LOGIN_ATTEMPT_LIMIT_ACCOUNT : LOGIN_ATTEMPT_LIMIT_ACCOUNT;
 
     if (redisStore.isReady()) {
-      checks.push(await redisStore.checkRateLimit("auth:login:ip", subject.ipSubject, LOGIN_ATTEMPT_LIMIT_IP, LOGIN_ATTEMPT_WINDOW_MS));
+      checks.push(await redisStore.checkRateLimit(`${scopePrefix}:ip`, subject.ipSubject, ipLimit, LOGIN_ATTEMPT_WINDOW_MS));
       if (subject.accountSubject) {
-        checks.push(await redisStore.checkRateLimit("auth:login:account", subject.accountSubject, LOGIN_ATTEMPT_LIMIT_ACCOUNT, LOGIN_ATTEMPT_WINDOW_MS));
+        checks.push(await redisStore.checkRateLimit(`${scopePrefix}:account`, subject.accountSubject, accountLimit, LOGIN_ATTEMPT_WINDOW_MS));
       }
     } else {
-      checks.push(consumeLocalLoginAttempt("auth:login:ip", subject.ipSubject, LOGIN_ATTEMPT_LIMIT_IP, LOGIN_ATTEMPT_WINDOW_MS));
+      checks.push(consumeLocalLoginAttempt(`${scopePrefix}:ip`, subject.ipSubject, ipLimit, LOGIN_ATTEMPT_WINDOW_MS));
       if (subject.accountSubject) {
-        checks.push(consumeLocalLoginAttempt("auth:login:account", subject.accountSubject, LOGIN_ATTEMPT_LIMIT_ACCOUNT, LOGIN_ATTEMPT_WINDOW_MS));
+        checks.push(consumeLocalLoginAttempt(`${scopePrefix}:account`, subject.accountSubject, accountLimit, LOGIN_ATTEMPT_WINDOW_MS));
       }
     }
 

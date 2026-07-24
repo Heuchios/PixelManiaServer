@@ -84,6 +84,8 @@ const deps = {
   LOGIN_ATTEMPT_LIMIT_ACCOUNT: 2,
   LOGIN_ATTEMPT_LIMIT_IP: 2,
   LOGIN_ATTEMPT_WINDOW_MS: 60_000,
+  TOKEN_LOGIN_ATTEMPT_LIMIT_ACCOUNT: 4,
+  TOKEN_LOGIN_ATTEMPT_LIMIT_IP: 5,
   MAX_USERNAME_LENGTH: 16,
   MIN_PASSWORD_LENGTH: 8,
   MIN_USERNAME_LENGTH: 3,
@@ -202,6 +204,13 @@ const helpers = /** @type {any} */ (AccountSessionHelpersModule.createServerAcco
   const blocked = await helpers.checkLoginAttemptAllowed(socket, "USO", "login");
   assert.equal(blocked.ok, false);
   assert.equal(blocked.retry_after_seconds >= 1, true);
+
+  assert.equal((await helpers.checkLoginAttemptAllowed(socket, "USO", "refresh_token_login")).ok, true);
+  assert.equal((await helpers.checkLoginAttemptAllowed(socket, "USO", "refresh_token_login")).ok, true);
+  assert.equal((await helpers.checkLoginAttemptAllowed(socket, "USO", "refresh_token_login")).ok, true);
+  assert.equal((await helpers.checkLoginAttemptAllowed(socket, "USO", "refresh_token_login")).ok, true);
+  const blockedRefresh = await helpers.checkLoginAttemptAllowed(socket, "USO", "refresh_token_login");
+  assert.equal(blockedRefresh.ok, false);
 
   helpers.recordLoginAttempt(socket, { id: "p1" }, "USO", "login", false, "password_mismatch", {
     request_id: "login-1",

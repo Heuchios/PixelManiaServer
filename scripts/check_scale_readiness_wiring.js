@@ -53,6 +53,7 @@ const files = {
   packageJson: readFirst(fromBackend("package.json")),
   deploy: require("./release_deployment_test_helpers").readDeploymentCoverage(path.resolve(__dirname, "..")),
   loadTest: readFirst(fromBackend("scripts/staged_ws_load_test.js"), false),
+  loadTestSafety: readFirst(fromBackend("scripts/check_staged_ws_load_test_safety.js"), false),
   loadTokenProvisioner: readFirst(fromBackend("scripts/provision_load_tokens.js"), false),
   multiInstanceWorldCapSmoke: readFirst(fromBackend("scripts/multi_instance_world_cap_smoke.js"), false),
   multiplayerScalingSmoke: readFirst(fromBackend("scripts/multiplayer_scaling_smoke.js"), false),
@@ -284,12 +285,20 @@ const checks = [
       && files.loadTest.includes('type === "rate_limited"')
       && files.loadTest.includes("max-rate-limited")
       && files.loadTest.includes("--urls <url-a,url-b>")
-      && files.loadTest.includes("--worlds <world-a,world-b>")
+      && files.loadTest.includes("--worlds <world-a,...>")
       && files.loadTest.includes('type === "world_route_redirect"')
       && files.loadTest.includes("getRouteSummaries()")
       && files.loadTest.includes("Multi-route load tests require distinct worlds")
       && files.loadTest.includes("worldStateBytesMax")
       && files.loadTest.includes("abnormalCloses")
+      && files.loadTest.includes("validateLiveTokenPool")
+      && files.loadTest.includes("validateWorldCapacityPlan")
+      && files.loadTest.includes("auth-spacing-ms")
+      && files.loadTest.includes("max-clients-per-world")
+      && files.loadTest.includes("waitWithHealth")
+      && files.loadTest.includes("failed before any token rotation")
+      && files.packageJson.includes('"check:load-staged-safety": "node scripts/check_staged_ws_load_test_safety.js"')
+      && files.loadTestSafety.includes("[staged-load-safety] success")
       && files.scaleReadinessDoc.includes("npm run load:staged"),
   },
   {

@@ -31,7 +31,7 @@ function resolveTrustedProxyClientAddress(request) {
     return forwardedAddress || peerAddress;
 }
 function createServerAccountSessionHelpers(deps) {
-    const { ACCOUNT_EMAIL_CHANGE_TTL_MS, ACCOUNT_PASSWORD_RESET_TTL_MS, EMAIL_VERIFICATION_TTL_MS, LOGIN_ATTEMPT_LIMIT_ACCOUNT, LOGIN_ATTEMPT_LIMIT_IP, LOGIN_ATTEMPT_WINDOW_MS, MAX_USERNAME_LENGTH, MIN_PASSWORD_LENGTH, MIN_USERNAME_LENGTH, PASSWORD_HASH_ALGORITHM, PASSWORD_SCRYPT_KEYLEN, PASSWORD_SCRYPT_N, PASSWORD_SCRYPT_P, PASSWORD_SCRYPT_R, PUBLIC_BASE_URL, SESSION_REFRESH_TOKEN_TTL_MS, SESSION_TOKEN_TTL_MS, SMTP_FROM, SMTP_HOST, SMTP_PASS, SMTP_PORT, SMTP_SECURE, SMTP_USER, accountKey, accounts, cleanAccountName, cleanEmail, getSocketAddress, getSocketDeviceInfo, getSocketUserAgent, isPostgresAuthoritativeReady, localEmailChangeRequests, localLoginAttemptBuckets, localPasswordResetRequests, logSecurityEvent, makeRequestId, postgresStore, queueAccountsSave, redisStore, sanitizeAccountState, } = deps;
+    const { ACCOUNT_EMAIL_CHANGE_TTL_MS, ACCOUNT_PASSWORD_RESET_TTL_MS, EMAIL_VERIFICATION_TTL_MS, LOGIN_ATTEMPT_LIMIT_ACCOUNT, LOGIN_ATTEMPT_LIMIT_IP, LOGIN_ATTEMPT_WINDOW_MS, TOKEN_LOGIN_ATTEMPT_LIMIT_ACCOUNT, TOKEN_LOGIN_ATTEMPT_LIMIT_IP, MAX_USERNAME_LENGTH, MIN_PASSWORD_LENGTH, MIN_USERNAME_LENGTH, PASSWORD_HASH_ALGORITHM, PASSWORD_SCRYPT_KEYLEN, PASSWORD_SCRYPT_N, PASSWORD_SCRYPT_P, PASSWORD_SCRYPT_R, PUBLIC_BASE_URL, SESSION_REFRESH_TOKEN_TTL_MS, SESSION_TOKEN_TTL_MS, SMTP_FROM, SMTP_HOST, SMTP_PASS, SMTP_PORT, SMTP_SECURE, SMTP_USER, accountKey, accounts, cleanAccountName, cleanEmail, getSocketAddress, getSocketDeviceInfo, getSocketUserAgent, isPostgresAuthoritativeReady, localEmailChangeRequests, localLoginAttemptBuckets, localPasswordResetRequests, logSecurityEvent, makeRequestId, postgresStore, queueAccountsSave, redisStore, sanitizeAccountState, } = deps;
     let mailTransporter = null;
     function validateUsername(value) {
         return AccountHelpers.validateUsername(value, MIN_USERNAME_LENGTH, MAX_USERNAME_LENGTH);
@@ -561,16 +561,20 @@ function createServerAccountSessionHelpers(deps) {
     async function checkLoginAttemptAllowed(socket, username, action = "login") {
         const subject = getLoginAttemptSubject(socket, String(username || ""));
         const checks = [];
+        const isTokenLogin = action === "refresh_token_login" || action === "token_login";
+        const scopePrefix = isTokenLogin ? "auth:token" : "auth:login";
+        const ipLimit = isTokenLogin ? TOKEN_LOGIN_ATTEMPT_LIMIT_IP : LOGIN_ATTEMPT_LIMIT_IP;
+        const accountLimit = isTokenLogin ? TOKEN_LOGIN_ATTEMPT_LIMIT_ACCOUNT : LOGIN_ATTEMPT_LIMIT_ACCOUNT;
         if (redisStore.isReady()) {
-            checks.push(await redisStore.checkRateLimit("auth:login:ip", subject.ipSubject, LOGIN_ATTEMPT_LIMIT_IP, LOGIN_ATTEMPT_WINDOW_MS));
+            checks.push(await redisStore.checkRateLimit(`${scopePrefix}:ip`, subject.ipSubject, ipLimit, LOGIN_ATTEMPT_WINDOW_MS));
             if (subject.accountSubject) {
-                checks.push(await redisStore.checkRateLimit("auth:login:account", subject.accountSubject, LOGIN_ATTEMPT_LIMIT_ACCOUNT, LOGIN_ATTEMPT_WINDOW_MS));
+                checks.push(await redisStore.checkRateLimit(`${scopePrefix}:account`, subject.accountSubject, accountLimit, LOGIN_ATTEMPT_WINDOW_MS));
             }
         }
         else {
-            checks.push(consumeLocalLoginAttempt("auth:login:ip", subject.ipSubject, LOGIN_ATTEMPT_LIMIT_IP, LOGIN_ATTEMPT_WINDOW_MS));
+            checks.push(consumeLocalLoginAttempt(`${scopePrefix}:ip`, subject.ipSubject, ipLimit, LOGIN_ATTEMPT_WINDOW_MS));
             if (subject.accountSubject) {
-                checks.push(consumeLocalLoginAttempt("auth:login:account", subject.accountSubject, LOGIN_ATTEMPT_LIMIT_ACCOUNT, LOGIN_ATTEMPT_WINDOW_MS));
+                checks.push(consumeLocalLoginAttempt(`${scopePrefix}:account`, subject.accountSubject, accountLimit, LOGIN_ATTEMPT_WINDOW_MS));
             }
         }
         const blocked = checks.find((entry) => !entry.allowed);
