@@ -177,7 +177,7 @@ $status
 }
 
 function Assert-LocalPreflightPreservedBackendCommit {
-  $trackedDiff = Get-GitText -RepoRoot $PSScriptRoot -Arguments @("diff", "--name-only", "HEAD", "--")
+  $trackedDiff = Get-GitText -RepoRoot $PSScriptRoot -Arguments @("-c", "core.safecrlf=false", "diff", "--name-only", "HEAD", "--")
   $untrackedFiles = Get-GitText -RepoRoot $PSScriptRoot -Arguments @("ls-files", "--others", "--exclude-standard")
   if ($trackedDiff -or $untrackedFiles) {
     $changes = @($trackedDiff, $untrackedFiles) | Where-Object { $_ }

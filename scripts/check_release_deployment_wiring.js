@@ -172,6 +172,10 @@ assertCheck(
     && deploy.includes("Assert-LocalPreflightPreservedBackendCommit"),
   "deploy proves a clean commit before preflight and rejects real generated drift",
 );
+assertCheck(
+  deploy.includes('@("-c", "core.safecrlf=false", "diff", "--name-only", "HEAD", "--")'),
+  "post-preflight drift detection ignores Windows line-ending diagnostics while retaining path checks",
+);
 assertCheck(deploy.includes("& npm run check:security"), "normal deploy runs the complete local security preflight");
 assertCheck(deploy.includes("Get-FileHash") && deploy.includes("sha256sum -c"), "release archives are SHA-256 verified remotely");
 assertCheck(deploy.includes('RELEASE_DIR="$BASE_DIR/releases/$RELEASE_ID"'), "deploy prepares immutable versioned release directories");
