@@ -107,11 +107,16 @@ const checks = [
       && files.server.includes("BOT_RATE_LIMIT_SECURITY_LOG_WINDOW_MS"),
   },
   {
-    name: "login attempt IP/account throttling remains wired",
+    name: "password and token login IP/account throttling remain separated",
     ok: files.server.includes("LOGIN_ATTEMPT_LIMIT_IP")
       && files.server.includes("LOGIN_ATTEMPT_LIMIT_ACCOUNT")
+      && files.server.includes("TOKEN_LOGIN_ATTEMPT_LIMIT_IP")
+      && files.server.includes("TOKEN_LOGIN_ATTEMPT_LIMIT_ACCOUNT")
       && files.server.includes("checkLoginAttemptAllowed")
-      && files.accountSessionHelpers.includes("auth:login:ip"),
+      && files.accountSessionHelpers.includes("isTokenLogin")
+      && files.accountSessionHelpers.includes("\"auth:token\" : \"auth:login\"")
+      && files.accountSessionHelpers.includes("`${scopePrefix}:ip`")
+      && files.accountSessionHelpers.includes("`${scopePrefix}:account`"),
   },
   {
     name: "env example exposes bot/rate-limit knobs",
