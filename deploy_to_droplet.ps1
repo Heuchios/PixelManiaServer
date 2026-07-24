@@ -190,7 +190,7 @@ $($changes -join "`n")
   $status = Get-GitText -RepoRoot $PSScriptRoot -Arguments @("status", "--porcelain", "--untracked-files=all")
   if ($status) {
     # Windows can mark rewritten files dirty by timestamp even when their Git blobs are unchanged.
-    Invoke-NativeProcess -FileName "git" -Arguments @("-C", $PSScriptRoot, "add", "-u", "--") -FailureMessage "Failed to refresh preflight-generated Git metadata"
+    [void](Get-GitText -RepoRoot $PSScriptRoot -Arguments @("-c", "core.safecrlf=false", "add", "-u", "--"))
   }
   Assert-CleanBackendCommit
 }
