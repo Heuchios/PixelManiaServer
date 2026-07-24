@@ -37,6 +37,11 @@ interface RedisStoreLike {
   checkRateLimit?(scope: string, subject: string, limit: number, windowMs: number): Promise<PacketRecord>;
 }
 
+interface ConsumeRateLimitOptions {
+  logSecurityEvent?: boolean;
+  store?: "distributed" | "socket";
+}
+
 interface RateLimitHelperDeps {
   accountKey(value: unknown): string;
   botRateLimitSecurityLogWindowMs: number;
@@ -194,6 +199,10 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
     return `socket:${socket?.playerId || "unknown"}`;
   }
 
+  function getSocketRateLimitSubject(socket: PacketRecord | null | undefined): string {
+    return `socket:${socket?.playerId || "unknown"}`;
+  }
+
   function getRateLimitSubjectKind(subject: unknown): "account" | "ip" | "socket" {
     const cleanSubject = String(subject || "").trim().toLowerCase();
     if (cleanSubject.startsWith("account:")) return "account";
@@ -248,7 +257,8 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
     bucketKey: unknown,
     limits: RateLimitConfig | undefined,
     result: PacketRecord = {},
-    data: unknown = null
+    data: unknown = null,
+    subjectOverride = ""
   ): void {
     const cleanScope = String(scope || "message").trim().toLowerCase() || "message";
     const cleanBucketKey = String(bucketKey || "unknown").trim().toLowerCase() || "unknown";
@@ -270,7 +280,7 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
         result,
         data,
         player,
-        getRateLimitSubject(socket, player)
+        subjectOverride || getRateLimitSubject(socket, player)
       ),
       cleanScope === "bot" ? "warning" : "info"
     );
@@ -283,16 +293,19 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
     bucketKey: unknown,
     limits: RateLimitConfig | undefined,
     data: unknown = null,
-    options: PacketRecord = {}
+    options: ConsumeRateLimitOptions = {}
   ): Promise<boolean> {
     const safeLimits = cleanRateLimitConfig(limits, defaultRateLimit);
     const cleanScope = String(scope || "message").trim().toLowerCase() || "message";
     const cleanBucketKey = String(bucketKey || "unknown").trim().toLowerCase() || "unknown";
-    const subject = getRateLimitSubject(socket, player);
+    const socketStore = options.store === "socket";
+    const subject = socketStore
+      ? getSocketRateLimitSubject(socket)
+      : getRateLimitSubject(socket, player);
     const subjectKind = getRateLimitSubjectKind(subject);
     recordRateLimitCheck(cleanScope, cleanBucketKey, subjectKind);
 
-    if (typeof deps.redisStore?.isReady === "function" && deps.redisStore.isReady() && typeof deps.redisStore.checkRateLimit === "function") {
+    if (!socketStore && typeof deps.redisStore?.isReady === "function" && deps.redisStore.isReady() && typeof deps.redisStore.checkRateLimit === "function") {
       const result = await deps.redisStore.checkRateLimit(`${cleanScope}:${cleanBucketKey}`, subject, safeLimits.limit, safeLimits.windowMs);
       if (result.allowed) {
         if (result.fallback) {
@@ -305,7 +318,7 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
       recordRateLimitRejection(cleanScope, cleanBucketKey, subjectKind);
       notifyRateLimited(socket, cleanBucketKey, data);
       if (options.logSecurityEvent) {
-        logRateLimitSecurityEvent(socket, player, cleanScope, cleanBucketKey, safeLimits, result, data);
+        logRateLimitSecurityEvent(socket, player, cleanScope, cleanBucketKey, safeLimits, result, data, subject);
       }
       return false;
     }
@@ -327,8 +340,10 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
     rateLimits.set(localBucketKey, bucket);
 
     if (bucket.count <= safeLimits.limit) {
-      deps.playerNetworkStats.rate_limit_store_fallback_allows =
-        Number(deps.playerNetworkStats.rate_limit_store_fallback_allows || 0) + 1;
+      if (!socketStore) {
+        deps.playerNetworkStats.rate_limit_store_fallback_allows =
+          Number(deps.playerNetworkStats.rate_limit_store_fallback_allows || 0) + 1;
+      }
       return true;
     }
 
@@ -337,10 +352,11 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
     if (options.logSecurityEvent) {
       logRateLimitSecurityEvent(socket, player, cleanScope, cleanBucketKey, safeLimits, {
         allowed: false,
-        fallback: true,
+        fallback: !socketStore,
+        store: socketStore ? "socket" : "local_fallback",
         count: bucket.count,
         resetInMs: Math.max(0, Number(bucket.resetAt || now) - now),
-      }, data);
+      }, data, subject);
     }
     return false;
   }
@@ -354,7 +370,15 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
 
   async function checkMessageRateLimit(socket: PacketRecord, player: PacketRecord | null | undefined, messageType: unknown, data: unknown = null): Promise<boolean> {
     const decision = deps.messageRouterHelpers.getMessageRateLimitDecision(messageType, data);
-    return consumeScopedRateLimit(socket, player, "message", decision.bucketKey, decision.limits, data);
+    return consumeScopedRateLimit(
+      socket,
+      player,
+      "message",
+      decision.bucketKey,
+      decision.limits,
+      data,
+      decision.bucketKey === "player_position" ? { store: "socket" } : {}
+    );
   }
 
   function getBotRateLimitAction(messageType: unknown, data: unknown = {}): string {

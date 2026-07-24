@@ -161,17 +161,33 @@ const helpers = BotRateLimitHelpersModule.createServerBotRateLimitHelpers(deps);
   assert.equal(deniedPayloads.at(-1).requestId, "dev-1");
   assert.equal(deniedPayloads.at(-1).extra.reason, "rate_limited");
 
+  let redisChecks = 0;
   const redisHelpers = BotRateLimitHelpersModule.createServerBotRateLimitHelpers({
     ...deps,
     redisStore: {
       isReady: () => true,
-      checkRateLimit: async () => ({ allowed: false, count: 7, resetInMs: 700 }),
+      checkRateLimit: async () => {
+        redisChecks += 1;
+        return { allowed: false, count: 7, resetInMs: 700 };
+      },
     },
   });
   assert.equal(await redisHelpers.consumeScopedRateLimit({ playerId: "p2", readyState: 1 }, { account_username: "" }, "bot", "chat_message", { limit: 1, windowMs: 1000 }, { type: "chat" }, { logSecurityEvent: true }), false);
+  assert.equal(redisChecks, 1);
   assert.equal(playerNetworkStats.bot_rate_limit_rejections, 2);
   assert.equal(playerNetworkStats.rate_limit_checks_by_subject_kind.ip, 1);
   assert.equal(playerNetworkStats.rate_limit_rejections_by_subject_kind.ip, 1);
+
+  const fallbackAllowsBeforeMovement = playerNetworkStats.rate_limit_store_fallback_allows;
+  const movementSocket = { playerId: "p3", readyState: 1 };
+  const movementPlayer = { account_username: "movement_user" };
+  assert.equal(await redisHelpers.checkMessageRateLimit(movementSocket, movementPlayer, "player_position", { type: "player_position" }), true);
+  assert.equal(await redisHelpers.checkMessageRateLimit(movementSocket, movementPlayer, "player_position", { type: "player_position" }), false);
+  assert.equal(redisChecks, 1);
+  assert.equal(playerNetworkStats.message_rate_limit_rejections, 2);
+  assert.equal(playerNetworkStats.rate_limit_checks_by_subject_kind.socket, 2);
+  assert.equal(playerNetworkStats.rate_limit_rejections_by_subject_kind.socket, 1);
+  assert.equal(playerNetworkStats.rate_limit_store_fallback_allows, fallbackAllowsBeforeMovement);
 
   assert.match(helperSource, /function createServerBotRateLimitTables/);
   assert.match(helperSource, /makeBotRateLimitConfig\("BOT_BLOCK_PLACE"/);
@@ -182,6 +198,7 @@ const helpers = BotRateLimitHelpersModule.createServerBotRateLimitHelpers(deps);
   assert.match(helperSource, /rate_limit_checks_by_subject_kind/);
   assert.match(helperSource, /messageRouterHelpers\.getMessageRateLimitDecision/);
   assert.match(helperSource, /messageRouterHelpers\.getBotRateLimitDecision/);
+  assert.match(helperSource, /decision\.bucketKey === "player_position" \? \{ store: "socket" \} : \{\}/);
   assert.match(generatedSource, /Generated from src\/server_bot_rate_limit_helpers\.ts/);
   assert.match(generatedSource, /module\.exports = /);
   assert.deepEqual(buildConfig.include, ["src/server_bot_rate_limit_helpers.ts"]);

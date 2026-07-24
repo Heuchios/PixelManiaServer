@@ -100,6 +100,12 @@ const checks = [
       && files.botRateLimitHelpers.includes("localBucketKey = `${cleanScope}:${cleanBucketKey}`"),
   },
   {
+    name: "high-frequency player movement uses an intentional per-socket bucket",
+    ok: files.botRateLimitHelpers.includes('decision.bucketKey === "player_position" ? { store: "socket" } : {}')
+      && files.botRateLimitHelpers.includes('const socketStore = options.store === "socket"')
+      && files.botRateLimitHelpers.includes("if (!socketStore && typeof deps.redisStore"),
+  },
+  {
     name: "rate-limit blocks are visible to clients and mirrored into security events",
     ok: files.messageRouter.includes("type: \"rate_limited\"")
       && files.botRateLimitHelpers.includes("logRateLimitSecurityEvent")
