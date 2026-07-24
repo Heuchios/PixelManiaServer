@@ -124,6 +124,7 @@ Useful knobs:
   --token-offset 0            Start assigning clients at this token row.
   --auth-spacing-ms 2s        Live token logins are paced below the shared 8-per-15s pre-auth limit.
   --auth-timeout-ms 20s       Abort when an opened client does not authenticate in time.
+  --handshake-timeout-ms 20s  Abort a WebSocket opening handshake that does not complete.
   --max-token-age 24h         Reject old live token pools. Provision a fresh pool for each stage.
   --allow-live-auth-burst     Explicitly bypass the live authentication pacing guard.
   --allow-unsafe-token-file   Explicitly accept stale, failed, or unverified token-pool metadata.
@@ -288,6 +289,11 @@ class LoadClient {
     this.spawnY = runner.spawnY + Math.floor(this.routeClientIndex / runner.spawnColumns) * runner.spawnSpacing;
     this.facing = 1;
     this.movementTimer = null;
+    this.positionSentCount = 0;
+    this.positionSendTimes = [];
+    this.lastPositionSentAt = 0;
+    this.minimumPositionGapMs = null;
+    this.maximumPositionSendsPerSecond = 0;
     this.openedAt = 0;
     this.authSentAt = 0;
     this.messagesReceived = 0;
@@ -339,7 +345,8 @@ class LoadClient {
       const closePhase = this.joined
         ? "joined"
         : (this.authenticated ? "authenticated" : (this.connected ? "connected" : "opening"));
-      const intentional = this.runner.shuttingDown && Number(code) === 1000;
+      const intentional = this.runner.shuttingDown;
+      const lifetimeMs = this.openedAt > 0 ? Date.now() - this.openedAt : 0;
       this.connected = false;
       this.joined = false;
       this.runner.stats.closed += 1;
@@ -348,12 +355,22 @@ class LoadClient {
       this.runner.recordClose(code, reasonText, {
         closePhase,
         intentional,
-        lifetimeMs: this.openedAt > 0 ? Date.now() - this.openedAt : 0,
+        lifetimeMs,
       });
+      if (!intentional && this.runner.verbose) {
+        console.warn(
+          `[client ${this.index} route=${this.routeIndex}] unexpected close`
+          + ` code=${Number(code) || 0}`
+          + ` reason=${reasonText || "<none>"}`
+          + ` phase=${closePhase}`
+          + ` lifetimeMs=${lifetimeMs}`,
+        );
+      }
       this.stopMovement();
     });
 
     ws.on("error", (error) => {
+      if (this.runner.shuttingDown) return;
       this.runner.stats.errors += 1;
       this.socketErrorCount += 1;
       this.runner.recordSocketError(error.message || "socket_error");
@@ -516,9 +533,24 @@ class LoadClient {
     if (type === "rate_limited") {
       this.runner.stats.rateLimited += 1;
       this.rateLimitedCount += 1;
-      this.runner.recordRateLimited(data.action || data.bucket || data.reason || "unknown");
+      const cadence = this.getPositionCadence();
+      this.runner.recordRateLimited(data.action || data.bucket || data.reason || "unknown", {
+        clientIndex: this.index,
+        routeIndex: this.routeIndex,
+        positionSent: this.positionSentCount,
+        recentPositionSends: cadence.recentPositionSends,
+        maximumPositionSendsPerSecond: this.maximumPositionSendsPerSecond,
+        minimumPositionGapMs: this.minimumPositionGapMs,
+      });
       if (this.runner.verbose) {
-        console.warn(`[client ${this.index} route=${this.routeIndex}] rate limited: bucket=${data.action || data.bucket || "unknown"}`);
+        console.warn(
+          `[client ${this.index} route=${this.routeIndex}] rate limited:`
+          + ` bucket=${data.action || data.bucket || "unknown"}`
+          + ` positionSent=${this.positionSentCount}`
+          + ` recent1s=${cadence.recentPositionSends}`
+          + ` max1s=${this.maximumPositionSendsPerSecond}`
+          + ` minGapMs=${this.minimumPositionGapMs ?? "n/a"}`,
+        );
       }
       return;
     }
@@ -534,12 +566,13 @@ class LoadClient {
 
   sendPosition() {
     if (!this.joined || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
-    const elapsed = (Date.now() - this.runner.startedAt) / 1000;
+    const sentAt = Date.now();
+    const elapsed = (sentAt - this.runner.startedAt) / 1000;
     const phase = elapsed * this.runner.angularSpeed + this.index * 0.137;
     const x = this.spawnX + Math.cos(phase) * this.runner.radius;
     const y = this.spawnY + Math.sin(phase * 0.7) * this.runner.radius * 0.25;
     this.facing = Math.sin(phase) >= 0 ? 1 : -1;
-    this.send({
+    const sent = this.send({
       type: "player_position",
       name: this.username,
       username: this.username,
@@ -566,7 +599,33 @@ class LoadClient {
       equipped_shoes_item: "",
       equipped_ride_item: "",
     });
+    if (!sent) return;
+
+    if (this.lastPositionSentAt > 0) {
+      const gapMs = Math.max(0, sentAt - this.lastPositionSentAt);
+      this.minimumPositionGapMs = this.minimumPositionGapMs === null
+        ? gapMs
+        : Math.min(this.minimumPositionGapMs, gapMs);
+    }
+    this.lastPositionSentAt = sentAt;
+    this.positionSentCount += 1;
+    this.positionSendTimes.push(sentAt);
+    const cadence = this.getPositionCadence(sentAt);
+    this.maximumPositionSendsPerSecond = Math.max(
+      this.maximumPositionSendsPerSecond,
+      cadence.recentPositionSends,
+    );
     this.runner.stats.positionSent += 1;
+  }
+
+  getPositionCadence(now = Date.now()) {
+    const cutoff = now - 1000;
+    while (this.positionSendTimes.length > 0 && this.positionSendTimes[0] < cutoff) {
+      this.positionSendTimes.shift();
+    }
+    return {
+      recentPositionSends: this.positionSendTimes.length,
+    };
   }
 
   stopMovement() {
@@ -576,7 +635,17 @@ class LoadClient {
 
   close(reason = "load_complete") {
     this.stopMovement();
-    if (this.ws && this.ws.readyState === WebSocket.OPEN) this.ws.close(1000, reason);
+    if (!this.ws) return;
+    if (this.ws.readyState === WebSocket.CONNECTING) {
+      this.ws.terminate();
+      return;
+    }
+    if (this.ws.readyState === WebSocket.OPEN) this.ws.close(1000, reason);
+  }
+
+  terminate() {
+    this.stopMovement();
+    if (this.ws && this.ws.readyState !== WebSocket.CLOSED) this.ws.terminate();
   }
 }
 
@@ -618,6 +687,7 @@ class LoadRunner {
     this.healthBaseline = null;
     this.statsTimer = null;
     this.shuttingDown = false;
+    this.shutdownPromise = null;
     this.fatalError = null;
     this.lastResult = null;
     this.tokenPoolPersisted = false;
@@ -628,6 +698,7 @@ class LoadRunner {
     this.authErrorReasons = new Map();
     this.rejectionReasons = new Map();
     this.rateLimitedBuckets = new Map();
+    this.lastRateLimitedClient = null;
     this.routeRedirectTargets = new Map();
     this.socketErrors = new Map();
     this.stats = {
@@ -679,8 +750,20 @@ class LoadRunner {
     this.incrementSummary(this.rejectionReasons, String(reason || "action_rejected").trim() || "action_rejected");
   }
 
-  recordRateLimited(bucket) {
+  recordRateLimited(bucket, details = {}) {
     this.incrementSummary(this.rateLimitedBuckets, String(bucket || "unknown").trim() || "unknown");
+    this.lastRateLimitedClient = {
+      clientIndex: Math.max(0, Math.trunc(Number(details.clientIndex) || 0)),
+      routeIndex: Math.max(0, Math.trunc(Number(details.routeIndex) || 0)),
+      positionSent: Math.max(0, Math.trunc(Number(details.positionSent) || 0)),
+      recentPositionSends: Math.max(0, Math.trunc(Number(details.recentPositionSends) || 0)),
+      maximumPositionSendsPerSecond: Math.max(0, Math.trunc(Number(details.maximumPositionSendsPerSecond) || 0)),
+      minimumPositionGapMs: details.minimumPositionGapMs !== null
+        && details.minimumPositionGapMs !== undefined
+        && Number.isFinite(Number(details.minimumPositionGapMs))
+        ? Math.max(0, Math.trunc(Number(details.minimumPositionGapMs)))
+        : null,
+    };
   }
 
   recordRouteRedirect(target) {
@@ -744,7 +827,15 @@ class LoadRunner {
       return `client protocol update required (${this.stats.updateRequired})`;
     }
     if (this.stats.rateLimited > this.maxRateLimited) {
-      return `rate-limit threshold exceeded (${this.stats.rateLimited}/${this.maxRateLimited}; buckets=${this.formatSummary(this.rateLimitedBuckets, 3) || "unknown"})`;
+      const client = this.lastRateLimitedClient;
+      const clientSummary = client
+        ? ` client=${client.clientIndex} route=${client.routeIndex}`
+          + ` recent1s=${client.recentPositionSends}`
+          + ` max1s=${client.maximumPositionSendsPerSecond}`
+          + ` minGapMs=${client.minimumPositionGapMs ?? "n/a"}`
+        : "";
+      return `rate-limit threshold exceeded (${this.stats.rateLimited}/${this.maxRateLimited};`
+        + ` buckets=${this.formatSummary(this.rateLimitedBuckets, 3) || "unknown"};${clientSummary.trim()})`;
     }
     if (this.stats.routeRedirects > 0) {
       return `unexpected route redirect (${this.stats.routeRedirects}; targets=${this.formatSummary(this.routeRedirectTargets, 3) || "unknown"})`;
@@ -753,7 +844,9 @@ class LoadRunner {
       return `WebSocket error detected (${this.stats.errors}; errors=${this.formatSummary(this.socketErrors, 2) || "unknown"})`;
     }
     if (this.stats.abnormalCloses > 0) {
-      return `unexpected WebSocket close (${this.stats.abnormalCloses}; phases=${this.formatSummary(this.closePhases, 3) || "unknown"})`;
+      return `unexpected WebSocket close (${this.stats.abnormalCloses}`
+        + `; reasons=${this.formatSummary(this.closeReasons, 3) || "unknown"}`
+        + `; phases=${this.formatSummary(this.closePhases, 3) || "unknown"})`;
     }
     if (this.stats.rejections > this.maxRejections) {
       return `action-rejection threshold exceeded (${this.stats.rejections}/${this.maxRejections}; reasons=${this.formatSummary(this.rejectionReasons, 3) || "unknown"})`;
@@ -974,8 +1067,7 @@ class LoadRunner {
       failureReason = error instanceof Error ? error.message : String(error || "load stage failed");
       throw error;
     } finally {
-      this.shutdown();
-      await wait(1000);
+      await this.shutdown();
       this.persistTokenPool(
         this.lastResult?.ok === true,
         failureReason || (this.lastResult?.ok ? "stage passed" : "final health gate failed"),
@@ -1056,11 +1148,17 @@ class LoadRunner {
   }
 
   shutdown() {
-    if (this.shuttingDown) return;
+    if (this.shutdownPromise) return this.shutdownPromise;
     this.shuttingDown = true;
     if (this.statsTimer) clearInterval(this.statsTimer);
     this.statsTimer = null;
-    for (const client of this.clients) client.close();
+    this.shutdownPromise = (async () => {
+      for (const client of this.clients) client.close();
+      await wait(500);
+      for (const client of this.clients) client.terminate();
+      await wait(50);
+    })();
+    return this.shutdownPromise;
   }
 }
 
@@ -1196,7 +1294,7 @@ async function main() {
       ? Number(args["angular-speed"] || process.env.PIXELMANIA_LOAD_ANGULAR_SPEED)
       : 0.35,
     statsMs: parseDurationMs(args["stats-ms"] || process.env.PIXELMANIA_LOAD_STATS_MS, 5_000),
-    handshakeTimeoutMs: parseDurationMs(args["handshake-timeout-ms"] || process.env.PIXELMANIA_LOAD_HANDSHAKE_TIMEOUT_MS, 10_000),
+    handshakeTimeoutMs: parseDurationMs(args["handshake-timeout-ms"] || process.env.PIXELMANIA_LOAD_HANDSHAKE_TIMEOUT_MS, 20_000),
     authSpacingMs,
     authTimeoutMs: Math.max(
       1_000,
@@ -1220,7 +1318,7 @@ async function main() {
     console.error(`[load] ${reason}; closing clients.`);
     process.exitCode = 130;
     runner.recordFatalError(new Error(reason));
-    runner.shutdown();
+    void runner.shutdown();
     runner.persistTokenPool(false, reason);
   };
   const handleSigint = () => handleSignal("SIGINT");

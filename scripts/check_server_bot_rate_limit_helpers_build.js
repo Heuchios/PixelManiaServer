@@ -194,6 +194,12 @@ const helpers = BotRateLimitHelpersModule.createServerBotRateLimitHelpers(deps);
   assert.equal(playerNetworkStats.rate_limit_last_rejection.store, "socket_token_bucket");
   assert.equal(playerNetworkStats.rate_limit_last_rejection.limit, 1);
   assert.equal(playerNetworkStats.rate_limit_last_rejection.capacity, 2);
+  assert.equal(playerNetworkStats.rate_limit_last_rejection.count, 3);
+  assert.equal(playerNetworkStats.rate_limit_last_rejection.observed_window_count, 3);
+  assert.equal(playerNetworkStats.rate_limit_last_rejection.lifetime_count, 3);
+  assert.equal(typeof playerNetworkStats.rate_limit_last_rejection.observed_window_elapsed_ms, "number");
+  assert.equal(typeof playerNetworkStats.rate_limit_last_rejection.refill_elapsed_ms, "number");
+  assert.equal(typeof playerNetworkStats.rate_limit_last_rejection.tokens_before_refill, "number");
   assert.equal(Object.hasOwn(playerNetworkStats.rate_limit_last_rejection, "subject"), false);
 
   assert.match(helperSource, /function createServerBotRateLimitTables/);

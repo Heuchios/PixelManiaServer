@@ -159,6 +159,21 @@ function createServerBotRateLimitHelpers(deps) {
             capacity: Math.max(1, Math.trunc(Number(details.capacity) || Number(details.limit) || 1)),
             available_tokens: Math.max(0, Number(Number(details.availableTokens || 0).toFixed(3))),
             reset_in_ms: Math.max(0, Math.trunc(Number(details.resetInMs) || 0)),
+            observed_window_count: Math.max(0, Math.trunc(Number(details.observedWindowCount) || 0)),
+            observed_window_elapsed_ms: Math.max(0, Math.trunc(Number(details.observedWindowElapsedMs) || 0)),
+            lifetime_count: Math.max(0, Math.trunc(Number(details.lifetimeCount) || 0)),
+            interarrival_ms: details.interarrivalMs !== null
+                && details.interarrivalMs !== undefined
+                && Number.isFinite(Number(details.interarrivalMs))
+                ? Math.max(0, Math.trunc(Number(details.interarrivalMs)))
+                : null,
+            minimum_interarrival_ms: details.minimumInterarrivalMs !== null
+                && details.minimumInterarrivalMs !== undefined
+                && Number.isFinite(Number(details.minimumInterarrivalMs))
+                ? Math.max(0, Math.trunc(Number(details.minimumInterarrivalMs)))
+                : null,
+            refill_elapsed_ms: Math.max(0, Math.trunc(Number(details.refillElapsedMs) || 0)),
+            tokens_before_refill: Math.max(0, Number(Number(details.tokensBeforeRefill || 0).toFixed(3))),
         };
     }
     function notifyRateLimited(socket, bucketKey, data = null) {
@@ -247,9 +262,33 @@ function createServerBotRateLimitHelpers(deps) {
                 ? Math.max(0, previousTokens)
                 : capacity;
             const availableTokens = Math.min(capacity, tokensBeforeRefill + elapsedMs * refillPerMs);
+            const previousObservedAt = Number(previousBucket.lastObservedAt);
+            const interarrivalMs = Number.isFinite(previousObservedAt)
+                ? Math.max(0, now - previousObservedAt)
+                : null;
+            const previousMinimumInterarrivalMs = Number(previousBucket.minimumInterarrivalMs);
+            const minimumInterarrivalMs = interarrivalMs === null
+                ? (Number.isFinite(previousMinimumInterarrivalMs) ? previousMinimumInterarrivalMs : null)
+                : (Number.isFinite(previousMinimumInterarrivalMs)
+                    ? Math.min(previousMinimumInterarrivalMs, interarrivalMs)
+                    : interarrivalMs);
+            const previousWindowStartedAt = Number(previousBucket.observedWindowStartedAt);
+            const observedWindowStartedAt = Number.isFinite(previousWindowStartedAt)
+                && now - previousWindowStartedAt < safeLimits.windowMs
+                ? previousWindowStartedAt
+                : now;
+            const observedWindowCount = observedWindowStartedAt === previousWindowStartedAt
+                ? Math.max(0, Math.trunc(Number(previousBucket.observedWindowCount) || 0)) + 1
+                : 1;
+            const lifetimeCount = Math.max(0, Math.trunc(Number(previousBucket.lifetimeCount) || 0)) + 1;
             const tokenBucket = {
                 tokens: availableTokens,
                 lastRefillAt: now,
+                lastObservedAt: now,
+                minimumInterarrivalMs,
+                observedWindowStartedAt,
+                observedWindowCount,
+                lifetimeCount,
             };
             if (availableTokens >= 1) {
                 tokenBucket.tokens = availableTokens - 1;
@@ -265,12 +304,19 @@ function createServerBotRateLimitHelpers(deps) {
                 bucket: cleanBucketKey,
                 subjectKind,
                 store: "socket_token_bucket",
-                count: capacity + 1,
+                count: observedWindowCount,
                 limit: safeLimits.limit,
                 windowMs: safeLimits.windowMs,
                 capacity,
                 availableTokens,
                 resetInMs,
+                observedWindowCount,
+                observedWindowElapsedMs: now - observedWindowStartedAt,
+                lifetimeCount,
+                interarrivalMs,
+                minimumInterarrivalMs,
+                refillElapsedMs: elapsedMs,
+                tokensBeforeRefill,
             });
             notifyRateLimited(socket, cleanBucketKey, data);
             if (options.logSecurityEvent) {
@@ -278,10 +324,17 @@ function createServerBotRateLimitHelpers(deps) {
                     allowed: false,
                     fallback: false,
                     store: "socket_token_bucket",
-                    count: capacity + 1,
+                    count: observedWindowCount,
                     capacity,
                     availableTokens,
                     resetInMs,
+                    observedWindowCount,
+                    observedWindowElapsedMs: now - observedWindowStartedAt,
+                    lifetimeCount,
+                    interarrivalMs,
+                    minimumInterarrivalMs,
+                    refillElapsedMs: elapsedMs,
+                    tokensBeforeRefill,
                 }, data, subject);
             }
             return false;
