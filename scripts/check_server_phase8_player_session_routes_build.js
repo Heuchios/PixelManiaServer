@@ -55,7 +55,6 @@ const deps = {
   buildPlayerStateForClient: (/** @type {unknown} */ state, /** @type {unknown} */ options = {}) => ({ state, options }),
   buildPublicPlayerPresencePayload: (/** @type {string} */ type, /** @type {unknown} */ _player, /** @type {unknown} */ world) => ({ type, world }),
   buildPublicPlayerProfilePayload: (/** @type {string} */ username, /** @type {string} */ requestId, /** @type {string} */ purpose) => ({ type: "player_profile", username, request_id: requestId, purpose, last_seen_at: "now", account: { username } }),
-  buildWorldStateMessage: (/** @type {unknown} */ world, /** @type {unknown} */ extra) => ({ type: "world_state", world, extra }),
   cancelActiveTradeForPlayer: (/** @type {string} */ playerId) => record(`cancel_trade:${playerId}`),
   cleanAccountName: (/** @type {unknown} */ value) => String(value || "").trim().toLowerCase(),
   cleanWorld: (/** @type {unknown} */ value) => String(value || "START").trim().toUpperCase(),
@@ -117,6 +116,7 @@ const deps = {
   sendActionRejected: (/** @type {unknown} */ _socket, /** @type {string} */ action, /** @type {string} */ message) => rejected.push({ action, message }),
   sendActiveWorldEventState: (/** @type {unknown} */ _socket, /** @type {unknown} */ world) => record(`events:${world}`),
   sendJson: (/** @type {unknown} */ _socket, /** @type {unknown} */ payload) => sent.push(payload),
+  sendWorldStateToSocket: (/** @type {unknown} */ _socket, /** @type {unknown} */ _player, /** @type {unknown} */ world, /** @type {unknown} */ extra) => sent.push({ type: "world_state", world, extra }),
   sendWorldPopulationUpdate: (/** @type {unknown} */ _socket, /** @type {unknown} */ world) => record(`send_population:${world}`),
   setPlayerState: (/** @type {string} */ username, /** @type {unknown} */ state) => savedStates.set(username, state),
   syncDropInterestForReceiver: (/** @type {unknown} */ _socket, /** @type {unknown} */ _player, /** @type {unknown} */ world) => record(`sync_drop:${world}`),
@@ -215,6 +215,7 @@ const socket = {};
   assert.match(helperSource, /function createServerPhase8PlayerSessionRoutes/);
   assert.match(helperSource, /function handlePlayerStateRequest/);
   assert.match(helperSource, /function handleJoinWorld/);
+  assert.match(helperSource, /sendWorldStateToSocket/);
   assert.match(helperSource, /flushPendingSessionPersistence/);
   assert.match(helperSource, /refreshPlayerStateFromPostgres/);
   assert.match(generatedSource, /Generated from src\/server_phase8_player_session_routes\.ts/);
@@ -224,6 +225,7 @@ const socket = {};
   assert.match(serverSource, /createServerPhase8PlayerSessionRoutes/);
   assert.match(serverSource, /handlePlayerStateRequest/);
   assert.match(serverSource, /handleJoinWorld/);
+  assert.match(serverSource, /sendWorldStateToSocket/);
   assert.match(serverSource, /socket\.inboundMessageQueue/);
   assert.match(serverSource, /function flushPendingSessionPersistence/);
   assert.match(serverSource, /function refreshPlayerStateFromPostgres/);

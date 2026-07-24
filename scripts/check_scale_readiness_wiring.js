@@ -118,6 +118,19 @@ const checks = [
       && files.worldStateSyncManager.includes("if raw_layer is Dictionary"),
   },
   {
+    name: "large late-join snapshots use bounded protocol 1.0.4 streaming",
+    ok: files.server.includes("WORLD_STATE_STREAMING_ENABLED")
+      && files.server.includes("WORLD_STATE_STREAM_MIN_CLIENT_VERSION")
+      && files.server.includes("buildWorldStateStreamPackets")
+      && serverAndSessionRouteSources.includes("sendWorldStateToSocket")
+      && files.networkManager.includes('const CLIENT_VERSION := "1.0.4"')
+      && files.networkManager.includes('"world_state_stream_begin"')
+      && files.networkManager.includes('"world_state_stream_chunk"')
+      && files.networkManager.includes('"world_state_stream_end"')
+      && files.envExample.includes("WORLD_STATE_STREAMING_ENABLED=true")
+      && files.envExample.includes("WORLD_STATE_STREAM_TARGET_PACKET_BYTES=49152"),
+  },
+  {
     name: "high-frequency pickup response uses inventory deltas instead of full player state",
     ok: (serverAndSessionRouteSources.includes("inventory_delta: pickupInventoryDelta")
       || serverAndSessionRouteSources.includes("inventory_deltas: pickupInventoryDelta"))

@@ -14,6 +14,8 @@ const {
   writeTokenAccounts,
 } = require("./staged_ws_load_test");
 
+const loadScriptSource = fs.readFileSync(path.join(__dirname, "staged_ws_load_test.js"), "utf8");
+
 assert.equal(parseDurationMs("1.5h", 0), 5_400_000);
 assert.equal(parseDurationMs("2s", 0), 2_000);
 
@@ -30,6 +32,13 @@ assert.throws(
   () => validateWorldCapacityPlan(250, routePlan.slice(0, 2), 50),
   /Impossible world-cap plan/,
 );
+assert.match(loadScriptSource, /PIXELMANIA_LOAD_CLIENT_VERSION \|\| "1\.0\.4"/);
+assert.match(loadScriptSource, /type === "world_state_stream_begin"/);
+assert.match(loadScriptSource, /type === "world_state_stream_chunk"/);
+assert.match(loadScriptSource, /type === "world_state_stream_end"/);
+assert.match(loadScriptSource, /worldStateStreamErrors === 0/);
+assert.match(loadScriptSource, /worldStatePacketBytesMax/);
+assert.match(loadScriptSource, /worldStates >= this\.clientsTarget/);
 
 const freshTimestamp = new Date().toISOString();
 const staleTimestamp = new Date(Date.now() - DEFAULT_TOKEN_POOL_MAX_AGE_MS - 60_000).toISOString();

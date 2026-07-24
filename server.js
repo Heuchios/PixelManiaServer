@@ -111,6 +111,10 @@ const BEDROCK_START_Y = Math.max(0, WORLD_HEIGHT - 4);
 const TILE_SIZE = Math.max(1, Math.trunc(Number(process.env.TILE_SIZE) || 32));
 const POSITION_MARGIN_PIXELS = TILE_SIZE * 4;
 const MAX_PACKET_BYTES = 64 * 1024;
+const WORLD_STATE_STREAMING_ENABLED = !["0", "false", "no"].includes(String(process.env.WORLD_STATE_STREAMING_ENABLED || "true").trim().toLowerCase());
+const WORLD_STATE_STREAM_MIN_CLIENT_VERSION = String(process.env.WORLD_STATE_STREAM_MIN_CLIENT_VERSION || "1.0.4").trim() || "1.0.4";
+const WORLD_STATE_STREAM_TARGET_PACKET_BYTES = Math.min(MAX_PACKET_BYTES, Math.max(4096, Math.trunc(Number(process.env.WORLD_STATE_STREAM_TARGET_PACKET_BYTES) || 48 * 1024)));
+const WORLD_STATE_STREAM_MAX_CHUNKS = Math.max(1, Math.min(4096, Math.trunc(Number(process.env.WORLD_STATE_STREAM_MAX_CHUNKS) || 256)));
 const MAX_DAMAGE_FLASH_MS = 2000;
 const PLAYER_POSITION_BROADCAST_INTERVAL_MS = Math.max(0, Math.trunc(Number(process.env.PLAYER_POSITION_BROADCAST_INTERVAL_MS) || 16));
 const PLAYER_POSITION_IDLE_HEARTBEAT_MS = Math.max(250, Math.trunc(Number(process.env.PLAYER_POSITION_IDLE_HEARTBEAT_MS) || 1000));
@@ -1095,7 +1099,6 @@ function getServerPhase8PlayerSessionRoutes() {
             buildPlayerStateForClient,
             buildPublicPlayerPresencePayload,
             buildPublicPlayerProfilePayload,
-            buildWorldStateMessage,
             cancelActiveTradeForPlayer,
             cleanAccountName,
             cleanWorld,
@@ -1146,6 +1149,7 @@ function getServerPhase8PlayerSessionRoutes() {
             sendActionRejected,
             sendActiveWorldEventState,
             sendJson,
+            sendWorldStateToSocket,
             sendWorldPopulationUpdate,
             setPlayerState,
             syncDropInterestForReceiver,
@@ -15465,7 +15469,7 @@ async function handleDoorEnterRequest(socket, player, data) {
             sendJson(socket, joinWorldPayload);
             sendWorldPopulationUpdate(socket, targetWorld);
             await refreshWorldDropsFromPostgres(targetWorld, "door_enter");
-            sendJson(socket, buildWorldStateMessage(targetWorld, {
+            sendWorldStateToSocket(socket, player, targetWorld, {
                 receiver_player: player,
                 respawn_player: true,
                 force_player_position: true,
@@ -15480,7 +15484,7 @@ async function handleDoorEnterRequest(socket, player, data) {
                 y: targetPosition.y,
                 world_state_reason: "door_enter",
                 message: `Entered ${targetWorld}.`,
-            }));
+            });
             seedDropInterestForReceiverFromWorldState(player, targetWorld);
             syncDropInterestForReceiver(socket, player, targetWorld, true);
             sendActiveWorldEventState(socket, targetWorld);
@@ -16857,10 +16861,10 @@ function incrementProducerSpeedupStat(stats, key) {
 function broadcastFreshWorldStateToCurrentPlayers(worldName, extraMessageData = {}) {
     const clean = cleanWorld(worldName || "START");
     for (const { player: receiver, socket: client } of getWorldPlayerRecords(clean, { includeSocket: true })) {
-        sendJson(client, buildWorldStateMessage(clean, {
+        sendWorldStateToSocket(client, receiver, clean, {
             ...extraMessageData,
             receiver_player: receiver,
-        }));
+        });
     }
 }
 function applyProducerSpeedupToWorld(worldName, options = {}) {
@@ -17094,7 +17098,7 @@ function replaceWorldStateAndBroadcast(worldName, state, extraMessageData = {}) 
     worldStates.set(clean, state);
     invalidateMovementCollisionCache(clean);
     saveWorldState(clean);
-    broadcastToWorld(clean, buildWorldStateMessage(clean, extraMessageData));
+    broadcastFreshWorldStateToCurrentPlayers(clean, extraMessageData);
 }
 function clearWorldByAdmin(worldName, data, socket = null, player = null) {
     const clean = cleanWorld(worldName);
@@ -19416,11 +19420,11 @@ async function handleDeveloperCommandRequestUnsafe(socket, player, data) {
         const commandWorld = getDeveloperCommandWorldName(player, data);
         worldStates.delete(commandWorld);
         ensureWorldState(commandWorld);
-        broadcastToWorld(commandWorld, buildWorldStateMessage(commandWorld, {
+        broadcastFreshWorldStateToCurrentPlayers(commandWorld, {
             respawn_player: true,
             force_respawn: true,
             world_state_reason: "admin_reload",
-        }));
+        });
         approve(`Reloaded ${commandWorld} from server storage.`, { target_world: commandWorld }, { command_type: "reload_world", target_world: commandWorld });
         return;
     }
@@ -25403,6 +25407,43 @@ function buildWorldStateMessage(worldName, extraMessageData = {}) {
         active_event: buildActiveWorldEventSnapshot(state),
         ...extras,
     };
+}
+function supportsWorldStateStreaming(player) {
+    if (!WORLD_STATE_STREAMING_ENABLED)
+        return false;
+    const playerRecord = player && typeof player === "object" && !Array.isArray(player)
+        ? player
+        : {};
+    const comparison = compareVersions(playerRecord.client_version || "", WORLD_STATE_STREAM_MIN_CLIENT_VERSION);
+    return comparison !== null && comparison >= 0;
+}
+function sendWorldStateToSocket(socket, player, worldName, extraMessageData = {}) {
+    const payload = buildWorldStateMessage(worldName, extraMessageData);
+    if (!supportsWorldStateStreaming(player)) {
+        sendJson(socket, payload);
+        return;
+    }
+    try {
+        const stream = WorldStateHelpersModule.buildWorldStateStreamPackets(payload, {
+            snapshotId: crypto.randomUUID(),
+            targetPacketBytes: WORLD_STATE_STREAM_TARGET_PACKET_BYTES,
+            maxPacketBytes: MAX_PACKET_BYTES,
+            maxChunks: WORLD_STATE_STREAM_MAX_CHUNKS,
+        });
+        for (const packet of stream.packets) {
+            sendJson(socket, packet);
+        }
+    }
+    catch (error) {
+        console.warn("[world_state_stream] falling back to legacy snapshot:", {
+            world: cleanWorld(worldName),
+            player: String(player && typeof player === "object" && !Array.isArray(player)
+                ? player.account_username || player.name || ""
+                : ""),
+            error: error instanceof Error ? error.message : String(error || "unknown error"),
+        });
+        sendJson(socket, payload);
+    }
 }
 function getActiveWorldEventRemainingMs(state) {
     if (!state || state.active_event_type !== SNOW_STORM_EVENT_TYPE)

@@ -128,7 +128,7 @@ Useful knobs:
   --max-token-age 24h         Reject old live token pools. Provision a fresh pool for each stage.
   --allow-live-auth-burst     Explicitly bypass the live authentication pacing guard.
   --allow-unsafe-token-file   Explicitly accept stale, failed, or unverified token-pool metadata.
-  --client-version 1.0.3
+  --client-version 1.0.4
   --rate 10                   Position messages per joined client per second.
   --radius 3                  Movement radius in pixels. Keeps the first update inside the 4px world-entry guard.
   --max-rejections 0          Maximum accepted action rejections before the stage fails.
@@ -306,6 +306,7 @@ class LoadClient {
     this.routeRedirectCount = 0;
     this.abnormalCloseCount = 0;
     this.socketErrorCount = 0;
+    this.worldStateStream = null;
   }
 
   connect() {
@@ -367,6 +368,7 @@ class LoadClient {
         );
       }
       this.stopMovement();
+      this.worldStateStream = null;
     });
 
     ws.on("error", (error) => {
@@ -477,11 +479,108 @@ class LoadClient {
       return;
     }
 
+    if (type === "world_state_stream_begin") {
+      const snapshotId = String(data.snapshot_id || "").trim();
+      const chunkCount = Math.trunc(Number(data.chunk_count));
+      const metadata = data.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+        ? data.metadata
+        : null;
+      const snapshotBytes = Math.max(0, Math.trunc(Number(data.snapshot_bytes) || 0));
+      if (
+        this.worldStateStream
+        || !snapshotId
+        || !Number.isFinite(chunkCount)
+        || chunkCount < 0
+        || chunkCount > 256
+        || !metadata
+        || snapshotBytes <= 0
+      ) {
+        this.recordWorldStateStreamError("invalid_begin");
+        return;
+      }
+      this.worldStateStream = {
+        snapshotId,
+        chunkCount,
+        snapshotBytes,
+        encoding: String(metadata.world_state_encoding || ""),
+        received: new Set(),
+        wireBytes: Math.max(0, Math.trunc(Number(messageBytes) || 0)),
+        packetBytesMax: Math.max(0, Math.trunc(Number(messageBytes) || 0)),
+      };
+      this.runner.stats.worldStatePacketBytesMax = Math.max(
+        this.runner.stats.worldStatePacketBytesMax,
+        Math.max(0, Math.trunc(Number(messageBytes) || 0)),
+      );
+      return;
+    }
+
+    if (type === "world_state_stream_chunk") {
+      const stream = this.worldStateStream;
+      const snapshotId = String(data.snapshot_id || "").trim();
+      const chunkIndex = Math.trunc(Number(data.chunk_index));
+      const chunkCount = Math.trunc(Number(data.chunk_count));
+      if (
+        !stream
+        || snapshotId !== stream.snapshotId
+        || !Number.isFinite(chunkIndex)
+        || chunkIndex < 0
+        || chunkIndex >= stream.chunkCount
+        || chunkCount !== stream.chunkCount
+      ) {
+        this.recordWorldStateStreamError("invalid_chunk");
+        return;
+      }
+      if (stream.received.has(chunkIndex)) return;
+      stream.received.add(chunkIndex);
+      const packetBytes = Math.max(0, Math.trunc(Number(messageBytes) || 0));
+      stream.wireBytes += packetBytes;
+      stream.packetBytesMax = Math.max(stream.packetBytesMax, packetBytes);
+      this.runner.stats.worldStatePacketBytesMax = Math.max(
+        this.runner.stats.worldStatePacketBytesMax,
+        packetBytes,
+      );
+      return;
+    }
+
+    if (type === "world_state_stream_end") {
+      const stream = this.worldStateStream;
+      const snapshotId = String(data.snapshot_id || "").trim();
+      const chunkCount = Math.trunc(Number(data.chunk_count));
+      if (
+        !stream
+        || snapshotId !== stream.snapshotId
+        || chunkCount !== stream.chunkCount
+        || stream.received.size !== stream.chunkCount
+      ) {
+        this.recordWorldStateStreamError("incomplete_end");
+        return;
+      }
+      const packetBytes = Math.max(0, Math.trunc(Number(messageBytes) || 0));
+      stream.wireBytes += packetBytes;
+      stream.packetBytesMax = Math.max(stream.packetBytesMax, packetBytes);
+      this.runner.stats.worldStates += 1;
+      this.runner.stats.worldStateStreams += 1;
+      this.runner.stats.worldStateStreamChunks += stream.chunkCount;
+      this.runner.stats.worldStateStreamWireBytesTotal += stream.wireBytes;
+      this.runner.stats.worldStateBytesTotal += stream.snapshotBytes;
+      this.runner.stats.worldStateBytesMax = Math.max(this.runner.stats.worldStateBytesMax, stream.snapshotBytes);
+      this.runner.stats.worldStatePacketBytesMax = Math.max(this.runner.stats.worldStatePacketBytesMax, stream.packetBytesMax);
+      if (stream.encoding === "grid_dictionary_v1") {
+        this.runner.stats.worldStateCompact += 1;
+      }
+      this.worldStateStream = null;
+      return;
+    }
+
     if (type === "world_state") {
       this.runner.stats.worldStates += 1;
       this.runner.stats.worldStateBytesTotal += Math.max(0, Math.trunc(Number(messageBytes) || 0));
       this.runner.stats.worldStateBytesMax = Math.max(
         this.runner.stats.worldStateBytesMax,
+        Math.max(0, Math.trunc(Number(messageBytes) || 0)),
+      );
+      this.runner.stats.worldStatePacketBytesMax = Math.max(
+        this.runner.stats.worldStatePacketBytesMax,
         Math.max(0, Math.trunc(Number(messageBytes) || 0)),
       );
       if (String(data.world_state_encoding || "") === "grid_dictionary_v1") {
@@ -554,6 +653,18 @@ class LoadClient {
       }
       return;
     }
+  }
+
+  recordWorldStateStreamError(reason) {
+    this.runner.stats.worldStateStreamErrors += 1;
+    this.runner.stats.errors += 1;
+    this.socketErrorCount += 1;
+    this.worldStateStream = null;
+    this.runner.recordSocketError(`world_state_stream:${reason}`);
+    if (this.runner.verbose) {
+      console.warn(`[client ${this.index} route=${this.routeIndex}] invalid world state stream: ${reason}`);
+    }
+    this.close("world_state_stream_error");
   }
 
   startMovement() {
@@ -726,6 +837,11 @@ class LoadRunner {
       worldStateCompact: 0,
       worldStateBytesTotal: 0,
       worldStateBytesMax: 0,
+      worldStateStreams: 0,
+      worldStateStreamChunks: 0,
+      worldStateStreamErrors: 0,
+      worldStateStreamWireBytesTotal: 0,
+      worldStatePacketBytesMax: 0,
     };
   }
 
@@ -1043,7 +1159,9 @@ class LoadRunner {
           && this.stats.rejections <= this.maxRejections
           && this.stats.rateLimited <= this.maxRateLimited
           && this.stats.routeRedirects === 0
-          && this.stats.abnormalCloses === 0,
+          && this.stats.abnormalCloses === 0
+          && this.stats.worldStateStreamErrors === 0
+          && this.stats.worldStates >= this.clientsTarget,
         activeAtEnd,
         joinedAtEnd,
         routeSummaries,
@@ -1129,8 +1247,10 @@ class LoadRunner {
       ` posOut=${this.stats.positionSent} posRate=${sentRate.toFixed(1)}/s rxRate=${rxRate.toFixed(1)}/s` +
       ` batches=${this.stats.positionBatches} rejections=${this.stats.rejections} rateLimited=${this.stats.rateLimited}` +
       ` redirects=${this.stats.routeRedirects} corrections=${this.stats.positionCorrections}` +
-      ` worldStates=${this.stats.worldStates} compact=${this.stats.worldStateCompact}` +
+      ` worldStates=${this.stats.worldStates} compact=${this.stats.worldStateCompact} streamed=${this.stats.worldStateStreams}` +
+      ` streamChunks=${this.stats.worldStateStreamChunks} streamErrors=${this.stats.worldStateStreamErrors}` +
       ` worldStateAvg=${worldStateAverageBytes}B worldStateMax=${this.stats.worldStateBytesMax}B` +
+      ` worldStatePacketMax=${this.stats.worldStatePacketBytesMax}B` +
       ` errors=${this.stats.errors} authErrors=${this.stats.authErrors}` +
       `${closeSummary ? ` close=${closeSummary}` : ""}` +
       `${closePhaseSummary ? ` unexpectedClose=${closePhaseSummary}` : ""}` +
@@ -1281,7 +1401,7 @@ async function main() {
   const runner = new LoadRunner({
     routes,
     healthUrl,
-    clientVersion: String(args["client-version"] || process.env.PIXELMANIA_LOAD_CLIENT_VERSION || "1.0.3"),
+    clientVersion: String(args["client-version"] || process.env.PIXELMANIA_LOAD_CLIENT_VERSION || "1.0.4"),
     clientsTarget: clients,
     step: parseInteger(args.step || process.env.PIXELMANIA_LOAD_STEP, 25, 1, clients),
     stepMs: parseDurationMs(args["step-ms"] || process.env.PIXELMANIA_LOAD_STEP_MS, 30_000),

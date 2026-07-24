@@ -257,7 +257,7 @@ function createServerPhase8PlayerSessionRoutes(deps) {
             }
             deps.sendJson(socket, joinWorldPayload);
             deps.sendWorldPopulationUpdate(socket, player.world);
-            deps.sendJson(socket, deps.buildWorldStateMessage(player.world, {
+            deps.sendWorldStateToSocket(socket, player, player.world, {
                 receiver_player: player,
                 respawn_player: true,
                 force_player_position: true,
@@ -272,7 +272,7 @@ function createServerPhase8PlayerSessionRoutes(deps) {
                 x: joinSpawn.x,
                 y: joinSpawn.y,
                 join_request_id: joinRequestId,
-            }));
+            });
             refreshJoinWorldDropsAfterState(socket, player, player.world);
             deps.sendActiveWorldEventState(socket, player.world);
             deps.publishPlayerPresenceUpdate(socket, player, player.world, "player_joined", context.playerId);

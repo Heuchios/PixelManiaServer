@@ -55,7 +55,6 @@ interface Phase8PlayerSessionDeps {
   buildPlayerStateForClient(state: unknown, options?: PacketRecord): unknown;
   buildPublicPlayerPresencePayload(type: string, player: PlayerRecord, worldName: unknown): unknown;
   buildPublicPlayerProfilePayload(username: string, requestId: string, purpose: string): unknown;
-  buildWorldStateMessage(worldName: unknown, extraMessageData?: PacketRecord): unknown;
   cancelActiveTradeForPlayer(playerId: string, reason: string): unknown;
   cleanAccountName(value: unknown): string;
   cleanWorld(value: unknown): string;
@@ -106,6 +105,7 @@ interface Phase8PlayerSessionDeps {
   sendActionRejected(socket: unknown, action: string, message: string, extra?: PacketRecord): unknown;
   sendActiveWorldEventState(socket: unknown, worldName: unknown): unknown;
   sendJson(socket: unknown, payload: unknown): unknown;
+  sendWorldStateToSocket(socket: unknown, player: PlayerRecord, worldName: unknown, extraMessageData?: PacketRecord): unknown;
   sendWorldPopulationUpdate(socket: unknown, worldName: unknown): unknown;
   setPlayerState(username: string, state: unknown): unknown;
   syncDropInterestForReceiver(socket: unknown, player: PlayerRecord, worldName: unknown, force?: boolean): unknown;
@@ -388,7 +388,7 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       deps.sendJson(socket, joinWorldPayload);
       deps.sendWorldPopulationUpdate(socket, player.world);
 
-      deps.sendJson(socket, deps.buildWorldStateMessage(player.world, {
+      deps.sendWorldStateToSocket(socket, player, player.world, {
         receiver_player: player,
         respawn_player: true,
         force_player_position: true,
@@ -403,7 +403,7 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
         x: joinSpawn.x,
         y: joinSpawn.y,
         join_request_id: joinRequestId,
-      }));
+      });
       refreshJoinWorldDropsAfterState(socket, player, player.world);
       deps.sendActiveWorldEventState(socket, player.world);
 
