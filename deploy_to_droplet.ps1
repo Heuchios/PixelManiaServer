@@ -176,6 +176,25 @@ $status
   }
 }
 
+function Assert-LocalPreflightPreservedBackendCommit {
+  $trackedDiff = Get-GitText -RepoRoot $PSScriptRoot -Arguments @("diff", "--name-only", "HEAD", "--")
+  $untrackedFiles = Get-GitText -RepoRoot $PSScriptRoot -Arguments @("ls-files", "--others", "--exclude-standard")
+  if ($trackedDiff -or $untrackedFiles) {
+    $changes = @($trackedDiff, $untrackedFiles) | Where-Object { $_ }
+    throw @"
+Local preflight changed backend release content. Commit the generated output or fix the build before deploying:
+$($changes -join "`n")
+"@
+  }
+
+  $status = Get-GitText -RepoRoot $PSScriptRoot -Arguments @("status", "--porcelain", "--untracked-files=all")
+  if ($status) {
+    # Windows can mark rewritten files dirty by timestamp even when their Git blobs are unchanged.
+    Invoke-NativeProcess -FileName "git" -Arguments @("-C", $PSScriptRoot, "add", "-u", "--") -FailureMessage "Failed to refresh preflight-generated Git metadata"
+  }
+  Assert-CleanBackendCommit
+}
+
 function Invoke-LocalDeployPreflight {
   Push-Location $PSScriptRoot
   try {
@@ -312,8 +331,9 @@ function Send-ReleaseArtifact {
   Invoke-NativeProcess -FileName "scp" -Arguments ($sshBaseArgs + @($LocalPath, "${sshTarget}:$RemotePath")) -FailureMessage "Artifact upload failed"
 }
 
-Invoke-LocalDeployPreflight
 Assert-CleanBackendCommit
+Invoke-LocalDeployPreflight
+Assert-LocalPreflightPreservedBackendCommit
 
 $commit = Get-GitText -RepoRoot $PSScriptRoot -Arguments @("rev-parse", "HEAD")
 $shortCommit = Get-GitText -RepoRoot $PSScriptRoot -Arguments @("rev-parse", "--short=12", "HEAD")

@@ -167,6 +167,11 @@ assertCheck(/^\*\.ps1\s+text\s+eol=lf\s*$/mu.test(gitAttributes), "Git exports P
 assertCheck(deploy.includes("Assert-ArchiveScriptsUseLf") && deploy.includes("Backend archive contains CRLF scripts"), "deploy rejects CRLF scripts in the packaged archive");
 assertCheck(deploymentTestHelpers.includes("readDeploymentCoverage") && deploy.includes("--worktree-attributes"), "release checks use the same attributed archive model as deployment");
 assertCheck(deploy.includes("Assert-CleanBackendCommit"), "deploy refuses a dirty backend worktree");
+assertCheck(
+  deploy.indexOf("Assert-CleanBackendCommit\nInvoke-LocalDeployPreflight") >= 0
+    && deploy.includes("Assert-LocalPreflightPreservedBackendCommit"),
+  "deploy proves a clean commit before preflight and rejects real generated drift",
+);
 assertCheck(deploy.includes("& npm run check:security"), "normal deploy runs the complete local security preflight");
 assertCheck(deploy.includes("Get-FileHash") && deploy.includes("sha256sum -c"), "release archives are SHA-256 verified remotely");
 assertCheck(deploy.includes('RELEASE_DIR="$BASE_DIR/releases/$RELEASE_ID"'), "deploy prepares immutable versioned release directories");
