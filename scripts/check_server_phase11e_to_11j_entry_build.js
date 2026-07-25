@@ -43,6 +43,8 @@ const phaseOwnership = {
     "reserveWorldAdmission",
     "commitWorldAdmissionReservation",
     "broadcastWorldPopulationUpdate",
+    "beginWorldHonorVisit",
+    "endWorldHonorVisit",
   ],
   "11G world simulation and persistence": [
     "ensureWorldState",
@@ -50,6 +52,7 @@ const phaseOwnership = {
     "createWorldSnapshot",
     "startWorldEventRandomScheduler",
     "buildWorldStateMessage",
+    "handleWorldHonorTopCommand",
   ],
   "11H gameplay transactions and interactions": [
     "handleInventoryTransactionRequest",

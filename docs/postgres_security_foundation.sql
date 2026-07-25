@@ -260,6 +260,29 @@ CREATE TABLE IF NOT EXISTS world_locks (
 	updated_at timestamptz NOT NULL DEFAULT now()
 );
 
+CREATE TABLE IF NOT EXISTS world_honor_visits (
+	world_id uuid NOT NULL REFERENCES worlds(world_id) ON DELETE CASCADE,
+	visitor_player_id uuid NOT NULL REFERENCES players(player_id) ON DELETE CASCADE,
+	honor_date date NOT NULL,
+	network_hash text NOT NULL DEFAULT '',
+	dwell_ms bigint NOT NULL DEFAULT 0 CHECK (dwell_ms >= 0),
+	visit_started_at timestamptz NOT NULL,
+	visit_ended_at timestamptz NOT NULL,
+	qualified_at timestamptz NOT NULL DEFAULT now(),
+	source_instance text NOT NULL DEFAULT '',
+	PRIMARY KEY (world_id, visitor_player_id, honor_date)
+);
+
+CREATE INDEX IF NOT EXISTS idx_world_honor_visits_date_world
+ON world_honor_visits(honor_date DESC, world_id);
+
+CREATE INDEX IF NOT EXISTS idx_world_honor_visits_world_date
+ON world_honor_visits(world_id, honor_date DESC);
+
+CREATE INDEX IF NOT EXISTS idx_world_honor_visits_network_date
+ON world_honor_visits(world_id, honor_date, network_hash)
+WHERE network_hash <> '';
+
 CREATE TABLE IF NOT EXISTS world_drops (
 	world_drop_id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
 	world_id uuid NOT NULL REFERENCES worlds(world_id) ON DELETE CASCADE,

@@ -78,6 +78,7 @@ const deps = {
   handleTradeOfferUpdate: () => record("trade_offer_update"),
   handleTradeRequest: () => record("trade_request"),
   handleTradeResponse: () => record("trade_response"),
+  handleWorldHonorTopCommand: () => record("world_honor_top"),
   rejectIfMuted: async () => false,
   rejectIfTradeBanned: async (/** @type {unknown} */ _socket, /** @type {unknown} */ _player, /** @type {Record<string, unknown>} */ data) => data.trade_banned === true,
   requireAuthenticated: () => true,
@@ -129,6 +130,11 @@ const player = {
     current_world: "START",
   });
 
+  const worldBroadcastCountBeforeTop = worldBroadcasts.length;
+  await routes.handleChat(socket, { ...player, world: "locked" }, { message: "/top overall" }, { playerId: "p1" });
+  assert.ok(calls.includes("world_honor_top"));
+  assert.equal(worldBroadcasts.length, worldBroadcastCountBeforeTop);
+
   await routes.handleChat(socket, { ...player, world: "locked" }, { message: "blocked" }, { playerId: "p1" });
   assert.deepEqual(rejected.pop(), {
     action: "chat",
@@ -155,6 +161,7 @@ const player = {
   assert.match(helperSource, /function handleLogin/);
   assert.match(helperSource, /function handleTradeFinalConfirmRoute/);
   assert.match(helperSource, /function handleChat/);
+  assert.match(helperSource, /handleWorldHonorTopCommandImpl/);
   assert.match(helperSource, /function handlePlayerPunchRoute/);
   assert.match(generatedSource, /Generated from src\/server_phase9_remaining_routes\.ts/);
   assert.match(generatedSource, /module\.exports = \{/);

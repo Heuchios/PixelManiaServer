@@ -2,7 +2,7 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 function createServerPhase9RemainingRoutes(deps) {
-    const { MAX_CHAT_LENGTH, accountKey, broadcastToAuthenticatedPlayers, broadcastToWorld, cleanName, cleanWorld, getPlayerCurrentWorldName, getServerPhase8PlayerSessionRoutes, handleAccountEmailChangeRequest: handleAccountEmailChangeRequestImpl, handleAccountLogin: handleAccountLoginImpl, handleAccountPasswordResetRequest: handleAccountPasswordResetRequestImpl, handleAccountRegister: handleAccountRegisterImpl, handleAccountTokenLogin: handleAccountTokenLoginImpl, handleBatteryChargerRequest: handleBatteryChargerRequestImpl, handleCustomTrustedPlayerState: handleCustomTrustedPlayerStateImpl, handleCustomTrustedPlayerStateClear: handleCustomTrustedPlayerStateClearImpl, handleDevBackendLogin: handleDevBackendLoginImpl, handleDeveloperCommandRequest: handleDeveloperCommandRequestImpl, handleDeveloperPinUnlock: handleDeveloperPinUnlockImpl, handleDoorEnterRequest: handleDoorEnterRequestImpl, handleFriendListRequest: handleFriendListRequestImpl, handleFriendRequest: handleFriendRequestImpl, handleFriendResponse: handleFriendResponseImpl, handleInventoryTransactionRequest: handleInventoryTransactionRequestImpl, handleInventoryUpgradePurchase: handleInventoryUpgradePurchaseImpl, handleNetfoxSpawnTicketRequest: handleNetfoxSpawnTicketRequestImpl, handleNetfoxTrustedPlayerState: handleNetfoxTrustedPlayerStateImpl, handleOilRefineryRequest: handleOilRefineryRequestImpl, handleOwnedLockedWorldsRequest: handleOwnedLockedWorldsRequestImpl, handlePlayerPunch: handlePlayerPunchImpl, handlePullPlayerRequest: handlePullPlayerRequestImpl, handleTradeCancel: handleTradeCancelImpl, handleTradeConfirm: handleTradeConfirmImpl, handleTradeFinalConfirm: handleTradeFinalConfirmImpl, handleTradeOfferUpdate: handleTradeOfferUpdateImpl, handleTradeRequest: handleTradeRequestImpl, handleTradeResponse: handleTradeResponseImpl, rejectIfMuted, rejectIfTradeBanned, requireAuthenticated, sanitizeAccountState, sendActionRejected, sendJson, shouldBlockPlayerChatByAntiTalk, upsertAccount, } = deps;
+    const { MAX_CHAT_LENGTH, accountKey, broadcastToAuthenticatedPlayers, broadcastToWorld, cleanName, cleanWorld, getPlayerCurrentWorldName, getServerPhase8PlayerSessionRoutes, handleAccountEmailChangeRequest: handleAccountEmailChangeRequestImpl, handleAccountLogin: handleAccountLoginImpl, handleAccountPasswordResetRequest: handleAccountPasswordResetRequestImpl, handleAccountRegister: handleAccountRegisterImpl, handleAccountTokenLogin: handleAccountTokenLoginImpl, handleBatteryChargerRequest: handleBatteryChargerRequestImpl, handleCustomTrustedPlayerState: handleCustomTrustedPlayerStateImpl, handleCustomTrustedPlayerStateClear: handleCustomTrustedPlayerStateClearImpl, handleDevBackendLogin: handleDevBackendLoginImpl, handleDeveloperCommandRequest: handleDeveloperCommandRequestImpl, handleDeveloperPinUnlock: handleDeveloperPinUnlockImpl, handleDoorEnterRequest: handleDoorEnterRequestImpl, handleFriendListRequest: handleFriendListRequestImpl, handleFriendRequest: handleFriendRequestImpl, handleFriendResponse: handleFriendResponseImpl, handleInventoryTransactionRequest: handleInventoryTransactionRequestImpl, handleInventoryUpgradePurchase: handleInventoryUpgradePurchaseImpl, handleNetfoxSpawnTicketRequest: handleNetfoxSpawnTicketRequestImpl, handleNetfoxTrustedPlayerState: handleNetfoxTrustedPlayerStateImpl, handleOilRefineryRequest: handleOilRefineryRequestImpl, handleOwnedLockedWorldsRequest: handleOwnedLockedWorldsRequestImpl, handlePlayerPunch: handlePlayerPunchImpl, handlePullPlayerRequest: handlePullPlayerRequestImpl, handleTradeCancel: handleTradeCancelImpl, handleTradeConfirm: handleTradeConfirmImpl, handleTradeFinalConfirm: handleTradeFinalConfirmImpl, handleTradeOfferUpdate: handleTradeOfferUpdateImpl, handleTradeRequest: handleTradeRequestImpl, handleTradeResponse: handleTradeResponseImpl, handleWorldHonorTopCommand: handleWorldHonorTopCommandImpl, rejectIfMuted, rejectIfTradeBanned, requireAuthenticated, sanitizeAccountState, sendActionRejected, sendJson, shouldBlockPlayerChatByAntiTalk, upsertAccount, } = deps;
     function getContextPlayerId(player, context) {
         return String(context.playerId || player.id || "");
     }
@@ -132,9 +132,17 @@ function createServerPhase9RemainingRoutes(deps) {
         const message = String(data.message || "").trim().slice(0, MAX_CHAT_LENGTH);
         if (message.length === 0)
             return;
+        const lowerMessage = message.toLowerCase();
+        if (lowerMessage === "/top" ||
+            lowerMessage.startsWith("/top ") ||
+            lowerMessage === "/honors" ||
+            lowerMessage.startsWith("/honors ")) {
+            await handleWorldHonorTopCommandImpl(socket, player, message);
+            return;
+        }
         if (await rejectIfMuted(socket, player, "chat"))
             return;
-        if (message.toLowerCase().startsWith("/bc ")) {
+        if (lowerMessage.startsWith("/bc ")) {
             const broadcastMessage = message.slice(4).trim().slice(0, MAX_CHAT_LENGTH);
             if (broadcastMessage.length > 0) {
                 const broadcastWorld = getPlayerCurrentWorldName(player);

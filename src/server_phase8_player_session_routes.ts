@@ -47,6 +47,7 @@ interface Phase8PlayerSessionDeps {
   tradeByPlayerId: MapLike;
 
   appendCctvWorldEvent(worldName: unknown, player: PlayerRecord, action: string, details?: PacketRecord): Promise<unknown>;
+  beginWorldHonorVisit(socket: unknown, player: PlayerRecord, worldName: unknown): Promise<unknown>;
   broadcastSystemToWorld(worldName: unknown, message: string, excludePlayerId?: unknown): unknown;
   broadcastToWorld(worldName: unknown, payload: unknown, excludePlayerId?: unknown): unknown;
   broadcastWorldPopulationUpdate(worldName: unknown): unknown;
@@ -55,7 +56,6 @@ interface Phase8PlayerSessionDeps {
   buildPlayerStateForClient(state: unknown, options?: PacketRecord): unknown;
   buildPublicPlayerPresencePayload(type: string, player: PlayerRecord, worldName: unknown): unknown;
   buildPublicPlayerProfilePayload(username: string, requestId: string, purpose: string): unknown;
-  buildWorldStateMessage(worldName: unknown, extraMessageData?: PacketRecord): unknown;
   cancelActiveTradeForPlayer(playerId: string, reason: string): unknown;
   cleanAccountName(value: unknown): string;
   cleanWorld(value: unknown): string;
@@ -68,6 +68,7 @@ interface Phase8PlayerSessionDeps {
   clearTrustedMovementBaseline(player: PlayerRecord): unknown;
   commitWorldAdmissionReservation(admission: unknown, player: PlayerRecord, oldWorld: unknown): Promise<unknown>;
   ensurePlayerState(username: string): unknown;
+  endWorldHonorVisit(player: PlayerRecord, worldName: unknown, reason: string): Promise<unknown>;
   ensureWorldRouteForAction(socket: unknown, player: PlayerRecord, worldName: string, action: string): Promise<unknown>;
   getEquipmentSlotsFromPlayerState(state: unknown): unknown;
   getFriendStatus(username: unknown, friendUsername: string): unknown;
@@ -106,6 +107,7 @@ interface Phase8PlayerSessionDeps {
   sendActionRejected(socket: unknown, action: string, message: string, extra?: PacketRecord): unknown;
   sendActiveWorldEventState(socket: unknown, worldName: unknown): unknown;
   sendJson(socket: unknown, payload: unknown): unknown;
+  sendWorldStateToSocket(socket: unknown, player: PlayerRecord, worldName: unknown, extraMessageData?: PacketRecord): unknown;
   sendWorldPopulationUpdate(socket: unknown, worldName: unknown): unknown;
   setPlayerState(username: string, state: unknown): unknown;
   syncDropInterestForReceiver(socket: unknown, player: PlayerRecord, worldName: unknown, force?: boolean): unknown;
@@ -331,6 +333,7 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       }
 
       if (player.joined_world && oldWorld && oldWorld !== newWorld) {
+        await deps.endWorldHonorVisit(player, oldWorld, "world_change");
         await deps.appendCctvWorldEvent(oldWorld, player, "leave", { reason: "world_change" });
         deps.broadcastSystemToWorld(oldWorld, `${player.name} left ${oldWorld}`, context.playerId);
         deps.broadcastToWorld(oldWorld, deps.buildPublicPlayerPresencePayload("player_left", player, oldWorld), context.playerId);
@@ -388,7 +391,7 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       deps.sendJson(socket, joinWorldPayload);
       deps.sendWorldPopulationUpdate(socket, player.world);
 
-      deps.sendJson(socket, deps.buildWorldStateMessage(player.world, {
+      deps.sendWorldStateToSocket(socket, player, player.world, {
         receiver_player: player,
         respawn_player: true,
         force_player_position: true,
@@ -403,9 +406,10 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
         x: joinSpawn.x,
         y: joinSpawn.y,
         join_request_id: joinRequestId,
-      }));
+      });
       refreshJoinWorldDropsAfterState(socket, player, player.world);
       deps.sendActiveWorldEventState(socket, player.world);
+      await deps.beginWorldHonorVisit(socket, player, player.world);
 
       deps.publishPlayerPresenceUpdate(socket, player, player.world, "player_joined", context.playerId);
 
@@ -432,6 +436,9 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
     const requestedWorld = deps.cleanWorld(data.world || player.world || "");
     const currentWorld = deps.cleanWorld(player.world || "");
     if (!player.joined_world || !currentWorld || (requestedWorld && requestedWorld !== currentWorld)) {
+      if (player.joined_world && player.world) {
+        await deps.endWorldHonorVisit(player, player.world, "leave_world_state_mismatch");
+      }
       player.joined_world = false;
       deps.clearPlayerWorldEntrySpawnGuard(player);
       deps.updatePlayerWorldIndex(player);
@@ -461,6 +468,7 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       });
       return;
     }
+    await deps.endWorldHonorVisit(player, currentWorld, "leave_world");
     await deps.appendCctvWorldEvent(currentWorld, player, "leave", { reason: "leave_world" });
     deps.broadcastToWorld(currentWorld, deps.buildPublicPlayerPresencePayload("player_left", player, currentWorld), context.playerId);
     deps.broadcastSystemToWorld(currentWorld, `${player.name} left ${currentWorld}`, context.playerId);

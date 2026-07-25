@@ -12,6 +12,9 @@ const clientRoot = process.env.PIXELMANIA_CLIENT_DIR
   : path.join(repoRoot, "..", "pixel-mania");
 const serverSource = fs.readFileSync(path.join(repoRoot, "server.js"), "utf8");
 const clientItemSource = fs.readFileSync(path.join(clientRoot, "Scripts", "item_database.gd"), "utf8");
+const clientAtlasItems = JSON.parse(
+  fs.readFileSync(path.join(clientRoot, "Data", "items", "atlas_items.json"), "utf8"),
+).items;
 const blockManagerSource = fs.readFileSync(path.join(clientRoot, "Scripts", "block_manager.gd"), "utf8");
 
 const expectedReturns = new Map([
@@ -23,13 +26,18 @@ const expectedReturns = new Map([
   ["anti_gravity", "anti_gravity"],
   ["night_theme_machine", "night_theme_machine"],
   ["snow_theme_machine", "snow_theme_machine"],
+  ["city_theme_machine", "city_theme_machine"],
   ["fish_monger", "fish_monger"],
 ]);
 
 function extractClientItemEntry(itemId) {
   const marker = `"${itemId}":`;
   const markerIndex = clientItemSource.indexOf(marker);
-  assert.notEqual(markerIndex, -1, `Client item definition is missing: ${itemId}`);
+  if (markerIndex < 0) {
+    const atlasItem = clientAtlasItems.find((/** @type {any} */ item) => item?.item_key === itemId);
+    assert.ok(atlasItem, `Client item definition is missing: ${itemId}`);
+    return JSON.stringify(atlasItem);
+  }
 
   const openIndex = clientItemSource.indexOf("{", markerIndex + marker.length);
   assert.notEqual(openIndex, -1, `Client item definition has no dictionary: ${itemId}`);

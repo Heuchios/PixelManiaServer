@@ -316,6 +316,33 @@ function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
       inbound_messages_received: Number(playerNetworkStats.inbound_messages_received || 0),
       inbound_bytes_received: Number(playerNetworkStats.inbound_bytes_received || 0),
       inbound_messages_oversize_rejected: Number(playerNetworkStats.inbound_messages_oversize_rejected || 0),
+      inbound_message_queue_pending: Number(playerNetworkStats.inbound_message_queue_pending || 0),
+      inbound_message_queue_pending_max: Number(playerNetworkStats.inbound_message_queue_pending_max || 0),
+      inbound_message_queue_max_socket_depth: Number(
+        playerNetworkStats.inbound_message_queue_max_socket_depth || 0,
+      ),
+      inbound_message_queue_wait_samples: Number(playerNetworkStats.inbound_message_queue_wait_samples || 0),
+      inbound_message_queue_wait_avg_ms: Number(playerNetworkStats.inbound_message_queue_wait_samples || 0) > 0
+        ? Number((
+          Number(playerNetworkStats.inbound_message_queue_wait_total_ms || 0)
+          / Number(playerNetworkStats.inbound_message_queue_wait_samples || 1)
+        ).toFixed(3))
+        : 0,
+      inbound_message_queue_wait_max_ms: Number(playerNetworkStats.inbound_message_queue_wait_max_ms || 0),
+      player_position_queue_wait_samples: Number(playerNetworkStats.player_position_queue_wait_samples || 0),
+      player_position_queue_wait_avg_ms: Number(playerNetworkStats.player_position_queue_wait_samples || 0) > 0
+        ? Number((
+          Number(playerNetworkStats.player_position_queue_wait_total_ms || 0)
+          / Number(playerNetworkStats.player_position_queue_wait_samples || 1)
+        ).toFixed(3))
+        : 0,
+      player_position_queue_wait_max_ms: Number(playerNetworkStats.player_position_queue_wait_max_ms || 0),
+      player_position_queue_wait_over_250ms: Number(
+        playerNetworkStats.player_position_queue_wait_over_250ms || 0,
+      ),
+      player_position_queue_last_delay: playerNetworkStats.player_position_queue_last_delay
+        ? { ...playerNetworkStats.player_position_queue_last_delay }
+        : null,
       inbound_packet_type_stats: inboundPacketTypeStats,
       packet_type_sample_limit: PACKET_TYPE_SIZE_SAMPLE_LIMIT,
       player_position_messages_received: Number(playerNetworkStats.player_position_messages_received || 0),

@@ -142,6 +142,7 @@ type ServerWebSocket = import("ws").WebSocket & {
   rateLimitSecurityWarnings?: Map<unknown, unknown>;
   authRequiredNotices?: Map<unknown, unknown>;
   inboundMessageQueue?: Promise<void>;
+  inboundMessageQueueDepth?: number;
   closeCleanupStarted?: boolean;
 };
 
@@ -149,6 +150,33 @@ interface ServerRouteContext {
   playerId: string;
   routeType: string;
   usedActionPosition: boolean;
+}
+
+type WorldHonorPeriod = "today" | "yesterday" | "overall";
+
+interface WorldHonorVisitSession {
+  playerId: string;
+  username: string;
+  world: string;
+  startedAtMs: number;
+  startedAtIso: string;
+  networkHash: string;
+  timer: ReturnType<typeof setTimeout> | null;
+  recordPromise: Promise<boolean> | null;
+  completed: boolean;
+}
+
+interface WorldHonorLeaderboardEntry {
+  rank: number;
+  world_name: string;
+  honor_score: number;
+  qualified_visitors: number;
+  last_honored_on: string;
+}
+
+interface WorldHonorLeaderboardCacheEntry {
+  expiresAtMs: number;
+  entries: WorldHonorLeaderboardEntry[];
 }
 
 type ServerRouteHandler = (
@@ -228,6 +256,13 @@ const BEDROCK_START_Y = Math.max(0, WORLD_HEIGHT - 4);
 const TILE_SIZE = Math.max(1, Math.trunc(Number(process.env.TILE_SIZE) || 32));
 const POSITION_MARGIN_PIXELS = TILE_SIZE * 4;
 const MAX_PACKET_BYTES = 64 * 1024;
+const WORLD_STATE_STREAMING_ENABLED = !["0", "false", "no"].includes(String(process.env.WORLD_STATE_STREAMING_ENABLED || "true").trim().toLowerCase());
+const WORLD_STATE_STREAM_MIN_CLIENT_VERSION = String(process.env.WORLD_STATE_STREAM_MIN_CLIENT_VERSION || "1.0.4").trim() || "1.0.4";
+const WORLD_STATE_STREAM_TARGET_PACKET_BYTES = Math.min(
+  MAX_PACKET_BYTES,
+  Math.max(4096, Math.trunc(Number(process.env.WORLD_STATE_STREAM_TARGET_PACKET_BYTES) || 48 * 1024))
+);
+const WORLD_STATE_STREAM_MAX_CHUNKS = Math.max(1, Math.min(4096, Math.trunc(Number(process.env.WORLD_STATE_STREAM_MAX_CHUNKS) || 256)));
 const MAX_DAMAGE_FLASH_MS = 2000;
 const PLAYER_POSITION_BROADCAST_INTERVAL_MS = Math.max(0, Math.trunc(Number(process.env.PLAYER_POSITION_BROADCAST_INTERVAL_MS) || 16));
 const PLAYER_POSITION_IDLE_HEARTBEAT_MS = Math.max(250, Math.trunc(Number(process.env.PLAYER_POSITION_IDLE_HEARTBEAT_MS) || 1000));
@@ -704,6 +739,47 @@ const REQUIRE_POSTGRES_AUTHORITATIVE_FOR_GAMEPLAY = !["0", "false", "no", "off"]
   process.env.REQUIRE_POSTGRES_AUTHORITATIVE_FOR_GAMEPLAY ||
   (RUNTIME_ENVIRONMENT === "production" ? "true" : "false")
 ).trim().toLowerCase());
+const WORLD_HONORS_ENABLED = !["0", "false", "no", "off"].includes(
+  String(process.env.WORLD_HONORS_ENABLED || "true").trim().toLowerCase()
+);
+const WORLD_HONOR_MIN_DWELL_MS = Math.max(
+  10000,
+  Math.min(30 * 60 * 1000, Math.trunc(Number(process.env.WORLD_HONOR_MIN_DWELL_MS) || 60000))
+);
+const WORLD_HONOR_MIN_PLAYER_LEVEL = Math.max(
+  1,
+  Math.min(100, Math.trunc(Number(process.env.WORLD_HONOR_MIN_PLAYER_LEVEL) || 1))
+);
+const WORLD_HONOR_MAX_ACCOUNTS_PER_NETWORK_PER_WORLD_DAY = Math.max(
+  0,
+  Math.min(50, Math.trunc(Number(process.env.WORLD_HONOR_MAX_ACCOUNTS_PER_NETWORK_PER_WORLD_DAY) || 3))
+);
+const WORLD_HONOR_OVERALL_HALF_LIFE_DAYS = Math.max(
+  1,
+  Math.min(365, Math.trunc(Number(process.env.WORLD_HONOR_OVERALL_HALF_LIFE_DAYS) || 30))
+);
+const WORLD_HONOR_INACTIVE_DAYS = Math.max(
+  WORLD_HONOR_OVERALL_HALF_LIFE_DAYS,
+  Math.min(730, Math.trunc(Number(process.env.WORLD_HONOR_INACTIVE_DAYS) || 60))
+);
+const WORLD_HONOR_TOP_LIMIT = Math.max(
+  1,
+  Math.min(25, Math.trunc(Number(process.env.WORLD_HONOR_TOP_LIMIT) || 10))
+);
+const WORLD_HONOR_LEADERBOARD_CACHE_MS = Math.max(
+  1000,
+  Math.min(5 * 60 * 1000, Math.trunc(Number(process.env.WORLD_HONOR_LEADERBOARD_CACHE_MS) || 30000))
+);
+const WORLD_HONOR_TOP_COMMAND_COOLDOWN_MS = Math.max(
+  0,
+  Math.min(30000, Math.trunc(Number(process.env.WORLD_HONOR_TOP_COMMAND_COOLDOWN_MS) || 1500))
+);
+const WORLD_HONOR_NETWORK_HASH_SECRET = String(
+  process.env.WORLD_HONOR_NETWORK_HASH_SECRET ||
+  NETFOX_SPAWN_TICKET_SECRET ||
+  POSTGRES_PASSWORD ||
+  ""
+).trim();
 const REDIS_ENABLED = String(process.env.REDIS_ENABLED || "false").trim().toLowerCase() === "true";
 const REDIS_URL = String(process.env.REDIS_URL || "redis://127.0.0.1:6379").trim();
 const REDIS_KEY_PREFIX = String(process.env.REDIS_KEY_PREFIX || "pixelmania").trim() || "pixelmania";
@@ -784,6 +860,7 @@ const SHOP_CATALOG: any = new Map([
   ["snow_repellent", { item_id: "snow_repellent", item_category: "block", amount: 1, price: 75000 }],
   ["night_theme_machine", { item_id: "night_theme_machine", item_category: "block", amount: 1, price: 125000 }],
   ["snow_theme_machine", { item_id: "snow_theme_machine", item_category: "block", amount: 1, price: 125000 }],
+  ["city_theme_machine", { item_id: "city_theme_machine", item_category: "block", amount: 1, price: 125000 }],
   ["cctv", { item_id: "cctv", item_category: "block", amount: 1, price: 15000 }],
   ["basic_items_pack", { item_id: "basic_items_pack", item_category: "material", amount: 1, price: 500, pack_size: 1 }],
   ["hairpack", { item_id: "hairpack", item_category: "material", amount: 1, price: 1500, pack_size: 1 }],
@@ -859,7 +936,7 @@ const LURE_PACK_TABLE: any = [
   { item_id: "cotton_cordel_lure", item_category: "lure", weight: 25 },
   { item_id: "void_worm_lure", item_category: "lure", weight: 5 },
 ];
-const WORLD_BACKGROUND_THEMES: any = new Set(["night", "snow"]);
+const WORLD_BACKGROUND_THEMES: any = new Set(["night", "snow", "city"]);
 const WorldStateHelpers = WorldStateHelpersModule.createWorldStateHelpers({
   itemDatabase: ItemDatabase,
   itemAtlasDb: ItemAtlasDB,
@@ -1246,6 +1323,7 @@ function getServerPhase8PlayerSessionRoutes() {
       postgresStore,
       tradeByPlayerId,
       appendCctvWorldEvent,
+      beginWorldHonorVisit,
       broadcastSystemToWorld,
       broadcastToWorld,
       broadcastWorldPopulationUpdate,
@@ -1254,7 +1332,6 @@ function getServerPhase8PlayerSessionRoutes() {
       buildPlayerStateForClient,
       buildPublicPlayerPresencePayload,
       buildPublicPlayerProfilePayload,
-      buildWorldStateMessage,
       cancelActiveTradeForPlayer,
       cleanAccountName,
       cleanWorld,
@@ -1267,6 +1344,7 @@ function getServerPhase8PlayerSessionRoutes() {
       clearTrustedMovementBaseline,
       commitWorldAdmissionReservation,
       ensurePlayerState,
+      endWorldHonorVisit,
       ensureWorldRouteForAction,
       getEquipmentSlotsFromPlayerState,
       getFriendStatus: (...args: unknown[]) => getServerFriendRoutes().getFriendStatus(...args),
@@ -1305,6 +1383,7 @@ function getServerPhase8PlayerSessionRoutes() {
       sendActionRejected,
       sendActiveWorldEventState,
       sendJson,
+      sendWorldStateToSocket,
       sendWorldPopulationUpdate,
       setPlayerState,
       syncDropInterestForReceiver,
@@ -1657,6 +1736,7 @@ function getServerPhase9RemainingRoutes() {
       handleTradeOfferUpdate: (...args: unknown[]) => getServerTradeRoutes().handleTradeOfferUpdate(...args),
       handleTradeRequest: (...args: unknown[]) => getServerTradeRoutes().handleTradeRequest(...args),
       handleTradeResponse: (...args: unknown[]) => getServerTradeRoutes().handleTradeResponse(...args),
+      handleWorldHonorTopCommand,
       rejectIfMuted,
       rejectIfTradeBanned,
       requireAuthenticated,
@@ -1953,6 +2033,9 @@ const worldFrozenTreasureOpenLocks: any = new Set();
 const localLoginAttemptBuckets: any = new Map();
 const punishmentCache: any = new Map();
 const activeFishingSessions: any = new Map();
+const activeWorldHonorVisits = new Map<string, WorldHonorVisitSession>();
+const worldHonorLeaderboardCache = new Map<WorldHonorPeriod, WorldHonorLeaderboardCacheEntry>();
+const worldHonorTopCommandCooldowns = new Map<string, number>();
 const blockDamage: any = new Map();
 const netfoxMovementRoutes: any = new Map();
 const movementCollisionCacheByWorld: any = new Map();
@@ -2007,6 +2090,17 @@ const playerNetworkStats: any = {
   inbound_messages_received: 0,
   inbound_bytes_received: 0,
   inbound_messages_oversize_rejected: 0,
+  inbound_message_queue_pending: 0,
+  inbound_message_queue_pending_max: 0,
+  inbound_message_queue_max_socket_depth: 0,
+  inbound_message_queue_wait_samples: 0,
+  inbound_message_queue_wait_total_ms: 0,
+  inbound_message_queue_wait_max_ms: 0,
+  player_position_queue_wait_samples: 0,
+  player_position_queue_wait_total_ms: 0,
+  player_position_queue_wait_max_ms: 0,
+  player_position_queue_wait_over_250ms: 0,
+  player_position_queue_last_delay: null,
   inbound_packet_type_stats: {},
   player_position_messages_received: 0,
   accepted_player_position_messages: 0,
@@ -2598,6 +2692,7 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
   socket.rateLimitSecurityWarnings = new Map();
   socket.authRequiredNotices = new Map();
   socket.inboundMessageQueue = Promise.resolve();
+  socket.inboundMessageQueueDepth = 0;
 
   socket.on("error", (error: Error) => {
     console.warn("[socket_error]", {
@@ -2612,7 +2707,42 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
   });
 
   socket.on("message", (raw: import("ws").RawData) => {
+    const enqueuedAt = Date.now();
+    const queueDepthAtEnqueue = Math.max(
+      1,
+      Math.trunc(Number(socket.inboundMessageQueueDepth) || 0) + 1,
+    );
+    socket.inboundMessageQueueDepth = queueDepthAtEnqueue;
+    playerNetworkStats.inbound_message_queue_pending = Math.max(
+      0,
+      Math.trunc(Number(playerNetworkStats.inbound_message_queue_pending) || 0) + 1,
+    );
+    playerNetworkStats.inbound_message_queue_pending_max = Math.max(
+      Number(playerNetworkStats.inbound_message_queue_pending_max) || 0,
+      playerNetworkStats.inbound_message_queue_pending,
+    );
+    playerNetworkStats.inbound_message_queue_max_socket_depth = Math.max(
+      Number(playerNetworkStats.inbound_message_queue_max_socket_depth) || 0,
+      queueDepthAtEnqueue,
+    );
+
     const processMessage = async () => {
+      const processingStartedAt = Date.now();
+      const queueWaitMs = Math.max(0, processingStartedAt - enqueuedAt);
+      socket.inboundMessageQueueDepth = Math.max(
+        0,
+        Math.trunc(Number(socket.inboundMessageQueueDepth) || 0) - 1,
+      );
+      playerNetworkStats.inbound_message_queue_pending = Math.max(
+        0,
+        Math.trunc(Number(playerNetworkStats.inbound_message_queue_pending) || 0) - 1,
+      );
+      playerNetworkStats.inbound_message_queue_wait_samples += 1;
+      playerNetworkStats.inbound_message_queue_wait_total_ms += queueWaitMs;
+      playerNetworkStats.inbound_message_queue_wait_max_ms = Math.max(
+        Number(playerNetworkStats.inbound_message_queue_wait_max_ms) || 0,
+        queueWaitMs,
+      );
     try {
       const messageBytes = getRawLength(raw);
       playerNetworkStats.inbound_messages_received += 1;
@@ -2645,6 +2775,24 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
       const incomingMessageType = ServerMessageRouterHelpers.getInboundMessageType(data);
       recordPacketTypeSize("inbound", incomingMessageType, messageBytes);
       if (!data || typeof data !== "object" || Array.isArray(data)) return;
+      if (incomingMessageType === "player_position") {
+        playerNetworkStats.player_position_queue_wait_samples += 1;
+        playerNetworkStats.player_position_queue_wait_total_ms += queueWaitMs;
+        playerNetworkStats.player_position_queue_wait_max_ms = Math.max(
+          Number(playerNetworkStats.player_position_queue_wait_max_ms) || 0,
+          queueWaitMs,
+        );
+        if (queueWaitMs >= 250) {
+          playerNetworkStats.player_position_queue_wait_over_250ms += 1;
+          playerNetworkStats.player_position_queue_last_delay = {
+            at: new Date(processingStartedAt).toISOString(),
+            player_id: playerId,
+            queue_wait_ms: queueWaitMs,
+            queue_depth_at_enqueue: queueDepthAtEnqueue,
+            socket_queue_depth_at_start: socket.inboundMessageQueueDepth,
+          };
+        }
+      }
 
       const player = players.get(playerId);
       if (!player || player.disconnected) return;
@@ -2706,6 +2854,7 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
       players.delete(playerId);
       socketByPlayerId.delete(playerId);
       clearPlayerInterestState(playerId);
+      worldHonorTopCommandCooldowns.delete(playerId);
       if (closedWorld !== "") {
         broadcastWorldPopulationUpdate(closedWorld);
       }
@@ -2752,6 +2901,7 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
             reason: persistenceFlush.reason || "unknown",
           });
         }
+        await endWorldHonorVisit(player, closedWorld, "disconnect");
 
         markAccountSeen(player.account_username);
         releaseActiveAccountSession(player);
@@ -3810,6 +3960,9 @@ function replaceActiveAccountSession(username: any, replacementPlayerId: any) {
 
   if (existingPlayer && existingPlayer.joined_world) {
     const existingWorld = cleanWorld(existingPlayer.world || "START");
+    void endWorldHonorVisit(existingPlayer, existingWorld, "session_replaced").catch((error: unknown) => {
+      console.warn("[world-honors] session replacement cleanup failed:", getErrorMessage(error));
+    });
     clearPlayerWorldIndex(existingPlayer);
     releasePlayerWorldAdmission(existingPlayer, existingWorld).catch((error: unknown) => {
       console.warn("[redis] world admission replacement cleanup failed:", getErrorMessage(error));
@@ -3821,6 +3974,7 @@ function replaceActiveAccountSession(username: any, replacementPlayerId: any) {
     broadcastSystemToWorld(existingPlayer.world, `${existingPlayer.name} left ${existingPlayer.world}`, activePlayerId);
     players.delete(activePlayerId);
     socketByPlayerId.delete(activePlayerId);
+    worldHonorTopCommandCooldowns.delete(activePlayerId);
     broadcastWorldPopulationUpdate(existingWorld);
   }
 }
@@ -4391,6 +4545,287 @@ function sendSystemChatToPlayer(socket: any, player: any, message: any) {
     message,
     world: player?.world || "",
   });
+}
+
+function getWorldHonorPlayerId(player: ServerPacketRecord): string {
+  return String(player.id || "").trim();
+}
+
+function getWorldHonorUsername(player: ServerPacketRecord): string {
+  return cleanAccountName(player.account_username || player.name || "");
+}
+
+function normalizeWorldHonorPeriod(value: unknown): WorldHonorPeriod | null {
+  const clean = String(value || "").trim().toLowerCase();
+  if (clean === "" || clean === "today" || clean === "daily") return "today";
+  if (clean === "yesterday" || clean === "previous") return "yesterday";
+  if (clean === "overall" || clean === "all" || clean === "honors") return "overall";
+  return null;
+}
+
+function hashWorldHonorNetwork(socket: unknown): string {
+  if (WORLD_HONOR_NETWORK_HASH_SECRET === "") return "";
+  const address = getSocketAddress(socket);
+  if (address === "") return "";
+  return crypto
+    .createHmac("sha256", WORLD_HONOR_NETWORK_HASH_SECRET)
+    .update(address)
+    .digest("hex");
+}
+
+function canPlayerGenerateWorldHonor(player: ServerPacketRecord, worldName: unknown): boolean {
+  if (!WORLD_HONORS_ENABLED || !player.authenticated) return false;
+
+  const playerId = getWorldHonorPlayerId(player);
+  const username = getWorldHonorUsername(player);
+  if (String(worldName || "").trim() === "") return false;
+  const cleanWorldName = cleanWorld(worldName || "");
+  if (playerId === "" || username === "" || cleanWorldName === "") return false;
+
+  const playerState = ensurePlayerState(username) as ServerPacketRecord | null;
+  const playerLevel = Math.max(1, Math.trunc(Number(playerState?.player_level) || 1));
+  if (playerLevel < WORLD_HONOR_MIN_PLAYER_LEVEL) return false;
+
+  const worldState = ensureWorldState(cleanWorldName);
+  const worldLock = getEffectiveWorldLockStateInState(worldState);
+  if (!worldLock.is_locked) return false;
+
+  return getWorldLockRoleForPlayer(worldLock, player) === "";
+}
+
+async function recordWorldHonorVisitSession(
+  player: ServerPacketRecord,
+  session: WorldHonorVisitSession,
+  reason: string
+): Promise<boolean> {
+  if (session.completed) return true;
+  if (session.recordPromise) return await session.recordPromise;
+
+  const elapsedMs = Math.max(0, Date.now() - session.startedAtMs);
+  if (elapsedMs < WORLD_HONOR_MIN_DWELL_MS) return false;
+  if (!canPlayerGenerateWorldHonor(player, session.world)) {
+    session.completed = true;
+    return true;
+  }
+
+  const recordPromise = (async (): Promise<boolean> => {
+    const result = await postgresStore.recordWorldHonorVisit({
+      world: session.world,
+      visitor_username: session.username,
+      network_hash: session.networkHash,
+      dwell_ms: elapsedMs,
+      visit_started_at: session.startedAtIso,
+      visit_ended_at: new Date().toISOString(),
+      source_instance: SERVER_INSTANCE_ID,
+      max_network_visitors: WORLD_HONOR_MAX_ACCOUNTS_PER_NETWORK_PER_WORLD_DAY,
+    });
+    if (!result.ok) {
+      console.warn("[world-honors] qualified visit could not be recorded", {
+        world: session.world,
+        username: session.username,
+        reason: result.reason || "unknown",
+        lifecycle_reason: reason,
+      });
+      return false;
+    }
+
+    const terminal = Boolean(result.recorded || result.duplicate || result.network_capped);
+    if (terminal) {
+      session.completed = true;
+    }
+    if (result.recorded) {
+      worldHonorLeaderboardCache.clear();
+      console.log("[world-honors] qualified visitor recorded", {
+        world: session.world,
+        username: session.username,
+        honor_date: result.honor_date || "",
+        dwell_ms: elapsedMs,
+      });
+    }
+    return terminal;
+  })();
+
+  session.recordPromise = recordPromise;
+  try {
+    return await recordPromise;
+  } catch (error) {
+    console.warn("[world-honors] visit qualification failed:", getErrorMessage(error));
+    return false;
+  } finally {
+    session.recordPromise = null;
+  }
+}
+
+function scheduleWorldHonorQualification(
+  player: ServerPacketRecord,
+  session: WorldHonorVisitSession,
+  delayMs: number
+): void {
+  if (session.timer) clearTimeout(session.timer);
+  session.timer = setTimeout(() => {
+    session.timer = null;
+    const activeSession = activeWorldHonorVisits.get(session.playerId);
+    const currentWorld = cleanWorld(player.world || "");
+    if (activeSession !== session || session.completed) {
+      return;
+    }
+    if (player.disconnected || !player.joined_world || currentWorld !== session.world) {
+      activeWorldHonorVisits.delete(session.playerId);
+      return;
+    }
+
+    void recordWorldHonorVisitSession(player, session, "dwell_timer").then((completed) => {
+      if (!completed && activeWorldHonorVisits.get(session.playerId) === session) {
+        scheduleWorldHonorQualification(player, session, 30000);
+      }
+    });
+  }, Math.max(1, delayMs));
+  session.timer.unref();
+}
+
+async function beginWorldHonorVisit(
+  socket: unknown,
+  player: ServerPacketRecord,
+  worldName: unknown
+): Promise<void> {
+  const playerId = getWorldHonorPlayerId(player);
+  const username = getWorldHonorUsername(player);
+  if (String(worldName || "").trim() === "") return;
+  const cleanWorldName = cleanWorld(worldName || "");
+  if (
+    !WORLD_HONORS_ENABLED ||
+    !postgresStore.isReady() ||
+    playerId === "" ||
+    username === "" ||
+    cleanWorldName === ""
+  ) {
+    return;
+  }
+
+  const existingSession = activeWorldHonorVisits.get(playerId);
+  if (existingSession?.world === cleanWorldName) return;
+  if (existingSession) {
+    await endWorldHonorVisit(player, existingSession.world, "superseded");
+  }
+  if (!canPlayerGenerateWorldHonor(player, cleanWorldName)) return;
+
+  const session: WorldHonorVisitSession = {
+    playerId,
+    username,
+    world: cleanWorldName,
+    startedAtMs: Date.now(),
+    startedAtIso: new Date().toISOString(),
+    networkHash: hashWorldHonorNetwork(socket),
+    timer: null,
+    recordPromise: null,
+    completed: false,
+  };
+  activeWorldHonorVisits.set(playerId, session);
+  scheduleWorldHonorQualification(player, session, WORLD_HONOR_MIN_DWELL_MS);
+}
+
+async function endWorldHonorVisit(
+  player: ServerPacketRecord,
+  worldName: unknown,
+  reason: string
+): Promise<void> {
+  const playerId = getWorldHonorPlayerId(player);
+  const session = activeWorldHonorVisits.get(playerId);
+  if (!session) return;
+
+  const rawWorldName = String(worldName || "").trim();
+  const cleanWorldName = rawWorldName === "" ? "" : cleanWorld(rawWorldName);
+  if (cleanWorldName !== "" && session.world !== cleanWorldName) return;
+
+  if (session.timer) {
+    clearTimeout(session.timer);
+    session.timer = null;
+  }
+  activeWorldHonorVisits.delete(playerId);
+  await recordWorldHonorVisitSession(player, session, reason);
+}
+
+async function getCachedWorldHonorLeaderboard(
+  period: WorldHonorPeriod
+): Promise<WorldHonorLeaderboardEntry[] | null> {
+  const nowMs = Date.now();
+  const cached = worldHonorLeaderboardCache.get(period);
+  if (cached && cached.expiresAtMs > nowMs) {
+    return cached.entries.map((entry) => ({ ...entry }));
+  }
+
+  const result = await postgresStore.getWorldHonorLeaderboard(period, {
+    limit: WORLD_HONOR_TOP_LIMIT,
+    half_life_days: WORLD_HONOR_OVERALL_HALF_LIFE_DAYS,
+    inactivity_days: WORLD_HONOR_INACTIVE_DAYS,
+  });
+  if (!result.ok) return null;
+
+  const entries: WorldHonorLeaderboardEntry[] = result.entries.map((entry: ServerPacketRecord) => ({
+    rank: Math.max(1, Math.trunc(Number(entry.rank) || 1)),
+    world_name: cleanWorld(entry.world_name || ""),
+    honor_score: Math.max(0, Number(entry.honor_score) || 0),
+    qualified_visitors: Math.max(0, Math.trunc(Number(entry.qualified_visitors) || 0)),
+    last_honored_on: String(entry.last_honored_on || ""),
+  }));
+  worldHonorLeaderboardCache.set(period, {
+    expiresAtMs: nowMs + WORLD_HONOR_LEADERBOARD_CACHE_MS,
+    entries,
+  });
+  return entries.map((entry) => ({ ...entry }));
+}
+
+async function handleWorldHonorTopCommand(
+  socket: unknown,
+  player: ServerPacketRecord,
+  message: unknown
+): Promise<void> {
+  const tokens = String(message || "").trim().split(/\s+/);
+  const periodToken = tokens.length >= 2 && tokens[1].toLowerCase() === "honors"
+    ? tokens[2] || "today"
+    : tokens[1] || "today";
+  const period = normalizeWorldHonorPeriod(periodToken);
+  if (!period) {
+    sendSystemChatToPlayer(socket, player, "Usage: /top [today|yesterday|overall]");
+    return;
+  }
+  if (!WORLD_HONORS_ENABLED) {
+    sendSystemChatToPlayer(socket, player, "World Honors are currently disabled.");
+    return;
+  }
+
+  const playerId = getWorldHonorPlayerId(player);
+  const nowMs = Date.now();
+  const nextAllowedAt = worldHonorTopCommandCooldowns.get(playerId) || 0;
+  if (WORLD_HONOR_TOP_COMMAND_COOLDOWN_MS > 0 && nowMs < nextAllowedAt) {
+    sendSystemChatToPlayer(socket, player, "Please wait a moment before refreshing World Honors.");
+    return;
+  }
+  worldHonorTopCommandCooldowns.set(playerId, nowMs + WORLD_HONOR_TOP_COMMAND_COOLDOWN_MS);
+
+  const entries = await getCachedWorldHonorLeaderboard(period);
+  if (!entries) {
+    sendSystemChatToPlayer(socket, player, "World Honors are still loading. Try again shortly.");
+    return;
+  }
+
+  const title = period === "today"
+    ? "Today"
+    : period === "yesterday"
+      ? "Yesterday"
+      : "Overall";
+  sendSystemChatToPlayer(socket, player, `World Honors - ${title}`);
+  if (entries.length === 0) {
+    sendSystemChatToPlayer(socket, player, "No worlds have qualified visitor honors for this period yet.");
+    return;
+  }
+
+  for (const entry of entries) {
+    const scoreText = period === "overall"
+      ? `${entry.honor_score.toFixed(1)} honor (${entry.qualified_visitors} recent visits)`
+      : `${entry.qualified_visitors} qualified visitor${entry.qualified_visitors === 1 ? "" : "s"}`;
+    sendSystemChatToPlayer(socket, player, `#${entry.rank} ${entry.world_name} - ${scoreText}`);
+  }
 }
 
 function serializeTradeSlots(slots: any) {
@@ -8335,6 +8770,7 @@ function isThemeMachineBlockType(blockType: any) {
   return Boolean(definition && definition.category === "block" && definition.theme_machine_block)
     || clean === "night_theme_machine"
     || clean === "snow_theme_machine"
+    || clean === "city_theme_machine"
     || clean === "theme_machine";
 }
 
@@ -14294,8 +14730,16 @@ async function refreshWorldStateFromPostgres(worldName: any, reason: any = "worl
     return { ok: true, found: false, world: clean, had_local_state: hadLocalState };
   }
 
+  const seedTimestampMigrationNeeded = WorldStateHelpers.needsSeedTimestampMigration(result.state || {});
   const state = deserializeWorldState(clean, result.state || {});
   worldStates.set(clean, state);
+  if (seedTimestampMigrationNeeded) {
+    queueWorldSave(clean, { critical: true });
+    console.log("[world-state] queued legacy seed timestamp migration", {
+      world: clean,
+      seeds: state.seeds instanceof Map ? state.seeds.size : 0,
+    });
+  }
   const summary = summarizeSerializedWorldStateForLog(result.state || {});
   if (WORLD_STATE_REFRESH_TRACE || summary.total_blocks === 0) {
     const logMethod = summary.total_blocks === 0 ? "warn" : "log";
@@ -16839,6 +17283,7 @@ async function handleDoorEnterRequest(socket: any, player: any, data: any) {
       }
 
       if (player.joined_world) {
+        await endWorldHonorVisit(player, oldWorld, "door_world_change");
         broadcastSystemToWorld(oldWorld, `${player.name} left ${oldWorld}`, player.id);
         broadcastToWorld(oldWorld, buildPublicPlayerPresencePayload("player_left", player, oldWorld), player.id);
         clearPlayerInterestState(player.id);
@@ -16913,7 +17358,7 @@ async function handleDoorEnterRequest(socket: any, player: any, data: any) {
       sendWorldPopulationUpdate(socket, targetWorld);
 
       await refreshWorldDropsFromPostgres(targetWorld, "door_enter");
-      sendJson(socket, buildWorldStateMessage(targetWorld, {
+      sendWorldStateToSocket(socket, player, targetWorld, {
         receiver_player: player,
         respawn_player: true,
         force_player_position: true,
@@ -16928,10 +17373,11 @@ async function handleDoorEnterRequest(socket: any, player: any, data: any) {
         y: targetPosition.y,
         world_state_reason: "door_enter",
         message: `Entered ${targetWorld}.`,
-      }));
+      });
       seedDropInterestForReceiverFromWorldState(player, targetWorld);
       syncDropInterestForReceiver(socket, player, targetWorld, true);
       sendActiveWorldEventState(socket, targetWorld);
+      await beginWorldHonorVisit(socket, player, targetWorld);
 
       publishPlayerPresenceUpdate(socket, player, targetWorld, "player_joined", player.id);
       broadcastSystemToWorld(targetWorld, `${player.name} joined ${targetWorld}`, player.id);
@@ -17100,8 +17546,9 @@ function prepareThemeMachineStateUpdate(socket: any, player: any, worldName: any
   }
 
   const definition = ItemDatabase.getItemDefinition(block.block_type) || {};
+  const configuredTheme = sanitizeWorldBackgroundTheme(definition.theme_machine_theme || "");
   update.enabled = Boolean(update.enabled);
-  update.theme = sanitizeWorldBackgroundTheme(update.theme || definition.theme_machine_theme || "night") || "night";
+  update.theme = configuredTheme || sanitizeWorldBackgroundTheme(update.theme || "night") || "night";
   update.block_type = block.block_type;
   return true;
 }
@@ -18441,10 +18888,10 @@ function incrementProducerSpeedupStat(stats: any, key: any) {
 function broadcastFreshWorldStateToCurrentPlayers(worldName: any, extraMessageData: any = {}) {
   const clean = cleanWorld(worldName || "START");
   for (const { player: receiver, socket: client } of getWorldPlayerRecords(clean, { includeSocket: true })) {
-    sendJson(client, buildWorldStateMessage(clean, {
+    sendWorldStateToSocket(client, receiver, clean, {
       ...extraMessageData,
       receiver_player: receiver,
-    }));
+    });
   }
 }
 
@@ -18690,7 +19137,7 @@ function replaceWorldStateAndBroadcast(worldName: any, state: any, extraMessageD
   worldStates.set(clean, state);
   invalidateMovementCollisionCache(clean);
   saveWorldState(clean);
-  broadcastToWorld(clean, buildWorldStateMessage(clean, extraMessageData));
+  broadcastFreshWorldStateToCurrentPlayers(clean, extraMessageData);
 }
 
 function clearWorldByAdmin(worldName: any, data: any, socket: any = null, player: any = null) {
@@ -21330,11 +21777,11 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
     const commandWorld = getDeveloperCommandWorldName(player, data);
     worldStates.delete(commandWorld);
     ensureWorldState(commandWorld);
-    broadcastToWorld(commandWorld, buildWorldStateMessage(commandWorld, {
+    broadcastFreshWorldStateToCurrentPlayers(commandWorld, {
       respawn_player: true,
       force_respawn: true,
       world_state_reason: "admin_reload",
-    }));
+    });
     approve(`Reloaded ${commandWorld} from server storage.`, { target_world: commandWorld }, { command_type: "reload_world", target_world: commandWorld });
     return;
   }
@@ -27627,6 +28074,51 @@ function buildWorldStateMessage(worldName: any, extraMessageData: any = {}) {
   };
 }
 
+function supportsWorldStateStreaming(player: unknown): boolean {
+  if (!WORLD_STATE_STREAMING_ENABLED) return false;
+  const playerRecord = player && typeof player === "object" && !Array.isArray(player)
+    ? player as ServerPacketRecord
+    : {};
+  const comparison = compareVersions(playerRecord.client_version || "", WORLD_STATE_STREAM_MIN_CLIENT_VERSION);
+  return comparison !== null && comparison >= 0;
+}
+
+function sendWorldStateToSocket(
+  socket: unknown,
+  player: unknown,
+  worldName: unknown,
+  extraMessageData: ServerPacketRecord = {}
+): void {
+  const payload = buildWorldStateMessage(worldName, extraMessageData) as ServerPacketRecord;
+  if (!supportsWorldStateStreaming(player)) {
+    sendJson(socket, payload);
+    return;
+  }
+
+  try {
+    const stream = WorldStateHelpersModule.buildWorldStateStreamPackets(payload, {
+      snapshotId: crypto.randomUUID(),
+      targetPacketBytes: WORLD_STATE_STREAM_TARGET_PACKET_BYTES,
+      maxPacketBytes: MAX_PACKET_BYTES,
+      maxChunks: WORLD_STATE_STREAM_MAX_CHUNKS,
+    });
+    for (const packet of stream.packets) {
+      sendJson(socket, packet);
+    }
+  } catch (error: unknown) {
+    console.warn("[world_state_stream] falling back to legacy snapshot:", {
+      world: cleanWorld(worldName),
+      player: String(
+        player && typeof player === "object" && !Array.isArray(player)
+          ? (player as ServerPacketRecord).account_username || (player as ServerPacketRecord).name || ""
+          : ""
+      ),
+      error: error instanceof Error ? error.message : String(error || "unknown error"),
+    });
+    sendJson(socket, payload);
+  }
+}
+
 function getActiveWorldEventRemainingMs(state: any) {
   if (!state || state.active_event_type !== SNOW_STORM_EVENT_TYPE) return 0;
   const endsAt = Date.parse(state.event_ends_at || "");
@@ -31088,6 +31580,11 @@ function stopGameplaySchedulersForShutdown() {
     clearInterval(duckTimer);
     duckTimer = null;
   }
+  for (const session of activeWorldHonorVisits.values()) {
+    if (session.timer) clearTimeout(session.timer);
+  }
+  activeWorldHonorVisits.clear();
+  worldHonorTopCommandCooldowns.clear();
   for (const timer of worldEventTimers.values()) {
     clearTimeout(timer);
   }

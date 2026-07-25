@@ -14,6 +14,11 @@ interface AtlasDefinitionBuilders {
 }
 
 const ATLAS_PASSTHROUGH_KEYS = Object.freeze([
+  "rarity",
+  "instance_tracked",
+  "shop_price",
+  "break_return_to_inventory",
+  "order",
   "punch_toggle_block",
   "toggle_active_block",
   "toggle_inactive_block",
@@ -29,6 +34,10 @@ const ATLAS_PASSTHROUGH_KEYS = Object.freeze([
   "animation_frames",
   "animation_atlas_coords",
   "animation_frame_seconds",
+  "theme_machine_block",
+  "theme_machine_theme",
+  "theme_machine_enabled_frames",
+  "theme_machine_frame_seconds",
   "running_animation_frames",
   "running_animation_loop_frames",
   "running_animation_frame_seconds",

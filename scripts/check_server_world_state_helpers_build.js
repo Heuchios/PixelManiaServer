@@ -252,7 +252,12 @@ const helpers = /** @type {any} */ (WorldStateHelpersModule.createWorldStateHelp
   sanitizeWorldLockState: (/** @type {any} */ state) => ({ ...state }),
   sanitizeAreaLockState: (/** @type {any} */ state) => ({ ...state }),
   getForegroundBlocksForState: (/** @type {any} */ state) => Array.from(state.foreground.values()),
-  serializeSeedForMessage: (/** @type {unknown} */ seed) => seed,
+  serializeSeedForMessage: (/** @type {unknown} */ seed) => {
+    if (!seed || typeof seed !== "object" || Array.isArray(seed)) return seed;
+    const payload = /** @type {Record<string, any>} */ ({ ...seed });
+    delete payload.planted_at;
+    return payload;
+  },
   getElectricalLayerForSave: () => [],
   getElectricalDevicesForSave: () => [],
   rebuildElectricalNetworksForState: (/** @type {any} */ state) => {
@@ -270,7 +275,7 @@ const helpers = /** @type {any} */ (WorldStateHelpersModule.createWorldStateHelp
   sanitizeAreaLocksList: (/** @type {unknown} */ locks) => Array.isArray(locks) ? locks : [],
   sanitizeCctvWorldState: (/** @type {any} */ state) => ({ ...state }),
   buildActiveWorldEventSnapshot: () => ({}),
-  worldBackgroundThemes: new Set(["night", "snow"]),
+  worldBackgroundThemes: new Set(["night", "snow", "city"]),
   worldWidth: 100,
   worldHeight: 70,
   bedrockStartY: 66,
@@ -349,6 +354,7 @@ assert.deepEqual(generatorEntry.linked_pole_keys, ["9,10"]);
 const poleEntry = helpers.normalizeElectricalDeviceStateEntry({ x: 7, y: 8, item_id: "electric_pole", linked_pole_keys: ["7,8", "8,8"] });
 assert.deepEqual(poleEntry.linked_pole_keys, ["8,8"]);
 assert.equal(helpers.sanitizeWorldBackgroundTheme("snow"), "snow");
+assert.equal(helpers.sanitizeWorldBackgroundTheme("city"), "city");
 assert.equal(helpers.sanitizeWorldBackgroundTheme("sunset"), "");
 const loadedBlocks = new Map();
 helpers.loadGridArrayIntoMap(loadedBlocks, [
@@ -373,6 +379,44 @@ assert.equal(loadedWorldState.background.get("3,4").block_type, "dirt");
 assert.equal(loadedWorldState.removed_foreground.get("5,6").block_type, "dirt");
 assert.equal(loadedWorldState.removed_background.get("7,8").block_type, "dirt");
 assert.equal(loadedWorldState.seeds.get("9,10").seed_type, "apple_seed");
+const plantedAt = Date.now() - 5000;
+const persistentSeedState = getMockWorldState("SEED_CLOCK");
+persistentSeedState.seeds.set("4,5", {
+  x: 4,
+  y: 5,
+  seed_type: "apple_seed",
+  grow_time: 15,
+  max_grow_time: 20,
+  planted_at: plantedAt,
+  mature: false,
+  mutated: false,
+});
+const serializedSeedWorld = helpers.serializeWorldState("SEED_CLOCK");
+assert.equal(serializedSeedWorld.seeds.length, 1);
+assert.equal(serializedSeedWorld.seeds[0].planted_at, plantedAt);
+const restoredSeedWorld = helpers.deserializeWorldState("SEED_CLOCK", serializedSeedWorld);
+const restoredSeed = restoredSeedWorld.seeds.get("4,5");
+assert.equal(restoredSeed.planted_at, plantedAt);
+const simulatedRejoinAt = plantedAt + 12000;
+const remainingAfterUnloadedTime = Math.max(
+  0,
+  restoredSeed.max_grow_time - ((simulatedRejoinAt - restoredSeed.planted_at) / 1000),
+);
+assert.equal(remainingAfterUnloadedTime, 8);
+const legacySeedLoadStartedAt = Date.now();
+const migratedLegacySeed = helpers.normalizeSeedEntry({
+  x: 6,
+  y: 7,
+  seed_type: "apple_seed",
+  grow_time: 15,
+  max_grow_time: 20,
+});
+assert.ok(migratedLegacySeed.planted_at >= legacySeedLoadStartedAt - 5100);
+assert.ok(migratedLegacySeed.planted_at <= Date.now() - 4900);
+assert.equal(helpers.needsSeedTimestampMigration({
+  seeds: [{ x: 6, y: 7, seed_type: "apple_seed", grow_time: 15, max_grow_time: 20 }],
+}), true);
+assert.equal(helpers.needsSeedTimestampMigration(serializedSeedWorld), false);
 const manyRemovedBlocks = Array.from({ length: 3301 }, (_, index) => ({
   x: index % 100,
   y: Math.floor(index / 100),
@@ -561,8 +605,8 @@ helpers.applyInteractionUpdateToWorldState("WORLD", { action: "anti_punch_state"
 assert.equal(getMockWorldState("WORLD").interactions.get("6,7").enabled, true);
 helpers.applyInteractionUpdateToWorldState("WORLD", { action: "anti_punch_state", x: 6, y: 7, enabled: false });
 assert.equal(getMockWorldState("WORLD").interactions.has("6,7"), false);
-helpers.applyInteractionUpdateToWorldState("WORLD", { action: "theme_machine_state", x: 8, y: 9, enabled: true, theme: "snow" });
-assert.equal(getMockWorldState("WORLD").interactions.get("8,9").theme, "snow");
+helpers.applyInteractionUpdateToWorldState("WORLD", { action: "theme_machine_state", x: 8, y: 9, enabled: true, theme: "city" });
+assert.equal(getMockWorldState("WORLD").interactions.get("8,9").theme, "city");
 helpers.applyInteractionUpdateToWorldState("WORLD", { action: "oil_refinery_state", x: 10, y: 11, battery_count: 2 });
 assert.equal(getMockWorldState("WORLD").interactions.get("10,11").battery_watts, 40);
 helpers.applyInteractionUpdateToWorldState("WORLD", { action: "battery_charger_state", x: 12, y: 13, production_progress: 0.25 });
@@ -583,7 +627,7 @@ helpers.loadInteractionsIntoMap(savedInteractions, [
   },
   { action: "anti_punch_state", x: 6, y: 7, enabled: false },
   { action: "anti_talk_state", x: 6, y: 8, enabled: true },
-  { action: "theme_machine_state", x: 8, y: 9, enabled: true, theme: "snow" },
+  { action: "theme_machine_state", x: 8, y: 9, enabled: true, theme: "city" },
   { action: "oil_refinery_state", x: 10, y: 11, battery_count: 2 },
   { action: "battery_charger_state", x: 12, y: 13, charge_ratio: 0.25 },
   { action: "missing_state", x: 1, y: 2 },
@@ -591,7 +635,7 @@ helpers.loadInteractionsIntoMap(savedInteractions, [
 assert.equal(savedInteractions.get("14,15").password, "secret");
 assert.equal(savedInteractions.has("6,7"), false);
 assert.equal(savedInteractions.get("6,8").block_type, "anti_talk");
-assert.equal(savedInteractions.get("8,9").theme, "snow");
+assert.equal(savedInteractions.get("8,9").theme, "city");
 assert.equal(savedInteractions.get("10,11").battery_watts, 40);
 assert.equal(savedInteractions.get("12,13").battery_progress, 0.25);
 assert.equal(savedInteractions.has("1,2"), false);
@@ -632,6 +676,68 @@ assert.ok(
 );
 assert.equal(helpers.serializeWorldState("WORLD").world_state_version, 1);
 
+const largeWorldState = {
+  type: "world_state",
+  world_state_encoding: "grid_dictionary_v1",
+  world: "STREAM_TEST",
+  join_request_id: "join-stream-test",
+  cleared: false,
+  foreground: Object.fromEntries(Array.from({ length: 12000 }, (_value, index) => [
+    `${index % 200},${Math.floor(index / 200)}`,
+    {
+      block_type: index % 2 === 0 ? "dirt" : "bedrock",
+      item_id: 100 + (index % 7),
+      variant: index % 11,
+    },
+  ])),
+  background: Object.fromEntries(Array.from({ length: 600 }, (_value, index) => [
+    `${index % 100},${Math.floor(index / 100)}`,
+    200 + (index % 5),
+  ])),
+  removed_foreground: [],
+  removed_background: [],
+  seeds: Array.from({ length: 300 }, (_value, index) => ({
+    x: index % 100,
+    y: Math.floor(index / 100),
+    seed_type: "dirt_seed",
+    planted_at: "2026-07-23T00:00:00.000Z",
+  })),
+  interactions: {},
+  world_lock: { is_locked: false },
+  area_locks: [],
+  active_event: {},
+};
+const streamResult = WorldStateHelpersModule.buildWorldStateStreamPackets(largeWorldState, {
+  snapshotId: "snapshot-stream-test",
+  targetPacketBytes: 48 * 1024,
+  maxPacketBytes: 64 * 1024,
+  maxChunks: 256,
+});
+const streamPackets = /** @type {Array<Record<string, any>>} */ (streamResult.packets);
+assert.ok(streamResult.snapshotBytes > 250 * 1024, "fixture must exercise a production-sized world snapshot");
+assert.ok(streamResult.chunkCount > 1, "large snapshots must be split into multiple chunks");
+assert.equal(streamPackets[0]?.type, "world_state_stream_begin");
+assert.equal(streamPackets.at(-1)?.type, "world_state_stream_end");
+for (const packet of streamPackets) {
+  assert.ok(Buffer.byteLength(JSON.stringify(packet)) <= 64 * 1024, "every world-state stream packet must stay under the hard WebSocket limit");
+  if (packet.type === "world_state_stream_chunk") {
+    assert.ok(Buffer.byteLength(JSON.stringify(packet)) <= 48 * 1024, "world-state chunks must stay under the configured target");
+  }
+}
+const streamBegin = /** @type {Record<string, any>} */ (streamPackets[0]);
+const reconstructedWorldState = /** @type {Record<string, any>} */ ({ ...streamBegin.metadata });
+for (const descriptor of streamBegin.sections) {
+  reconstructedWorldState[descriptor.name] = descriptor.kind === "array" ? [] : {};
+}
+for (const packet of streamPackets.filter((entry) => entry.type === "world_state_stream_chunk")) {
+  if (packet.section_kind === "array") {
+    reconstructedWorldState[packet.section].push(...packet.data);
+  } else {
+    Object.assign(reconstructedWorldState[packet.section], packet.data);
+  }
+}
+assert.deepEqual(reconstructedWorldState, JSON.parse(JSON.stringify(largeWorldState)));
+
 assert.equal(
   packageJson.scripts["build:server-world-state-helpers"],
   "tsc --project tsconfig.server-world-state-helpers.json && node scripts/sync_server_world_state_helpers_build.js"
@@ -669,6 +775,7 @@ assert.match(helperSource, /function loadInteractionsIntoMap/);
 assert.match(helperSource, /function loadDropsIntoMap/);
 assert.match(helperSource, /function compactWorldLayerEntriesForNetwork/);
 assert.match(helperSource, /function serializeWorldState/);
+assert.match(helperSource, /function buildWorldStateStreamPackets/);
 assert.match(generatedSource, /Generated from src\/server_world_state_helpers\.ts/);
 assert.match(generatedSource, /module\.exports = \{/);
 assert.match(serverSource, /require\("\.\/server_world_state_helpers"\)/);
@@ -697,6 +804,9 @@ assert.match(serverSource, /WorldStateHelpers\.loadDropsIntoMap/);
 assert.match(serverSource, /WorldStateHelpers\.compactWorldLayerEntriesForNetwork/);
 assert.match(serverSource, /world_state_encoding: "grid_dictionary_v1"/);
 assert.match(serverSource, /WorldStateHelpers\.serializeWorldState/);
+assert.match(serverSource, /WORLD_STATE_STREAM_MIN_CLIENT_VERSION/);
+assert.match(serverSource, /buildWorldStateStreamPackets/);
+assert.match(serverSource, /sendWorldStateToSocket/);
 assert.match(deploySource, /server_world_state_helpers\.js/);
 assert.match(deploySource, /src\/server_world_state_helpers\.ts/);
 assert.match(deploySource, /tsconfig\.server-world-state-helpers\.json/);

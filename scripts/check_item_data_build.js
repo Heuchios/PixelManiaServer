@@ -35,6 +35,48 @@ assert.equal(itemDatabase.hasItem("pickaxe"), false);
 assert.equal(itemDatabase.hasItem("shovel"), false);
 assert.equal(itemDatabase.hasItem("furnace"), false);
 
+const themeMachineCases = [
+  { itemId: "night_theme_machine", atlasItemId: 37, theme: "night", cells: [[17, 7], [18, 7]] },
+  { itemId: "snow_theme_machine", atlasItemId: 38, theme: "snow", cells: [[17, 8], [18, 8]] },
+  { itemId: "city_theme_machine", atlasItemId: 36, theme: "city", cells: [[17, 9], [18, 9]] },
+];
+for (const themeMachineCase of themeMachineCases) {
+  const definition = itemDatabase.getItemDefinition(themeMachineCase.itemId);
+  assert.equal(atlasDb.getItemIdForKey(themeMachineCase.itemId), themeMachineCase.atlasItemId);
+  assert.deepEqual(
+    Array.from(atlasDb.getItem(themeMachineCase.atlasItemId)?.atlas_coords || []),
+    themeMachineCase.cells[0],
+  );
+  assert.equal(definition?.category, "block");
+  assert.equal(definition?.rarity, "legendary");
+  assert.equal(definition?.instance_tracked, true);
+  assert.equal(definition?.block_health, 4);
+  assert.equal(definition?.no_collision, true);
+  assert.equal(definition?.collidable, false);
+  assert.equal(definition?.theme_machine_block, true);
+  assert.equal(definition?.theme_machine_theme, themeMachineCase.theme);
+  assert.equal(definition?.theme_machine_frame_seconds, 0.45);
+  assert.equal(definition?.shop_price, 125000);
+  assert.equal(definition?.break_return_to_inventory, true);
+  assert.equal(definition?.drop_rules?.seed_chance, 0);
+  assert.deepEqual(Array.from(definition?.drop_rules?.gem_range || []), [0, 0]);
+  assert.equal(definition?.atlas_item_id, themeMachineCase.atlasItemId);
+  assert.equal(definition?.atlas_source_id, 0);
+  assert.equal(definition?.source_id ?? definition?.atlas_source_id, 0);
+  assert.equal(definition?.alternative_tile, 0);
+  assert.deepEqual(Array.from(definition?.atlas_coords || []), themeMachineCase.cells[0]);
+  assert.deepEqual(Array.from(definition?.texture?.cell || []), themeMachineCase.cells[0]);
+  assert.deepEqual(Array.from(definition?.inventory_icon?.cell || []), themeMachineCase.cells[0]);
+  assert.deepEqual(
+    definition?.theme_machine_enabled_frames?.map((/** @type {any} */ frame) => Array.from(frame.cell || [])),
+    themeMachineCase.cells,
+  );
+}
+assert.match(serverSource, /\["city_theme_machine",\s*\{\s*item_id:\s*"city_theme_machine"[^]*?price:\s*125000\s*\}\]/);
+assert.match(serverSource, /new Set\(\["night", "snow", "city"\]\)/);
+assert.match(serverSource, /const configuredTheme = sanitizeWorldBackgroundTheme\(definition\.theme_machine_theme \|\| ""\)/);
+assert.match(serverSource, /update\.theme = configuredTheme \|\| sanitizeWorldBackgroundTheme\(update\.theme \|\| "night"\) \|\| "night"/);
+
 const pickaxeItemIds = [
   "stone_pickaxe",
   "golden_pickaxe",

@@ -1319,6 +1319,29 @@ class PostgresStore {
 
       CREATE INDEX IF NOT EXISTS idx_world_object_changes_player_time
       ON ${this.table("world_object_changes")}(player_id, created_at DESC);
+
+      CREATE TABLE IF NOT EXISTS ${this.table("world_honor_visits")} (
+        world_id uuid NOT NULL REFERENCES ${this.table("worlds")}(world_id) ON DELETE CASCADE,
+        visitor_player_id uuid NOT NULL REFERENCES ${this.table("players")}(player_id) ON DELETE CASCADE,
+        honor_date date NOT NULL,
+        network_hash text NOT NULL DEFAULT '',
+        dwell_ms bigint NOT NULL DEFAULT 0 CHECK (dwell_ms >= 0),
+        visit_started_at timestamptz NOT NULL,
+        visit_ended_at timestamptz NOT NULL,
+        qualified_at timestamptz NOT NULL DEFAULT now(),
+        source_instance text NOT NULL DEFAULT '',
+        PRIMARY KEY (world_id, visitor_player_id, honor_date)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_world_honor_visits_date_world
+      ON ${this.table("world_honor_visits")}(honor_date DESC, world_id);
+
+      CREATE INDEX IF NOT EXISTS idx_world_honor_visits_world_date
+      ON ${this.table("world_honor_visits")}(world_id, honor_date DESC);
+
+      CREATE INDEX IF NOT EXISTS idx_world_honor_visits_network_date
+      ON ${this.table("world_honor_visits")}(world_id, honor_date, network_hash)
+      WHERE network_hash <> '';
     `);
   }
 
@@ -4563,6 +4586,268 @@ class PostgresStore {
       [cleanWorldName]
     );
     return result.rows[0]?.world_id || null;
+  }
+
+  async recordWorldHonorVisit(entry: RuntimeRecord = {}) {
+    if (!this.isReady()) {
+      return { ok: false, recorded: false, reason: "postgres_unavailable" };
+    }
+
+    const worldName = cleanName(entry.world || entry.world_name || "").toUpperCase();
+    const visitorUsername = cleanName(entry.visitor_username || entry.username || "");
+    const networkHash = /^[a-f0-9]{64}$/i.test(cleanName(entry.network_hash || ""))
+      ? cleanName(entry.network_hash).toLowerCase()
+      : "";
+    const dwellMs = Math.max(0, toInt(entry.dwell_ms, 0));
+    const maxNetworkVisitors = Math.max(0, Math.min(50, toInt(entry.max_network_visitors, 0)));
+    const sourceInstance = cleanName(entry.source_instance || "").slice(0, 128);
+    const startedMs = Date.parse(cleanName(entry.visit_started_at || ""));
+    const endedMs = Date.parse(cleanName(entry.visit_ended_at || ""));
+    const visitStartedAt = new Date(Number.isFinite(startedMs) ? startedMs : Date.now() - dwellMs).toISOString();
+    const visitEndedAt = new Date(Number.isFinite(endedMs) ? endedMs : Date.now()).toISOString();
+
+    if (worldName === "" || visitorUsername === "") {
+      return { ok: false, recorded: false, reason: "invalid_visit" };
+    }
+
+    try {
+      const result = await this.withTransaction(async (client) => {
+        const worldId = await this.ensureWorldIdentity(client, worldName);
+        const playerId = await this.ensurePlayerIdentityForExistingAccount(client, visitorUsername, worldName);
+        if (!worldId || !playerId) {
+          return { ok: false, recorded: false, reason: "identity_missing" };
+        }
+
+        const dateResult = await client.query(`
+          SELECT to_char((now() AT TIME ZONE 'UTC')::date, 'YYYY-MM-DD') AS honor_date
+        `);
+        const honorDate = cleanName(dateResult.rows[0]?.honor_date || "");
+        if (honorDate === "") {
+          return { ok: false, recorded: false, reason: "honor_date_unavailable" };
+        }
+
+        if (networkHash !== "") {
+          await client.query(
+            "SELECT pg_advisory_xact_lock(hashtextextended($1, 0))",
+            [`world_honor:${worldId}:${honorDate}:${networkHash}`]
+          );
+        }
+
+        const existingResult = await client.query(
+          `
+          SELECT honor_date::text AS honor_date
+            FROM ${this.table("world_honor_visits")}
+           WHERE world_id = $1
+             AND visitor_player_id = $2
+             AND honor_date = $3::date
+           LIMIT 1
+          `,
+          [worldId, playerId, honorDate]
+        );
+        if (existingResult.rows[0]) {
+          return {
+            ok: true,
+            recorded: false,
+            duplicate: true,
+            honor_date: honorDate,
+            reason: "already_counted_today",
+          };
+        }
+
+        if (networkHash !== "" && maxNetworkVisitors > 0) {
+          const networkResult = await client.query(
+            `
+            SELECT COUNT(*)::integer AS visitor_count
+              FROM ${this.table("world_honor_visits")}
+             WHERE world_id = $1
+               AND honor_date = $2::date
+               AND network_hash = $3
+            `,
+            [worldId, honorDate, networkHash]
+          );
+          const networkVisitorCount = toInt(networkResult.rows[0]?.visitor_count, 0);
+          if (networkVisitorCount >= maxNetworkVisitors) {
+            return {
+              ok: true,
+              recorded: false,
+              network_capped: true,
+              honor_date: honorDate,
+              reason: "network_daily_cap",
+            };
+          }
+        }
+
+        const insertResult = await client.query(
+          `
+          INSERT INTO ${this.table("world_honor_visits")} (
+            world_id,
+            visitor_player_id,
+            honor_date,
+            network_hash,
+            dwell_ms,
+            visit_started_at,
+            visit_ended_at,
+            qualified_at,
+            source_instance
+          )
+          VALUES ($1, $2, $3::date, $4, $5, $6::timestamptz, $7::timestamptz, now(), $8)
+          ON CONFLICT (world_id, visitor_player_id, honor_date) DO NOTHING
+          RETURNING honor_date::text AS honor_date
+          `,
+          [
+            worldId,
+            playerId,
+            honorDate,
+            networkHash,
+            dwellMs,
+            visitStartedAt,
+            visitEndedAt,
+            sourceInstance,
+          ]
+        );
+
+        return {
+          ok: true,
+          recorded: Boolean(insertResult.rows[0]),
+          duplicate: !insertResult.rows[0],
+          honor_date: honorDate,
+          reason: insertResult.rows[0] ? "" : "already_counted_today",
+        };
+      });
+
+      return result || { ok: false, recorded: false, reason: "postgres_unavailable" };
+    } catch (error) {
+      this.logger("[postgres] world honor visit record failed:", getErrorMessage(error));
+      return { ok: false, recorded: false, reason: "database_error" };
+    }
+  }
+
+  async getWorldHonorLeaderboard(period: unknown, options: RuntimeRecord = {}) {
+    if (!this.isReady()) {
+      return { ok: false, period: "today", entries: [], reason: "postgres_unavailable" };
+    }
+
+    const requestedPeriod = cleanName(period || "today").toLowerCase();
+    const normalizedPeriod = requestedPeriod === "yesterday" || requestedPeriod === "overall"
+      ? requestedPeriod
+      : "today";
+    const limit = Math.max(1, Math.min(50, toInt(options.limit, 10)));
+    const halfLifeDays = Math.max(1, Math.min(365, toInt(options.half_life_days, 30)));
+    const inactivityDays = Math.max(1, Math.min(730, toInt(options.inactivity_days, 60)));
+
+    try {
+      let result: QueryResult<any>;
+      if (normalizedPeriod === "overall") {
+        result = await this.queryReadWithRetry(
+          "world honor overall leaderboard",
+          `
+          WITH clock AS (
+            SELECT (now() AT TIME ZONE 'UTC')::date AS today
+          ),
+          scores AS (
+            SELECT w.world_name::text AS world_name,
+                   SUM(
+                     POWER(
+                       0.5::double precision,
+                       GREATEST(0, clock.today - hv.honor_date)::double precision / $1::double precision
+                     )
+                   ) AS honor_score,
+                   COUNT(*)::bigint AS qualified_visitors,
+                   MAX(hv.honor_date) AS last_honored_on
+              FROM ${this.table("world_honor_visits")} hv
+              JOIN ${this.table("worlds")} w
+                ON w.world_id = hv.world_id
+               AND w.is_active = true
+              JOIN ${this.table("world_locks")} wl
+                ON wl.world_id = hv.world_id
+               AND wl.is_locked = true
+              CROSS JOIN clock
+             WHERE hv.honor_date >= clock.today - $2::integer
+             GROUP BY w.world_name
+          ),
+          ranked AS (
+            SELECT ROW_NUMBER() OVER (
+                     ORDER BY honor_score DESC, qualified_visitors DESC, last_honored_on DESC, world_name ASC
+                   )::integer AS rank,
+                   world_name,
+                   honor_score,
+                   qualified_visitors,
+                   last_honored_on
+              FROM scores
+          )
+          SELECT rank,
+                 world_name,
+                 honor_score,
+                 qualified_visitors,
+                 last_honored_on::text AS last_honored_on
+            FROM ranked
+           ORDER BY rank ASC
+           LIMIT $3
+          `,
+          [halfLifeDays, inactivityDays, limit]
+        );
+      } else {
+        const dayOffset = normalizedPeriod === "yesterday" ? 1 : 0;
+        result = await this.queryReadWithRetry(
+          `world honor ${normalizedPeriod} leaderboard`,
+          `
+          WITH clock AS (
+            SELECT (now() AT TIME ZONE 'UTC')::date AS today
+          ),
+          scores AS (
+            SELECT w.world_name::text AS world_name,
+                   COUNT(*)::double precision AS honor_score,
+                   COUNT(*)::bigint AS qualified_visitors,
+                   MAX(hv.honor_date) AS last_honored_on
+              FROM ${this.table("world_honor_visits")} hv
+              JOIN ${this.table("worlds")} w
+                ON w.world_id = hv.world_id
+               AND w.is_active = true
+              JOIN ${this.table("world_locks")} wl
+                ON wl.world_id = hv.world_id
+               AND wl.is_locked = true
+              CROSS JOIN clock
+             WHERE hv.honor_date = clock.today - $1::integer
+             GROUP BY w.world_name
+          ),
+          ranked AS (
+            SELECT ROW_NUMBER() OVER (
+                     ORDER BY honor_score DESC, world_name ASC
+                   )::integer AS rank,
+                   world_name,
+                   honor_score,
+                   qualified_visitors,
+                   last_honored_on
+              FROM scores
+          )
+          SELECT rank,
+                 world_name,
+                 honor_score,
+                 qualified_visitors,
+                 last_honored_on::text AS last_honored_on
+            FROM ranked
+           ORDER BY rank ASC
+           LIMIT $2
+          `,
+          [dayOffset, limit]
+        );
+      }
+
+      return {
+        ok: true,
+        period: normalizedPeriod,
+        entries: result.rows.map((row) => ({
+          rank: Math.max(1, toInt(row.rank, 1)),
+          world_name: cleanName(row.world_name || "").toUpperCase(),
+          honor_score: Math.max(0, Number(row.honor_score) || 0),
+          qualified_visitors: Math.max(0, toInt(row.qualified_visitors, 0)),
+          last_honored_on: cleanName(row.last_honored_on || ""),
+        })),
+      };
+    } catch (error) {
+      this.logger(`[postgres] world honor ${normalizedPeriod} leaderboard failed:`, getErrorMessage(error));
+      return { ok: false, period: normalizedPeriod, entries: [], reason: "database_error" };
+    }
   }
 
   async upsertWorldState(client: PoolClient, worldName: unknown, worldState: RuntimeRecord) {

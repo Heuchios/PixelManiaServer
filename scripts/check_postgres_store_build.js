@@ -34,6 +34,8 @@ assert.equal(typeof store.saveWorldStateWithWorldChanges, "function");
 assert.equal(typeof store.listOwnedWorldLocks, "function");
 assert.equal(typeof store.auditIntegrityHashes, "function");
 assert.equal(typeof store.getAdminMonitoringDashboard, "function");
+assert.equal(typeof store.recordWorldHonorVisit, "function");
+assert.equal(typeof store.getWorldHonorLeaderboard, "function");
 
 assert.equal(PostgresStore.INTEGRITY_HASH_ALGORITHM, "sha256:v1");
 assert.equal(typeof PostgresStore.applyCanonicalInventoryRowsToPlayerState, "function");
@@ -101,6 +103,10 @@ assert.match(postgresStoreSource, /queryReadWithRetry\("world states load"/);
 assert.match(postgresStoreSource, /world state load failed after retries:[\s\S]*throw postgresError\(error\)/);
 assert.match(postgresStoreSource, /function assertPostgresOperationCanContinue/);
 assert.match(postgresStoreSource, /concurrent \? this\.withTransactionNow\(work\) : this\.withTransaction\(work\)/);
+assert.match(postgresStoreSource, /world_honor_visits/);
+assert.match(postgresStoreSource, /async recordWorldHonorVisit/);
+assert.match(postgresStoreSource, /async getWorldHonorLeaderboard/);
+assert.match(postgresStoreSource, /pg_advisory_xact_lock/);
 assert.match(postgresStoreSource, /revokeRotatedToken/);
 assert.match(postgresStoreSource, /revokeOtherSessions/);
 assert.match(postgresStoreSource, /PIXELMANIA_OPERATION_ABORTED/);
@@ -113,6 +119,8 @@ assert.match(generatedSource, /applyCanonicalInventoryRowsToPlayerState/);
 assert.match(generatedSource, /async loadPlayerState/);
 assert.match(generatedSource, /async queryReadWithRetry/);
 assert.match(generatedSource, /saveWorldStateWithWorldChanges/);
+assert.match(generatedSource, /async recordWorldHonorVisit/);
+assert.match(generatedSource, /async getWorldHonorLeaderboard/);
 
 assert.match(deploySource, /src\/postgres_store\.ts/);
 assert.match(deploySource, /tsconfig\.postgres-store\.json/);

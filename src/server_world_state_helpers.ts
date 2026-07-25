@@ -130,6 +130,7 @@ interface WorldStateHelpers {
   normalizeRemovedBlockEntry(rawEntry: unknown): JsonRecord | null;
   normalizeSeedEntry(rawEntry: unknown): JsonRecord | null;
   normalizeWorldEventTileEntry(rawEntry: unknown, fallbackEventId?: unknown): JsonRecord | null;
+  needsSeedTimestampMigration(rawState: unknown): boolean;
   sanitizeBulletinBoardMessage(rawMessage: unknown): JsonRecord | null;
   sanitizeBulletinBoardState(rawEntry: unknown, worldName: unknown, x: unknown, y: unknown): JsonRecord;
   sanitizeBlockUpdate(data: JsonRecord, worldName: unknown): JsonRecord | null;
@@ -164,8 +165,197 @@ interface WorldStateHelpers {
   serializeWorldState(worldName: unknown): JsonRecord;
 }
 
+interface WorldStateStreamOptions {
+  snapshotId?: unknown;
+  targetPacketBytes?: unknown;
+  maxPacketBytes?: unknown;
+  maxChunks?: unknown;
+}
+
+interface WorldStateStreamResult {
+  packets: JsonRecord[];
+  snapshotBytes: number;
+  chunkCount: number;
+  sectionCount: number;
+}
+
 function isRecord(value: unknown): value is JsonRecord {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
+}
+
+function getJsonByteLength(value: unknown): number {
+  const serialized = JSON.stringify(value);
+  if (serialized === undefined) {
+    throw new Error("World state stream value is not JSON serializable.");
+  }
+  return Buffer.byteLength(serialized);
+}
+
+function buildWorldStateStreamPackets(
+  rawState: unknown,
+  options: WorldStateStreamOptions = {}
+): WorldStateStreamResult {
+  const serializedState = JSON.stringify(rawState);
+  if (!serializedState) {
+    throw new Error("World state stream requires a JSON object.");
+  }
+  const state = JSON.parse(serializedState) as unknown;
+  if (!isRecord(state)) {
+    throw new Error("World state stream requires a JSON object.");
+  }
+
+  const maxPacketBytes = Math.max(4096, Math.trunc(Number(options.maxPacketBytes) || 64 * 1024));
+  const targetPacketBytes = Math.min(
+    maxPacketBytes,
+    Math.max(4096, Math.trunc(Number(options.targetPacketBytes) || 48 * 1024))
+  );
+  const maxChunks = Math.max(1, Math.min(4096, Math.trunc(Number(options.maxChunks) || 256)));
+  const snapshotId = String(options.snapshotId || "").trim().slice(0, 128);
+  if (!snapshotId) {
+    throw new Error("World state stream requires a snapshot ID.");
+  }
+
+  const world = String(state.world || "").trim().slice(0, 64);
+  const joinRequestId = String(state.join_request_id || "").trim().slice(0, 128);
+  const metadata: JsonRecord = {};
+  const sections: JsonRecord[] = [];
+  const sectionValues: Array<{ name: string; kind: "array" | "dictionary"; value: unknown[] | JsonRecord }> = [];
+
+  for (const [name, value] of Object.entries(state)) {
+    if (Array.isArray(value)) {
+      sections.push({ name, kind: "array" });
+      sectionValues.push({ name, kind: "array", value });
+    } else if (isRecord(value)) {
+      sections.push({ name, kind: "dictionary" });
+      sectionValues.push({ name, kind: "dictionary", value });
+    } else {
+      metadata[name] = value;
+    }
+  }
+
+  const chunkPayloads: JsonRecord[] = [];
+  const makeChunkEnvelope = (
+    sectionName: string,
+    sectionKind: "array" | "dictionary",
+    data: unknown[] | JsonRecord
+  ): JsonRecord => ({
+    type: "world_state_stream_chunk",
+    stream_version: 1,
+    snapshot_id: snapshotId,
+    world,
+    join_request_id: joinRequestId,
+    chunk_index: maxChunks,
+    chunk_count: maxChunks,
+    section: sectionName,
+    section_kind: sectionKind,
+    data,
+  });
+
+  for (const section of sectionValues) {
+    const emptyData: unknown[] | JsonRecord = section.kind === "array" ? [] : {};
+    const emptyPacketBytes = getJsonByteLength(makeChunkEnvelope(section.name, section.kind, emptyData));
+    if (emptyPacketBytes > maxPacketBytes) {
+      throw new Error(`World state stream envelope exceeds ${maxPacketBytes} bytes for section ${section.name}.`);
+    }
+
+    if (section.kind === "array") {
+      let data: unknown[] = [];
+      let contentBytes = 0;
+      for (const value of section.value as unknown[]) {
+        const serializedValue = JSON.stringify(value);
+        const valueBytes = Buffer.byteLength(serializedValue === undefined ? "null" : serializedValue);
+        const candidateContentBytes = contentBytes + (data.length > 0 ? 1 : 0) + valueBytes;
+        if (data.length > 0 && emptyPacketBytes + candidateContentBytes > targetPacketBytes) {
+          chunkPayloads.push(makeChunkEnvelope(section.name, section.kind, data));
+          data = [];
+          contentBytes = 0;
+        }
+        contentBytes += (data.length > 0 ? 1 : 0) + valueBytes;
+        data.push(value);
+        if (emptyPacketBytes + contentBytes > maxPacketBytes) {
+          throw new Error(`World state stream array entry exceeds ${maxPacketBytes} bytes in section ${section.name}.`);
+        }
+      }
+      if (data.length > 0) {
+        chunkPayloads.push(makeChunkEnvelope(section.name, section.kind, data));
+      }
+      continue;
+    }
+
+    let data: JsonRecord = {};
+    let entryCount = 0;
+    let contentBytes = 0;
+    for (const [key, value] of Object.entries(section.value as JsonRecord)) {
+      const serializedKey = JSON.stringify(key);
+      const serializedValue = JSON.stringify(value);
+      if (serializedValue === undefined) continue;
+      const entryBytes = Buffer.byteLength(serializedKey) + 1 + Buffer.byteLength(serializedValue);
+      const candidateContentBytes = contentBytes + (entryCount > 0 ? 1 : 0) + entryBytes;
+      if (entryCount > 0 && emptyPacketBytes + candidateContentBytes > targetPacketBytes) {
+        chunkPayloads.push(makeChunkEnvelope(section.name, section.kind, data));
+        data = {};
+        entryCount = 0;
+        contentBytes = 0;
+      }
+      contentBytes += (entryCount > 0 ? 1 : 0) + entryBytes;
+      data[key] = value;
+      entryCount += 1;
+      if (emptyPacketBytes + contentBytes > maxPacketBytes) {
+        throw new Error(`World state stream dictionary entry exceeds ${maxPacketBytes} bytes in section ${section.name}.`);
+      }
+    }
+    if (entryCount > 0) {
+      chunkPayloads.push(makeChunkEnvelope(section.name, section.kind, data));
+    }
+  }
+
+  if (chunkPayloads.length > maxChunks) {
+    throw new Error(`World state stream requires ${chunkPayloads.length} chunks; maximum is ${maxChunks}.`);
+  }
+
+  const chunkCount = chunkPayloads.length;
+  const chunks: JsonRecord[] = chunkPayloads.map((packet, index): JsonRecord => ({
+    ...packet,
+    chunk_index: index,
+    chunk_count: chunkCount,
+  }));
+  const snapshotBytes = Buffer.byteLength(serializedState);
+  const beginPacket: JsonRecord = {
+    type: "world_state_stream_begin",
+    stream_version: 1,
+    snapshot_id: snapshotId,
+    world,
+    join_request_id: joinRequestId,
+    chunk_count: chunkCount,
+    section_count: sections.length,
+    snapshot_bytes: snapshotBytes,
+    sections,
+    metadata,
+  };
+  const endPacket: JsonRecord = {
+    type: "world_state_stream_end",
+    stream_version: 1,
+    snapshot_id: snapshotId,
+    world,
+    join_request_id: joinRequestId,
+    chunk_count: chunkCount,
+    snapshot_bytes: snapshotBytes,
+  };
+  const packets = [beginPacket, ...chunks, endPacket];
+
+  for (const packet of packets) {
+    const packetBytes = getJsonByteLength(packet);
+    if (packetBytes > maxPacketBytes) {
+      throw new Error(`World state stream packet ${String(packet.type || "unknown")} is ${packetBytes} bytes; maximum is ${maxPacketBytes}.`);
+    }
+  }
+
+  return {
+    packets,
+    snapshotBytes,
+    chunkCount,
+    sectionCount: sections.length,
+  };
 }
 
 function hasOwn(source: JsonRecord, key: string): boolean {
@@ -593,6 +783,46 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
       planted_at: plantedAt,
       mutated: Boolean(rawEntry.mutated),
     };
+  }
+
+  function serializeSeedForSave(seed: unknown): unknown {
+    const serialized = config.serializeSeedForMessage(seed);
+    if (!isRecord(seed) || !isRecord(serialized)) return serialized;
+
+    let plantedAt = Number(seed.planted_at || 0);
+    if (!Number.isFinite(plantedAt) || plantedAt <= 0) {
+      const maxGrowTime = Math.max(
+        1,
+        Math.min(86400, Number(serialized.max_grow_time) || config.getSeedConfiguredGrowTime(serialized.seed_type)),
+      );
+      const growTime = Boolean(serialized.mature)
+        ? 0
+        : Math.max(0, Math.min(maxGrowTime, Number(serialized.grow_time) || maxGrowTime));
+      plantedAt = Date.now() - Math.max(0, maxGrowTime - growTime) * 1000;
+    }
+
+    return {
+      ...serialized,
+      planted_at: plantedAt,
+    };
+  }
+
+  function needsSeedTimestampMigration(rawState: unknown): boolean {
+    if (!isRecord(rawState)) return false;
+    const rawSeeds = Array.isArray(rawState.seeds)
+      ? rawState.seeds
+      : (Array.isArray(rawState.planted_seeds) ? rawState.planted_seeds : []);
+
+    return rawSeeds.some((rawSeed: unknown) => {
+      if (!isRecord(rawSeed)) return false;
+      const seedType = clampString(rawSeed.seed_type || rawSeed.type || "");
+      if (seedType === "" || !itemDatabase.hasItem(seedType) || resolveInventoryCategory(seedType) !== "seed") {
+        return false;
+      }
+
+      const plantedAt = Number(rawSeed.planted_at || 0);
+      return !Number.isFinite(plantedAt) || plantedAt <= 0;
+    });
   }
 
   function loadGridArrayIntoMap(target: Map<unknown, unknown>, rawEntries: unknown, normalizeEntry: NormalizeEntryFunction): void {
@@ -2171,7 +2401,7 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
       background_blocks: Array.from((state.background instanceof Map ? state.background : new Map()).values()),
       removed_foreground: state.cleared ? [] : Array.from((state.removed_foreground instanceof Map ? state.removed_foreground : new Map()).values()),
       removed_background: state.cleared ? [] : Array.from((state.removed_background instanceof Map ? state.removed_background : new Map()).values()),
-      seeds: Array.from((state.seeds instanceof Map ? state.seeds : new Map()).values()).map(config.serializeSeedForMessage),
+      seeds: Array.from((state.seeds instanceof Map ? state.seeds : new Map()).values()).map(serializeSeedForSave),
       electrical_layer: config.getElectricalLayerForSave(state),
       electrical_devices: config.getElectricalDevicesForSave(state),
       interactions: Array.from((state.interactions instanceof Map ? state.interactions : new Map()).values()),
@@ -2210,6 +2440,7 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
     normalizeRemovedBlockEntry,
     normalizeSeedEntry,
     normalizeWorldEventTileEntry,
+    needsSeedTimestampMigration,
     sanitizeBulletinBoardMessage,
     sanitizeBulletinBoardState,
     sanitizeBlockUpdate,
@@ -2246,5 +2477,6 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
 }
 
 export = {
+  buildWorldStateStreamPackets,
   createWorldStateHelpers,
 };

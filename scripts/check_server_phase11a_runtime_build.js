@@ -67,6 +67,23 @@ const playerNetworkStats = {
   inbound_messages_received: 2,
   inbound_bytes_received: 64,
   inbound_messages_oversize_rejected: 0,
+  inbound_message_queue_pending: 3,
+  inbound_message_queue_pending_max: 8,
+  inbound_message_queue_max_socket_depth: 5,
+  inbound_message_queue_wait_samples: 4,
+  inbound_message_queue_wait_total_ms: 50,
+  inbound_message_queue_wait_max_ms: 25,
+  player_position_queue_wait_samples: 2,
+  player_position_queue_wait_total_ms: 30,
+  player_position_queue_wait_max_ms: 20,
+  player_position_queue_wait_over_250ms: 1,
+  player_position_queue_last_delay: {
+    at: "2026-07-19T00:00:02.000Z",
+    player_id: "player-1",
+    queue_wait_ms: 275,
+    queue_depth_at_enqueue: 4,
+    socket_queue_depth_at_start: 3,
+  },
   inbound_packet_type_stats: {},
   outbound_packet_type_stats: {},
   rate_limit_checks_by_bucket: { "message:player_position": 12, empty: 0 },
@@ -289,6 +306,15 @@ runtime.recordPacketTypeSize("inbound", "PLAYER_POSITION", 64);
 const networkSnapshot = /** @type {Record<string, any>} */ (runtime.getPlayerNetworkStatsSnapshot());
 assert.equal(networkSnapshot.inbound_messages_received, 2);
 assert.equal(networkSnapshot.inbound_packet_type_stats.player_position.count, 1);
+assert.equal(networkSnapshot.inbound_message_queue_pending, 3);
+assert.equal(networkSnapshot.inbound_message_queue_pending_max, 8);
+assert.equal(networkSnapshot.inbound_message_queue_max_socket_depth, 5);
+assert.equal(networkSnapshot.inbound_message_queue_wait_avg_ms, 12.5);
+assert.equal(networkSnapshot.inbound_message_queue_wait_max_ms, 25);
+assert.equal(networkSnapshot.player_position_queue_wait_avg_ms, 15);
+assert.equal(networkSnapshot.player_position_queue_wait_max_ms, 20);
+assert.equal(networkSnapshot.player_position_queue_wait_over_250ms, 1);
+assert.equal(networkSnapshot.player_position_queue_last_delay.queue_wait_ms, 275);
 assert.equal(networkSnapshot.rate_limit_checks_by_bucket["message:player_position"], 12);
 assert.equal(networkSnapshot.rate_limit_rejections_by_bucket["message:player_position"], 2);
 assert.equal(networkSnapshot.rate_limit_checks_by_subject_kind.account, 12);

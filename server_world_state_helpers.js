@@ -3,6 +3,161 @@
 function isRecord(value) {
     return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
+function getJsonByteLength(value) {
+    const serialized = JSON.stringify(value);
+    if (serialized === undefined) {
+        throw new Error("World state stream value is not JSON serializable.");
+    }
+    return Buffer.byteLength(serialized);
+}
+function buildWorldStateStreamPackets(rawState, options = {}) {
+    const serializedState = JSON.stringify(rawState);
+    if (!serializedState) {
+        throw new Error("World state stream requires a JSON object.");
+    }
+    const state = JSON.parse(serializedState);
+    if (!isRecord(state)) {
+        throw new Error("World state stream requires a JSON object.");
+    }
+    const maxPacketBytes = Math.max(4096, Math.trunc(Number(options.maxPacketBytes) || 64 * 1024));
+    const targetPacketBytes = Math.min(maxPacketBytes, Math.max(4096, Math.trunc(Number(options.targetPacketBytes) || 48 * 1024)));
+    const maxChunks = Math.max(1, Math.min(4096, Math.trunc(Number(options.maxChunks) || 256)));
+    const snapshotId = String(options.snapshotId || "").trim().slice(0, 128);
+    if (!snapshotId) {
+        throw new Error("World state stream requires a snapshot ID.");
+    }
+    const world = String(state.world || "").trim().slice(0, 64);
+    const joinRequestId = String(state.join_request_id || "").trim().slice(0, 128);
+    const metadata = {};
+    const sections = [];
+    const sectionValues = [];
+    for (const [name, value] of Object.entries(state)) {
+        if (Array.isArray(value)) {
+            sections.push({ name, kind: "array" });
+            sectionValues.push({ name, kind: "array", value });
+        }
+        else if (isRecord(value)) {
+            sections.push({ name, kind: "dictionary" });
+            sectionValues.push({ name, kind: "dictionary", value });
+        }
+        else {
+            metadata[name] = value;
+        }
+    }
+    const chunkPayloads = [];
+    const makeChunkEnvelope = (sectionName, sectionKind, data) => ({
+        type: "world_state_stream_chunk",
+        stream_version: 1,
+        snapshot_id: snapshotId,
+        world,
+        join_request_id: joinRequestId,
+        chunk_index: maxChunks,
+        chunk_count: maxChunks,
+        section: sectionName,
+        section_kind: sectionKind,
+        data,
+    });
+    for (const section of sectionValues) {
+        const emptyData = section.kind === "array" ? [] : {};
+        const emptyPacketBytes = getJsonByteLength(makeChunkEnvelope(section.name, section.kind, emptyData));
+        if (emptyPacketBytes > maxPacketBytes) {
+            throw new Error(`World state stream envelope exceeds ${maxPacketBytes} bytes for section ${section.name}.`);
+        }
+        if (section.kind === "array") {
+            let data = [];
+            let contentBytes = 0;
+            for (const value of section.value) {
+                const serializedValue = JSON.stringify(value);
+                const valueBytes = Buffer.byteLength(serializedValue === undefined ? "null" : serializedValue);
+                const candidateContentBytes = contentBytes + (data.length > 0 ? 1 : 0) + valueBytes;
+                if (data.length > 0 && emptyPacketBytes + candidateContentBytes > targetPacketBytes) {
+                    chunkPayloads.push(makeChunkEnvelope(section.name, section.kind, data));
+                    data = [];
+                    contentBytes = 0;
+                }
+                contentBytes += (data.length > 0 ? 1 : 0) + valueBytes;
+                data.push(value);
+                if (emptyPacketBytes + contentBytes > maxPacketBytes) {
+                    throw new Error(`World state stream array entry exceeds ${maxPacketBytes} bytes in section ${section.name}.`);
+                }
+            }
+            if (data.length > 0) {
+                chunkPayloads.push(makeChunkEnvelope(section.name, section.kind, data));
+            }
+            continue;
+        }
+        let data = {};
+        let entryCount = 0;
+        let contentBytes = 0;
+        for (const [key, value] of Object.entries(section.value)) {
+            const serializedKey = JSON.stringify(key);
+            const serializedValue = JSON.stringify(value);
+            if (serializedValue === undefined)
+                continue;
+            const entryBytes = Buffer.byteLength(serializedKey) + 1 + Buffer.byteLength(serializedValue);
+            const candidateContentBytes = contentBytes + (entryCount > 0 ? 1 : 0) + entryBytes;
+            if (entryCount > 0 && emptyPacketBytes + candidateContentBytes > targetPacketBytes) {
+                chunkPayloads.push(makeChunkEnvelope(section.name, section.kind, data));
+                data = {};
+                entryCount = 0;
+                contentBytes = 0;
+            }
+            contentBytes += (entryCount > 0 ? 1 : 0) + entryBytes;
+            data[key] = value;
+            entryCount += 1;
+            if (emptyPacketBytes + contentBytes > maxPacketBytes) {
+                throw new Error(`World state stream dictionary entry exceeds ${maxPacketBytes} bytes in section ${section.name}.`);
+            }
+        }
+        if (entryCount > 0) {
+            chunkPayloads.push(makeChunkEnvelope(section.name, section.kind, data));
+        }
+    }
+    if (chunkPayloads.length > maxChunks) {
+        throw new Error(`World state stream requires ${chunkPayloads.length} chunks; maximum is ${maxChunks}.`);
+    }
+    const chunkCount = chunkPayloads.length;
+    const chunks = chunkPayloads.map((packet, index) => ({
+        ...packet,
+        chunk_index: index,
+        chunk_count: chunkCount,
+    }));
+    const snapshotBytes = Buffer.byteLength(serializedState);
+    const beginPacket = {
+        type: "world_state_stream_begin",
+        stream_version: 1,
+        snapshot_id: snapshotId,
+        world,
+        join_request_id: joinRequestId,
+        chunk_count: chunkCount,
+        section_count: sections.length,
+        snapshot_bytes: snapshotBytes,
+        sections,
+        metadata,
+    };
+    const endPacket = {
+        type: "world_state_stream_end",
+        stream_version: 1,
+        snapshot_id: snapshotId,
+        world,
+        join_request_id: joinRequestId,
+        chunk_count: chunkCount,
+        snapshot_bytes: snapshotBytes,
+    };
+    const packets = [beginPacket, ...chunks, endPacket];
+    for (const packet of packets) {
+        const packetBytes = getJsonByteLength(packet);
+        if (packetBytes > maxPacketBytes) {
+            throw new Error(`World state stream packet ${String(packet.type || "unknown")} is ${packetBytes} bytes; maximum is ${maxPacketBytes}.`);
+        }
+    }
+    return {
+        packets,
+        snapshotBytes,
+        chunkCount,
+        sectionCount: sections.length,
+    };
+}
 function hasOwn(source, key) {
     return Object.prototype.hasOwnProperty.call(source, key);
 }
@@ -408,6 +563,40 @@ function createWorldStateHelpers(config) {
             planted_at: plantedAt,
             mutated: Boolean(rawEntry.mutated),
         };
+    }
+    function serializeSeedForSave(seed) {
+        const serialized = config.serializeSeedForMessage(seed);
+        if (!isRecord(seed) || !isRecord(serialized))
+            return serialized;
+        let plantedAt = Number(seed.planted_at || 0);
+        if (!Number.isFinite(plantedAt) || plantedAt <= 0) {
+            const maxGrowTime = Math.max(1, Math.min(86400, Number(serialized.max_grow_time) || config.getSeedConfiguredGrowTime(serialized.seed_type)));
+            const growTime = Boolean(serialized.mature)
+                ? 0
+                : Math.max(0, Math.min(maxGrowTime, Number(serialized.grow_time) || maxGrowTime));
+            plantedAt = Date.now() - Math.max(0, maxGrowTime - growTime) * 1000;
+        }
+        return {
+            ...serialized,
+            planted_at: plantedAt,
+        };
+    }
+    function needsSeedTimestampMigration(rawState) {
+        if (!isRecord(rawState))
+            return false;
+        const rawSeeds = Array.isArray(rawState.seeds)
+            ? rawState.seeds
+            : (Array.isArray(rawState.planted_seeds) ? rawState.planted_seeds : []);
+        return rawSeeds.some((rawSeed) => {
+            if (!isRecord(rawSeed))
+                return false;
+            const seedType = clampString(rawSeed.seed_type || rawSeed.type || "");
+            if (seedType === "" || !itemDatabase.hasItem(seedType) || resolveInventoryCategory(seedType) !== "seed") {
+                return false;
+            }
+            const plantedAt = Number(rawSeed.planted_at || 0);
+            return !Number.isFinite(plantedAt) || plantedAt <= 0;
+        });
     }
     function loadGridArrayIntoMap(target, rawEntries, normalizeEntry) {
         if (!(target instanceof Map) || !Array.isArray(rawEntries) || typeof normalizeEntry !== "function")
@@ -1900,7 +2089,7 @@ function createWorldStateHelpers(config) {
             background_blocks: Array.from((state.background instanceof Map ? state.background : new Map()).values()),
             removed_foreground: state.cleared ? [] : Array.from((state.removed_foreground instanceof Map ? state.removed_foreground : new Map()).values()),
             removed_background: state.cleared ? [] : Array.from((state.removed_background instanceof Map ? state.removed_background : new Map()).values()),
-            seeds: Array.from((state.seeds instanceof Map ? state.seeds : new Map()).values()).map(config.serializeSeedForMessage),
+            seeds: Array.from((state.seeds instanceof Map ? state.seeds : new Map()).values()).map(serializeSeedForSave),
             electrical_layer: config.getElectricalLayerForSave(state),
             electrical_devices: config.getElectricalDevicesForSave(state),
             interactions: Array.from((state.interactions instanceof Map ? state.interactions : new Map()).values()),
@@ -1938,6 +2127,7 @@ function createWorldStateHelpers(config) {
         normalizeRemovedBlockEntry,
         normalizeSeedEntry,
         normalizeWorldEventTileEntry,
+        needsSeedTimestampMigration,
         sanitizeBulletinBoardMessage,
         sanitizeBulletinBoardState,
         sanitizeBlockUpdate,
@@ -1973,5 +2163,6 @@ function createWorldStateHelpers(config) {
     };
 }
 module.exports = {
+    buildWorldStateStreamPackets,
     createWorldStateHelpers,
 };

@@ -204,6 +204,7 @@ function createServerPhase8PlayerSessionRoutes(deps) {
                 }
             }
             if (player.joined_world && oldWorld && oldWorld !== newWorld) {
+                await deps.endWorldHonorVisit(player, oldWorld, "world_change");
                 await deps.appendCctvWorldEvent(oldWorld, player, "leave", { reason: "world_change" });
                 deps.broadcastSystemToWorld(oldWorld, `${player.name} left ${oldWorld}`, context.playerId);
                 deps.broadcastToWorld(oldWorld, deps.buildPublicPlayerPresencePayload("player_left", player, oldWorld), context.playerId);
@@ -257,7 +258,7 @@ function createServerPhase8PlayerSessionRoutes(deps) {
             }
             deps.sendJson(socket, joinWorldPayload);
             deps.sendWorldPopulationUpdate(socket, player.world);
-            deps.sendJson(socket, deps.buildWorldStateMessage(player.world, {
+            deps.sendWorldStateToSocket(socket, player, player.world, {
                 receiver_player: player,
                 respawn_player: true,
                 force_player_position: true,
@@ -272,9 +273,10 @@ function createServerPhase8PlayerSessionRoutes(deps) {
                 x: joinSpawn.x,
                 y: joinSpawn.y,
                 join_request_id: joinRequestId,
-            }));
+            });
             refreshJoinWorldDropsAfterState(socket, player, player.world);
             deps.sendActiveWorldEventState(socket, player.world);
+            await deps.beginWorldHonorVisit(socket, player, player.world);
             deps.publishPlayerPresenceUpdate(socket, player, player.world, "player_joined", context.playerId);
             deps.broadcastSystemToWorld(player.world, `${player.name} joined ${player.world}`, context.playerId);
             deps.broadcastWorldPopulationUpdate(player.world);
@@ -299,6 +301,9 @@ function createServerPhase8PlayerSessionRoutes(deps) {
         const requestedWorld = deps.cleanWorld(data.world || player.world || "");
         const currentWorld = deps.cleanWorld(player.world || "");
         if (!player.joined_world || !currentWorld || (requestedWorld && requestedWorld !== currentWorld)) {
+            if (player.joined_world && player.world) {
+                await deps.endWorldHonorVisit(player, player.world, "leave_world_state_mismatch");
+            }
             player.joined_world = false;
             deps.clearPlayerWorldEntrySpawnGuard(player);
             deps.updatePlayerWorldIndex(player);
@@ -323,6 +328,7 @@ function createServerPhase8PlayerSessionRoutes(deps) {
             });
             return;
         }
+        await deps.endWorldHonorVisit(player, currentWorld, "leave_world");
         await deps.appendCctvWorldEvent(currentWorld, player, "leave", { reason: "leave_world" });
         deps.broadcastToWorld(currentWorld, deps.buildPublicPlayerPresencePayload("player_left", player, currentWorld), context.playerId);
         deps.broadcastSystemToWorld(currentWorld, `${player.name} left ${currentWorld}`, context.playerId);

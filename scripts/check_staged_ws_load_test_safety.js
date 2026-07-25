@@ -5,8 +5,12 @@ const fs = require("fs");
 const os = require("os");
 const path = require("path");
 const {
+  DEFAULT_MAX_MOVEMENT_BUFFERED_BYTES,
+  DEFAULT_MAX_PONG_AGE_MS,
   DEFAULT_TOKEN_POOL_MAX_AGE_MS,
   buildRoutes,
+  getMovementTransportDecision,
+  nanosecondsToMilliseconds,
   parseDurationMs,
   readTokenPool,
   validateLiveTokenPool,
@@ -14,8 +18,58 @@ const {
   writeTokenAccounts,
 } = require("./staged_ws_load_test");
 
+const loadScriptSource = fs.readFileSync(path.join(__dirname, "staged_ws_load_test.js"), "utf8");
+
 assert.equal(parseDurationMs("1.5h", 0), 5_400_000);
 assert.equal(parseDurationMs("2s", 0), 2_000);
+assert.equal(nanosecondsToMilliseconds(15_163_000_000), 15_163);
+assert.equal(nanosecondsToMilliseconds(Number.NaN), 0);
+
+const healthyTransport = getMovementTransportDecision(
+  { bufferedAmount: 0 },
+  { positionWritePending: false, lastPongAt: 9_000 },
+  { now: 10_000 },
+);
+assert.equal(healthyTransport.ok, true);
+assert.equal(healthyTransport.pongAgeMs, 1_000);
+
+const pendingTransport = getMovementTransportDecision(
+  { bufferedAmount: 0 },
+  { positionWritePending: true, positionWriteStartedAt: 8_500, lastPongAt: 9_000 },
+  { now: 10_000 },
+);
+assert.equal(pendingTransport.ok, false);
+assert.equal(pendingTransport.reason, "pending_write");
+assert.equal(pendingTransport.pendingWriteAgeMs, 1_500);
+
+const bufferedTransport = getMovementTransportDecision(
+  { bufferedAmount: DEFAULT_MAX_MOVEMENT_BUFFERED_BYTES + 1 },
+  { positionWritePending: false, lastPongAt: 9_000 },
+  { now: 10_000 },
+);
+assert.equal(bufferedTransport.ok, false);
+assert.equal(bufferedTransport.reason, "buffered_amount");
+
+const staleHeartbeatTransport = getMovementTransportDecision(
+  { bufferedAmount: 0 },
+  { positionWritePending: false, lastPongAt: 1 },
+  { now: DEFAULT_MAX_PONG_AGE_MS + 2 },
+);
+assert.equal(staleHeartbeatTransport.ok, false);
+assert.equal(staleHeartbeatTransport.reason, "stale_peer_activity");
+
+const delayedPongWithFreshInboundTransport = getMovementTransportDecision(
+  { bufferedAmount: 0 },
+  {
+    positionWritePending: false,
+    lastPongAt: 1,
+    lastInboundAt: DEFAULT_MAX_PONG_AGE_MS,
+  },
+  { now: DEFAULT_MAX_PONG_AGE_MS + 2 },
+);
+assert.equal(delayedPongWithFreshInboundTransport.ok, true);
+assert.equal(delayedPongWithFreshInboundTransport.pongAgeMs, DEFAULT_MAX_PONG_AGE_MS + 1);
+assert.equal(delayedPongWithFreshInboundTransport.inboundAgeMs, 2);
 
 const routePlan = buildRoutes(
   ["wss://example.test/ws-a", "wss://example.test/ws-b"],
@@ -30,6 +84,13 @@ assert.throws(
   () => validateWorldCapacityPlan(250, routePlan.slice(0, 2), 50),
   /Impossible world-cap plan/,
 );
+assert.match(loadScriptSource, /PIXELMANIA_LOAD_CLIENT_VERSION \|\| "1\.0\.4"/);
+assert.match(loadScriptSource, /type === "world_state_stream_begin"/);
+assert.match(loadScriptSource, /type === "world_state_stream_chunk"/);
+assert.match(loadScriptSource, /type === "world_state_stream_end"/);
+assert.match(loadScriptSource, /worldStateStreamErrors === 0/);
+assert.match(loadScriptSource, /worldStatePacketBytesMax/);
+assert.match(loadScriptSource, /worldStates >= this\.clientsTarget/);
 
 const freshTimestamp = new Date().toISOString();
 const staleTimestamp = new Date(Date.now() - DEFAULT_TOKEN_POOL_MAX_AGE_MS - 60_000).toISOString();

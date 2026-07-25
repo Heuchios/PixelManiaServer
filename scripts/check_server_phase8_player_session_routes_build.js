@@ -47,6 +47,7 @@ const deps = {
   },
   tradeByPlayerId,
   appendCctvWorldEvent: async (/** @type {unknown} */ world, /** @type {unknown} */ _player, /** @type {string} */ action) => record(`cctv:${action}:${world}`),
+  beginWorldHonorVisit: async (/** @type {unknown} */ _socket, /** @type {unknown} */ _player, /** @type {unknown} */ world) => record(`honor_begin:${world}`),
   broadcastSystemToWorld: (/** @type {unknown} */ world, /** @type {string} */ message) => record(`system:${world}:${message}`),
   broadcastToWorld: (/** @type {unknown} */ world, /** @type {unknown} */ payload) => record(`broadcast:${world}:${payload && typeof payload === "object" ? /** @type {any} */ (payload).type : ""}`),
   broadcastWorldPopulationUpdate: (/** @type {unknown} */ world) => record(`population:${world}`),
@@ -55,7 +56,6 @@ const deps = {
   buildPlayerStateForClient: (/** @type {unknown} */ state, /** @type {unknown} */ options = {}) => ({ state, options }),
   buildPublicPlayerPresencePayload: (/** @type {string} */ type, /** @type {unknown} */ _player, /** @type {unknown} */ world) => ({ type, world }),
   buildPublicPlayerProfilePayload: (/** @type {string} */ username, /** @type {string} */ requestId, /** @type {string} */ purpose) => ({ type: "player_profile", username, request_id: requestId, purpose, last_seen_at: "now", account: { username } }),
-  buildWorldStateMessage: (/** @type {unknown} */ world, /** @type {unknown} */ extra) => ({ type: "world_state", world, extra }),
   cancelActiveTradeForPlayer: (/** @type {string} */ playerId) => record(`cancel_trade:${playerId}`),
   cleanAccountName: (/** @type {unknown} */ value) => String(value || "").trim().toLowerCase(),
   cleanWorld: (/** @type {unknown} */ value) => String(value || "START").trim().toUpperCase(),
@@ -68,6 +68,7 @@ const deps = {
   clearTrustedMovementBaseline: () => record("clear_trusted"),
   commitWorldAdmissionReservation: async () => record("commit_admission"),
   ensurePlayerState: (/** @type {string} */ username) => savedStates.get(username) || { username, inventory: [] },
+  endWorldHonorVisit: async (/** @type {unknown} */ _player, /** @type {unknown} */ world, /** @type {string} */ reason) => record(`honor_end:${world}:${reason}`),
   ensureWorldRouteForAction: async () => ({ ok: true }),
   getEquipmentSlotsFromPlayerState: (/** @type {any} */ state) => state.equipment_slots || {},
   getFriendStatus: () => "none",
@@ -117,6 +118,7 @@ const deps = {
   sendActionRejected: (/** @type {unknown} */ _socket, /** @type {string} */ action, /** @type {string} */ message) => rejected.push({ action, message }),
   sendActiveWorldEventState: (/** @type {unknown} */ _socket, /** @type {unknown} */ world) => record(`events:${world}`),
   sendJson: (/** @type {unknown} */ _socket, /** @type {unknown} */ payload) => sent.push(payload),
+  sendWorldStateToSocket: (/** @type {unknown} */ _socket, /** @type {unknown} */ _player, /** @type {unknown} */ world, /** @type {unknown} */ extra) => sent.push({ type: "world_state", world, extra }),
   sendWorldPopulationUpdate: (/** @type {unknown} */ _socket, /** @type {unknown} */ world) => record(`send_population:${world}`),
   setPlayerState: (/** @type {string} */ username, /** @type {unknown} */ state) => savedStates.set(username, state),
   syncDropInterestForReceiver: (/** @type {unknown} */ _socket, /** @type {unknown} */ _player, /** @type {unknown} */ world) => record(`sync_drop:${world}`),
@@ -159,6 +161,7 @@ const socket = {};
   assert.equal(joiningPlayer.joined_world, true);
   assert.equal(joiningPlayer.facing, -1);
   assert.ok(joinEvents.includes("guard_spawn:TEST:32:64"));
+  assert.ok(joinEvents.includes("honor_begin:TEST"));
   assert.ok(joinEvents.indexOf("refresh_world:TEST:join_world") >= 0);
   assert.ok(joinEvents.indexOf("refresh_player:joiner:join_world") > joinEvents.indexOf("refresh_world:TEST:join_world"));
   const joinOkPayload = /** @type {any} */ (sent.find((payload) => /** @type {any} */ (payload).type === "join_world_ok"));
@@ -172,8 +175,11 @@ const socket = {};
   assert.equal(joiningPlayer.joined_world, false);
   assert.equal(joiningPlayer.world, "");
   assert.ok(leaveEvents.includes("clear_world_entry_spawn"));
+  assert.ok(leaveEvents.includes("honor_end:TEST:leave_world"));
   assert.ok(events.includes("release_admission:TEST"));
   assert.ok(leaveEvents.indexOf("flush:joiner:TEST:leave_world") >= 0);
+  assert.ok(leaveEvents.indexOf("flush:joiner:TEST:leave_world") < leaveEvents.indexOf("honor_end:TEST:leave_world"));
+  assert.ok(leaveEvents.indexOf("honor_end:TEST:leave_world") < leaveEvents.indexOf("release_admission:TEST"));
   assert.ok(leaveEvents.indexOf("flush:joiner:TEST:leave_world") < leaveEvents.indexOf("release_admission:TEST"));
 
   persistenceFlushSucceeds = false;
@@ -194,12 +200,27 @@ const socket = {};
   assert.equal(rejected.pop()?.action, "leave_world");
   persistenceFlushSucceeds = true;
 
+  const mismatchedLeavePlayer = /** @type {any} */ ({
+    id: "p-mismatch",
+    account_username: "mismatch",
+    name: "Mismatch",
+    world: "ACTUAL",
+    joined_world: true,
+  });
+  const mismatchEventStart = events.length;
+  await routes.handleLeaveWorld(socket, mismatchedLeavePlayer, { type: "leave_world", world: "other" }, { playerId: "p-mismatch" });
+  const mismatchEvents = events.slice(mismatchEventStart);
+  assert.equal(mismatchedLeavePlayer.joined_world, false);
+  assert.ok(mismatchEvents.includes("honor_end:ACTUAL:leave_world_state_mismatch"));
+
   const changingPlayer = /** @type {any} */ ({ id: "p3", account_username: "mover", account_email: "m@example.com", name: "Mover", world: "OLD", joined_world: true });
   const changeEventStart = events.length;
   await routes.handleJoinWorld(socket, changingPlayer, { type: "join_world", world: "new" }, { playerId: "p3" });
   const changeEvents = events.slice(changeEventStart);
   assert.equal(changingPlayer.world, "NEW");
   assert.ok(changeEvents.indexOf("flush:mover:OLD:world_change") >= 0);
+  assert.ok(changeEvents.includes("honor_end:OLD:world_change"));
+  assert.ok(changeEvents.includes("honor_begin:NEW"));
   assert.ok(changeEvents.indexOf("flush:mover:OLD:world_change") < changeEvents.indexOf("release_route:OLD"));
 
   assert.equal(
@@ -215,8 +236,11 @@ const socket = {};
   assert.match(helperSource, /function createServerPhase8PlayerSessionRoutes/);
   assert.match(helperSource, /function handlePlayerStateRequest/);
   assert.match(helperSource, /function handleJoinWorld/);
+  assert.match(helperSource, /sendWorldStateToSocket/);
   assert.match(helperSource, /flushPendingSessionPersistence/);
   assert.match(helperSource, /refreshPlayerStateFromPostgres/);
+  assert.match(helperSource, /beginWorldHonorVisit/);
+  assert.match(helperSource, /endWorldHonorVisit/);
   assert.match(generatedSource, /Generated from src\/server_phase8_player_session_routes\.ts/);
   assert.match(generatedSource, /module\.exports = \{/);
   assert.match(syncSource, /server_phase8_player_session_routes\.js/);
@@ -224,6 +248,7 @@ const socket = {};
   assert.match(serverSource, /createServerPhase8PlayerSessionRoutes/);
   assert.match(serverSource, /handlePlayerStateRequest/);
   assert.match(serverSource, /handleJoinWorld/);
+  assert.match(serverSource, /sendWorldStateToSocket/);
   assert.match(serverSource, /socket\.inboundMessageQueue/);
   assert.match(serverSource, /function flushPendingSessionPersistence/);
   assert.match(serverSource, /function refreshPlayerStateFromPostgres/);

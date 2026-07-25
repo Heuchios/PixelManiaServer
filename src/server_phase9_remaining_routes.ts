@@ -52,6 +52,7 @@ function createServerPhase9RemainingRoutes(deps: Phase9RemainingRouteDeps) {
     handleTradeOfferUpdate: handleTradeOfferUpdateImpl,
     handleTradeRequest: handleTradeRequestImpl,
     handleTradeResponse: handleTradeResponseImpl,
+    handleWorldHonorTopCommand: handleWorldHonorTopCommandImpl,
     rejectIfMuted,
     rejectIfTradeBanned,
     requireAuthenticated,
@@ -222,9 +223,19 @@ function createServerPhase9RemainingRoutes(deps: Phase9RemainingRouteDeps) {
 
     const message = String(data.message || "").trim().slice(0, MAX_CHAT_LENGTH);
     if (message.length === 0) return;
+    const lowerMessage = message.toLowerCase();
+    if (
+      lowerMessage === "/top" ||
+      lowerMessage.startsWith("/top ") ||
+      lowerMessage === "/honors" ||
+      lowerMessage.startsWith("/honors ")
+    ) {
+      await handleWorldHonorTopCommandImpl(socket, player, message);
+      return;
+    }
     if (await rejectIfMuted(socket, player, "chat")) return;
 
-    if (message.toLowerCase().startsWith("/bc ")) {
+    if (lowerMessage.startsWith("/bc ")) {
       const broadcastMessage = message.slice(4).trim().slice(0, MAX_CHAT_LENGTH);
       if (broadcastMessage.length > 0) {
         const broadcastWorld = getPlayerCurrentWorldName(player);

@@ -4,6 +4,7 @@ const fs = require("fs");
 const http = require("http");
 const https = require("https");
 const path = require("path");
+const { monitorEventLoopDelay, performance } = require("node:perf_hooks");
 const WebSocket = require("ws");
 
 const LIVE_TOKEN_AUTH_LIMIT = 8;
@@ -11,6 +12,9 @@ const LIVE_TOKEN_AUTH_WINDOW_MS = 15_000;
 const LIVE_TOKEN_AUTH_SPACING_MS = 2_000;
 const DEFAULT_TOKEN_POOL_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MAX_CLIENTS_PER_WORLD = 50;
+const DEFAULT_HEARTBEAT_INTERVAL_MS = 5_000;
+const DEFAULT_MAX_PONG_AGE_MS = 15_000;
+const DEFAULT_MAX_MOVEMENT_BUFFERED_BYTES = 64 * 1024;
 
 function parseArgs(argv) {
   const args = {};
@@ -58,6 +62,78 @@ function parseDurationMs(value, fallback) {
 function boolArg(value) {
   if (value === true) return true;
   return ["1", "true", "yes", "on"].includes(String(value || "").trim().toLowerCase());
+}
+
+function nanosecondsToMilliseconds(value) {
+  const numericValue = Number(value);
+  if (!Number.isFinite(numericValue) || numericValue <= 0) return 0;
+  return Math.round((numericValue / 1_000_000) * 100) / 100;
+}
+
+function getMovementTransportDecision(webSocket, state = {}, options = {}) {
+  const now = Math.max(0, Number(options.now) || Date.now());
+  const bufferedAmount = Math.max(0, Math.trunc(Number(webSocket?.bufferedAmount) || 0));
+  const maxBufferedBytes = Math.max(
+    0,
+    Math.trunc(Number(options.maxBufferedBytes) || DEFAULT_MAX_MOVEMENT_BUFFERED_BYTES),
+  );
+  const maxPongAgeMs = Math.max(
+    1_000,
+    Math.trunc(Number(options.maxPongAgeMs) || DEFAULT_MAX_PONG_AGE_MS),
+  );
+  const lastPongAt = Math.max(0, Number(state.lastPongAt) || 0);
+  const pongAgeMs = lastPongAt > 0 ? Math.max(0, now - lastPongAt) : 0;
+  const lastInboundAt = Math.max(0, Number(state.lastInboundAt) || 0);
+  const inboundAgeMs = lastInboundAt > 0 ? Math.max(0, now - lastInboundAt) : 0;
+  const lastPeerActivityAt = Math.max(lastPongAt, lastInboundAt);
+  const peerActivityAgeMs = lastPeerActivityAt > 0 ? Math.max(0, now - lastPeerActivityAt) : 0;
+  const pendingSince = Math.max(0, Number(state.positionWriteStartedAt) || 0);
+  const pendingWriteAgeMs = state.positionWritePending && pendingSince > 0
+    ? Math.max(0, now - pendingSince)
+    : 0;
+
+  if (bufferedAmount > maxBufferedBytes) {
+    return {
+      ok: false,
+      reason: "buffered_amount",
+      bufferedAmount,
+      pongAgeMs,
+      inboundAgeMs,
+      peerActivityAgeMs,
+      pendingWriteAgeMs,
+    };
+  }
+  if (state.positionWritePending) {
+    return {
+      ok: false,
+      reason: "pending_write",
+      bufferedAmount,
+      pongAgeMs,
+      inboundAgeMs,
+      peerActivityAgeMs,
+      pendingWriteAgeMs,
+    };
+  }
+  if (lastPeerActivityAt > 0 && peerActivityAgeMs > maxPongAgeMs) {
+    return {
+      ok: false,
+      reason: "stale_peer_activity",
+      bufferedAmount,
+      pongAgeMs,
+      inboundAgeMs,
+      peerActivityAgeMs,
+      pendingWriteAgeMs,
+    };
+  }
+  return {
+    ok: true,
+    reason: "",
+    bufferedAmount,
+    pongAgeMs,
+    inboundAgeMs,
+    peerActivityAgeMs,
+    pendingWriteAgeMs,
+  };
 }
 
 function parseCsvList(value) {
@@ -128,11 +204,15 @@ Useful knobs:
   --max-token-age 24h         Reject old live token pools. Provision a fresh pool for each stage.
   --allow-live-auth-burst     Explicitly bypass the live authentication pacing guard.
   --allow-unsafe-token-file   Explicitly accept stale, failed, or unverified token-pool metadata.
-  --client-version 1.0.3
+  --client-version 1.0.4
   --rate 10                   Position messages per joined client per second.
   --radius 3                  Movement radius in pixels. Keeps the first update inside the 4px world-entry guard.
   --max-rejections 0          Maximum accepted action rejections before the stage fails.
   --max-rate-limited 0        Maximum accepted rate_limited responses before the stage fails.
+  --max-transport-skips 0     Maximum movement sends skipped for client transport backpressure.
+  --max-movement-buffer 65536 Maximum queued WebSocket bytes before movement is coalesced.
+  --heartbeat-ms 5s           WebSocket ping interval used by transport diagnostics.
+  --max-pong-age-ms 15s       Coalesce movement after no pong or application traffic from the peer.
   --stats-ms 5000
 `;
 }
@@ -289,11 +369,22 @@ class LoadClient {
     this.spawnY = runner.spawnY + Math.floor(this.routeClientIndex / runner.spawnColumns) * runner.spawnSpacing;
     this.facing = 1;
     this.movementTimer = null;
+    this.heartbeatTimer = null;
+    this.movementSequence = 0;
     this.positionSentCount = 0;
     this.positionSendTimes = [];
     this.lastPositionSentAt = 0;
     this.minimumPositionGapMs = null;
     this.maximumPositionSendsPerSecond = 0;
+    this.positionWritePending = false;
+    this.positionWriteStartedAt = 0;
+    this.maximumPositionWriteMs = 0;
+    this.maximumBufferedAmount = 0;
+    this.lastPingAt = 0;
+    this.lastPongAt = 0;
+    this.lastInboundAt = 0;
+    this.maximumPongAgeMs = 0;
+    this.transportBackpressureSkipCount = 0;
     this.openedAt = 0;
     this.authSentAt = 0;
     this.messagesReceived = 0;
@@ -306,6 +397,7 @@ class LoadClient {
     this.routeRedirectCount = 0;
     this.abnormalCloseCount = 0;
     this.socketErrorCount = 0;
+    this.worldStateStream = null;
   }
 
   connect() {
@@ -318,14 +410,22 @@ class LoadClient {
     ws.on("open", () => {
       this.connected = true;
       this.openedAt = Date.now();
+      this.lastPongAt = this.openedAt;
+      this.lastInboundAt = this.openedAt;
       this.runner.stats.opened += 1;
+      this.startHeartbeat();
       void this.sendAuth().catch((error) => {
         this.runner.recordFatalError(error);
         this.close("auth_schedule_failed");
       });
     });
 
+    ws.on("pong", () => {
+      this.lastPongAt = Date.now();
+    });
+
     ws.on("message", (raw) => {
+      this.lastInboundAt = Date.now();
       this.messagesReceived += 1;
       this.runner.stats.messagesReceived += 1;
       const rawText = raw.toString();
@@ -367,6 +467,10 @@ class LoadClient {
         );
       }
       this.stopMovement();
+      this.stopHeartbeat();
+      this.positionWritePending = false;
+      this.positionWriteStartedAt = 0;
+      this.worldStateStream = null;
     });
 
     ws.on("error", (error) => {
@@ -380,7 +484,7 @@ class LoadClient {
     });
   }
 
-  send(payload) {
+  send(payload, options = {}) {
     if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return false;
     const outgoing = {
       ...payload,
@@ -388,7 +492,16 @@ class LoadClient {
       client_platform: "load_test",
     };
     const raw = JSON.stringify(outgoing);
-    this.ws.send(raw);
+    try {
+      if (typeof options.onFlushed === "function") {
+        this.ws.send(raw, options.onFlushed);
+      } else {
+        this.ws.send(raw);
+      }
+    } catch (error) {
+      if (typeof options.onFlushed === "function") options.onFlushed(error);
+      return false;
+    }
     this.bytesSent += Buffer.byteLength(raw);
     this.runner.stats.bytesSent += Buffer.byteLength(raw);
     this.runner.stats.messagesSent += 1;
@@ -477,11 +590,108 @@ class LoadClient {
       return;
     }
 
+    if (type === "world_state_stream_begin") {
+      const snapshotId = String(data.snapshot_id || "").trim();
+      const chunkCount = Math.trunc(Number(data.chunk_count));
+      const metadata = data.metadata && typeof data.metadata === "object" && !Array.isArray(data.metadata)
+        ? data.metadata
+        : null;
+      const snapshotBytes = Math.max(0, Math.trunc(Number(data.snapshot_bytes) || 0));
+      if (
+        this.worldStateStream
+        || !snapshotId
+        || !Number.isFinite(chunkCount)
+        || chunkCount < 0
+        || chunkCount > 256
+        || !metadata
+        || snapshotBytes <= 0
+      ) {
+        this.recordWorldStateStreamError("invalid_begin");
+        return;
+      }
+      this.worldStateStream = {
+        snapshotId,
+        chunkCount,
+        snapshotBytes,
+        encoding: String(metadata.world_state_encoding || ""),
+        received: new Set(),
+        wireBytes: Math.max(0, Math.trunc(Number(messageBytes) || 0)),
+        packetBytesMax: Math.max(0, Math.trunc(Number(messageBytes) || 0)),
+      };
+      this.runner.stats.worldStatePacketBytesMax = Math.max(
+        this.runner.stats.worldStatePacketBytesMax,
+        Math.max(0, Math.trunc(Number(messageBytes) || 0)),
+      );
+      return;
+    }
+
+    if (type === "world_state_stream_chunk") {
+      const stream = this.worldStateStream;
+      const snapshotId = String(data.snapshot_id || "").trim();
+      const chunkIndex = Math.trunc(Number(data.chunk_index));
+      const chunkCount = Math.trunc(Number(data.chunk_count));
+      if (
+        !stream
+        || snapshotId !== stream.snapshotId
+        || !Number.isFinite(chunkIndex)
+        || chunkIndex < 0
+        || chunkIndex >= stream.chunkCount
+        || chunkCount !== stream.chunkCount
+      ) {
+        this.recordWorldStateStreamError("invalid_chunk");
+        return;
+      }
+      if (stream.received.has(chunkIndex)) return;
+      stream.received.add(chunkIndex);
+      const packetBytes = Math.max(0, Math.trunc(Number(messageBytes) || 0));
+      stream.wireBytes += packetBytes;
+      stream.packetBytesMax = Math.max(stream.packetBytesMax, packetBytes);
+      this.runner.stats.worldStatePacketBytesMax = Math.max(
+        this.runner.stats.worldStatePacketBytesMax,
+        packetBytes,
+      );
+      return;
+    }
+
+    if (type === "world_state_stream_end") {
+      const stream = this.worldStateStream;
+      const snapshotId = String(data.snapshot_id || "").trim();
+      const chunkCount = Math.trunc(Number(data.chunk_count));
+      if (
+        !stream
+        || snapshotId !== stream.snapshotId
+        || chunkCount !== stream.chunkCount
+        || stream.received.size !== stream.chunkCount
+      ) {
+        this.recordWorldStateStreamError("incomplete_end");
+        return;
+      }
+      const packetBytes = Math.max(0, Math.trunc(Number(messageBytes) || 0));
+      stream.wireBytes += packetBytes;
+      stream.packetBytesMax = Math.max(stream.packetBytesMax, packetBytes);
+      this.runner.stats.worldStates += 1;
+      this.runner.stats.worldStateStreams += 1;
+      this.runner.stats.worldStateStreamChunks += stream.chunkCount;
+      this.runner.stats.worldStateStreamWireBytesTotal += stream.wireBytes;
+      this.runner.stats.worldStateBytesTotal += stream.snapshotBytes;
+      this.runner.stats.worldStateBytesMax = Math.max(this.runner.stats.worldStateBytesMax, stream.snapshotBytes);
+      this.runner.stats.worldStatePacketBytesMax = Math.max(this.runner.stats.worldStatePacketBytesMax, stream.packetBytesMax);
+      if (stream.encoding === "grid_dictionary_v1") {
+        this.runner.stats.worldStateCompact += 1;
+      }
+      this.worldStateStream = null;
+      return;
+    }
+
     if (type === "world_state") {
       this.runner.stats.worldStates += 1;
       this.runner.stats.worldStateBytesTotal += Math.max(0, Math.trunc(Number(messageBytes) || 0));
       this.runner.stats.worldStateBytesMax = Math.max(
         this.runner.stats.worldStateBytesMax,
+        Math.max(0, Math.trunc(Number(messageBytes) || 0)),
+      );
+      this.runner.stats.worldStatePacketBytesMax = Math.max(
+        this.runner.stats.worldStatePacketBytesMax,
         Math.max(0, Math.trunc(Number(messageBytes) || 0)),
       );
       if (String(data.world_state_encoding || "") === "grid_dictionary_v1") {
@@ -541,6 +751,10 @@ class LoadClient {
         recentPositionSends: cadence.recentPositionSends,
         maximumPositionSendsPerSecond: this.maximumPositionSendsPerSecond,
         minimumPositionGapMs: this.minimumPositionGapMs,
+        maximumBufferedAmount: this.maximumBufferedAmount,
+        maximumPositionWriteMs: this.maximumPositionWriteMs,
+        maximumPongAgeMs: this.maximumPongAgeMs,
+        transportBackpressureSkips: this.transportBackpressureSkipCount,
       });
       if (this.runner.verbose) {
         console.warn(
@@ -549,11 +763,51 @@ class LoadClient {
           + ` positionSent=${this.positionSentCount}`
           + ` recent1s=${cadence.recentPositionSends}`
           + ` max1s=${this.maximumPositionSendsPerSecond}`
-          + ` minGapMs=${this.minimumPositionGapMs ?? "n/a"}`,
+          + ` minGapMs=${this.minimumPositionGapMs ?? "n/a"}`
+          + ` maxBuffered=${this.maximumBufferedAmount}`
+          + ` maxWriteMs=${this.maximumPositionWriteMs}`
+          + ` maxPongAgeMs=${this.maximumPongAgeMs}`
+          + ` transportSkips=${this.transportBackpressureSkipCount}`,
         );
       }
       return;
     }
+  }
+
+  recordWorldStateStreamError(reason) {
+    this.runner.stats.worldStateStreamErrors += 1;
+    this.runner.stats.errors += 1;
+    this.socketErrorCount += 1;
+    this.worldStateStream = null;
+    this.runner.recordSocketError(`world_state_stream:${reason}`);
+    if (this.runner.verbose) {
+      console.warn(`[client ${this.index} route=${this.routeIndex}] invalid world state stream: ${reason}`);
+    }
+    this.close("world_state_stream_error");
+  }
+
+  startHeartbeat() {
+    if (this.heartbeatTimer || !this.ws) return;
+    this.heartbeatTimer = setInterval(() => {
+      if (!this.ws || this.ws.readyState !== WebSocket.OPEN) return;
+      this.lastPingAt = Date.now();
+      try {
+        this.ws.ping();
+      } catch (error) {
+        this.transportBackpressureSkipCount += 1;
+        this.runner.recordTransportBackpressure("ping_error", {
+          clientIndex: this.index,
+          routeIndex: this.routeIndex,
+          message: error instanceof Error ? error.message : String(error || "ping_error"),
+        });
+      }
+    }, this.runner.heartbeatIntervalMs);
+    if (typeof this.heartbeatTimer.unref === "function") this.heartbeatTimer.unref();
+  }
+
+  stopHeartbeat() {
+    if (this.heartbeatTimer) clearInterval(this.heartbeatTimer);
+    this.heartbeatTimer = null;
   }
 
   startMovement() {
@@ -567,11 +821,43 @@ class LoadClient {
   sendPosition() {
     if (!this.joined || !this.ws || this.ws.readyState !== WebSocket.OPEN) return;
     const sentAt = Date.now();
+    const transport = getMovementTransportDecision(this.ws, this, {
+      now: sentAt,
+      maxBufferedBytes: this.runner.maxMovementBufferedBytes,
+      maxPongAgeMs: this.runner.maxPongAgeMs,
+    });
+    this.maximumBufferedAmount = Math.max(this.maximumBufferedAmount, transport.bufferedAmount);
+    this.maximumPongAgeMs = Math.max(this.maximumPongAgeMs, transport.pongAgeMs);
+    this.runner.stats.maximumBufferedAmount = Math.max(
+      this.runner.stats.maximumBufferedAmount,
+      transport.bufferedAmount,
+    );
+    this.runner.stats.maximumPongAgeMs = Math.max(
+      this.runner.stats.maximumPongAgeMs,
+      transport.pongAgeMs,
+    );
+    if (!transport.ok) {
+      this.transportBackpressureSkipCount += 1;
+      this.runner.recordTransportBackpressure(transport.reason, {
+        clientIndex: this.index,
+        routeIndex: this.routeIndex,
+        bufferedAmount: transport.bufferedAmount,
+        pongAgeMs: transport.pongAgeMs,
+        inboundAgeMs: transport.inboundAgeMs,
+        peerActivityAgeMs: transport.peerActivityAgeMs,
+        pendingWriteAgeMs: transport.pendingWriteAgeMs,
+      });
+      return;
+    }
+
     const elapsed = (sentAt - this.runner.startedAt) / 1000;
     const phase = elapsed * this.runner.angularSpeed + this.index * 0.137;
     const x = this.spawnX + Math.cos(phase) * this.runner.radius;
     const y = this.spawnY + Math.sin(phase * 0.7) * this.runner.radius * 0.25;
     this.facing = Math.sin(phase) >= 0 ? 1 : -1;
+    const movementSequence = this.movementSequence + 1;
+    this.positionWritePending = true;
+    this.positionWriteStartedAt = sentAt;
     const sent = this.send({
       type: "player_position",
       name: this.username,
@@ -584,6 +870,8 @@ class LoadClient {
       animation_state: "walk",
       velocity_x: -Math.sin(phase) * this.runner.radius * this.runner.angularSpeed,
       velocity_y: 0,
+      movement_sequence: movementSequence,
+      client_time_msec: sentAt,
       on_floor: true,
       in_water: false,
       in_lava_fire: false,
@@ -598,9 +886,42 @@ class LoadClient {
       equipped_pants_item: "",
       equipped_shoes_item: "",
       equipped_ride_item: "",
+    }, {
+      onFlushed: (error) => {
+        const flushedAt = Date.now();
+        const writeMs = Math.max(0, flushedAt - this.positionWriteStartedAt);
+        this.maximumPositionWriteMs = Math.max(this.maximumPositionWriteMs, writeMs);
+        this.runner.stats.maximumPositionWriteMs = Math.max(
+          this.runner.stats.maximumPositionWriteMs,
+          writeMs,
+        );
+        this.maximumBufferedAmount = Math.max(
+          this.maximumBufferedAmount,
+          Math.max(0, Math.trunc(Number(this.ws?.bufferedAmount) || 0)),
+        );
+        this.runner.stats.maximumBufferedAmount = Math.max(
+          this.runner.stats.maximumBufferedAmount,
+          this.maximumBufferedAmount,
+        );
+        this.positionWritePending = false;
+        this.positionWriteStartedAt = 0;
+        if (error) {
+          this.transportBackpressureSkipCount += 1;
+          this.runner.recordTransportBackpressure("movement_send_error", {
+            clientIndex: this.index,
+            routeIndex: this.routeIndex,
+            message: error instanceof Error ? error.message : String(error || "movement_send_error"),
+          });
+        }
+      },
     });
-    if (!sent) return;
+    if (!sent) {
+      this.positionWritePending = false;
+      this.positionWriteStartedAt = 0;
+      return;
+    }
 
+    this.movementSequence = movementSequence;
     if (this.lastPositionSentAt > 0) {
       const gapMs = Math.max(0, sentAt - this.lastPositionSentAt);
       this.minimumPositionGapMs = this.minimumPositionGapMs === null
@@ -635,6 +956,7 @@ class LoadClient {
 
   close(reason = "load_complete") {
     this.stopMovement();
+    this.stopHeartbeat();
     if (!this.ws) return;
     if (this.ws.readyState === WebSocket.CONNECTING) {
       this.ws.terminate();
@@ -645,6 +967,7 @@ class LoadClient {
 
   terminate() {
     this.stopMovement();
+    this.stopHeartbeat();
     if (this.ws && this.ws.readyState !== WebSocket.CLOSED) this.ws.terminate();
   }
 }
@@ -664,6 +987,10 @@ class LoadRunner {
     this.radius = options.radius;
     this.maxRejections = options.maxRejections;
     this.maxRateLimited = options.maxRateLimited;
+    this.maxTransportBackpressureSkips = options.maxTransportBackpressureSkips;
+    this.maxMovementBufferedBytes = options.maxMovementBufferedBytes;
+    this.heartbeatIntervalMs = options.heartbeatIntervalMs;
+    this.maxPongAgeMs = options.maxPongAgeMs;
     this.angularSpeed = options.angularSpeed;
     this.statsMs = options.statsMs;
     this.handshakeTimeoutMs = options.handshakeTimeoutMs;
@@ -688,6 +1015,10 @@ class LoadRunner {
     this.statsTimer = null;
     this.shuttingDown = false;
     this.shutdownPromise = null;
+    this.localEventLoopMonitor = monitorEventLoopDelay({ resolution: 20 });
+    this.localEventLoopMonitorEnabled = false;
+    this.localEventLoopUtilizationBaseline = null;
+    this.lastLocalRuntimeSnapshot = null;
     this.fatalError = null;
     this.lastResult = null;
     this.tokenPoolPersisted = false;
@@ -699,6 +1030,8 @@ class LoadRunner {
     this.rejectionReasons = new Map();
     this.rateLimitedBuckets = new Map();
     this.lastRateLimitedClient = null;
+    this.transportBackpressureReasons = new Map();
+    this.lastTransportBackpressure = null;
     this.routeRedirectTargets = new Map();
     this.socketErrors = new Map();
     this.stats = {
@@ -711,6 +1044,7 @@ class LoadRunner {
       updateRequired: 0,
       rejections: 0,
       rateLimited: 0,
+      transportBackpressureSkips: 0,
       routeRedirects: 0,
       abnormalCloses: 0,
       positionCorrections: 0,
@@ -719,6 +1053,9 @@ class LoadRunner {
       bytesSent: 0,
       bytesReceived: 0,
       positionSent: 0,
+      maximumBufferedAmount: 0,
+      maximumPositionWriteMs: 0,
+      maximumPongAgeMs: 0,
       positionBatches: 0,
       positionItems: 0,
       leftItems: 0,
@@ -726,6 +1063,11 @@ class LoadRunner {
       worldStateCompact: 0,
       worldStateBytesTotal: 0,
       worldStateBytesMax: 0,
+      worldStateStreams: 0,
+      worldStateStreamChunks: 0,
+      worldStateStreamErrors: 0,
+      worldStateStreamWireBytesTotal: 0,
+      worldStatePacketBytesMax: 0,
     };
   }
 
@@ -763,6 +1105,32 @@ class LoadRunner {
         && Number.isFinite(Number(details.minimumPositionGapMs))
         ? Math.max(0, Math.trunc(Number(details.minimumPositionGapMs)))
         : null,
+      maximumBufferedAmount: Math.max(0, Math.trunc(Number(details.maximumBufferedAmount) || 0)),
+      maximumPositionWriteMs: Math.max(0, Math.trunc(Number(details.maximumPositionWriteMs) || 0)),
+      maximumPongAgeMs: Math.max(0, Math.trunc(Number(details.maximumPongAgeMs) || 0)),
+      transportBackpressureSkips: Math.max(
+        0,
+        Math.trunc(Number(details.transportBackpressureSkips) || 0),
+      ),
+    };
+  }
+
+  recordTransportBackpressure(reason, details = {}) {
+    const cleanReason = String(reason || "transport_backpressure").trim() || "transport_backpressure";
+    this.stats.transportBackpressureSkips += 1;
+    this.incrementSummary(this.transportBackpressureReasons, cleanReason);
+    const localRuntime = this.getLocalRuntimeSnapshot();
+    this.lastTransportBackpressure = {
+      reason: cleanReason,
+      clientIndex: Math.max(0, Math.trunc(Number(details.clientIndex) || 0)),
+      routeIndex: Math.max(0, Math.trunc(Number(details.routeIndex) || 0)),
+      bufferedAmount: Math.max(0, Math.trunc(Number(details.bufferedAmount) || 0)),
+      pongAgeMs: Math.max(0, Math.trunc(Number(details.pongAgeMs) || 0)),
+      inboundAgeMs: Math.max(0, Math.trunc(Number(details.inboundAgeMs) || 0)),
+      peerActivityAgeMs: Math.max(0, Math.trunc(Number(details.peerActivityAgeMs) || 0)),
+      pendingWriteAgeMs: Math.max(0, Math.trunc(Number(details.pendingWriteAgeMs) || 0)),
+      message: String(details.message || ""),
+      localRuntime,
     };
   }
 
@@ -782,6 +1150,48 @@ class LoadRunner {
     if (!this.fatalError) {
       this.fatalError = error instanceof Error ? error : new Error(String(error || "unknown load-runner error"));
     }
+  }
+
+  startLocalRuntimeMonitor() {
+    if (this.localEventLoopMonitorEnabled) return;
+    this.localEventLoopMonitor.reset();
+    this.localEventLoopMonitor.enable();
+    this.localEventLoopMonitorEnabled = true;
+    this.localEventLoopUtilizationBaseline = performance.eventLoopUtilization();
+    this.lastLocalRuntimeSnapshot = this.getLocalRuntimeSnapshot();
+  }
+
+  getLocalRuntimeSnapshot() {
+    if (!this.localEventLoopMonitorEnabled) {
+      return this.lastLocalRuntimeSnapshot || {
+        event_loop_delay_max_ms: 0,
+        event_loop_delay_p99_ms: 0,
+        event_loop_utilization: 0,
+        rss_mb: 0,
+        heap_used_mb: 0,
+      };
+    }
+
+    const utilization = this.localEventLoopUtilizationBaseline
+      ? performance.eventLoopUtilization(this.localEventLoopUtilizationBaseline)
+      : performance.eventLoopUtilization();
+    const memory = process.memoryUsage();
+    const snapshot = {
+      event_loop_delay_max_ms: nanosecondsToMilliseconds(this.localEventLoopMonitor.max),
+      event_loop_delay_p99_ms: nanosecondsToMilliseconds(this.localEventLoopMonitor.percentile(99)),
+      event_loop_utilization: Math.round(Math.max(0, Number(utilization.utilization) || 0) * 10_000) / 10_000,
+      rss_mb: Math.round((memory.rss / (1024 * 1024)) * 10) / 10,
+      heap_used_mb: Math.round((memory.heapUsed / (1024 * 1024)) * 10) / 10,
+    };
+    this.lastLocalRuntimeSnapshot = snapshot;
+    return snapshot;
+  }
+
+  stopLocalRuntimeMonitor() {
+    if (!this.localEventLoopMonitorEnabled) return;
+    this.getLocalRuntimeSnapshot();
+    this.localEventLoopMonitor.disable();
+    this.localEventLoopMonitorEnabled = false;
   }
 
   async acquireAuthPermit() {
@@ -826,6 +1236,30 @@ class LoadRunner {
     if (this.stats.updateRequired > 0) {
       return `client protocol update required (${this.stats.updateRequired})`;
     }
+    if (this.stats.transportBackpressureSkips > this.maxTransportBackpressureSkips) {
+      const details = this.lastTransportBackpressure;
+      const localRuntime = details?.localRuntime || this.getLocalRuntimeSnapshot();
+      const clientSummary = details
+        ? ` client=${details.clientIndex} route=${details.routeIndex}`
+          + ` reason=${details.reason}`
+          + ` buffered=${details.bufferedAmount}`
+          + ` pongAgeMs=${details.pongAgeMs}`
+          + ` inboundAgeMs=${details.inboundAgeMs}`
+          + ` peerActivityAgeMs=${details.peerActivityAgeMs}`
+          + ` pendingWriteAgeMs=${details.pendingWriteAgeMs}`
+          + `${details.message ? ` message=${details.message}` : ""}`
+        : "";
+      const localRuntimeSummary = localRuntime
+        ? ` localLagMaxMs=${localRuntime.event_loop_delay_max_ms}`
+          + ` localLagP99Ms=${localRuntime.event_loop_delay_p99_ms}`
+          + ` localELU=${localRuntime.event_loop_utilization}`
+          + ` localRssMb=${localRuntime.rss_mb}`
+        : "";
+      return `client transport-backpressure threshold exceeded`
+        + ` (${this.stats.transportBackpressureSkips}/${this.maxTransportBackpressureSkips};`
+        + ` reasons=${this.formatSummary(this.transportBackpressureReasons, 3) || "unknown"};`
+        + `${clientSummary.trim()}${localRuntimeSummary})`;
+    }
     if (this.stats.rateLimited > this.maxRateLimited) {
       const client = this.lastRateLimitedClient;
       const clientSummary = client
@@ -833,6 +1267,10 @@ class LoadRunner {
           + ` recent1s=${client.recentPositionSends}`
           + ` max1s=${client.maximumPositionSendsPerSecond}`
           + ` minGapMs=${client.minimumPositionGapMs ?? "n/a"}`
+          + ` maxBuffered=${client.maximumBufferedAmount}`
+          + ` maxWriteMs=${client.maximumPositionWriteMs}`
+          + ` maxPongAgeMs=${client.maximumPongAgeMs}`
+          + ` transportSkips=${client.transportBackpressureSkips}`
         : "";
       return `rate-limit threshold exceeded (${this.stats.rateLimited}/${this.maxRateLimited};`
         + ` buckets=${this.formatSummary(this.rateLimitedBuckets, 3) || "unknown"};${clientSummary.trim()})`;
@@ -892,6 +1330,8 @@ class LoadRunner {
         joined: this.stats.joined,
         auth_errors: this.stats.authErrors,
         rate_limited: this.stats.rateLimited,
+        transport_backpressure_skips: this.stats.transportBackpressureSkips,
+        local_runtime: this.getLocalRuntimeSnapshot(),
         redirects: this.stats.routeRedirects,
         routes: this.routes.map((route) => ({ url: route.url, world: route.world })),
       },
@@ -953,6 +1393,10 @@ class LoadRunner {
         updateRequired: clients.reduce((sum, client) => sum + client.updateRequiredCount, 0),
         rejections: clients.reduce((sum, client) => sum + client.rejectionCount, 0),
         rateLimited: clients.reduce((sum, client) => sum + client.rateLimitedCount, 0),
+        transportBackpressureSkips: clients.reduce(
+          (sum, client) => sum + client.transportBackpressureSkipCount,
+          0,
+        ),
         routeRedirects: clients.reduce((sum, client) => sum + client.routeRedirectCount, 0),
         abnormalCloses: clients.reduce((sum, client) => sum + client.abnormalCloseCount, 0),
         socketErrors: clients.reduce((sum, client) => sum + client.socketErrorCount, 0),
@@ -967,6 +1411,7 @@ class LoadRunner {
         + `[active=${summary.active}/${summary.target}`
         + ` auth=${summary.authenticated}/${summary.target}`
         + ` joined=${summary.joined}/${summary.target}`
+        + ` transport=${summary.transportBackpressureSkips}`
         + ` redirect=${summary.routeRedirects}]`
       ))
       .join(" ");
@@ -974,7 +1419,7 @@ class LoadRunner {
 
   async run() {
     console.log("[load] staged PixelMania WebSocket load test");
-    console.log(`[load] routes=${this.routes.length} health=${this.healthUrl || "(disabled)"} clients=${this.clientsTarget} step=${this.step} stepMs=${this.stepMs} holdMs=${this.holdMs} rate=${this.rate}/s authSpacingMs=${this.authSpacingMs}`);
+    console.log(`[load] routes=${this.routes.length} health=${this.healthUrl || "(disabled)"} clients=${this.clientsTarget} step=${this.step} stepMs=${this.stepMs} holdMs=${this.holdMs} rate=${this.rate}/s authSpacingMs=${this.authSpacingMs} maxTransportSkips=${this.maxTransportBackpressureSkips} maxMovementBuffer=${this.maxMovementBufferedBytes} maxPongAgeMs=${this.maxPongAgeMs}`);
     this.routes.forEach((route, routeIndex) => {
       console.log(`[load] route[${routeIndex}] url=${route.url} world=${route.world} target=${this.getRouteTarget(routeIndex)}`);
     });
@@ -986,6 +1431,7 @@ class LoadRunner {
     let failureReason = "";
     try {
       this.startedAt = Date.now();
+      this.startLocalRuntimeMonitor();
       if (this.healthUrl) {
         this.healthBaseline = await getJson(this.healthUrl);
       }
@@ -1042,8 +1488,11 @@ class LoadRunner {
           && this.stats.errors === 0
           && this.stats.rejections <= this.maxRejections
           && this.stats.rateLimited <= this.maxRateLimited
+          && this.stats.transportBackpressureSkips <= this.maxTransportBackpressureSkips
           && this.stats.routeRedirects === 0
-          && this.stats.abnormalCloses === 0,
+          && this.stats.abnormalCloses === 0
+          && this.stats.worldStateStreamErrors === 0
+          && this.stats.worldStates >= this.clientsTarget,
         activeAtEnd,
         joinedAtEnd,
         routeSummaries,
@@ -1059,6 +1508,7 @@ class LoadRunner {
           + ` abnormalCloses=${summary.abnormalCloses}`
           + ` rejections=${summary.rejections}`
           + ` rateLimited=${summary.rateLimited}`
+          + ` transportSkips=${summary.transportBackpressureSkips}`
           + ` redirects=${summary.routeRedirects}`,
         );
       }
@@ -1112,6 +1562,7 @@ class LoadRunner {
     const authErrorSummary = this.formatSummary(this.authErrorReasons);
     const rejectionSummary = this.formatSummary(this.rejectionReasons);
     const rateLimitedSummary = this.formatSummary(this.rateLimitedBuckets, 3);
+    const transportBackpressureSummary = this.formatSummary(this.transportBackpressureReasons, 3);
     const routeRedirectSummary = this.formatSummary(this.routeRedirectTargets, 2);
     const closePhaseSummary = this.formatSummary(this.closePhases, 3);
     const socketErrorSummary = this.formatSummary(this.socketErrors, 1);
@@ -1123,20 +1574,29 @@ class LoadRunner {
     const worldStateAverageBytes = this.stats.worldStates > 0
       ? Math.round(this.stats.worldStateBytesTotal / this.stats.worldStates)
       : 0;
+    const localRuntime = this.getLocalRuntimeSnapshot();
 
     console.log(
       `[load] ${final ? "final " : ""}t=${elapsedSec.toFixed(1)}s active=${active} auth=${this.stats.authenticated} joined=${joined}` +
       ` posOut=${this.stats.positionSent} posRate=${sentRate.toFixed(1)}/s rxRate=${rxRate.toFixed(1)}/s` +
       ` batches=${this.stats.positionBatches} rejections=${this.stats.rejections} rateLimited=${this.stats.rateLimited}` +
+      ` transportSkips=${this.stats.transportBackpressureSkips}` +
+      ` maxBuffered=${this.stats.maximumBufferedAmount}B maxWrite=${this.stats.maximumPositionWriteMs}ms` +
+      ` maxPongAge=${this.stats.maximumPongAgeMs}ms` +
+      ` localLagMax=${localRuntime.event_loop_delay_max_ms}ms localLagP99=${localRuntime.event_loop_delay_p99_ms}ms` +
+      ` localELU=${localRuntime.event_loop_utilization} rss=${localRuntime.rss_mb}MB heap=${localRuntime.heap_used_mb}MB` +
       ` redirects=${this.stats.routeRedirects} corrections=${this.stats.positionCorrections}` +
-      ` worldStates=${this.stats.worldStates} compact=${this.stats.worldStateCompact}` +
+      ` worldStates=${this.stats.worldStates} compact=${this.stats.worldStateCompact} streamed=${this.stats.worldStateStreams}` +
+      ` streamChunks=${this.stats.worldStateStreamChunks} streamErrors=${this.stats.worldStateStreamErrors}` +
       ` worldStateAvg=${worldStateAverageBytes}B worldStateMax=${this.stats.worldStateBytesMax}B` +
+      ` worldStatePacketMax=${this.stats.worldStatePacketBytesMax}B` +
       ` errors=${this.stats.errors} authErrors=${this.stats.authErrors}` +
       `${closeSummary ? ` close=${closeSummary}` : ""}` +
       `${closePhaseSummary ? ` unexpectedClose=${closePhaseSummary}` : ""}` +
       `${authErrorSummary ? ` authReason=${authErrorSummary}` : ""}` +
       `${rejectionSummary ? ` rejectReason=${rejectionSummary}` : ""}` +
       `${rateLimitedSummary ? ` rateBucket=${rateLimitedSummary}` : ""}` +
+      `${transportBackpressureSummary ? ` transportReason=${transportBackpressureSummary}` : ""}` +
       `${routeRedirectSummary ? ` redirectTarget=${routeRedirectSummary}` : ""}` +
       `${serverRateLimitSummary ? ` serverRateDelta=${serverRateLimitSummary}` : ""}` +
       `${socketErrorSummary ? ` socketError=${socketErrorSummary}` : ""}` +
@@ -1157,6 +1617,7 @@ class LoadRunner {
       await wait(500);
       for (const client of this.clients) client.terminate();
       await wait(50);
+      this.stopLocalRuntimeMonitor();
     })();
     return this.shutdownPromise;
   }
@@ -1281,7 +1742,7 @@ async function main() {
   const runner = new LoadRunner({
     routes,
     healthUrl,
-    clientVersion: String(args["client-version"] || process.env.PIXELMANIA_LOAD_CLIENT_VERSION || "1.0.3"),
+    clientVersion: String(args["client-version"] || process.env.PIXELMANIA_LOAD_CLIENT_VERSION || "1.0.4"),
     clientsTarget: clients,
     step: parseInteger(args.step || process.env.PIXELMANIA_LOAD_STEP, 25, 1, clients),
     stepMs: parseDurationMs(args["step-ms"] || process.env.PIXELMANIA_LOAD_STEP_MS, 30_000),
@@ -1290,6 +1751,32 @@ async function main() {
     radius: parseInteger(args.radius || process.env.PIXELMANIA_LOAD_RADIUS, 3, 0, 1024),
     maxRejections: parseInteger(args["max-rejections"] || process.env.PIXELMANIA_LOAD_MAX_REJECTIONS, 0, 0, 1_000_000),
     maxRateLimited: parseInteger(args["max-rate-limited"] || process.env.PIXELMANIA_LOAD_MAX_RATE_LIMITED, 0, 0, 1_000_000),
+    maxTransportBackpressureSkips: parseInteger(
+      args["max-transport-skips"] || process.env.PIXELMANIA_LOAD_MAX_TRANSPORT_SKIPS,
+      0,
+      0,
+      1_000_000,
+    ),
+    maxMovementBufferedBytes: parseInteger(
+      args["max-movement-buffer"] || process.env.PIXELMANIA_LOAD_MAX_MOVEMENT_BUFFER,
+      DEFAULT_MAX_MOVEMENT_BUFFERED_BYTES,
+      0,
+      64 * 1024 * 1024,
+    ),
+    heartbeatIntervalMs: Math.max(
+      1_000,
+      parseDurationMs(
+        args["heartbeat-ms"] || process.env.PIXELMANIA_LOAD_HEARTBEAT_MS,
+        DEFAULT_HEARTBEAT_INTERVAL_MS,
+      ),
+    ),
+    maxPongAgeMs: Math.max(
+      1_000,
+      parseDurationMs(
+        args["max-pong-age-ms"] || process.env.PIXELMANIA_LOAD_MAX_PONG_AGE_MS,
+        DEFAULT_MAX_PONG_AGE_MS,
+      ),
+    ),
     angularSpeed: Number.isFinite(Number(args["angular-speed"] || process.env.PIXELMANIA_LOAD_ANGULAR_SPEED))
       ? Number(args["angular-speed"] || process.env.PIXELMANIA_LOAD_ANGULAR_SPEED)
       : 0.35,
@@ -1345,6 +1832,7 @@ async function main() {
       + ` unexpectedCloses=${runner.stats.abnormalCloses}`
       + ` rejections=${runner.stats.rejections}/${runner.maxRejections}`
       + ` rateLimited=${runner.stats.rateLimited}/${runner.maxRateLimited}`
+      + ` transportSkips=${runner.stats.transportBackpressureSkips}/${runner.maxTransportBackpressureSkips}`
       + ` redirects=${runner.stats.routeRedirects}`
       + ` routes=${routeVerdict}`,
     );
@@ -1360,6 +1848,9 @@ if (require.main === module) {
 
 module.exports = {
   DEFAULT_MAX_CLIENTS_PER_WORLD,
+  DEFAULT_HEARTBEAT_INTERVAL_MS,
+  DEFAULT_MAX_MOVEMENT_BUFFERED_BYTES,
+  DEFAULT_MAX_PONG_AGE_MS,
   DEFAULT_TOKEN_POOL_MAX_AGE_MS,
   LIVE_TOKEN_AUTH_LIMIT,
   LIVE_TOKEN_AUTH_SPACING_MS,
@@ -1367,6 +1858,8 @@ module.exports = {
   LoadRunner,
   boolArg,
   buildRoutes,
+  getMovementTransportDecision,
+  nanosecondsToMilliseconds,
   parseDurationMs,
   parseInteger,
   readTokenPool,
