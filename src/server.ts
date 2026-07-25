@@ -30481,7 +30481,12 @@ async function getGlobalActiveWorldPopulationCounts(): Promise<Record<string, nu
   }
 }
 
-async function handleWorldPopulationRequest(socket: any, player: any, _data: any, _context: any = {}) {
+async function handleWorldPopulationRequest(
+  socket: unknown,
+  player: ServerPacketRecord,
+  _data: ServerPacketRecord,
+  _context: ServerRouteContext,
+) {
   if (!requireAuthenticated(socket, player, "view active worlds")) return;
 
   const worldCounts = await getGlobalActiveWorldPopulationCounts();

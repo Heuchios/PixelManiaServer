@@ -28025,7 +28025,7 @@ async function getGlobalActiveWorldPopulationCounts() {
         activeWorldDirectoryBuildPromise = null;
     }
 }
-async function handleWorldPopulationRequest(socket, player, _data, _context = {}) {
+async function handleWorldPopulationRequest(socket, player, _data, _context) {
     if (!requireAuthenticated(socket, player, "view active worlds"))
         return;
     const worldCounts = await getGlobalActiveWorldPopulationCounts();
