@@ -143,6 +143,7 @@ Useful knobs:
   --max-token-age 24h         Reject old live token pools. Provision a fresh pool for each stage.
   --allow-live-auth-burst     Explicitly bypass the live authentication pacing guard.
   --allow-unsafe-token-file   Explicitly accept stale, failed, or unverified token-pool metadata.
+  --auth-only                 Authenticate and hold sockets without joining worlds or sending movement.
   --client-version 1.0.4
   --rate 10                   Position messages per joined client per second.
   --radius 3                  Movement radius in pixels. Keeps the first update inside the 4px world-entry guard.
@@ -459,6 +460,7 @@ class LoadClient {
         this.tokenRow.session_token = String(data.session_token || this.tokenRow.session_token || "");
         this.tokenRow.refresh_token = String(data.refresh_token || this.tokenRow.refresh_token || "");
       }
+      if (this.runner.authOnly) return;
       this.send({
         type: "join_world",
         request_id: makeRequestId("join", this.index),
@@ -805,6 +807,7 @@ class LoadRunner {
     this.handshakeTimeoutMs = options.handshakeTimeoutMs;
     this.authSpacingMs = options.authSpacingMs;
     this.authTimeoutMs = options.authTimeoutMs;
+    this.authOnly = options.authOnly;
     this.devLogin = options.devLogin;
     this.verbose = options.verbose;
     this.usernamePrefix = options.usernamePrefix;
@@ -1096,11 +1099,13 @@ class LoadRunner {
   getRouteSummaries() {
     return this.routes.map((route, routeIndex) => {
       const clients = this.clients.filter((client) => client.routeIndex === routeIndex);
+      const target = this.getRouteTarget(routeIndex);
       return {
         routeIndex,
         url: route.url,
         world: route.world,
-        target: this.getRouteTarget(routeIndex),
+        target,
+        joinedTarget: this.authOnly ? 0 : target,
         opened: clients.filter((client) => client.openedAt > 0).length,
         authenticated: clients.filter((client) => client.authenticated).length,
         joined: clients.filter((client) => client.joined).length,
@@ -1123,7 +1128,7 @@ class LoadRunner {
         `r${summary.routeIndex}`
         + `[active=${summary.active}/${summary.target}`
         + ` auth=${summary.authenticated}/${summary.target}`
-        + ` joined=${summary.joined}/${summary.target}`
+        + ` joined=${summary.joined}/${summary.joinedTarget}`
         + ` redirect=${summary.routeRedirects}]`
       ))
       .join(" ");
@@ -1131,7 +1136,7 @@ class LoadRunner {
 
   async run() {
     console.log("[load] staged PixelMania WebSocket load test");
-    console.log(`[load] routes=${this.routes.length} health=${this.healthUrl || "(disabled)"} clients=${this.clientsTarget} step=${this.step} stepMs=${this.stepMs} holdMs=${this.holdMs} rate=${this.rate}/s authSpacingMs=${this.authSpacingMs}`);
+    console.log(`[load] mode=${this.authOnly ? "auth-only" : "full"} routes=${this.routes.length} health=${this.healthUrl || "(disabled)"} clients=${this.clientsTarget} step=${this.step} stepMs=${this.stepMs} holdMs=${this.holdMs} rate=${this.rate}/s authSpacingMs=${this.authSpacingMs}`);
     this.routes.forEach((route, routeIndex) => {
       console.log(`[load] route[${routeIndex}] url=${route.url} world=${route.world} target=${this.getRouteTarget(routeIndex)}`);
     });
@@ -1179,10 +1184,11 @@ class LoadRunner {
       const routeSummaries = this.getRouteSummaries();
       const activeAtEnd = routeSummaries.reduce((sum, summary) => sum + summary.active, 0);
       const joinedAtEnd = routeSummaries.reduce((sum, summary) => sum + summary.joined, 0);
+      const joinedTarget = this.authOnly ? 0 : this.clientsTarget;
       const routesHealthy = routeSummaries.every((summary) => (
         summary.active === summary.target
         && summary.authenticated === summary.target
-        && summary.joined === summary.target
+        && summary.joined === summary.joinedTarget
         && summary.authErrors === 0
         && summary.updateRequired === 0
         && summary.socketErrors === 0
@@ -1192,7 +1198,7 @@ class LoadRunner {
       const result = {
         ok: routesHealthy
           && activeAtEnd === this.clientsTarget
-          && joinedAtEnd === this.clientsTarget
+          && joinedAtEnd === joinedTarget
           && this.stats.authenticated === this.clientsTarget
           && this.stats.authErrors === 0
           && this.stats.updateRequired === 0
@@ -1202,9 +1208,10 @@ class LoadRunner {
           && this.stats.routeRedirects === 0
           && this.stats.abnormalCloses === 0
           && this.stats.worldStateStreamErrors === 0
-          && this.stats.worldStates >= this.clientsTarget,
+          && (this.authOnly || this.stats.worldStates >= this.clientsTarget),
         activeAtEnd,
         joinedAtEnd,
+        joinedTarget,
         routeSummaries,
         latency: this.getLatencySummaries(),
       };
@@ -1214,7 +1221,7 @@ class LoadRunner {
           `[load] route[${summary.routeIndex}] final`
           + ` active=${summary.active}/${summary.target}`
           + ` auth=${summary.authenticated}/${summary.target}`
-          + ` joined=${summary.joined}/${summary.target}`
+          + ` joined=${summary.joined}/${summary.joinedTarget}`
           + ` errors=${summary.socketErrors}`
           + ` abnormalCloses=${summary.abnormalCloses}`
           + ` rejections=${summary.rejections}`
@@ -1368,6 +1375,7 @@ async function main() {
   }
   const routes = buildRoutes(urls, worlds);
   const devLogin = boolArg(args["dev-login"] || process.env.PIXELMANIA_LOAD_DEV_LOGIN);
+  const authOnly = boolArg(args["auth-only"] || process.env.PIXELMANIA_LOAD_AUTH_ONLY);
   const tokenFile = args["token-file"] ? String(args["token-file"]) : "";
   const tokenPool = readTokenPool(tokenFile);
   const tokenAccounts = tokenPool.accounts;
@@ -1401,7 +1409,7 @@ async function main() {
     1,
     100_000,
   );
-  validateWorldCapacityPlan(clients, routes, maxClientsPerWorld);
+  if (!authOnly) validateWorldCapacityPlan(clients, routes, maxClientsPerWorld);
   const tokenOffset = parseInteger(args["token-offset"] || process.env.PIXELMANIA_LOAD_TOKEN_OFFSET, 0, 0, 100_000);
   if (!devLogin && tokenAccounts.length - tokenOffset < clients) {
     throw new Error(`Token file has ${tokenAccounts.length} account(s), offset=${tokenOffset}, but --clients=${clients}.`);
@@ -1465,6 +1473,7 @@ async function main() {
       1_000,
       parseDurationMs(args["auth-timeout-ms"] || process.env.PIXELMANIA_LOAD_AUTH_TIMEOUT_MS, 20_000),
     ),
+    authOnly,
     devLogin,
     verbose: boolArg(args.verbose || process.env.PIXELMANIA_LOAD_VERBOSE),
     usernamePrefix: String(args["username-prefix"] || process.env.PIXELMANIA_LOAD_USERNAME_PREFIX || "LoadTest_"),
@@ -1502,7 +1511,7 @@ async function main() {
     const routeVerdict = runner.formatRouteProgress(result.routeSummaries);
     throw new Error(
       `Load stage did not remain healthy: active=${result.activeAtEnd}/${clients}`
-      + ` joined=${result.joinedAtEnd}/${clients}`
+      + ` joined=${result.joinedAtEnd}/${result.joinedTarget}`
       + ` authenticated=${runner.stats.authenticated}/${clients}`
       + ` authErrors=${runner.stats.authErrors}`
       + ` updateRequired=${runner.stats.updateRequired}`

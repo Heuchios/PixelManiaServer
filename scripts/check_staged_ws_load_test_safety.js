@@ -39,6 +39,10 @@ assert.match(loadScriptSource, /type === "world_state_stream_end"/);
 assert.match(loadScriptSource, /worldStateStreamErrors === 0/);
 assert.match(loadScriptSource, /worldStatePacketBytesMax/);
 assert.match(loadScriptSource, /worldStates >= this\.clientsTarget/);
+assert.match(loadScriptSource, /--auth-only/);
+assert.match(loadScriptSource, /if \(this\.runner\.authOnly\) return;/);
+assert.match(loadScriptSource, /this\.authOnly \|\| this\.stats\.worldStates >= this\.clientsTarget/);
+assert.match(loadScriptSource, /if \(!authOnly\) validateWorldCapacityPlan/);
 
 const freshTimestamp = new Date().toISOString();
 const staleTimestamp = new Date(Date.now() - DEFAULT_TOKEN_POOL_MAX_AGE_MS - 60_000).toISOString();

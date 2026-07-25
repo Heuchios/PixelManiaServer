@@ -311,6 +311,7 @@ const socket = {};
   assert.equal(savedOptions.tokenFamily, "5cac9292-da2f-4859-a828-fc278a16a06d");
   assert.equal(savedOptions.touchLogin, true);
   assert.equal(savedOptions.shouldContinue(), true);
+  assert.equal(typeof savedOptions.diagnostics, "object");
   assert.equal(legacyRevokeCalls, 0);
   assert.equal(events.mirroredAccounts.length, authoritativeMirrorCountBefore);
 
@@ -373,6 +374,8 @@ const socket = {};
   assert.match(helperSource, /data\.refresh_token \|\| data\.session_token/);
   assert.match(helperSource, /function isAuthSocketOpen/);
   assert.match(helperSource, /token_login_session_rotation/);
+  assert.match(helperSource, /postgres_timing/);
+  assert.match(helperSource, /diagnostics: sessionRotationTiming/);
   assert.match(helperSource, /revokeRotatedToken: true/);
   assert.match(helperSource, /rotatedFromSessionId: validatedSessionId/);
   assert.match(helperSource, /accountId: validatedAccountId \|\| account\.account_id/);

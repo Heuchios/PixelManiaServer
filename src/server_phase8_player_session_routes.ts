@@ -33,10 +33,17 @@ interface MapLike {
 }
 
 interface PostgresStoreLike {
+  db?: {
+    totalCount?: unknown;
+    idleCount?: unknown;
+    waitingCount?: unknown;
+  };
+  writeQueueDepth?: unknown;
   mirrorPlayerWorld(username: unknown, world: unknown): unknown;
 }
 
 interface Phase8PlayerSessionDeps {
+  JOIN_SLOW_STAGE_MS?: unknown;
   activeFishingSessions: MapLike;
   adminInventoryLookupPurpose: string;
   adminItemInstanceHistoryLookupPurpose: string;
@@ -127,6 +134,57 @@ function errorMessage(error: unknown): string {
 }
 
 function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
+  const joinSlowStageMs = Math.max(250, Number(deps.JOIN_SLOW_STAGE_MS || 1000));
+
+  function isJoinSocketOpen(socket: unknown): boolean {
+    if (!socket || typeof socket !== "object") return true;
+    const readyState = (socket as PacketRecord).readyState;
+    return typeof readyState !== "number" || readyState === 1;
+  }
+
+  function logSlowJoinStage(
+    socket: unknown,
+    player: PlayerRecord,
+    worldName: string,
+    stage: string,
+    durationMs: number,
+    timings?: Record<string, number>
+  ): void {
+    const postgresPool = deps.postgresStore?.db;
+    console.warn("[join] slow world admission stage", JSON.stringify({
+      stage,
+      duration_ms: durationMs,
+      username: String(player.account_username || player.name || ""),
+      world: worldName,
+      socket_open: isJoinSocketOpen(socket),
+      postgres_write_queue_depth: Number(deps.postgresStore?.writeQueueDepth || 0),
+      postgres_pool_total: Number(postgresPool?.totalCount || 0),
+      postgres_pool_idle: Number(postgresPool?.idleCount || 0),
+      postgres_pool_waiting: Number(postgresPool?.waitingCount || 0),
+      ...(timings ? { timings: { ...timings } } : {}),
+    }));
+  }
+
+  async function runJoinStage<T>(
+    socket: unknown,
+    player: PlayerRecord,
+    worldName: string,
+    timings: Record<string, number>,
+    stage: string,
+    work: () => MaybePromise<T>
+  ): Promise<T> {
+    const startedAt = Date.now();
+    try {
+      return await work();
+    } finally {
+      const durationMs = Math.max(0, Date.now() - startedAt);
+      timings[stage] = Math.max(0, Number(timings[stage] || 0)) + durationMs;
+      if (durationMs >= joinSlowStageMs) {
+        logSlowJoinStage(socket, player, worldName, stage, durationMs);
+      }
+    }
+  }
+
   function syncJoinWorldDropsToReceiver(socket: unknown, player: PlayerRecord, worldName: unknown): void {
     const cleanWorldName = deps.cleanWorld(worldName || player.world || "START");
     if (deps.cleanWorld(player.world || "") !== cleanWorldName) return;
@@ -260,10 +318,33 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
     const oldWorld = player.world;
     const newWorld = deps.cleanWorld(data.world);
     const joinRequestId = deps.clampString(data.join_request_id || data.request_id || "", 128);
-    if (await deps.rejectIfWorldBanned(socket, player, newWorld, "join_world")) return;
-    const routeCheck = toRecord(await deps.ensureWorldRouteForAction(socket, player, newWorld, "join_world"));
+    const joinStartedAt = Date.now();
+    const joinTimings: Record<string, number> = {};
+    if (await runJoinStage(
+      socket,
+      player,
+      newWorld,
+      joinTimings,
+      "world_ban_check",
+      () => deps.rejectIfWorldBanned(socket, player, newWorld, "join_world")
+    )) return;
+    const routeCheck = toRecord(await runJoinStage(
+      socket,
+      player,
+      newWorld,
+      joinTimings,
+      "world_route_check",
+      () => deps.ensureWorldRouteForAction(socket, player, newWorld, "join_world")
+    ));
     if (!routeCheck.ok) return;
-    const admission = await deps.reserveWorldAdmission(player, newWorld, "join_world");
+    const admission = await runJoinStage(
+      socket,
+      player,
+      newWorld,
+      joinTimings,
+      "world_admission_reserve",
+      () => deps.reserveWorldAdmission(player, newWorld, "join_world")
+    );
     const admissionRecord = toRecord(admission);
     if (!admissionRecord.ok) {
       if (admissionRecord.reason === "world_route_admission_mismatch") {
@@ -279,7 +360,14 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
 
     let admissionCommitted = false;
     try {
-      const worldRefresh = toRecord(await deps.refreshWorldStateFromPostgres(newWorld, "join_world"));
+      const worldRefresh = toRecord(await runJoinStage(
+        socket,
+        player,
+        newWorld,
+        joinTimings,
+        "world_state_refresh",
+        () => deps.refreshWorldStateFromPostgres(newWorld, "join_world")
+      ));
       if (!worldRefresh.ok) {
         deps.sendActionRejected(socket, "join_world", "World data is still loading. Try again.", {
           reason: worldRefresh.reason || "world_state_refresh_failed",
@@ -292,7 +380,14 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
         return;
       }
 
-      const playerRefresh = toRecord(await deps.refreshPlayerStateFromPostgres(player.account_username, "join_world"));
+      const playerRefresh = toRecord(await runJoinStage(
+        socket,
+        player,
+        newWorld,
+        joinTimings,
+        "player_state_refresh",
+        () => deps.refreshPlayerStateFromPostgres(player.account_username, "join_world")
+      ));
       if (!playerRefresh.ok) {
         deps.sendActionRejected(socket, "join_world", "Player data is still loading. Try again.", {
           reason: playerRefresh.reason || "player_state_refresh_failed",
@@ -306,7 +401,14 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
         deps.cancelActiveTradeForPlayer(context.playerId, "Trade canceled because a player changed worlds.");
         deps.activeFishingSessions.delete(context.playerId);
         deps.clearPlayerFishingPresence(player);
-        const keyCleanup = toRecord(await deps.removeWorldLockKeysFromPlayerInventory(socket, player, oldWorld, "world_change"));
+        const keyCleanup = toRecord(await runJoinStage(
+          socket,
+          player,
+          newWorld,
+          joinTimings,
+          "old_world_key_cleanup",
+          () => deps.removeWorldLockKeysFromPlayerInventory(socket, player, oldWorld, "world_change")
+        ));
         if (!keyCleanup.ok) {
           deps.sendActionRejected(socket, "join_world", String(keyCleanup.message || "Could not remove your World Lock Key. Try again."), {
             reason: keyCleanup.reason || "world_lock_key_cleanup_failed",
@@ -315,10 +417,17 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
           });
           return;
         }
-        const transitionFlush = toRecord(await deps.flushPendingSessionPersistence(
-          player.account_username,
-          oldWorld,
-          "world_change"
+        const transitionFlush = toRecord(await runJoinStage(
+          socket,
+          player,
+          newWorld,
+          joinTimings,
+          "old_world_persistence_flush",
+          () => deps.flushPendingSessionPersistence(
+            player.account_username,
+            oldWorld,
+            "world_change"
+          )
         ));
         if (!transitionFlush.ok) {
           deps.sendActionRejected(socket, "join_world", "Could not safely save your current world. Try again.", {
@@ -331,7 +440,14 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       }
 
       if (player.joined_world && oldWorld && oldWorld !== newWorld) {
-        await deps.appendCctvWorldEvent(oldWorld, player, "leave", { reason: "world_change" });
+        await runJoinStage(
+          socket,
+          player,
+          newWorld,
+          joinTimings,
+          "old_world_cctv_event",
+          () => deps.appendCctvWorldEvent(oldWorld, player, "leave", { reason: "world_change" })
+        );
         deps.broadcastSystemToWorld(oldWorld, `${player.name} left ${oldWorld}`, context.playerId);
         deps.broadcastToWorld(oldWorld, deps.buildPublicPlayerPresencePayload("player_left", player, oldWorld), context.playerId);
         deps.clearPlayerInterestState(context.playerId);
@@ -342,7 +458,14 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       player.current_world_id = newWorld;
       player.joined_world = true;
       deps.updatePlayerWorldIndex(player);
-      await deps.commitWorldAdmissionReservation(admission, player, oldWorld);
+      await runJoinStage(
+        socket,
+        player,
+        newWorld,
+        joinTimings,
+        "world_admission_commit",
+        () => deps.commitWorldAdmissionReservation(admission, player, oldWorld)
+      );
       admissionCommitted = true;
       deps.resetPlayerMovementTracking(player);
       deps.clearNetfoxTrustedPlayerState(player);
@@ -357,7 +480,14 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       player.on_floor = true;
       player.facing = Number(data.facing) < 0 ? -1 : 1;
       deps.postgresStore.mirrorPlayerWorld(player.account_username, player.world);
-      await deps.appendCctvWorldEvent(player.world, player, "enter", { reason: "join_world" });
+      await runJoinStage(
+        socket,
+        player,
+        newWorld,
+        joinTimings,
+        "join_cctv_event",
+        () => deps.appendCctvWorldEvent(player.world, player, "enter", { reason: "join_world" })
+      );
 
       const existingPlayers = deps.getPlayersInWorld(player.world, context.playerId, player);
       console.log("[APPEARANCE][Server] sending world appearance snapshot", {
@@ -381,29 +511,43 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
         join_request_id: joinRequestId,
       };
       if (deps.isNetfoxRealMode(player, data)) {
-        joinWorldPayload.netfox_route = await deps.buildNetfoxSpawnTicketPayload(player, player.world, {
-          websocket_player_id: context.playerId,
-        });
+        joinWorldPayload.netfox_route = await runJoinStage(
+          socket,
+          player,
+          newWorld,
+          joinTimings,
+          "netfox_spawn_ticket",
+          () => deps.buildNetfoxSpawnTicketPayload(player, player.world, {
+            websocket_player_id: context.playerId,
+          })
+        );
       }
       deps.sendJson(socket, joinWorldPayload);
       deps.sendWorldPopulationUpdate(socket, player.world);
 
-      deps.sendWorldStateToSocket(socket, player, player.world, {
-        receiver_player: player,
-        respawn_player: true,
-        force_player_position: true,
-        world_state_reason: "join_world",
-        spawn_x: joinSpawn.x,
-        spawn_y: joinSpawn.y,
-        spawn_grid_x: joinSpawn.grid_x,
-        spawn_grid_y: joinSpawn.grid_y,
-        spawn_at_entrance_gate: true,
-        portal_spawn_x: joinSpawn.x,
-        portal_spawn_y: joinSpawn.y,
-        x: joinSpawn.x,
-        y: joinSpawn.y,
-        join_request_id: joinRequestId,
-      });
+      await runJoinStage(
+        socket,
+        player,
+        newWorld,
+        joinTimings,
+        "world_state_send",
+        () => deps.sendWorldStateToSocket(socket, player, player.world, {
+          receiver_player: player,
+          respawn_player: true,
+          force_player_position: true,
+          world_state_reason: "join_world",
+          spawn_x: joinSpawn.x,
+          spawn_y: joinSpawn.y,
+          spawn_grid_x: joinSpawn.grid_x,
+          spawn_grid_y: joinSpawn.grid_y,
+          spawn_at_entrance_gate: true,
+          portal_spawn_x: joinSpawn.x,
+          portal_spawn_y: joinSpawn.y,
+          x: joinSpawn.x,
+          y: joinSpawn.y,
+          join_request_id: joinRequestId,
+        })
+      );
       refreshJoinWorldDropsAfterState(socket, player, player.world);
       deps.sendActiveWorldEventState(socket, player.world);
 
@@ -420,8 +564,30 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       deps.touchLivePresence(socket, player, { force: true });
       deps.notifyOnlineFriendsOfFriendState(player.account_username);
     } finally {
-      if (!admissionCommitted) {
-        await deps.releaseWorldAdmissionReservation(admission);
+      try {
+        if (!admissionCommitted) {
+          await runJoinStage(
+            socket,
+            player,
+            newWorld,
+            joinTimings,
+            "world_admission_release",
+            () => deps.releaseWorldAdmissionReservation(admission)
+          );
+        }
+      } finally {
+        const totalDurationMs = Math.max(0, Date.now() - joinStartedAt);
+        joinTimings.total = totalDurationMs;
+        if (totalDurationMs >= joinSlowStageMs) {
+          logSlowJoinStage(
+            socket,
+            player,
+            newWorld,
+            "join_world_total",
+            totalDurationMs,
+            joinTimings
+          );
+        }
       }
     }
   }

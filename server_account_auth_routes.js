@@ -10,7 +10,7 @@ function createServerAccountAuthRoutes(deps) {
         const readyState = socket.readyState;
         return typeof readyState !== "number" || readyState === 1;
     }
-    async function runAuthStage(socket, stage, work) {
+    async function runAuthStage(socket, stage, work, postgresTiming = null) {
         const startedAt = Date.now();
         try {
             return await work();
@@ -27,6 +27,9 @@ function createServerAccountAuthRoutes(deps) {
                     postgres_pool_total: Number(postgresPool?.totalCount || 0),
                     postgres_pool_idle: Number(postgresPool?.idleCount || 0),
                     postgres_pool_waiting: Number(postgresPool?.waitingCount || 0),
+                    ...(postgresTiming && Object.keys(postgresTiming).length > 0
+                        ? { postgres_timing: { ...postgresTiming } }
+                        : {}),
                 }));
             }
         }
@@ -669,6 +672,7 @@ function createServerAccountAuthRoutes(deps) {
         account.last_seen_at = new Date().toISOString();
         const nextTokens = issueSessionTokens(account);
         if (isPostgresAuthoritativeReady()) {
+            const sessionRotationTiming = {};
             const sessionResult = await runAuthStage(socket, "token_login_session_rotation", () => (postgresStore.saveSession(account, {
                 ip: getSocketAddress(socket),
                 userAgent: getSocketUserAgent(socket, data),
@@ -683,7 +687,8 @@ function createServerAccountAuthRoutes(deps) {
                 revokeOtherSessions: ACCOUNT_ONE_ACTIVE_SESSION,
                 touchLogin: true,
                 shouldContinue: () => isAuthSocketOpen(socket),
-            })));
+                diagnostics: sessionRotationTiming,
+            })), sessionRotationTiming);
             if (!sessionResult.ok) {
                 account.session_token_hash = previousSessionHash;
                 account.session_token_expires_at = previousSessionExpiresAt;

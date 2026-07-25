@@ -6048,6 +6048,31 @@ class PostgresStore {
     const revokeRotatedToken = details.revokeRotatedToken === true || details.revoke_rotated_token === true;
     const revokeOtherSessions = details.revokeOtherSessions === true || details.revoke_other_sessions === true;
     const touchLogin = details.touchLogin === true || details.touch_login === true;
+    const diagnostics = details.diagnostics
+      && typeof details.diagnostics === "object"
+      && !Array.isArray(details.diagnostics)
+      ? details.diagnostics as RuntimeRecord
+      : null;
+    const operationStartedAt = Date.now();
+    const recordDuration = (key: string, startedAt: number) => {
+      if (!diagnostics) return;
+      diagnostics[key] = Math.max(0, toInt(diagnostics[key], 0)) + Math.max(0, Date.now() - startedAt);
+    };
+    const timeOperation = async <T>(key: string, work: () => Promise<T>): Promise<T> => {
+      const startedAt = Date.now();
+      try {
+        return await work();
+      } finally {
+        recordDuration(key, startedAt);
+      }
+    };
+    if (diagnostics) {
+      diagnostics.concurrent = concurrent;
+      diagnostics.write_queue_depth_start = this.writeQueueDepth;
+      diagnostics.pool_total_start = Number(this.pool?.totalCount || 0);
+      diagnostics.pool_idle_start = Number(this.pool?.idleCount || 0);
+      diagnostics.pool_waiting_start = Number(this.pool?.waitingCount || 0);
+    }
     if (sessionHash === "") return { ok: false, reason: "missing_session_hash" };
 
     try {
@@ -6055,158 +6080,195 @@ class PostgresStore {
       const runTransaction = <T>(work: TransactionWork<T>) => (
         concurrent ? this.withTransactionNow(work) : this.withTransaction(work)
       );
-      await runTransaction(async (client) => {
-        assertPostgresOperationCanContinue(details);
-        let accountId = accountIdHint;
-        if (accountId === "") {
-          const playerId = await this.ensurePlayerIdentity(client, username, email, role);
-          if (!playerId) throw new Error("session account identity unavailable");
-          assertPostgresOperationCanContinue(details);
+      const transactionStartedAt = Date.now();
+      let transactionWorkMs = 0;
+      try {
+        await runTransaction(async (client) => {
+          const transactionWorkStartedAt = Date.now();
+          try {
+            assertPostgresOperationCanContinue(details);
+            let accountId = accountIdHint;
+            if (accountId === "") {
+              const playerId = await timeOperation(
+                "identity_ensure_ms",
+                () => this.ensurePlayerIdentity(client, username, email, role)
+              );
+              if (!playerId) throw new Error("session account identity unavailable");
+              assertPostgresOperationCanContinue(details);
 
-          const accountResult = await client.query(
-            `SELECT account_id FROM ${this.table("accounts")} WHERE lower(username::text) = lower($1) LIMIT 1`,
-            [username]
-          );
-          accountId = cleanName(accountResult.rows[0]?.account_id || "");
+              const accountResult = await timeOperation(
+                "account_lookup_ms",
+                () => client.query(
+                  `SELECT account_id FROM ${this.table("accounts")} WHERE lower(username::text) = lower($1) LIMIT 1`,
+                  [username]
+                )
+              );
+              accountId = cleanName(accountResult.rows[0]?.account_id || "");
+            }
+            if (!isUuid(accountId)) throw new Error("session account identity unavailable");
+            assertPostgresOperationCanContinue(details);
+
+            let rotatedFromSessionId = rotatedFromSessionIdHint || null;
+            let tokenFamily = tokenFamilyHint || null;
+            if (rotatedFromTokenHash !== "" && (!rotatedFromSessionId || !tokenFamily)) {
+              const rotatedResult = await timeOperation(
+                "rotated_session_lookup_ms",
+                () => client.query(
+                  `
+                  SELECT session_id, token_family
+                    FROM ${this.table("sessions")}
+                   WHERE session_token_hash = $1
+                      OR refresh_token_hash = $1
+                   LIMIT 1
+                  `,
+                  [rotatedFromTokenHash]
+                )
+              );
+              rotatedFromSessionId = rotatedFromSessionId || rotatedResult.rows[0]?.session_id || null;
+              tokenFamily = tokenFamily || rotatedResult.rows[0]?.token_family || null;
+            }
+            assertPostgresOperationCanContinue(details);
+
+            await timeOperation(
+              "session_upsert_ms",
+              () => client.query(
+                `
+                INSERT INTO ${this.table("sessions")} (
+                  account_id,
+                  session_token_hash,
+                  refresh_token_hash,
+                  ip_address,
+                  user_agent,
+                  device_info,
+                  session_mode,
+                  token_family,
+                  rotated_from_session_id,
+                  issued_at,
+                  expires_at,
+                  refresh_expires_at,
+                  last_seen_at
+                )
+                VALUES (
+                  $1,
+                  $2,
+                  NULLIF($3, ''),
+                  NULLIF($4, '')::inet,
+                  NULLIF($5, ''),
+                  $6::jsonb,
+                  NULLIF($7, ''),
+                  COALESCE($8::uuid, gen_random_uuid()),
+                  $9::uuid,
+                  now(),
+                  COALESCE(NULLIF($10, '')::timestamptz, now() + interval '1 day'),
+                  COALESCE(NULLIF($11, '')::timestamptz, COALESCE(NULLIF($10, '')::timestamptz, now() + interval '1 day')),
+                  now()
+                )
+                ON CONFLICT (session_token_hash) DO UPDATE
+                  SET expires_at = EXCLUDED.expires_at,
+                      refresh_token_hash = COALESCE(EXCLUDED.refresh_token_hash, ${this.table("sessions")}.refresh_token_hash),
+                      refresh_expires_at = COALESCE(EXCLUDED.refresh_expires_at, ${this.table("sessions")}.refresh_expires_at),
+                      last_seen_at = now(),
+                      revoked_at = NULL,
+                      revoked_reason = NULL,
+                      ip_address = COALESCE(EXCLUDED.ip_address, ${this.table("sessions")}.ip_address),
+                      user_agent = COALESCE(EXCLUDED.user_agent, ${this.table("sessions")}.user_agent),
+                      device_info = EXCLUDED.device_info,
+                      session_mode = COALESCE(EXCLUDED.session_mode, ${this.table("sessions")}.session_mode),
+                      token_family = COALESCE(EXCLUDED.token_family, ${this.table("sessions")}.token_family),
+                      rotated_from_session_id = COALESCE(EXCLUDED.rotated_from_session_id, ${this.table("sessions")}.rotated_from_session_id)
+                `,
+                [
+                  accountId,
+                  sessionHash,
+                  refreshHash,
+                  ipAddress,
+                  userAgent,
+                  JSON.stringify(deviceInfo),
+                  sessionMode,
+                  tokenFamily,
+                  rotatedFromSessionId,
+                  expiresAt,
+                  refreshExpiresAt,
+                ]
+              )
+            );
+            assertPostgresOperationCanContinue(details);
+
+            if (touchLogin) {
+              await timeOperation(
+                "account_touch_ms",
+                () => client.query(
+                  `
+                  UPDATE ${this.table("accounts")}
+                     SET last_login_at = now(),
+                         updated_at = now()
+                   WHERE account_id = $1
+                  `,
+                  [accountId]
+                )
+              );
+              assertPostgresOperationCanContinue(details);
+            }
+
+            if (revokeOtherSessions) {
+              await timeOperation(
+                "session_revoke_ms",
+                () => client.query(
+                  `
+                  UPDATE ${this.table("sessions")}
+                     SET revoked_at = now(),
+                         revoked_reason = CASE
+                           WHEN $3 <> ''
+                            AND (session_token_hash = $3 OR refresh_token_hash = $3)
+                             THEN 'rotated'
+                           ELSE 'one_active_session'
+                         END
+                   WHERE account_id = $1
+                     AND session_token_hash <> $2
+                     AND revoked_at IS NULL
+                  `,
+                  [accountId, sessionHash, rotatedFromTokenHash]
+                )
+              );
+              assertPostgresOperationCanContinue(details);
+            } else if (
+              revokeRotatedToken
+              && rotatedFromTokenHash !== ""
+              && rotatedFromTokenHash !== sessionHash
+              && rotatedFromTokenHash !== refreshHash
+            ) {
+              await timeOperation(
+                "session_revoke_ms",
+                () => client.query(
+                  `
+                  UPDATE ${this.table("sessions")}
+                     SET revoked_at = now(),
+                         revoked_reason = 'rotated'
+                   WHERE account_id = $1
+                     AND (
+                       session_token_hash = $2
+                       OR refresh_token_hash = $2
+                     )
+                     AND session_token_hash <> $3
+                     AND revoked_at IS NULL
+                  `,
+                  [accountId, rotatedFromTokenHash, sessionHash]
+                )
+              );
+              assertPostgresOperationCanContinue(details);
+            }
+          } finally {
+            transactionWorkMs += Math.max(0, Date.now() - transactionWorkStartedAt);
+            if (diagnostics) diagnostics.transaction_work_ms = transactionWorkMs;
+          }
+        });
+      } finally {
+        const transactionTotalMs = Math.max(0, Date.now() - transactionStartedAt);
+        if (diagnostics) {
+          diagnostics.transaction_total_ms = transactionTotalMs;
+          diagnostics.transaction_overhead_ms = Math.max(0, transactionTotalMs - transactionWorkMs);
         }
-        if (!isUuid(accountId)) throw new Error("session account identity unavailable");
-        assertPostgresOperationCanContinue(details);
-
-        let rotatedFromSessionId = rotatedFromSessionIdHint || null;
-        let tokenFamily = tokenFamilyHint || null;
-        if (rotatedFromTokenHash !== "" && (!rotatedFromSessionId || !tokenFamily)) {
-          const rotatedResult = await client.query(
-            `
-            SELECT session_id, token_family
-              FROM ${this.table("sessions")}
-             WHERE session_token_hash = $1
-                OR refresh_token_hash = $1
-             LIMIT 1
-            `,
-            [rotatedFromTokenHash]
-          );
-          rotatedFromSessionId = rotatedFromSessionId || rotatedResult.rows[0]?.session_id || null;
-          tokenFamily = tokenFamily || rotatedResult.rows[0]?.token_family || null;
-        }
-        assertPostgresOperationCanContinue(details);
-
-        await client.query(
-          `
-          INSERT INTO ${this.table("sessions")} (
-            account_id,
-            session_token_hash,
-            refresh_token_hash,
-            ip_address,
-            user_agent,
-            device_info,
-            session_mode,
-            token_family,
-            rotated_from_session_id,
-            issued_at,
-            expires_at,
-            refresh_expires_at,
-            last_seen_at
-          )
-          VALUES (
-            $1,
-            $2,
-            NULLIF($3, ''),
-            NULLIF($4, '')::inet,
-            NULLIF($5, ''),
-            $6::jsonb,
-            NULLIF($7, ''),
-            COALESCE($8::uuid, gen_random_uuid()),
-            $9::uuid,
-            now(),
-            COALESCE(NULLIF($10, '')::timestamptz, now() + interval '1 day'),
-            COALESCE(NULLIF($11, '')::timestamptz, COALESCE(NULLIF($10, '')::timestamptz, now() + interval '1 day')),
-            now()
-          )
-          ON CONFLICT (session_token_hash) DO UPDATE
-            SET expires_at = EXCLUDED.expires_at,
-                refresh_token_hash = COALESCE(EXCLUDED.refresh_token_hash, ${this.table("sessions")}.refresh_token_hash),
-                refresh_expires_at = COALESCE(EXCLUDED.refresh_expires_at, ${this.table("sessions")}.refresh_expires_at),
-                last_seen_at = now(),
-                revoked_at = NULL,
-                revoked_reason = NULL,
-                ip_address = COALESCE(EXCLUDED.ip_address, ${this.table("sessions")}.ip_address),
-                user_agent = COALESCE(EXCLUDED.user_agent, ${this.table("sessions")}.user_agent),
-                device_info = EXCLUDED.device_info,
-                session_mode = COALESCE(EXCLUDED.session_mode, ${this.table("sessions")}.session_mode),
-                token_family = COALESCE(EXCLUDED.token_family, ${this.table("sessions")}.token_family),
-                rotated_from_session_id = COALESCE(EXCLUDED.rotated_from_session_id, ${this.table("sessions")}.rotated_from_session_id)
-          `,
-          [
-            accountId,
-            sessionHash,
-            refreshHash,
-            ipAddress,
-            userAgent,
-            JSON.stringify(deviceInfo),
-            sessionMode,
-            tokenFamily,
-            rotatedFromSessionId,
-            expiresAt,
-            refreshExpiresAt,
-          ]
-        );
-        assertPostgresOperationCanContinue(details);
-
-        if (touchLogin) {
-          await client.query(
-            `
-            UPDATE ${this.table("accounts")}
-               SET last_login_at = now(),
-                   updated_at = now()
-             WHERE account_id = $1
-            `,
-            [accountId]
-          );
-          assertPostgresOperationCanContinue(details);
-        }
-
-        if (revokeOtherSessions) {
-          await client.query(
-            `
-            UPDATE ${this.table("sessions")}
-               SET revoked_at = now(),
-                   revoked_reason = CASE
-                     WHEN $3 <> ''
-                      AND (session_token_hash = $3 OR refresh_token_hash = $3)
-                       THEN 'rotated'
-                     ELSE 'one_active_session'
-                   END
-             WHERE account_id = $1
-               AND session_token_hash <> $2
-               AND revoked_at IS NULL
-            `,
-            [accountId, sessionHash, rotatedFromTokenHash]
-          );
-          assertPostgresOperationCanContinue(details);
-        } else if (
-          revokeRotatedToken
-          && rotatedFromTokenHash !== ""
-          && rotatedFromTokenHash !== sessionHash
-          && rotatedFromTokenHash !== refreshHash
-        ) {
-          await client.query(
-            `
-            UPDATE ${this.table("sessions")}
-               SET revoked_at = now(),
-                   revoked_reason = 'rotated'
-             WHERE account_id = $1
-               AND (
-                 session_token_hash = $2
-                 OR refresh_token_hash = $2
-               )
-               AND session_token_hash <> $3
-               AND revoked_at IS NULL
-            `,
-            [accountId, rotatedFromTokenHash, sessionHash]
-          );
-          assertPostgresOperationCanContinue(details);
-        }
-      });
+      }
 
       return {
         ok: true,
@@ -6223,6 +6285,14 @@ class PostgresStore {
       }
       this.logger("[postgres] session save failed:", getErrorMessage(error));
       return { ok: false, reason: "database_error", message: getErrorMessage(error) };
+    } finally {
+      if (diagnostics) {
+        diagnostics.total_ms = Math.max(0, Date.now() - operationStartedAt);
+        diagnostics.write_queue_depth_end = this.writeQueueDepth;
+        diagnostics.pool_total_end = Number(this.pool?.totalCount || 0);
+        diagnostics.pool_idle_end = Number(this.pool?.idleCount || 0);
+        diagnostics.pool_waiting_end = Number(this.pool?.waitingCount || 0);
+      }
     }
   }
 
