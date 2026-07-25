@@ -188,6 +188,12 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
     return crypto.randomBytes(Math.max(16, Math.trunc(Number(byteLength) || 32))).toString("hex");
   }
 
+  function queueSessionFallbackSave(): void {
+    if (!isPostgresAuthoritativeReady()) {
+      queueAccountsSave();
+    }
+  }
+
   function issueSessionToken(account: PacketRecord): string {
     const token = makeSecureToken(32);
     account.session_token_expires_at = new Date(Date.now() + SESSION_TOKEN_TTL_MS).toISOString();
@@ -195,7 +201,7 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
     account.refresh_token_hash = "";
     account.refresh_token_expires_at = "";
     account.last_seen_at = new Date().toISOString();
-    queueAccountsSave();
+    queueSessionFallbackSave();
     return token;
   }
 
@@ -207,7 +213,7 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
     account.refresh_token_hash = makeTokenHash(refreshToken);
     account.refresh_token_expires_at = new Date(Date.now() + SESSION_REFRESH_TOKEN_TTL_MS).toISOString();
     account.last_seen_at = new Date().toISOString();
-    queueAccountsSave();
+    queueSessionFallbackSave();
     return { sessionToken, refreshToken };
   }
 
@@ -218,7 +224,7 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
     account.session_token_expires_at = "";
     account.refresh_token_hash = "";
     account.refresh_token_expires_at = "";
-    queueAccountsSave();
+    queueSessionFallbackSave();
     if (username !== "" && typeof postgresStore?.revokeSessionsByUsername === "function") {
       postgresStore.revokeSessionsByUsername(username);
     }

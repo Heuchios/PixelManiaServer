@@ -11,6 +11,7 @@ const LIVE_TOKEN_AUTH_WINDOW_MS = 15_000;
 const LIVE_TOKEN_AUTH_SPACING_MS = 2_000;
 const DEFAULT_TOKEN_POOL_MAX_AGE_MS = 24 * 60 * 60 * 1000;
 const DEFAULT_MAX_CLIENTS_PER_WORLD = 50;
+const AUTH_ONLY_KEEPALIVE_MS = 25_000;
 
 function parseArgs(argv) {
   const args = {};
@@ -305,6 +306,7 @@ class LoadClient {
     this.spawnY = runner.spawnY + Math.floor(this.routeClientIndex / runner.spawnColumns) * runner.spawnSpacing;
     this.facing = 1;
     this.movementTimer = null;
+    this.keepAliveTimer = null;
     this.positionSentCount = 0;
     this.positionSendTimes = [];
     this.lastPositionSentAt = 0;
@@ -341,6 +343,7 @@ class LoadClient {
       this.connected = true;
       this.openedAt = Date.now();
       this.runner.stats.opened += 1;
+      this.startKeepAlive();
       void this.sendAuth().catch((error) => {
         this.runner.recordFatalError(error);
         this.close("auth_schedule_failed");
@@ -389,6 +392,7 @@ class LoadClient {
         );
       }
       this.stopMovement();
+      this.stopKeepAlive();
       this.worldStateStream = null;
     });
 
@@ -771,8 +775,24 @@ class LoadClient {
     this.movementTimer = null;
   }
 
+  startKeepAlive() {
+    if (!this.runner.authOnly || this.keepAliveTimer) return;
+    this.keepAliveTimer = setInterval(() => {
+      if (this.ws?.readyState === WebSocket.OPEN) {
+        this.ws.ping();
+      }
+    }, AUTH_ONLY_KEEPALIVE_MS);
+    if (typeof this.keepAliveTimer.unref === "function") this.keepAliveTimer.unref();
+  }
+
+  stopKeepAlive() {
+    if (this.keepAliveTimer) clearInterval(this.keepAliveTimer);
+    this.keepAliveTimer = null;
+  }
+
   close(reason = "load_complete") {
     this.stopMovement();
+    this.stopKeepAlive();
     if (!this.ws) return;
     if (this.ws.readyState === WebSocket.CONNECTING) {
       this.ws.terminate();
@@ -783,6 +803,7 @@ class LoadClient {
 
   terminate() {
     this.stopMovement();
+    this.stopKeepAlive();
     if (this.ws && this.ws.readyState !== WebSocket.CLOSED) this.ws.terminate();
   }
 }

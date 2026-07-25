@@ -41,6 +41,10 @@ assert.match(loadScriptSource, /worldStatePacketBytesMax/);
 assert.match(loadScriptSource, /worldStates >= this\.clientsTarget/);
 assert.match(loadScriptSource, /--auth-only/);
 assert.match(loadScriptSource, /if \(this\.runner\.authOnly\) return;/);
+assert.match(loadScriptSource, /const AUTH_ONLY_KEEPALIVE_MS = 25_000;/);
+assert.match(loadScriptSource, /if \(!this\.runner\.authOnly \|\| this\.keepAliveTimer\) return;/);
+assert.match(loadScriptSource, /this\.ws\.ping\(\)/);
+assert.match(loadScriptSource, /this\.stopKeepAlive\(\)/);
 assert.match(loadScriptSource, /this\.authOnly \|\| this\.stats\.worldStates >= this\.clientsTarget/);
 assert.match(loadScriptSource, /if \(!authOnly\) validateWorldCapacityPlan/);
 

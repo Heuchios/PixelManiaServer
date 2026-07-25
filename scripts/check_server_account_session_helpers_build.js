@@ -165,6 +165,21 @@ const helpers = /** @type {any} */ (AccountSessionHelpersModule.createServerAcco
   assert.equal(helpers.isRefreshTokenValid(account, tokens.refreshToken), true);
   assert.equal(typeof account.session_token_hash, "string");
   assert.equal(typeof account.refresh_token_hash, "string");
+  assert.equal(events.accountSaves.length, 1);
+
+  const authoritativeAccountSaves = [];
+  const authoritativeHelpers = /** @type {any} */ (AccountSessionHelpersModule.createServerAccountSessionHelpers({
+    ...deps,
+    isPostgresAuthoritativeReady: () => true,
+    queueAccountsSave: () => authoritativeAccountSaves.push(Date.now()),
+  }));
+  const authoritativeAccount = {
+    username: "AuthoritativeSession",
+    email: "authoritative-session@example.test",
+  };
+  authoritativeHelpers.issueSessionTokens(authoritativeAccount);
+  authoritativeHelpers.clearSessionToken(authoritativeAccount);
+  assert.equal(authoritativeAccountSaves.length, 0);
 
   const verificationToken = helpers.makeEmailVerificationToken(account);
   assert.equal(helpers.hasActiveEmailVerificationToken(account), true);
@@ -222,6 +237,8 @@ const helpers = /** @type {any} */ (AccountSessionHelpersModule.createServerAcco
   assert.match(helperSource, /function createServerAccountSessionHelpers/);
   assert.match(helperSource, /function makePasswordHash/);
   assert.match(helperSource, /function issueSessionTokens/);
+  assert.match(helperSource, /function queueSessionFallbackSave/);
+  assert.match(helperSource, /if \(!isPostgresAuthoritativeReady\(\)\)/);
   assert.match(helperSource, /async function applyPasswordResetToken/);
   assert.match(helperSource, /async function confirmEmailChangeToken/);
   assert.match(helperSource, /async function checkLoginAttemptAllowed/);
