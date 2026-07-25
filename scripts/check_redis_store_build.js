@@ -98,6 +98,41 @@ async function main() {
   });
   assert.equal(await store.setActiveSession("uso", "player-1", 60000), false);
   assert.equal(await store.setPresence("uso", { world: "START" }, 45000), false);
+  assert.deepEqual(await store.listPresence(), []);
+
+  /** @type {string[][]} */
+  const presenceCommands = [];
+  const presenceStore = new RedisStore({
+    enabled: true,
+    keyPrefix: "Pixel Test",
+    logger: () => {},
+  });
+  presenceStore.client = {
+    isOpen: true,
+    connect: async () => undefined,
+    quit: async () => undefined,
+    on: () => undefined,
+    sendCommand: async (/** @type {string[]} */ command) => {
+      presenceCommands.push(command);
+      if (command[0] === "SCAN") {
+        return ["0", ["pixel_test:presence:uso", "pixel_test:presence:rayan"]];
+      }
+      if (command[0] === "MGET") {
+        return [
+          JSON.stringify({ username: "uso", world: "START", joined_world: true }),
+          JSON.stringify({ username: "rayan", world: "FARM", joined_world: true }),
+        ];
+      }
+      throw new Error(`Unexpected Redis command: ${command[0]}`);
+    },
+  };
+  presenceStore.ready = true;
+  assert.deepEqual(await presenceStore.listPresence(25), [
+    { username: "uso", world: "START", joined_world: true },
+    { username: "rayan", world: "FARM", joined_world: true },
+  ]);
+  assert.equal(presenceCommands[0][0], "SCAN");
+  assert.equal(presenceCommands[1][0], "MGET");
 
   const health = await store.getHealthSnapshot();
   assert.equal(health.enabled, false);

@@ -787,6 +787,8 @@ const REDIS_CONNECT_TIMEOUT_MS = Math.max(250, Math.trunc(Number(process.env.RED
 const REDIS_ACTION_LOCK_TTL_MS = Math.max(1000, Math.trunc(Number(process.env.REDIS_ACTION_LOCK_TTL_MS) || 5000));
 const REDIS_ACTION_LOCK_GUARD_MS = Math.max(3000, REDIS_ACTION_LOCK_TTL_MS + 3000);
 const REDIS_PRESENCE_TTL_MS = Math.max(10000, Math.trunc(Number(process.env.REDIS_PRESENCE_TTL_MS) || 45000));
+const ACTIVE_WORLD_DIRECTORY_PRESENCE_LIMIT = Math.max(100, Math.min(10000, Math.trunc(Number(process.env.ACTIVE_WORLD_DIRECTORY_PRESENCE_LIMIT) || 5000)));
+const ACTIVE_WORLD_DIRECTORY_CACHE_MS = Math.max(250, Math.min(5000, Math.trunc(Number(process.env.ACTIVE_WORLD_DIRECTORY_CACHE_MS) || 1000)));
 const REDIS_ACTIVE_SESSION_TTL_MS = Math.max(REDIS_PRESENCE_TTL_MS, Math.trunc(Number(process.env.REDIS_ACTIVE_SESSION_TTL_MS) || 120000));
 const WORLD_ADMISSION_TTL_MS = Math.max(REDIS_PRESENCE_TTL_MS, Math.trunc(Number(process.env.WORLD_ADMISSION_TTL_MS) || REDIS_PRESENCE_TTL_MS));
 const WORLD_ROUTE_TTL_MS = Math.max(REDIS_PRESENCE_TTL_MS, Math.trunc(Number(process.env.WORLD_ROUTE_TTL_MS) || REDIS_PRESENCE_TTL_MS));
@@ -1943,6 +1945,7 @@ const ServerPhase7Dispatcher = ServerPhase7DispatcherModule.createServerPhase7Di
     request_link_generator_pad: (socket, player, data, context) => getServerPhase8WorldActionRoutes().handleRequestLinkGeneratorPad(socket, player, data, context),
     request_link_generator_pole: (socket, player, data, context) => getServerPhase8WorldActionRoutes().handleRequestLinkGeneratorPole(socket, player, data, context),
     request_link_electric_poles: (socket, player, data, context) => getServerPhase8WorldActionRoutes().handleRequestLinkElectricPoles(socket, player, data, context),
+    world_population_request: (socket, player, data, context) => handleWorldPopulationRequest(socket, player, data, context),
     oil_refinery_request: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleOilRefineryRequestRoute(socket, player, data, context),
     battery_charger_request: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleBatteryChargerRequestRoute(socket, player, data, context),
     world_seed_update: (socket, player, data, context) => getServerPhase8WorldActionRoutes().handleWorldSeedUpdate(socket, player, data, context),
@@ -1970,6 +1973,7 @@ const POSTGRES_AUTHORITY_LOBBY_ROUTE_TYPES: any = new Set([
   "ping",
   "pong",
   "server_status_request",
+  "world_population_request",
 ]);
 const POSTGRES_AUTHORITY_HANDLED_ROUTE_TYPES: any = new Set(ServerPhase7Dispatcher.getRouteCatalog().handled_routes || []);
 const POSTGRES_AUTHORITY_UNAVAILABLE_MESSAGE = "Server database is still loading. Please stay on the login screen and try again.";
@@ -2007,6 +2011,9 @@ wss.on("error", (error: Error) => {
 const players: any = new Map();
 const socketByPlayerId: any = new Map();
 const worldPlayers: any = new Map();
+let activeWorldDirectoryCache: Record<string, number> = {};
+let activeWorldDirectoryCacheExpiresAt = 0;
+let activeWorldDirectoryBuildPromise: Promise<Record<string, number>> | null = null;
 const worldStates: any = new Map();
 const playerStates: any = new Map();
 const accounts: any = new Map();
@@ -4001,10 +4008,12 @@ function touchLivePresence(socket: any, player: any, options: any = {}) {
   if (!force && now - Number(player.last_presence_at || 0) < Math.floor(REDIS_PRESENCE_TTL_MS / 3)) return;
 
   player.last_presence_at = now;
+  if (force) activeWorldDirectoryCacheExpiresAt = 0;
   const presence: any = {
     username: player.account_username,
     player_id: player.id,
     world: player.world || "",
+    joined_world: Boolean(player.joined_world),
     x: Math.round(Number(player.x || 0)),
     y: Math.round(Number(player.y || 0)),
     ip: getSocketAddress(socket),
@@ -30391,6 +30400,98 @@ async function releaseOwnedWorldRouteIfEmpty(worldName: any) {
 function getWorldPopulationCount(worldName: any, excludePlayerId: any = "") {
   const clean = cleanWorld(worldName || "START");
   return getWorldPlayerRecords(clean, { excludePlayerId }).length;
+}
+
+function addActiveWorldDirectoryPlayer(
+  worldPlayersByName: Map<string, Set<string>>,
+  worldName: unknown,
+  playerIdentity: unknown,
+) {
+  const rawWorldName = String(worldName || "").trim();
+  const identity = String(playerIdentity || "").trim();
+  if (rawWorldName === "" || identity === "") return;
+
+  const cleanWorldName = cleanWorld(rawWorldName);
+  if (cleanWorldName === "") return;
+  let identities = worldPlayersByName.get(cleanWorldName);
+  if (!identities) {
+    identities = new Set<string>();
+    worldPlayersByName.set(cleanWorldName, identities);
+  }
+  identities.add(identity);
+}
+
+async function buildGlobalActiveWorldPopulationCounts(): Promise<Record<string, number>> {
+  const worldPlayersByName = new Map<string, Set<string>>();
+
+  if (redisStore.isReady()) {
+    const presenceRecords = await redisStore.listPresence(ACTIVE_WORLD_DIRECTORY_PRESENCE_LIMIT);
+    for (const presence of presenceRecords) {
+      if (!presence || presence.joined_world !== true) continue;
+      const identity = presence.username || presence.player_id;
+      if (!identity) continue;
+      addActiveWorldDirectoryPlayer(
+        worldPlayersByName,
+        presence.world,
+        presence.username ? `account:${presence.username}` : `player:${identity}`,
+      );
+    }
+  }
+
+  // Merge this route's live records so a join appears before its Redis write
+  // completes and so the directory remains useful during a Redis interruption.
+  for (const runtimePlayer of players.values()) {
+    if (!runtimePlayer || !runtimePlayer.authenticated || !runtimePlayer.joined_world || runtimePlayer.disconnected) continue;
+    addActiveWorldDirectoryPlayer(
+      worldPlayersByName,
+      runtimePlayer.world,
+      runtimePlayer.account_username ? `account:${runtimePlayer.account_username}` : `player:${runtimePlayer.id}`,
+    );
+  }
+
+  const entries = [...worldPlayersByName.entries()]
+    .map(([world, identities]) => ({ world, count: identities.size }))
+    .filter((entry) => entry.count > 0)
+    .sort((left, right) => right.count - left.count || left.world.localeCompare(right.world));
+
+  const counts: Record<string, number> = {};
+  for (const entry of entries) {
+    counts[entry.world] = entry.count;
+  }
+  return counts;
+}
+
+async function getGlobalActiveWorldPopulationCounts(): Promise<Record<string, number>> {
+  const now = Date.now();
+  if (now < activeWorldDirectoryCacheExpiresAt) {
+    return { ...activeWorldDirectoryCache };
+  }
+  if (activeWorldDirectoryBuildPromise) {
+    return { ...(await activeWorldDirectoryBuildPromise) };
+  }
+
+  activeWorldDirectoryBuildPromise = buildGlobalActiveWorldPopulationCounts();
+  try {
+    const counts = await activeWorldDirectoryBuildPromise;
+    activeWorldDirectoryCache = { ...counts };
+    activeWorldDirectoryCacheExpiresAt = Date.now() + ACTIVE_WORLD_DIRECTORY_CACHE_MS;
+    return { ...counts };
+  } finally {
+    activeWorldDirectoryBuildPromise = null;
+  }
+}
+
+async function handleWorldPopulationRequest(socket: any, player: any, _data: any, _context: any = {}) {
+  if (!requireAuthenticated(socket, player, "view active worlds")) return;
+
+  const worldCounts = await getGlobalActiveWorldPopulationCounts();
+  sendJson(socket, {
+    type: "world_population",
+    world_counts: worldCounts,
+    clear_unreported: true,
+    global: true,
+    generated_at: new Date().toISOString(),
+  });
 }
 
 function getWorldPopulationForBatching(worldName: any) {

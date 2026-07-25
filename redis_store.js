@@ -946,6 +946,49 @@ class RedisStore {
         }
     }
     /**
+     * Returns current presence records across every websocket route sharing this
+     * Redis key prefix. Expired records are omitted by Redis automatically.
+     *
+     * @param {number} maxEntries
+     * @returns {Promise<RedisRecord[]>}
+     */
+    async listPresence(maxEntries = 5000) {
+        if (!this.isReady())
+            return [];
+        const limit = Math.max(1, Math.min(10000, toInt(maxEntries, 5000)));
+        try {
+            const keys = await this._scanKeys(this.pattern("presence", "*"), limit);
+            if (keys.length === 0)
+                return [];
+            const records = [];
+            const batchSize = 250;
+            for (let offset = 0; offset < keys.length; offset += batchSize) {
+                const batch = keys.slice(offset, offset + batchSize);
+                const reply = await this.client.sendCommand(["MGET", ...batch]);
+                if (!Array.isArray(reply))
+                    continue;
+                for (const rawValue of reply) {
+                    if (rawValue === undefined || rawValue === null)
+                        continue;
+                    try {
+                        const parsed = JSON.parse(String(rawValue));
+                        if (parsed && typeof parsed === "object" && !Array.isArray(parsed)) {
+                            records.push(parsed);
+                        }
+                    }
+                    catch {
+                        // Ignore malformed or partially replaced presence records.
+                    }
+                }
+            }
+            return records;
+        }
+        catch (error) {
+            this.logFailure("presence list", error);
+            return [];
+        }
+    }
+    /**
      * @param {string} username
      * @returns {Promise<void>}
      */

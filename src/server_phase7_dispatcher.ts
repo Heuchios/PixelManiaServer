@@ -97,6 +97,7 @@ const DIRECT_HANDLER_ROUTE_TYPES = Object.freeze([
   "request_link_generator_pad",
   "request_link_generator_pole",
   "request_link_electric_poles",
+  "world_population_request",
   "world_seed_update",
   "world_interaction_update",
   "world_item_drop_create",
