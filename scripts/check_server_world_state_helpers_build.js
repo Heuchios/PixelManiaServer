@@ -403,6 +403,39 @@ const remainingAfterUnloadedTime = Math.max(
   restoredSeed.max_grow_time - ((simulatedRejoinAt - restoredSeed.planted_at) / 1000),
 );
 assert.equal(remainingAfterUnloadedTime, 8);
+
+const placementRevisionState = getMockWorldState("PLACEMENT_REVISION");
+placementRevisionState.block_revision = 42;
+placementRevisionState.foreground.set("12,13", {
+  x: 12,
+  y: 13,
+  block_type: "dirt",
+  item_id: 1,
+  block_revision: 41,
+  placement_request_id: "place_foreground_dirt_12_13_test",
+  placed_by_account: "uso",
+});
+placementRevisionState.removed_background.set("14,15", {
+  x: 14,
+  y: 15,
+  block_type: "dirt",
+  item_id: 1,
+  block_revision: 42,
+  mutation_request_id: "break_background_dirt_14_15_test",
+});
+const serializedPlacementRevisionState = helpers.serializeWorldState("PLACEMENT_REVISION");
+assert.equal(serializedPlacementRevisionState.world_state_version, 2);
+assert.equal(serializedPlacementRevisionState.block_revision, 42);
+const serializedPlacementBlocks = /** @type {Array<Record<string, unknown>>} */ (serializedPlacementRevisionState.blocks);
+const serializedPlacementTombstones = /** @type {Array<Record<string, unknown>>} */ (serializedPlacementRevisionState.removed_background);
+assert.equal(serializedPlacementBlocks.find((entry) => entry.x === 12 && entry.y === 13)?.placement_request_id, "place_foreground_dirt_12_13_test");
+assert.equal(serializedPlacementTombstones.find((entry) => entry.x === 14 && entry.y === 15)?.mutation_request_id, "break_background_dirt_14_15_test");
+const restoredPlacementRevisionState = helpers.deserializeWorldState("PLACEMENT_REVISION", serializedPlacementRevisionState);
+assert.equal(restoredPlacementRevisionState.block_revision, 42);
+assert.equal(restoredPlacementRevisionState.foreground.get("12,13").block_revision, 41);
+assert.equal(restoredPlacementRevisionState.foreground.get("12,13").placement_request_id, "place_foreground_dirt_12_13_test");
+assert.equal(restoredPlacementRevisionState.removed_background.get("14,15").block_revision, 42);
+assert.equal(restoredPlacementRevisionState.removed_background.get("14,15").mutation_request_id, "break_background_dirt_14_15_test");
 const legacySeedLoadStartedAt = Date.now();
 const migratedLegacySeed = helpers.normalizeSeedEntry({
   x: 6,
@@ -674,7 +707,7 @@ assert.ok(
   Buffer.byteLength(JSON.stringify(compactWorldLayer)) < Buffer.byteLength(JSON.stringify(verboseWorldLayer)),
   "dictionary world layers must be smaller than verbose arrays",
 );
-assert.equal(helpers.serializeWorldState("WORLD").world_state_version, 1);
+assert.equal(helpers.serializeWorldState("WORLD").world_state_version, 2);
 
 const largeWorldState = {
   type: "world_state",

@@ -209,6 +209,7 @@ function createWorldStateHelpers(config) {
     function createEmptyWorldState() {
         return {
             world_generation_version: currentWorldGenerationVersion,
+            block_revision: 0,
             cleared: false,
             foreground: new Map(),
             background: new Map(),
@@ -255,6 +256,15 @@ function createWorldStateHelpers(config) {
             y: grid.y,
             block_type: blockType,
         };
+        const blockRevision = Math.max(0, Math.trunc(Number(rawEntry.block_revision) || 0));
+        if (blockRevision > 0)
+            entry.block_revision = blockRevision;
+        const placementRequestId = clampString(rawEntry.placement_request_id || "");
+        if (placementRequestId !== "")
+            entry.placement_request_id = placementRequestId;
+        const placedByAccount = config.cleanAccountName(rawEntry.placed_by_account || "");
+        if (placedByAccount !== "")
+            entry.placed_by_account = placedByAccount;
         if (hasOwn(rawEntry, "entrance_locked")) {
             entry.entrance_locked = Boolean(rawEntry.entrance_locked);
         }
@@ -529,11 +539,18 @@ function createWorldStateHelpers(config) {
         if (blockType !== "" && (!itemDatabase.hasItem(blockType) || resolveInventoryCategory(blockType) !== "block")) {
             return null;
         }
-        return {
+        const entry = {
             x: grid.x,
             y: grid.y,
             block_type: blockType,
         };
+        const blockRevision = Math.max(0, Math.trunc(Number(rawEntry.block_revision) || 0));
+        if (blockRevision > 0)
+            entry.block_revision = blockRevision;
+        const mutationRequestId = clampString(rawEntry.mutation_request_id || "");
+        if (mutationRequestId !== "")
+            entry.mutation_request_id = mutationRequestId;
+        return entry;
     }
     function normalizeSeedEntry(rawEntry) {
         if (!isRecord(rawEntry))
@@ -712,7 +729,16 @@ function createWorldStateHelpers(config) {
         if (!isRecord(data))
             return state;
         state.world_generation_version = clampInteger(data.world_generation_version || legacyWorldGenerationVersion, legacyWorldGenerationVersion, currentWorldGenerationVersion);
+        state.block_revision = Math.max(0, Math.trunc(Number(data.block_revision) || 0));
         loadSavedWorldGridData(state, data);
+        for (const layerName of ["foreground", "background", "removed_foreground", "removed_background"]) {
+            const layer = getStateMap(state, layerName);
+            for (const rawEntry of layer.values()) {
+                if (!isRecord(rawEntry))
+                    continue;
+                state.block_revision = Math.max(Number(state.block_revision) || 0, Math.max(0, Math.trunc(Number(rawEntry.block_revision) || 0)));
+            }
+        }
         loadElectricalDataIntoState(state, data, worldName);
         loadInteractionsIntoMap(getStateMap(state, "interactions"), data.interactions, worldName);
         loadDropsIntoMap(getStateMap(state, "drops"), data.drops || data.item_drops);
@@ -2080,8 +2106,9 @@ function createWorldStateHelpers(config) {
     function serializeWorldState(worldName) {
         const state = config.ensureWorldState(worldName);
         return {
-            world_state_version: 1,
+            world_state_version: 2,
             world_generation_version: clampInteger(state.world_generation_version || legacyWorldGenerationVersion, legacyWorldGenerationVersion, currentWorldGenerationVersion),
+            block_revision: Math.max(0, Math.trunc(Number(state.block_revision) || 0)),
             world_name: cleanWorld(worldName),
             saved_at: new Date().toISOString(),
             cleared: Boolean(state.cleared),

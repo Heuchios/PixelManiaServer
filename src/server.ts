@@ -50,6 +50,11 @@ const ServerRuntimeStats = require("./server_runtime_stats");
 
 type ServerPacketRecord = Record<string, unknown>;
 
+interface WorldBlockReconciliationOptions {
+  authoritative_pending?: boolean;
+  reason?: unknown;
+}
+
 interface ServerInboundMessageEnvelope {
   data: ServerPacketRecord;
   enqueuedAt: number;
@@ -1967,6 +1972,11 @@ const ServerPhase7Dispatcher = ServerPhase7DispatcherModule.createServerPhase7Di
     developer_pin_unlock: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleDeveloperPinUnlockRoute(socket, player, data, context),
     developer_command_request: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleDeveloperCommandRequestRoute(socket, player, data, context),
     world_block_update: (socket, player, data, context) => getServerPhase8WorldActionRoutes().handleWorldBlockUpdate(socket, player, data, context),
+    world_block_reconcile_request: (socket, player, data) => handleWorldBlockReconcileRequest(
+      socket as ServerWebSocket,
+      player as ServerPacketRecord | null | undefined,
+      data as ServerPacketRecord,
+    ),
     electrical_layer_update: (socket, player, data, context) => getServerPhase8WorldActionRoutes().handleElectricalLayerUpdate(socket, player, data, context),
     request_wire_visibility_refresh: (socket, player, data, context) => getServerPhase8WorldActionRoutes().handleRequestWireVisibilityRefresh(socket, player, data, context),
     request_open_generator: (socket, player, data, context) => getServerPhase8WorldActionRoutes().handleRequestOpenGenerator(socket, player, data, context),
@@ -2176,6 +2186,7 @@ const playerNetworkStats: any = {
   idempotency_duplicates: 0,
   idempotency_db_failures: 0,
 };
+const activeWorldBlockIdempotencyKeys = new Set<string>();
 const ServerSocketDeliveryHelpers = ServerSocketDeliveryHelpersModule.createServerSocketDeliveryHelpers({
   websocketOpenState: WebSocket.OPEN,
   maxPacketBytes: MAX_PACKET_BYTES,
@@ -2885,11 +2896,15 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
         return;
       }
 
-      const phase7Dispatch = await ServerPhase7Dispatcher.dispatch(socket, player, data, {
-        playerId,
-      });
-      if (phase7Dispatch.handled) return;
-      return;
+      try {
+        const phase7Dispatch = await ServerPhase7Dispatcher.dispatch(socket, player, data, {
+          playerId,
+        });
+        if (phase7Dispatch.handled) return;
+        return;
+      } finally {
+        completeMessageIdempotency(player, data);
+      }
     } catch (error) {
       console.warn("[socket_message_error]", getErrorMessage(error));
     }
@@ -3698,9 +3713,22 @@ function getMessageIdempotencyTTLMs(data: any = {}) {
   return ServerMessageRouterHelpers.getMessageIdempotencyTTLMs(data);
 }
 
-function sendDuplicateRequestNotice(socket: any, data: any) {
+function sendDuplicateRequestNotice(
+  socket: ServerWebSocket,
+  player: ServerPacketRecord | null | undefined,
+  data: ServerPacketRecord,
+  idempotencyKey: unknown = "",
+) {
   const type = String(data?.type || "").trim();
   const requestId = makeRequestId(data);
+
+  if (type === "world_block_update") {
+    sendWorldBlockReconciliation(socket, player, data, {
+      authoritative_pending: activeWorldBlockIdempotencyKeys.has(String(idempotencyKey || "")),
+      reason: "duplicate_request_reconciled",
+    });
+    return;
+  }
 
   if (type === "inventory_transaction_request") {
     sendInventoryTransactionRejected(socket, data, "Duplicate request ignored.");
@@ -3763,7 +3791,12 @@ async function enforceMessageIdempotency(socket: any, player: any, data: any) {
     playerNetworkStats.idempotency_db_failures += 1;
     return true;
   }
-  if (!claim.duplicate) return true;
+  if (!claim.duplicate) {
+    if (String(data?.type || "").trim() === "world_block_update") {
+      activeWorldBlockIdempotencyKeys.add(key);
+    }
+    return true;
+  }
 
   playerNetworkStats.idempotency_duplicates += 1;
   logSecurityEvent(socket, player, "message_idempotency_duplicate", {
@@ -3772,8 +3805,19 @@ async function enforceMessageIdempotency(socket: any, player: any, data: any) {
     request_id: makeRequestId(data),
     idempotency_ttl_ms: idempotencyTTLMs,
   }, "info");
-  sendDuplicateRequestNotice(socket, data);
+  sendDuplicateRequestNotice(socket, player, data, key);
   return false;
+}
+
+function completeMessageIdempotency(
+  player: ServerPacketRecord | null | undefined,
+  data: ServerPacketRecord,
+) {
+  if (String(data?.type || "").trim() !== "world_block_update") return;
+  const scope = makeMessageIdempotencyScope(data);
+  if (scope === "") return;
+  const key = makeMessageIdempotencyKey(player, data, scope);
+  if (key !== "") activeWorldBlockIdempotencyKeys.delete(key);
 }
 
 function getClientVersion(data: any) {
@@ -19215,8 +19259,10 @@ function replaceWorldStateAndBroadcast(worldName: any, state: any, extraMessageD
 function clearWorldByAdmin(worldName: any, data: any, socket: any = null, player: any = null) {
   const clean = cleanWorld(worldName);
   const currentState = ensureWorldState(clean);
+  const successorBlockRevision = Math.min(Number.MAX_SAFE_INTEGER, getWorldBlockRevision(currentState) + 1);
   const beforeSummary = summarizeWorldAuditState(currentState);
   const nextState = createEmptyWorldState();
+  nextState.block_revision = successorBlockRevision;
   nextState.cleared = true;
 
   const protectedEntries = getProtectedClearEntries(currentState, data);
@@ -19256,9 +19302,11 @@ function clearWorldByAdmin(worldName: any, data: any, socket: any = null, player
 function resetWorldByAdmin(worldName: any, socket: any = null, player: any = null) {
   const clean = cleanWorld(worldName);
   const currentState = ensureWorldState(clean);
+  const successorBlockRevision = Math.min(Number.MAX_SAFE_INTEGER, getWorldBlockRevision(currentState) + 1);
   const beforeSummary = summarizeWorldAuditState(currentState);
   const snapshot = createWorldSnapshot(clean, "before_reset_world", socket, player);
   const nextState = createEmptyWorldState();
+  nextState.block_revision = successorBlockRevision;
   replaceWorldStateAndBroadcast(clean, nextState, {
     respawn_player: true,
     force_respawn: true,
@@ -24777,6 +24825,16 @@ function sanitizeSeedUpdate(data: any, worldName: any) {
   };
 }
 
+function getWorldBlockRevision(state: ServerPacketRecord | null | undefined) {
+  return Math.max(0, Math.trunc(Number(state?.block_revision) || 0));
+}
+
+function nextWorldBlockRevision(state: ServerPacketRecord) {
+  const nextRevision = Math.min(Number.MAX_SAFE_INTEGER, getWorldBlockRevision(state) + 1);
+  state.block_revision = nextRevision;
+  return nextRevision;
+}
+
 function applyBlockUpdateToWorldState(worldName: any, update: any) {
   const state = ensureWorldState(worldName);
   const key = gridKey(update.x, update.y);
@@ -24786,15 +24844,25 @@ function applyBlockUpdateToWorldState(worldName: any, update: any) {
   const cctvPlacementStartsFresh = isForeground && update.action === "place" && isCctvBlockType(update.block_type) && !hasCctvBlock(worldName);
 
   if (update.action === "place") {
+    const blockRevision = nextWorldBlockRevision(state);
+    const placementRequestId = clampString(update.request_id || update.action_id || "");
+    update.block_revision = blockRevision;
+    update.placement_request_id = placementRequestId;
+    update.world = cleanWorld(worldName);
     if (update.toggle_action !== "punch_toggle") {
       clearServerBlockDamage(worldName, update);
     }
-    target.set(key, {
+    const blockEntry: ServerPacketRecord = {
       x: update.x,
       y: update.y,
       block_type: update.block_type,
       item_id: Math.max(0, Math.trunc(Number(update.item_id) || ItemAtlasDB.getItemIdForKey(update.block_type) || 0)),
-    });
+      block_revision: blockRevision,
+    };
+    if (placementRequestId !== "") blockEntry.placement_request_id = placementRequestId;
+    const placedByAccount = cleanAccountName(update.placed_by_account || "");
+    if (placedByAccount !== "") blockEntry.placed_by_account = placedByAccount;
+    target.set(key, blockEntry);
     const electricalDeviceChanged = syncElectricalDeviceStateForBlockUpdate(state, update);
     removed.delete(key);
     if (isDiceBlockType(update.block_type)) {
@@ -24815,6 +24883,11 @@ function applyBlockUpdateToWorldState(worldName: any, update: any) {
   }
 
   if (update.action === "break") {
+    const blockRevision = nextWorldBlockRevision(state);
+    const mutationRequestId = clampString(update.request_id || update.action_id || "");
+    update.block_revision = blockRevision;
+    update.mutation_request_id = mutationRequestId;
+    update.world = cleanWorld(worldName);
     clearServerBlockDamage(worldName, update);
     target.delete(key);
     const electricalDeviceChanged = syncElectricalDeviceStateForBlockUpdate(state, update);
@@ -24824,6 +24897,8 @@ function applyBlockUpdateToWorldState(worldName: any, update: any) {
       y: update.y,
       block_type: update.block_type || "",
       item_id: Math.max(0, Math.trunc(Number(update.item_id) || ItemAtlasDB.getItemIdForKey(update.block_type) || 0)),
+      block_revision: blockRevision,
+      mutation_request_id: mutationRequestId,
     });
 
     if (isForeground && isWorldLockBlockType(update.block_type)) {
@@ -27793,6 +27868,97 @@ function getWorldBlockTypeAt(worldName: any, x: any, y: any, layer: any = "foreg
   return clampString(block?.block_type || "");
 }
 
+function buildWorldBlockReconciliationPayload(
+  player: ServerPacketRecord | null | undefined,
+  data: ServerPacketRecord,
+  options: WorldBlockReconciliationOptions = {},
+) {
+  const requestedWorld = cleanWorld(data?.world || data?.current_world || getPlayerCurrentWorldName(player));
+  const currentWorld = getPlayerCurrentWorldName(player);
+  const layer = String(data?.layer || "foreground").trim().toLowerCase() === "background"
+    ? "background"
+    : "foreground";
+  const x = Math.trunc(Number(data?.x ?? data?.target_x) || 0);
+  const y = Math.trunc(Number(data?.y ?? data?.target_y) || 0);
+  const requestId = makeRequestId(data);
+  const blockAction = String(data?.block_action || data?.requested_action || data?.action || "place").trim().toLowerCase();
+  const requestedBlockType = clampString(data?.requested_block_type || data?.block_type || data?.item_id || "");
+  const payload: ServerPacketRecord = {
+    type: "world_block_reconcile",
+    world: requestedWorld,
+    current_world: currentWorld,
+    request_id: requestId,
+    action_id: requestId,
+    block_action: blockAction,
+    layer,
+    x,
+    y,
+    requested_block_type: requestedBlockType,
+    authoritative_pending: options.authoritative_pending === true,
+    authoritative_present: false,
+    authoritative_block_type: "",
+    authoritative_item_id: 0,
+    authoritative_placement_request_id: "",
+    authoritative_matches_request: false,
+    block_revision: 0,
+    cell_revision: 0,
+    reason: clampString(options.reason || "authoritative_reconcile"),
+  };
+
+  if (requestedWorld !== currentWorld || !isGridInWorld(x, y)) {
+    payload.reason = requestedWorld !== currentWorld ? "wrong_world" : "invalid_grid";
+    return payload;
+  }
+
+  const state = ensureWorldState(currentWorld);
+  const explicitTarget = getWorldLayerMap(state, layer);
+  const removed = getWorldRemovedLayerMap(state, layer);
+  const key = gridKey(x, y);
+  const generatedMaps = buildServerGeneratedWorldMaps(currentWorld, state);
+  const effectiveTarget = layer === "background"
+    ? buildEffectiveBackgroundMap(currentWorld, state, generatedMaps.background)
+    : buildEffectiveForegroundMap(currentWorld, state, generatedMaps.foreground);
+  const block = effectiveTarget.get(key) || null;
+  const explicitBlock = explicitTarget.get(key) || null;
+  const tombstone = removed.get(key) || null;
+  const placementRequestId = clampString(explicitBlock?.placement_request_id || block?.placement_request_id || "");
+  payload.authoritative_present = Boolean(block);
+  payload.authoritative_block_type = clampString(block?.block_type || "");
+  payload.authoritative_item_id = Math.max(0, Math.trunc(Number(block?.item_id) || 0));
+  payload.authoritative_placement_request_id = placementRequestId;
+  payload.authoritative_matches_request = requestId !== "" && placementRequestId === requestId;
+  payload.block_revision = getWorldBlockRevision(state);
+  payload.cell_revision = Math.max(
+    Math.max(0, Math.trunc(Number(explicitBlock?.block_revision || block?.block_revision) || 0)),
+    Math.max(0, Math.trunc(Number(tombstone?.block_revision) || 0)),
+  );
+  const playerState = ensurePlayerState(player?.account_username || player?.name || "");
+  if (playerState) payload.player_data = buildPlayerStateForClient(playerState);
+  return payload;
+}
+
+function sendWorldBlockReconciliation(
+  socket: ServerWebSocket,
+  player: ServerPacketRecord | null | undefined,
+  data: ServerPacketRecord,
+  options: WorldBlockReconciliationOptions = {},
+) {
+  if (!socket || socket.readyState !== WebSocket.OPEN) return;
+  sendJson(socket, buildWorldBlockReconciliationPayload(player, data, options));
+}
+
+function handleWorldBlockReconcileRequest(
+  socket: ServerWebSocket,
+  player: ServerPacketRecord | null | undefined,
+  data: ServerPacketRecord,
+) {
+  if (!requireAuthenticated(socket, player, "reconcile block placement")) return;
+  sendWorldBlockReconciliation(socket, player, data, {
+    authoritative_pending: false,
+    reason: "client_reconcile_request",
+  });
+}
+
 function getWorldLayerMap(state: any, layer: any = "foreground") {
   const cleanLayer = String(layer || "").toLowerCase();
   if (cleanLayer === "background") return state.background;
@@ -28113,6 +28279,7 @@ function buildWorldStateMessage(worldName: any, extraMessageData: any = {}) {
     type: "world_state",
     world_state_encoding: "grid_dictionary_v1",
     world: clean,
+    block_revision: getWorldBlockRevision(state),
     cleared: Boolean(state.cleared),
     foreground: WorldStateHelpers.compactWorldLayerEntriesForNetwork(
       getEffectiveForegroundBlocksForState(state, clean, generatedMaps.foreground)
