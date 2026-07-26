@@ -532,6 +532,12 @@ const DICE_BLOCK_TYPE = "dice_block";
 const CHECKPOINT_BLOCK_TYPE = "checkpoint";
 const TACKLE_BOX_COOLDOWN_MS = 4 * 60 * 60 * 1000;
 const TACKLE_BOX_REWARD_COUNT = 5;
+const ATM_MACHINE_BLOCK_TYPE = "atm_machine";
+const ATM_MACHINE_COOLDOWN_MS = 12 * 60 * 60 * 1000;
+const ATM_MACHINE_REWARD_ITEM_ID = "gem";
+const ATM_MACHINE_REWARD_ITEM_CATEGORY = "currency";
+const ATM_MACHINE_REWARD_AMOUNT_MIN = 1;
+const ATM_MACHINE_REWARD_AMOUNT_MAX = 100;
 const WATER_WELL_BLOCK_TYPE = "water_well";
 const WATER_WELL_COOLDOWN_MS = 5 * 60 * 1000;
 const WATER_WELL_REWARD_ITEM_ID = "water_bucket";
@@ -896,6 +902,7 @@ const SHOP_CATALOG: any = new Map([
   ["night_theme_machine", { item_id: "night_theme_machine", item_category: "block", amount: 1, price: 125000 }],
   ["snow_theme_machine", { item_id: "snow_theme_machine", item_category: "block", amount: 1, price: 125000 }],
   ["city_theme_machine", { item_id: "city_theme_machine", item_category: "block", amount: 1, price: 125000 }],
+  ["atm_machine", { item_id: "atm_machine", item_category: "block", amount: 1, price: 12500 }],
   ["cctv", { item_id: "cctv", item_category: "block", amount: 1, price: 15000 }],
   ["basic_items_pack", { item_id: "basic_items_pack", item_category: "material", amount: 1, price: 500, pack_size: 1 }],
   ["hairpack", { item_id: "hairpack", item_category: "material", amount: 1, price: 1500, pack_size: 1 }],
@@ -1535,6 +1542,7 @@ function getServerPhase8WorldActionRoutes() {
       isPostgresAuthoritativeReady,
       isSafeBlockType,
       isSnowRepellentBlockType,
+      isAtmMachineBlockType,
       isTackleBoxBlockType,
       isVendBlockType,
       isWaterBucketScoopBreak,
@@ -8842,6 +8850,13 @@ function isWaterWellBlockType(blockType: any) {
   return Boolean(definition && definition.category === "block" && definition.water_well_block);
 }
 
+function isAtmMachineBlockType(blockType: any) {
+  const clean = clampString(blockType || "");
+  if (clean === ATM_MACHINE_BLOCK_TYPE) return true;
+  const definition = ItemDatabase.getItemDefinition(clean);
+  return Boolean(definition && definition.category === "block" && definition.atm_machine_block);
+}
+
 function isDiceBlockType(blockType: any) {
   const clean = clampString(blockType || "");
   if (clean === DICE_BLOCK_TYPE) return true;
@@ -10020,6 +10035,11 @@ function getTimedProviderCooldownMsForBlockType(blockType: any) {
     const seconds = Number(definition.water_well_cooldown_seconds);
     if (Number.isFinite(seconds)) return clampInteger(Math.round(seconds * 1000), 0, 30 * 24 * 60 * 60 * 1000);
     return WATER_WELL_COOLDOWN_MS;
+  }
+  if (isAtmMachineBlockType(clean)) {
+    const seconds = Number(definition.atm_machine_cooldown_seconds);
+    if (Number.isFinite(seconds)) return clampInteger(Math.round(seconds * 1000), 0, 30 * 24 * 60 * 60 * 1000);
+    return ATM_MACHINE_COOLDOWN_MS;
   }
   const seconds = Number(definition.tackle_box_cooldown_seconds);
   if (Number.isFinite(seconds)) return clampInteger(Math.round(seconds * 1000), 0, 30 * 24 * 60 * 60 * 1000);
@@ -11335,12 +11355,13 @@ async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName:
   const state = ensureWorldState(worldName);
   const block = state.foreground.get(gridKey(update.x, update.y));
   const isWaterWell = Boolean(block && isWaterWellBlockType(block.block_type));
+  const isAtmMachine = Boolean(block && isAtmMachineBlockType(block.block_type));
   const isTackleBox = Boolean(block && isTackleBoxBlockType(block.block_type));
-  const providerName = isWaterWell ? "Water Well" : "Tackle Box";
-  const providerType = isWaterWell ? "water_well" : "tackle_box";
-  if (!block || (!isTackleBox && !isWaterWell)) {
+  const providerName = isAtmMachine ? "ATM Machine" : (isWaterWell ? "Water Well" : "Tackle Box");
+  const providerType = isAtmMachine ? "atm_machine" : (isWaterWell ? "water_well" : "tackle_box");
+  if (!block || (!isTackleBox && !isWaterWell && !isAtmMachine)) {
     sendActionRejected(socket, "world_interaction_update", `${providerName} missing.`, {
-      reason: isWaterWell ? "water_well_missing" : "tackle_box_missing",
+      reason: isAtmMachine ? "atm_machine_missing" : (isWaterWell ? "water_well_missing" : "tackle_box_missing"),
       x: update.x,
       y: update.y,
     });
@@ -11359,7 +11380,7 @@ async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName:
   const operation = clampString(update.operation || "harvest").toLowerCase();
   if (operation !== "harvest") {
     sendActionRejected(socket, "world_interaction_update", `Unknown ${providerName} action.`, {
-      reason: isWaterWell ? "unknown_water_well_action" : "unknown_tackle_box_action",
+      reason: isAtmMachine ? "unknown_atm_machine_action" : (isWaterWell ? "unknown_water_well_action" : "unknown_tackle_box_action"),
     });
     return false;
   }
@@ -11368,7 +11389,7 @@ async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName:
   const tackleLock = await acquireLiveActionLock(worldTackleBoxActionLocks, providerType, tackleActionKey, player.id);
   if (!tackleLock) {
     sendActionRejected(socket, "world_interaction_update", `That ${providerName} is busy.`, {
-      reason: isWaterWell ? "water_well_busy" : "tackle_box_busy",
+      reason: isAtmMachine ? "atm_machine_busy" : (isWaterWell ? "water_well_busy" : "tackle_box_busy"),
     });
     return false;
   }
@@ -11389,11 +11410,52 @@ async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName:
       const statePayload = makeTackleBoxStatePayload(worldName, update.x, update.y, block.block_type, tackle, "cooldown");
       sendJson(socket, statePayload);
       sendActionRejected(socket, "world_interaction_update", `${providerName} is not ready yet.`, {
-        reason: isWaterWell ? "water_well_cooldown" : "tackle_box_cooldown",
+        reason: isAtmMachine ? "atm_machine_cooldown" : (isWaterWell ? "water_well_cooldown" : "tackle_box_cooldown"),
         remaining_ms: clientState.remaining_ms,
         state: clientState,
       });
       return false;
+    }
+
+    const definition = ItemDatabase.getItemDefinition(block.block_type) || {};
+    let atmBeforeState = null;
+    let atmStagedState = null;
+    let atmReward: { item_id: string; item_category: string; amount: number } | null = null;
+    if (isAtmMachine) {
+      const rewardItemId = clampString(definition.atm_machine_reward_item_id || ATM_MACHINE_REWARD_ITEM_ID);
+      const rewardCategory = resolveInventoryCategory(rewardItemId, definition.atm_machine_reward_item_category || ATM_MACHINE_REWARD_ITEM_CATEGORY);
+      const amountRange = Array.isArray(definition.atm_machine_reward_amount_range)
+        ? definition.atm_machine_reward_amount_range
+        : [ATM_MACHINE_REWARD_AMOUNT_MIN, ATM_MACHINE_REWARD_AMOUNT_MAX];
+      const stackLimit = ItemDatabase.getStackLimit(rewardItemId);
+      const minAmount = clampInteger(amountRange[0], ATM_MACHINE_REWARD_AMOUNT_MIN, stackLimit);
+      const maxAmount = clampInteger(amountRange[1], minAmount, stackLimit);
+      const amount = randomRangeInclusive(Math.min(minAmount, maxAmount), Math.max(minAmount, maxAmount));
+      const playerState = ensureWritablePlayerState(player.account_username);
+      if (!playerState) {
+        sendActionRejected(socket, "world_interaction_update", "Could not load your server inventory.", {
+          reason: "atm_machine_inventory_unavailable",
+        });
+        return false;
+      }
+      if (!ItemDatabase.hasItem(rewardItemId) || !ItemDatabase.canStoreItemInCategory(rewardItemId, rewardCategory) || !canAddItemToState(playerState, rewardItemId, rewardCategory, amount)) {
+        sendActionRejected(socket, "world_interaction_update", "Your gem balance is full.", {
+          reason: "atm_machine_reward_capacity",
+          item_id: rewardItemId,
+          item_category: rewardCategory,
+          amount,
+        });
+        return false;
+      }
+      atmBeforeState = cloneJson(playerState);
+      atmStagedState = cloneJson(playerState);
+      if (!addItemToState(atmStagedState, rewardItemId, rewardCategory, amount)) {
+        sendActionRejected(socket, "world_interaction_update", "Could not add ATM gems.", {
+          reason: "atm_machine_reward_failed",
+        });
+        return false;
+      }
+      atmReward = { item_id: rewardItemId, item_category: rewardCategory, amount };
     }
 
     const nowMs = Date.now();
@@ -11410,8 +11472,9 @@ async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName:
     const dropPosition = getGridCenterPixels(update.x, update.y);
     const emittedDrops: any = [];
     const rewards: any = [];
-    if (isWaterWell) {
-      const definition = ItemDatabase.getItemDefinition(block.block_type) || {};
+    if (isAtmMachine) {
+      if (atmReward) rewards.push(atmReward);
+    } else if (isWaterWell) {
       const rewardItemId = clampString(definition.water_well_reward_item_id || WATER_WELL_REWARD_ITEM_ID);
       const rewardCategory = resolveInventoryCategory(rewardItemId, definition.water_well_reward_item_category || WATER_WELL_REWARD_ITEM_CATEGORY);
       const amountRange = Array.isArray(definition.water_well_reward_amount_range)
@@ -11489,6 +11552,68 @@ async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName:
         source_block: block.block_type,
       },
     }));
+
+    if (isAtmMachine) {
+      if (!atmReward) {
+        worldStates.set(cleanWorld(worldName), deserializeWorldState(worldName, previousWorldState));
+        sendActionRejected(socket, "world_interaction_update", "ATM Machine reward was not prepared.", {
+          reason: "atm_machine_reward_missing",
+        });
+        return false;
+      }
+      const committedAtmReward = atmReward;
+      const serializedWorld = serializeWorldState(worldName);
+      const commit = await commitPlayerInventoryState(socket, player, player.account_username, atmBeforeState, atmStagedState, {
+        source: "atm_machine",
+        action: "atm_machine_harvest",
+        reason: "atm_machine_reward",
+        request_id: requestId,
+        world: worldName,
+        metadata: {
+          transaction_id: sourceId,
+          x: update.x,
+          y: update.y,
+          reward_item_id: committedAtmReward.item_id,
+          reward_item_category: committedAtmReward.item_category,
+          reward_amount: committedAtmReward.amount,
+          next_harvest_at: savedTackle.next_harvest_at,
+        },
+        world_state: serializedWorld,
+        world_changes: [objectChange],
+        failure_message: "Could not collect ATM gems. Try again.",
+      });
+      if (!commit.ok) {
+        worldStates.set(cleanWorld(worldName), deserializeWorldState(worldName, previousWorldState));
+        sendActionRejected(socket, "world_interaction_update", commit.message || "PostgreSQL rejected the ATM Machine update.", {
+          reason: commit.reason || "atm_machine_commit_failed",
+        });
+        return false;
+      }
+      const committedState = commit.state;
+      const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
+      persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
+      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, statePayload, {
+        username: player.account_username,
+        rewards: combineRewardEntries(rewards),
+      });
+      logWorldChange(socket, player, objectChange, { skipPostgres: commit.postgres_committed });
+      logItemLedgerForState(socket, player, player.account_username, committedState, committedAtmReward.item_id, committedAtmReward.item_category, committedAtmReward.amount, "atm_machine_harvest", sourceId, "atm_machine_reward", worldName, {
+        x: update.x,
+        y: update.y,
+        next_harvest_at: savedTackle.next_harvest_at,
+      }, { skipPostgres: commit.postgres_committed });
+      sendInventoryTransactionResult(socket, {
+        ok: true,
+        request_id: requestId,
+        action: "atm_machine_harvest",
+        source_type: "atm_machine_harvest",
+        message: `ATM Machine produced ${committedAtmReward.amount} gems.`,
+        username: player.account_username,
+        rewards: combineRewardEntries(rewards),
+        inventory_deltas: inventoryDeltas,
+      });
+      return true;
+    }
 
     const commit = await commitWorldStateWithBlockChanges(worldName, [objectChange, ...dropChanges], {
       player,

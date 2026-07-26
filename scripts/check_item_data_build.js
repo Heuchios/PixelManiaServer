@@ -77,6 +77,43 @@ assert.match(serverSource, /new Set\(\["night", "snow", "city"\]\)/);
 assert.match(serverSource, /const configuredTheme = sanitizeWorldBackgroundTheme\(definition\.theme_machine_theme \|\| ""\)/);
 assert.match(serverSource, /update\.theme = configuredTheme \|\| sanitizeWorldBackgroundTheme\(update\.theme \|\| "night"\) \|\| "night"/);
 
+const atmMachineDefinition = itemDatabase.getItemDefinition("atm_machine");
+assert.equal(atlasDb.getItemIdForKey("atm_machine"), 39);
+assert.deepEqual(Array.from(atlasDb.getItem(39)?.atlas_coords || []), [5, 16]);
+assert.equal(atmMachineDefinition?.category, "block");
+assert.equal(atmMachineDefinition?.rarity, "epic");
+assert.equal(atmMachineDefinition?.instance_tracked, true);
+assert.equal(atmMachineDefinition?.block_health, 4);
+assert.equal(atmMachineDefinition?.no_collision, true);
+assert.equal(atmMachineDefinition?.collidable, false);
+assert.equal(atmMachineDefinition?.atm_machine_block, true);
+assert.equal(atmMachineDefinition?.atm_machine_cooldown_seconds, 43200);
+assert.equal(atmMachineDefinition?.atm_machine_reward_item_id, "gem");
+assert.equal(atmMachineDefinition?.atm_machine_reward_item_category, "currency");
+assert.deepEqual(Array.from(atmMachineDefinition?.atm_machine_reward_amount_range || []), [1, 100]);
+assert.deepEqual(Array.from(atmMachineDefinition?.atm_machine_ready_atlas_coords || []), [5, 16]);
+assert.deepEqual(Array.from(atmMachineDefinition?.atm_machine_producing_atlas_coords || []), [6, 16]);
+assert.equal(atmMachineDefinition?.shop_price, 12500);
+assert.equal(atmMachineDefinition?.break_return_to_inventory, true);
+assert.equal(atmMachineDefinition?.drop_rules?.seed_chance, 0);
+assert.deepEqual(Array.from(atmMachineDefinition?.drop_rules?.gem_range || []), [0, 0]);
+assert.equal(atmMachineDefinition?.atlas_item_id, 39);
+assert.equal(atmMachineDefinition?.atlas_source_id, 0);
+assert.equal(atmMachineDefinition?.source_id ?? atmMachineDefinition?.atlas_source_id, 0);
+assert.equal(atmMachineDefinition?.alternative_tile, 0);
+assert.deepEqual(Array.from(atmMachineDefinition?.atlas_coords || []), [5, 16]);
+assert.deepEqual(Array.from(atmMachineDefinition?.texture?.cell || []), [5, 16]);
+assert.deepEqual(Array.from(atmMachineDefinition?.inventory_icon?.cell || []), [5, 16]);
+assert.match(serverSource, /\["atm_machine",\s*\{\s*item_id:\s*"atm_machine"[^]*?price:\s*12500\s*\}\]/);
+assert.match(serverSource, /const ATM_MACHINE_COOLDOWN_MS = 12 \* 60 \* 60 \* 1000/);
+assert.match(serverSource, /function isAtmMachineBlockType\(blockType/);
+assert.match(serverSource, /action:\s*"atm_machine_harvest"/);
+assert.match(serverSource, /source:\s*"atm_machine"/);
+assert.match(serverSource, /world_changes:\s*\[objectChange\]/);
+assert.match(serverSource, /ATM Machine produced \$\{committedAtmReward\.amount\} gems\./);
+assert.match(atlasDefinitionSource, /"atm_machine_block"/);
+assert.match(atlasDefinitionSource, /"atm_machine_reward_amount_range"/);
+
 const pickaxeItemIds = [
   "stone_pickaxe",
   "golden_pickaxe",

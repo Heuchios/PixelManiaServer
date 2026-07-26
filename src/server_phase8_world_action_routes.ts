@@ -117,6 +117,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
     isPostgresAuthoritativeReady,
     isSafeBlockType,
     isSnowRepellentBlockType,
+    isAtmMachineBlockType,
     isTackleBoxBlockType,
     isVendBlockType,
     isWaterBucketScoopBreak,
@@ -528,7 +529,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
           if (update.action === "place" && isDisplayBlockType(update.block_type)) {
             initializeDisplayOwnerOnPlace(worldName, update, player);
           }
-          if (update.action === "place" && (isTackleBoxBlockType(update.block_type) || isWaterWellBlockType(update.block_type))) {
+          if (update.action === "place" && (isTackleBoxBlockType(update.block_type) || isWaterWellBlockType(update.block_type) || isAtmMachineBlockType(update.block_type))) {
             const objectBefore = getWorldObjectJournalData(worldName, {
               action: "tackle_box_state",
               x: update.x,
@@ -549,7 +550,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
               blockTransactionId,
               {
                 tackle_box_action: "place",
-                timed_provider_type: isWaterWellBlockType(update.block_type) ? "water_well" : "tackle_box",
+                timed_provider_type: isAtmMachineBlockType(update.block_type) ? "atm_machine" : (isWaterWellBlockType(update.block_type) ? "water_well" : "tackle_box"),
                 next_harvest_at: tackle.next_harvest_at,
               }
             ));
