@@ -14509,7 +14509,7 @@ function clampString(value: any, limit: any = MAX_ITEM_ID_LENGTH) {
   return TextHelpers.clampString(value, limit);
 }
 
-function sanitizeProfileBio(value: any) {
+function sanitizeProfileBio(value: unknown) {
   const normalized = String(value || "")
     .replace(/\r\n?/g, "\n")
     .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
