@@ -209,6 +209,7 @@ function createWorldStateHelpers(config) {
     function createEmptyWorldState() {
         return {
             world_generation_version: currentWorldGenerationVersion,
+            world_revision: 0,
             block_revision: 0,
             cleared: false,
             foreground: new Map(),
@@ -729,6 +730,7 @@ function createWorldStateHelpers(config) {
         if (!isRecord(data))
             return state;
         state.world_generation_version = clampInteger(data.world_generation_version || legacyWorldGenerationVersion, legacyWorldGenerationVersion, currentWorldGenerationVersion);
+        state.world_revision = Math.max(0, Math.trunc(Number(data.world_revision) || 0));
         state.block_revision = Math.max(0, Math.trunc(Number(data.block_revision) || 0));
         loadSavedWorldGridData(state, data);
         for (const layerName of ["foreground", "background", "removed_foreground", "removed_background"]) {
@@ -2108,6 +2110,7 @@ function createWorldStateHelpers(config) {
         return {
             world_state_version: 2,
             world_generation_version: clampInteger(state.world_generation_version || legacyWorldGenerationVersion, legacyWorldGenerationVersion, currentWorldGenerationVersion),
+            world_revision: Math.max(0, Math.trunc(Number(state.world_revision) || 0)),
             block_revision: Math.max(0, Math.trunc(Number(state.block_revision) || 0)),
             world_name: cleanWorld(worldName),
             saved_at: new Date().toISOString(),

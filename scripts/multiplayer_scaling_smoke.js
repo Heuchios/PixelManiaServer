@@ -431,6 +431,7 @@ async function runLocalSingleInstanceSmoke(options) {
     SERVER_INSTANCE_WS_URL: `ws://127.0.0.1:${port}`,
   });
   const clients = [];
+  let routeOwnershipToken = "";
   try {
     const health = await waitForServer(server, { requireRouteFeature: true });
     assert(health.features?.max_players_per_world === 2, "health did not expose max_players_per_world=2");
@@ -534,6 +535,8 @@ async function runRedisRouteConflictSmoke(options) {
     const route = await store.getWorldRoute(world);
     assert(route.ok, "Redis did not report a route owner");
     assert(route.owner_instance_id === "route-smoke-a", `expected route-smoke-a owner, got ${JSON.stringify(route)}`);
+    routeOwnershipToken = String(route.ownership_token || "");
+    assert(routeOwnershipToken !== "", "Redis route did not expose an ownership fence token");
 
     const rejected = await redirectedClient.joinWorld(world);
     assert(!rejected.ok && rejected.reason === "world_route_redirect", `expected world_route_redirect, got ${JSON.stringify(rejected.response)}`);
@@ -543,9 +546,8 @@ async function runRedisRouteConflictSmoke(options) {
   } finally {
     for (const client of clients) client.close();
     await wait(500);
-    if (store.isReady()) {
-      await store.releaseWorldRoute(world, "route-smoke-a");
-      await store.releaseWorldRoute(world, "route-smoke-b");
+    if (store.isReady() && routeOwnershipToken !== "") {
+      await store.releaseWorldRoute(world, "route-smoke-a", routeOwnershipToken);
     }
     await store.close();
     await stopServer(serverA);

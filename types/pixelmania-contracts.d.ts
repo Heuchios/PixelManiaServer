@@ -1239,11 +1239,16 @@ declare namespace PixelMania {
     ws_url?: string;
     owner_key?: string;
     target_key?: string;
+    ownership_token?: string;
+    ownership_epoch?: number;
+    token_key?: string;
+    epoch_key?: string;
   }
 
   interface RedisWorldRouteReleaseResult {
     released: boolean;
     fallback: boolean;
+    reason?: string;
   }
 
   interface RedisNetfoxMovementRouteSetResult {
@@ -1647,6 +1652,10 @@ declare namespace PixelMania {
     pickup_delay?: number;
     drop_amount?: number;
     drop_before_amount?: number;
+    expected_drop_before_amount?: number;
+    world_state?: Record<string, unknown>;
+    world_changes?: WorldChangeEntry[];
+    world_persistence?: Record<string, unknown>;
     correlation_id?: string | null;
     ip_address?: string;
     ip?: string;
@@ -1666,6 +1675,7 @@ declare namespace PixelMania {
     drop_before_amount: number;
     drop_after_amount: number;
     item_instances: TrackedItemInstanceSnapshot[];
+    persisted_revision?: number;
   }
 
   interface PostgresDropPickupFailure {
@@ -1675,6 +1685,11 @@ declare namespace PixelMania {
       | "invalid_payload"
       | "player_not_found"
       | "postgres_unavailable"
+      | "world_ownership_required"
+      | "world_ownership_fence_rejected"
+      | "stale_world_revision"
+      | "world_revision_content_conflict"
+      | "world_revision_cas_rejected"
       | "tracked_item_instance_movement_failed";
     drop_id?: string;
     item_type?: ItemId;

@@ -7,6 +7,17 @@ import path = require("node:path");
 type WarnFunction = (...args: unknown[]) => void;
 type JsonRecord = Record<string, any>;
 
+interface PersistenceWaitSummary {
+  ok: boolean;
+  total: number;
+  failed: number;
+}
+
+interface WorldLoadRevisionDecision {
+  source: "database" | "memory" | "empty";
+  reason: string;
+}
+
 function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -43,6 +54,74 @@ function writeJsonFileAtomic(filePath: string, data: unknown): void {
   fs.renameSync(tempPath, filePath);
 }
 
+function clonePersistenceSnapshot<T>(data: T): T {
+  if (typeof structuredClone === "function") {
+    return structuredClone(data);
+  }
+  return JSON.parse(JSON.stringify(data)) as T;
+}
+
+function normalizeWorldRevision(value: unknown): number {
+  const revision = Number(value);
+  if (!Number.isSafeInteger(revision) || revision < 0) return 0;
+  return revision;
+}
+
+function resolveWorldLoadRevision(input: unknown): WorldLoadRevisionDecision {
+  const details = isRecord(input) ? input : {};
+  const memoryExists = details.memory_exists === true;
+  const databaseFound = details.database_found === true;
+  const memoryRevision = normalizeWorldRevision(details.memory_revision);
+  const databaseRevision = normalizeWorldRevision(details.database_revision);
+  const memoryAuthoritative = details.memory_authoritative === true;
+
+  if (!databaseFound) {
+    if (memoryExists && memoryRevision > 0 && memoryAuthoritative) {
+      return { source: "memory", reason: "database_missing_preserve_owned_memory" };
+    }
+    return { source: "empty", reason: "database_missing" };
+  }
+  if (!memoryExists || databaseRevision >= memoryRevision) {
+    return { source: "database", reason: memoryExists ? "database_revision_current" : "memory_missing" };
+  }
+  if (memoryAuthoritative) {
+    return { source: "memory", reason: "owned_memory_revision_newer" };
+  }
+  return { source: "database", reason: "uncommitted_memory_rejected" };
+}
+
+function createWorldPersistenceCoordinator() {
+  const tails = new Map<string, Promise<void>>();
+
+  function enqueue<T>(worldName: unknown, work: () => Promise<T> | T): Promise<T> {
+    const key = String(worldName || "START").trim().toUpperCase() || "START";
+    const previous = tails.get(key) || Promise.resolve();
+    const run = previous.catch(() => undefined).then(work);
+    const tail = run.then(() => undefined, () => undefined);
+    tails.set(key, tail);
+    void tail.finally(() => {
+      if (tails.get(key) === tail) tails.delete(key);
+    });
+    return run;
+  }
+
+  async function wait(worldName: unknown): Promise<void> {
+    const key = String(worldName || "START").trim().toUpperCase() || "START";
+    const tail = tails.get(key);
+    if (tail) await tail;
+  }
+
+  async function waitAll(): Promise<void> {
+    await Promise.all(Array.from(tails.values()));
+  }
+
+  function pendingCount(): number {
+    return tails.size;
+  }
+
+  return { enqueue, pendingCount, wait, waitAll };
+}
+
 async function writeJsonFileAtomicAsync(filePath: string, data: unknown): Promise<void> {
   const tempPath = `${filePath}.tmp-${process.pid}-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
   try {
@@ -63,13 +142,23 @@ function trackPersistenceWrite(
   pendingPersistenceWrites: Set<Promise<unknown>>,
   promise: unknown,
   label = "persistence write",
-  warn: WarnFunction = console.warn
+  warn: WarnFunction = console.warn,
+  failureLabels: Set<string> | null = null
 ): unknown {
   if (!promise || typeof (promise as { then?: unknown }).then !== "function") return promise;
 
   const tracked = Promise.resolve(promise)
-    .catch((error) => {
+    .then((value) => {
+      if (value === false) {
+        failureLabels?.add(label);
+      } else {
+        failureLabels?.delete(label);
+      }
+      return value;
+    }, (error) => {
+      failureLabels?.add(label);
       warn(`[persistence] ${label} failed:`, errorMessage(error));
+      return false;
     })
     .finally(() => {
       pendingPersistenceWrites.delete(tracked);
@@ -79,9 +168,22 @@ function trackPersistenceWrite(
   return tracked;
 }
 
-async function waitForPersistenceWrites(pendingPersistenceWrites: Set<Promise<unknown>>): Promise<void> {
-  if (pendingPersistenceWrites.size === 0) return;
-  await Promise.allSettled(Array.from(pendingPersistenceWrites));
+async function waitForPersistenceWrites(
+  pendingPersistenceWrites: Set<Promise<unknown>>,
+  failureLabels: Set<string> | null = null
+): Promise<PersistenceWaitSummary> {
+  let total = 0;
+  let observedFailures = 0;
+  while (pendingPersistenceWrites.size > 0) {
+    const pending = Array.from(pendingPersistenceWrites);
+    const results = await Promise.allSettled(pending);
+    total += results.length;
+    observedFailures += results.filter((result) => (
+      result.status === "rejected" || (result.status === "fulfilled" && result.value === false)
+    )).length;
+  }
+  const failed = failureLabels ? failureLabels.size : observedFailures;
+  return { ok: failed === 0, total, failed };
 }
 
 function getJsonSavedAtTime(filePath: string, warn: WarnFunction = console.warn): number {
@@ -216,12 +318,16 @@ function copyJsonFolderIfMissingOrNewer(
 
 export = {
   backupCorruptJsonFile,
+  clonePersistenceSnapshot,
   copyJsonFolderIfMissingOrNewer,
   copyJsonIfMissingOrNewer,
+  createWorldPersistenceCoordinator,
   getCountDictionaryScore,
   getJsonContentScore,
   getJsonSavedAtTime,
+  normalizeWorldRevision,
   readJsonFile,
+  resolveWorldLoadRevision,
   trackPersistenceWrite,
   waitForPersistenceWrites,
   writeJsonFileAtomic,

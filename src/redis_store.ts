@@ -689,9 +689,18 @@ class RedisStore {
    * @param {number} ttlMs
    * @returns {Promise<RedisWorldRouteResult>}
    */
-  async claimWorldRoute(worldName: string, instanceId: string, wsUrl: string, ttlMs: number): Promise<RedisWorldRouteResult> {
+  async claimWorldRoute(worldName: string, instanceId: string, wsUrl: string, ttlMs: number, claimantId = ""): Promise<RedisWorldRouteResult> {
+    const cleanClaimantId = clean(claimantId) || `${clean(instanceId)}:local`;
     if (!this.isReady()) {
-      return { ok: true, fallback: true, world: clean(worldName), owner_instance_id: clean(instanceId), ws_url: clean(wsUrl) };
+      return {
+        ok: true,
+        fallback: true,
+        world: clean(worldName),
+        owner_instance_id: clean(instanceId),
+        ws_url: clean(wsUrl),
+        ownership_token: `${cleanClaimantId}:0`,
+        ownership_epoch: 0,
+      };
     }
 
     const cleanWorldName = clean(worldName);
@@ -704,6 +713,8 @@ class RedisStore {
     const safeTtlMs = Math.max(10000, toInt(ttlMs, 45000));
     const ownerKey = this.key("world_route_owner", cleanWorldName);
     const targetKey = this.key("world_route_target", cleanWorldName);
+    const tokenKey = this.key("world_route_token", cleanWorldName);
+    const epochKey = this.key("world_route_epoch", cleanWorldName);
 
     try {
       const reply = await this.client!.sendCommand([
@@ -711,29 +722,50 @@ class RedisStore {
         [
           "local owner_key = KEYS[1]",
           "local target_key = KEYS[2]",
+          "local token_key = KEYS[3]",
+          "local epoch_key = KEYS[4]",
           "local instance_id = ARGV[1]",
           "local ws_url = ARGV[2]",
           "local ttl_ms = tonumber(ARGV[3])",
+          "local claimant_id = ARGV[4]",
           "local current_owner = redis.call('GET', owner_key)",
+          "local current_token = redis.call('GET', token_key)",
           "if current_owner and current_owner ~= instance_id then",
-          "  return {0, current_owner, redis.call('GET', target_key) or ''}",
+          "  return {0, current_owner, redis.call('GET', target_key) or '', current_token or '', redis.call('GET', epoch_key) or '0'}",
+          "end",
+          "if current_owner and current_token and string.sub(current_token, 1, string.len(claimant_id) + 1) ~= claimant_id .. ':' then",
+          "  return {0, current_owner, redis.call('GET', target_key) or '', current_token, redis.call('GET', epoch_key) or '0'}",
+          "end",
+          "if current_owner and not current_token then",
+          "  local next_epoch = redis.call('INCR', epoch_key)",
+          "  current_token = claimant_id .. ':' .. tostring(next_epoch)",
+          "end",
+          "if not current_owner then",
+          "  local next_epoch = redis.call('INCR', epoch_key)",
+          "  current_token = claimant_id .. ':' .. tostring(next_epoch)",
           "end",
           "redis.call('SET', owner_key, instance_id, 'PX', ttl_ms)",
           "redis.call('SET', target_key, ws_url, 'PX', ttl_ms)",
-          "return {1, instance_id, ws_url}",
+          "redis.call('SET', token_key, current_token, 'PX', ttl_ms)",
+          "return {1, instance_id, ws_url, current_token, redis.call('GET', epoch_key) or '0'}",
         ].join("\n"),
-        "2",
+        "4",
         ownerKey,
         targetKey,
+        tokenKey,
+        epochKey,
         cleanInstanceId,
         cleanWsUrl,
         String(safeTtlMs),
+        cleanClaimantId,
       ]);
 
       const values = Array.isArray(reply) ? reply : [];
       const ok = toInt(values[0], 0) === 1;
       const ownerInstanceId = clean(values[1] || "");
       const routeWsUrl = clean(values[2] || "");
+      const ownershipToken = clean(values[3] || "");
+      const ownershipEpoch = Math.max(0, toInt(values[4], 0));
       return {
         ok,
         fallback: false,
@@ -743,6 +775,10 @@ class RedisStore {
         ws_url: routeWsUrl,
         owner_key: ownerKey,
         target_key: targetKey,
+        ownership_token: ownershipToken,
+        ownership_epoch: ownershipEpoch,
+        token_key: tokenKey,
+        epoch_key: epochKey,
       };
     } catch (error) {
       this.logFailure("world route claim", error);
@@ -764,8 +800,8 @@ class RedisStore {
    * @param {number} ttlMs
    * @returns {Promise<RedisWorldRouteResult>}
    */
-  async refreshWorldRoute(worldName: string, instanceId: string, wsUrl: string, ttlMs: number): Promise<RedisWorldRouteResult> {
-    return this.claimWorldRoute(worldName, instanceId, wsUrl, ttlMs);
+  async refreshWorldRoute(worldName: string, instanceId: string, wsUrl: string, ttlMs: number, claimantId = ""): Promise<RedisWorldRouteResult> {
+    return this.claimWorldRoute(worldName, instanceId, wsUrl, ttlMs, claimantId);
   }
 
   /**
@@ -780,10 +816,14 @@ class RedisStore {
 
     const ownerKey = this.key("world_route_owner", cleanWorldName);
     const targetKey = this.key("world_route_target", cleanWorldName);
+    const tokenKey = this.key("world_route_token", cleanWorldName);
+    const epochKey = this.key("world_route_epoch", cleanWorldName);
     try {
-      const [ownerInstanceId, routeWsUrl] = await Promise.all([
+      const [ownerInstanceId, routeWsUrl, ownershipToken, ownershipEpoch] = await Promise.all([
         this.client!.sendCommand(["GET", ownerKey]),
         this.client!.sendCommand(["GET", targetKey]),
+        this.client!.sendCommand(["GET", tokenKey]),
+        this.client!.sendCommand(["GET", epochKey]),
       ]);
       const owner = clean(ownerInstanceId || "");
       return {
@@ -793,6 +833,12 @@ class RedisStore {
         world: cleanWorldName,
         owner_instance_id: owner,
         ws_url: clean(routeWsUrl || ""),
+        ownership_token: clean(ownershipToken || ""),
+        ownership_epoch: Math.max(0, toInt(ownershipEpoch, 0)),
+        owner_key: ownerKey,
+        target_key: targetKey,
+        token_key: tokenKey,
+        epoch_key: epochKey,
       };
     } catch (error) {
       this.logFailure("world route get", error);
@@ -805,28 +851,34 @@ class RedisStore {
    * @param {string} instanceId
    * @returns {Promise<RedisWorldRouteReleaseResult>}
    */
-  async releaseWorldRoute(worldName: string, instanceId: string): Promise<RedisWorldRouteReleaseResult> {
+  async releaseWorldRoute(worldName: string, instanceId: string, ownershipToken = ""): Promise<RedisWorldRouteReleaseResult> {
     if (!this.isReady()) return { released: false, fallback: true };
 
     const cleanWorldName = clean(worldName);
     const cleanInstanceId = clean(instanceId);
-    if (cleanWorldName === "" || cleanInstanceId === "") return { released: false, fallback: false };
+    const cleanOwnershipToken = clean(ownershipToken);
+    if (cleanWorldName === "" || cleanInstanceId === "" || cleanOwnershipToken === "") {
+      return { released: false, fallback: false, reason: "invalid_world_route_release" };
+    }
 
     const ownerKey = this.key("world_route_owner", cleanWorldName);
     const targetKey = this.key("world_route_target", cleanWorldName);
+    const tokenKey = this.key("world_route_token", cleanWorldName);
     try {
       const reply = await this.client!.sendCommand([
         "EVAL",
         [
-          "if redis.call('GET', KEYS[1]) == ARGV[1] then",
-          "  return redis.call('DEL', KEYS[1], KEYS[2])",
+          "if redis.call('GET', KEYS[1]) == ARGV[1] and redis.call('GET', KEYS[3]) == ARGV[2] then",
+          "  return redis.call('DEL', KEYS[1], KEYS[2], KEYS[3])",
           "end",
           "return 0",
         ].join("\n"),
-        "2",
+        "3",
         ownerKey,
         targetKey,
+        tokenKey,
         cleanInstanceId,
+        cleanOwnershipToken,
       ]);
       return { released: toInt(reply, 0) > 0, fallback: false };
     } catch (error) {

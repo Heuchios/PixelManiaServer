@@ -156,6 +156,8 @@ function buildPostgresDropPickupFailure(input) {
         result.message = input.message;
     if (Object.prototype.hasOwnProperty.call(input, "item_instances"))
         result.item_instances = input.item_instances;
+    if (Object.prototype.hasOwnProperty.call(input, "persisted_revision"))
+        result.persisted_revision = input.persisted_revision;
     return result;
 }
 function buildPostgresDropPickupSuccess(input) {
@@ -169,6 +171,7 @@ function buildPostgresDropPickupSuccess(input) {
         drop_before_amount: input.drop_before_amount,
         drop_after_amount: input.drop_after_amount,
         item_instances: input.item_instances,
+        persisted_revision: input.persisted_revision,
     };
 }
 function getPostgresDropPickupFailureReason(result, fallback = "postgres_rejected") {

@@ -67,6 +67,7 @@ const PORT = Math.max(1, Math.trunc(Number(process.env.PORT) || 8080));
 const PUBLIC_BASE_URL = String(process.env.PUBLIC_BASE_URL || `http://localhost:${PORT}`).replace(/\/+$/, "");
 const PUBLIC_WS_URL = String(process.env.PUBLIC_WS_URL || PUBLIC_BASE_URL.replace(/^http/i, "ws") + "/ws").trim();
 const SERVER_INSTANCE_ID = String(process.env.SERVER_INSTANCE_ID || `${os.hostname()}-${process.pid}`).trim() || `${os.hostname()}-${process.pid}`;
+const SERVER_PROCESS_OWNERSHIP_ID = `${SERVER_INSTANCE_ID}:${process.pid}:${crypto.randomUUID()}`;
 const SERVER_INSTANCE_WS_URL = String(process.env.SERVER_INSTANCE_WS_URL || PUBLIC_WS_URL).trim() || PUBLIC_WS_URL;
 const RUNTIME_ENVIRONMENT = String(process.env.ENVIRONMENT || process.env.NODE_ENV || "").trim().toLowerCase();
 const SERVER_CLIENT_VERSION = String(process.env.SERVER_CLIENT_VERSION || "1.0.1").trim() || "1.0.1";
@@ -1827,6 +1828,11 @@ const pendingWorldUpdateBroadcasts = new Map();
 const pendingWorldUpdateBroadcastTimers = new Map();
 const pendingWorldAdmissions = new Map();
 const ownedWorldRoutes = new Set();
+const worldPersistenceOwnership = new Map();
+const worldPersistenceCoordinator = PersistenceHelpers.createWorldPersistenceCoordinator();
+const worldUnpersistedRevisions = new Map();
+const worldPersistedRevisions = new Map();
+const persistenceWriteFailures = new Set();
 const worldRouteConflictLogAt = new Map();
 const worldRouteAdmissionMismatchLogAt = new Map();
 const playerInterestByReceiver = new Map();
@@ -1836,7 +1842,6 @@ const worldSaveWrites = new Map();
 const worldJsonBackupTimers = new Map();
 const pendingWorldJsonBackups = new Map();
 const worldPersistenceGuardWarns = new Map();
-const worldSaveRouteAuthorizations = new Map();
 const playerSaveTimers = new Map();
 const playerSaveWrites = new Map();
 const worldEventTimers = new Map();
@@ -2064,7 +2069,11 @@ const ServerPhase11bLifecycle = ServerPhase11bLifecycleModule.createServerPhase1
         accountsSaveTimer = timer;
     },
     stopGameplaySchedulers: stopGameplaySchedulersForShutdown,
+    getOwnedWorldNames: () => Array.from(ownedWorldRoutes.values()),
+    refreshOwnedWorldRoutes: refreshOwnedWorldPersistenceLeases,
+    waitForWorldPersistence: () => worldPersistenceCoordinator.waitAll(),
     waitForPersistenceWrites,
+    WORLD_ROUTE_TTL_MS,
     worldSaveTimers,
     worldSnapshotSchedulerState,
     worldStates,
@@ -3109,10 +3118,10 @@ async function writeJsonFileAtomicAsync(filePath, data) {
     return PersistenceHelpers.writeJsonFileAtomicAsync(filePath, data);
 }
 function trackPersistenceWrite(promise, label = "persistence write") {
-    return PersistenceHelpers.trackPersistenceWrite(pendingPersistenceWrites, promise, label);
+    return PersistenceHelpers.trackPersistenceWrite(pendingPersistenceWrites, promise, label, console.warn, persistenceWriteFailures);
 }
 async function waitForPersistenceWrites() {
-    return PersistenceHelpers.waitForPersistenceWrites(pendingPersistenceWrites);
+    return PersistenceHelpers.waitForPersistenceWrites(pendingPersistenceWrites, persistenceWriteFailures);
 }
 function getJsonSavedAtTime(filePath) {
     return PersistenceHelpers.getJsonSavedAtTime(filePath);
@@ -6473,8 +6482,44 @@ async function handleVendBuy(socket, player, data, worldName, vend) {
             return;
         }
         const vendTransactionId = makeAuditId("vend");
+        const worldRollback = captureWorldMutationRollback(worldName);
         const originalVend = cloneJson(vend);
-        const transaction = await postgresStore.applyVendBuyTransaction({
+        listing.stock = Math.max(0, Number(listing.stock) - itemAmount);
+        vend.pending_wls = clampInteger(Number(vend.pending_wls) + priceWls, 0, pendingLimit);
+        vend.logs.push({
+            buyer_username: player.account_username,
+            item_id: listing.item_id,
+            item_category: listing.item_category,
+            amount: itemAmount,
+            price_wls: priceWls,
+            date: new Date().toISOString(),
+        });
+        vend.logs = vend.logs.slice(-VEND_LOG_LIMIT);
+        if (listing.stock <= 0) {
+            vend.listing = null;
+        }
+        const savedVend = setVendStateAt(worldName, vend);
+        const visualBlockType = syncVendVisualBlock(worldName, savedVend) || VEND_BLOCK_EMPTY;
+        advanceAuthoritativeWorldRevision(worldName, "vending_buy");
+        const serializedWorld = serializeWorldState(worldName);
+        const worldChange = buildWorldObjectChangeEntry(socket, player, worldName, {
+            action: "vending_buy",
+            source_type: "vending",
+            source_id: vendTransactionId,
+            request_id: makeRequestId(data),
+            x: vend.x,
+            y: vend.y,
+            block_type: visualBlockType,
+        }, originalVend, savedVend, vendTransactionId, {
+            owner_username: vend.owner_username,
+            buyer_username: player.account_username,
+            item_id: soldItemId,
+            item_category: soldItemCategory,
+            amount: itemAmount,
+            price_wls: priceWls,
+            sale_count: saleCount,
+        });
+        const persistence = await runOwnedWorldPersistence(worldName, "vending_buy", (ownership) => (postgresStore.applyVendBuyTransaction({
             owner_username: String(vend.owner_username || ""),
             buyer_username: player.account_username,
             world: worldName,
@@ -6493,8 +6538,15 @@ async function handleVendBuy(socket, player, data, worldName, vend) {
             listing_id: listing.listing_id || listing.transaction_id || "",
             ip_address: getSocketAddress(socket),
             at: new Date().toISOString(),
-        });
+            world_state: serializedWorld,
+            world_changes: [worldChange],
+            world_persistence: ownership,
+        })));
+        const transaction = (persistence.ok
+            ? persistence.value
+            : { ok: false, reason: persistence.reason || "world_persistence_failed" });
         if (!transaction.ok) {
+            restoreWorldMutationRollback(worldName, worldRollback);
             if (transaction.reason === "insufficient_inventory") {
                 rejectVendTransaction(socket, data, "You no longer have enough World Locks.");
                 return;
@@ -6514,45 +6566,9 @@ async function handleVendBuy(socket, player, data, worldName, vend) {
             rejectVendTransaction(socket, data, "Could not synchronize your purchased item balance.");
             return;
         }
-        listing.stock = Math.max(0, Number(listing.stock) - itemAmount);
-        vend.pending_wls = clampInteger(Number(vend.pending_wls) + priceWls, 0, pendingLimit);
-        vend.logs.push({
-            buyer_username: player.account_username,
-            item_id: listing.item_id,
-            item_category: listing.item_category,
-            amount: itemAmount,
-            price_wls: priceWls,
-            date: new Date().toISOString(),
-        });
-        vend.logs = vend.logs.slice(-VEND_LOG_LIMIT);
-        if (listing.stock <= 0) {
-            vend.listing = null;
-        }
-        const savedVend = setVendStateAt(worldName, vend);
-        persistPlayerInventoryChange(player.account_username, buyerState);
-        const vendWorldCommit = await commitWorldStateWithBlockChanges(worldName, [
-            buildWorldObjectChangeEntry(socket, player, worldName, {
-                action: "vending_buy",
-                source_type: "vending",
-                source_id: vendTransactionId,
-                request_id: makeRequestId(data),
-                x: vend.x,
-                y: vend.y,
-                block_type: syncVendVisualBlock(worldName, savedVend) || VEND_BLOCK_EMPTY,
-            }, originalVend, savedVend, vendTransactionId, {
-                owner_username: vend.owner_username,
-                buyer_username: player.account_username,
-                item_id: soldItemId,
-                item_category: soldItemCategory,
-                amount: itemAmount,
-                price_wls: priceWls,
-                sale_count: saleCount,
-            }),
-        ]);
-        if (!vendWorldCommit.ok) {
-            console.warn("[world-journal] vending buy world save failed:", vendWorldCommit.message || vendWorldCommit.reason || "unknown");
-            queueWorldSave(worldName);
-        }
+        persistPlayerInventoryChange(player.account_username, buyerState, { postgresCommitted: true });
+        markWorldRevisionPersisted(worldName, transaction.persisted_revision || serializedWorld.world_revision);
+        writeWorldStateJsonBackup(worldName, serializedWorld);
         logVendingTransaction(socket, player, {
             transaction_id: vendTransactionId,
             action: "buy",
@@ -13440,7 +13456,7 @@ function writeWorldStateJsonBackup(worldName, serialized = null) {
     const worldState = serialized && typeof serialized === "object" && !Array.isArray(serialized)
         ? serialized
         : serializeWorldState(clean);
-    pendingWorldJsonBackups.set(clean, worldState);
+    pendingWorldJsonBackups.set(clean, PersistenceHelpers.clonePersistenceSnapshot(worldState));
     const shouldDebounce = isPostgresAuthoritativeReady() && WORLD_JSON_BACKUP_DEBOUNCE_MS > 0;
     if (!shouldDebounce) {
         flushWorldStateJsonBackup(clean);
@@ -13483,11 +13499,12 @@ function flushWorldStateJsonBackups(options = {}) {
     }
 }
 function persistWorldStateAfterInventoryCommit(worldName, postgresCommitted, serialized = null) {
+    void serialized;
     if (postgresCommitted) {
-        writeWorldStateJsonBackup(worldName, serialized);
+        writeWorldStateJsonBackup(worldName, serializeWorldState(worldName));
         return;
     }
-    queueWorldSave(worldName);
+    queueWorldSave(worldName, { mutation: false, reason: "inventory_world_transaction_fallback" });
 }
 /**
  * @param {string} worldName
@@ -13497,17 +13514,27 @@ function persistWorldStateAfterInventoryCommit(worldName, postgresCommitted, ser
  */
 async function persistAuthoritativeWorldState(worldName, serialized = null, reason = "world_state_update") {
     const clean = cleanWorld(worldName);
-    const worldState = serialized || serializeWorldState(clean);
-    writeWorldStateJsonBackup(clean, worldState);
+    void serialized;
+    if (!shouldPersistWholeWorldState(clean, reason)) {
+        return { ok: false, reason: "world_ownership_unverified" };
+    }
+    advanceAuthoritativeWorldRevision(clean, reason);
+    const worldState = serializeWorldState(clean);
     if (!isPostgresAuthoritativeReady()) {
-        queueWorldSave(clean);
-        return { ok: true, postgres_committed: false, queued: true };
+        if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE) {
+            return { ok: false, reason: "postgres_unavailable" };
+        }
+        writeWorldStateJsonBackup(clean, worldState);
+        markWorldRevisionPersisted(clean, worldState.world_revision);
+        return { ok: true, postgres_committed: false };
     }
-    const saved = await postgresStore.saveWorldState(clean, worldState);
-    if (!saved) {
+    const persistence = await runOwnedWorldPersistence(clean, reason, (ownership) => (postgresStore.saveWorldState(clean, worldState, ownership)));
+    if (!persistence.ok || persistence.value !== true) {
         console.warn("[postgres] authoritative world state save failed", { world: clean, reason });
-        return { ok: false, reason: "database_error" };
+        return { ok: false, reason: persistence.reason || "database_error" };
     }
+    markWorldRevisionPersisted(clean, worldState.world_revision);
+    writeWorldStateJsonBackup(clean, worldState);
     return { ok: true, postgres_committed: true };
 }
 function countSerializedWorldCollection(value) {
@@ -13553,6 +13580,11 @@ async function refreshWorldStateFromPostgres(worldName, reason = "world_state_se
     if (!persistenceFlush.ok) {
         return { ok: false, reason: persistenceFlush.reason || "world_persistence_flush_failed" };
     }
+    await worldPersistenceCoordinator.wait(clean);
+    const ownershipVerification = await verifyWorldPersistenceOwnership(clean);
+    if (!ownershipVerification.ok) {
+        return { ok: false, reason: ownershipVerification.reason || "world_ownership_unverified" };
+    }
     const result = await postgresStore.loadWorldState(clean);
     if (!result || !result.ok) {
         console.warn("[postgres] authoritative world refresh failed", {
@@ -13563,19 +13595,76 @@ async function refreshWorldStateFromPostgres(worldName, reason = "world_state_se
         });
         return { ok: false, reason: result?.reason || "database_error" };
     }
-    if (!result.found) {
-        const hadLocalState = worldStates.has(clean);
+    const postLoadOwnershipVerification = await verifyWorldPersistenceOwnership(clean);
+    if (!postLoadOwnershipVerification.ok) {
+        return { ok: false, reason: postLoadOwnershipVerification.reason || "world_ownership_changed_during_load" };
+    }
+    // Read memory after the database await. A world mutation may have completed
+    // while PostgreSQL was loading, and that accepted revision must not be
+    // replaced by the older result that just arrived.
+    const memoryExists = worldStates.has(clean);
+    const memoryRevision = memoryExists ? getWorldRevision(clean) : 0;
+    const databaseRevision = PersistenceHelpers.normalizeWorldRevision(result.world_revision ?? result.state?.world_revision);
+    worldPersistedRevisions.set(clean, databaseRevision);
+    const memoryAuthoritative = isMemoryWorldRevisionAuthoritative(clean, memoryRevision, postLoadOwnershipVerification.ownership);
+    const loadDecision = PersistenceHelpers.resolveWorldLoadRevision({
+        memory_exists: memoryExists,
+        memory_revision: memoryRevision,
+        database_found: result.found === true,
+        database_revision: databaseRevision,
+        memory_authoritative: memoryAuthoritative,
+    });
+    console.log("[world-persistence]", JSON.stringify({
+        event: "load",
+        world_id: clean,
+        server_instance: SERVER_INSTANCE_ID,
+        ownership_token: postLoadOwnershipVerification.ownership?.ownership_token || "",
+        ownership_epoch: postLoadOwnershipVerification.ownership?.ownership_epoch || 0,
+        loaded_revision: databaseRevision,
+        mutation_revision: memoryRevision,
+        requested_save_revision: 0,
+        persisted_revision: databaseRevision,
+        affected_row_count: 0,
+        save_result: `${loadDecision.source}:${loadDecision.reason}`,
+    }));
+    if (loadDecision.source === "memory") {
+        const reconciled = await saveWorldState(clean, {
+            mutation: false,
+            reason: `reconcile_${loadDecision.reason}`,
+        });
+        if (reconciled !== true) {
+            return { ok: false, reason: "newer_memory_reconcile_failed" };
+        }
+        scheduleWorldEventEnd(clean);
+        const memoryState = serializeWorldState(clean);
+        const memorySummary = summarizeSerializedWorldStateForLog(memoryState);
+        return {
+            ok: true,
+            found: true,
+            world: clean,
+            source: "memory",
+            world_revision: getWorldRevision(clean),
+            ...memorySummary,
+        };
+    }
+    if (loadDecision.source === "empty") {
+        worldUnpersistedRevisions.delete(clean);
+        worldPersistedRevisions.set(clean, 0);
         worldStates.set(clean, createEmptyWorldState());
+        scheduleWorldEventEnd(clean);
         console.warn("[postgres] authoritative world row missing; using empty world state", {
             world: clean,
             reason,
-            had_local_state: hadLocalState,
+            had_local_state: memoryExists,
+            memory_revision: memoryRevision,
         });
-        return { ok: true, found: false, world: clean, had_local_state: hadLocalState };
+        return { ok: true, found: false, world: clean, had_local_state: memoryExists };
     }
     const seedTimestampMigrationNeeded = WorldStateHelpers.needsSeedTimestampMigration(result.state || {});
     const state = deserializeWorldState(clean, result.state || {});
+    worldUnpersistedRevisions.delete(clean);
     worldStates.set(clean, state);
+    scheduleWorldEventEnd(clean);
     if (seedTimestampMigrationNeeded) {
         queueWorldSave(clean, { critical: true });
         console.log("[world-state] queued legacy seed timestamp migration", {
@@ -13594,7 +13683,14 @@ async function refreshWorldStateFromPostgres(worldName, reason = "world_state_se
             ...summary,
         });
     }
-    return { ok: true, found: true, world: clean, ...summary };
+    return {
+        ok: true,
+        found: true,
+        world: clean,
+        source: "database",
+        world_revision: getWorldRevision(clean),
+        ...summary,
+    };
 }
 async function refreshPlayerStateFromPostgres(username, reason = "player_state_send") {
     const clean = cleanAccountName(username);
@@ -13696,26 +13792,59 @@ async function commitPlayerInventoryState(socket, player, username, beforeState,
         afterState.saved_at = new Date().toISOString();
         const deltas = buildInventoryDeltasBetweenStates(beforeState || {}, afterState);
         if (isPostgresAuthoritativeReady()) {
-            const result = await postgresStore.applyInventoryDeltaTransaction(InventoryContracts.buildPostgresInventoryDeltaTransactionEntry({
+            const worldName = cleanWorld(options.world || player?.world || "START");
+            const worldChanges = Array.isArray(options.world_changes) ? options.world_changes : [];
+            const requestedWorldState = options.world_state && typeof options.world_state === "object"
+                ? options.world_state
+                : {};
+            const includesWorldMutation = Object.keys(requestedWorldState).length > 0 || worldChanges.length > 0;
+            let worldStateForCommit = {};
+            const transactionMetadata = options.metadata && typeof options.metadata === "object"
+                ? options.metadata
+                : {};
+            if (includesWorldMutation) {
+                if (!shouldPersistWholeWorldState(worldName, options.action || "inventory_world_transaction")) {
+                    return InventoryContracts.buildInventoryCommitFailure({
+                        reason: "world_ownership_unverified",
+                        message: "That world is changing servers. Try again.",
+                    });
+                }
+                advanceAuthoritativeWorldRevision(worldName, options.action || "inventory_world_transaction");
+                worldStateForCommit = serializeWorldState(worldName);
+            }
+            const buildTransaction = (ownership = null) => (postgresStore.applyInventoryDeltaTransaction(InventoryContracts.buildPostgresInventoryDeltaTransactionEntry({
                 accountUsername: cleanUsername,
-                world: options.world || player?.world || "START",
+                world: worldName,
                 source: options.source || options.source_type || options.action || "system",
                 action: options.action || "update",
                 reason: options.reason || options.action || "update",
                 requestId: options.request_id || "",
                 correlationId: options.correlation_id || "",
-                metadata: options.metadata || {},
+                metadata: ownership ? { ...transactionMetadata, world_persistence: ownership } : transactionMetadata,
                 ipAddress: options.ip_address || getSocketAddress(socket),
                 userAgent: options.user_agent || "",
                 sessionTokenHash: options.session_token_hash || "",
                 deviceInfo: options.device_info || {},
                 deltas,
                 playerState: afterState,
-                worldState: options.world_state || {},
-                worldChanges: Array.isArray(options.world_changes) ? options.world_changes : [],
+                worldState: worldStateForCommit,
+                worldChanges,
                 allowStateRepair: options.allow_state_repair === true,
                 at: new Date().toISOString(),
-            }));
+            })));
+            let result = null;
+            if (includesWorldMutation) {
+                const persistence = await runOwnedWorldPersistence(worldName, options.action || "inventory_world_transaction", (ownership) => buildTransaction(ownership));
+                result = persistence.ok && persistence.value && typeof persistence.value === "object"
+                    ? persistence.value
+                    : {
+                        ok: false,
+                        reason: persistence.reason || "world_persistence_failed",
+                    };
+            }
+            else {
+                result = await buildTransaction();
+            }
             if (!result || !result.ok) {
                 logSecurityEvent(socket, player, "postgres_inventory_commit_failed", {
                     username: cleanUsername,
@@ -13740,6 +13869,10 @@ async function commitPlayerInventoryState(socket, player, username, beforeState,
             }
             setPlayerState(cleanUsername, afterState);
             writePlayerStateJsonBackup(cleanUsername, afterState);
+            if (includesWorldMutation) {
+                markWorldRevisionPersisted(worldName, worldStateForCommit.world_revision);
+                writeWorldStateJsonBackup(worldName, worldStateForCommit);
+            }
             const equipmentChanged = syncPlayerEquipmentSlotsFromState(player, afterState, cleanUsername);
             if (equipmentChanged && player) {
                 publishPlayerPresenceUpdate(socket, player, options.world || player.world || "START", "player_position");
@@ -17024,6 +17157,9 @@ async function uploadWorldSnapshotToObjectStorage(snapshotPath, cleanWorld, snap
 function createWorldSnapshot(worldName, reason, socket = null, player = null, details = {}) {
     try {
         const clean = cleanWorld(worldName);
+        if (!shouldPersistWholeWorldState(clean, `snapshot_${String(reason || "snapshot")}`)) {
+            return null;
+        }
         const snapshotId = makeAuditId("snapshot");
         const stamp = new Date().toISOString().replace(/[:.]/g, "-");
         const snapshotDir = path.join(WORLD_SNAPSHOT_FOLDER, safeFileName(clean, "START"));
@@ -17035,7 +17171,7 @@ function createWorldSnapshot(worldName, reason, socket = null, player = null, de
             reason: String(reason || "snapshot"),
             actor: getAuditActor(socket, player),
             details,
-            world_state: serializeWorldState(clean),
+            world_state: PersistenceHelpers.clonePersistenceSnapshot(serializeWorldState(clean)),
         };
         const snapshotFileWrite = writeJsonFileAtomicAsync(snapshotPath, snapshotPayload)
             .then(() => true)
@@ -17045,7 +17181,7 @@ function createWorldSnapshot(worldName, reason, socket = null, player = null, de
         });
         const objectStorageWrite = snapshotFileWrite.then((fileSaved) => (fileSaved ? uploadWorldSnapshotToObjectStorage(snapshotPath, clean, snapshotFileName) : null));
         if (postgresStore.isReady()) {
-            trackPersistenceWrite((async () => {
+            const snapshotPersistence = runOwnedWorldPersistence(clean, `snapshot_${String(reason || "snapshot")}`, async (ownership) => {
                 const fileSaved = await snapshotFileWrite;
                 const objectStorageUri = await objectStorageWrite;
                 return postgresStore.saveWorldSnapshot(clean, snapshotPayload.world_state, {
@@ -17053,8 +17189,10 @@ function createWorldSnapshot(worldName, reason, socket = null, player = null, de
                     storageUri: objectStorageUri || (fileSaved ? snapshotPath : ""),
                     createdBy: cleanAccountName(player?.account_username || player?.name || "system") || "system",
                     storeSnapshotData: !objectStorageUri || WORLD_SNAPSHOT_POSTGRES_INLINE,
+                    ownership,
                 });
-            })(), `world snapshot ${clean}`);
+            }).then((result) => result.ok && result.value === true);
+            trackPersistenceWrite(snapshotPersistence, `world snapshot ${clean}`);
         }
         else {
             trackPersistenceWrite(objectStorageWrite, `world snapshot upload ${clean}`);
@@ -17396,8 +17534,9 @@ function broadcastFreshWorldStateToCurrentPlayers(worldName, extraMessageData = 
         });
     }
 }
-function applyProducerSpeedupToWorld(worldName, options = {}) {
+async function applyProducerSpeedupToWorld(worldName, options = {}) {
     const clean = cleanWorld(worldName || "START");
+    const rollback = captureWorldMutationRollback(clean);
     const state = ensureWorldState(clean);
     const nowMs = Date.now();
     const targetRemainingSeconds = clampInteger(options.remaining_seconds || 0, 0, 30 * 24 * 60 * 60);
@@ -17485,7 +17624,22 @@ function applyProducerSpeedupToWorld(worldName, options = {}) {
     }
     if (stats.total > 0) {
         worldStates.set(clean, state);
-        saveWorldState(clean);
+        const saved = await saveWorldState(clean, {
+            reason: "producer_speedup",
+        });
+        if (saved !== true) {
+            restoreWorldMutationRollback(clean, rollback);
+            return {
+                ok: false,
+                reason: "world_persistence_failed",
+                message: "The world change could not be saved.",
+                target_world: clean,
+                remaining_seconds: targetRemainingSeconds,
+                mode: targetRemainingSeconds <= 0 ? "ready" : "remaining",
+                changed: 0,
+                stats: {},
+            };
+        }
         broadcastFreshWorldStateToCurrentPlayers(clean, {
             world_state_reason: "producer_speedup",
             producer_speedup: true,
@@ -17617,8 +17771,9 @@ function getProtectedClearEntries(state, data) {
 function addBedrockFloorEntries(target) {
     return WorldStateHelpers.addBedrockFloorEntries(target);
 }
-function replaceWorldStateAndBroadcast(worldName, state, extraMessageData = {}) {
+async function replaceWorldStateAndBroadcast(worldName, state, extraMessageData = {}) {
     const clean = cleanWorld(worldName);
+    const rollback = captureWorldMutationRollback(clean);
     const existingTimer = worldSaveTimers.get(clean);
     if (existingTimer) {
         clearTimeout(existingTimer);
@@ -17626,10 +17781,17 @@ function replaceWorldStateAndBroadcast(worldName, state, extraMessageData = {}) 
     }
     worldStates.set(clean, state);
     invalidateMovementCollisionCache(clean);
-    saveWorldState(clean);
+    const saved = await saveWorldState(clean, {
+        reason: extraMessageData.world_state_reason || "replace_world_state",
+    });
+    if (saved !== true) {
+        restoreWorldMutationRollback(clean, rollback);
+        return { ok: false, reason: "world_persistence_failed" };
+    }
     broadcastFreshWorldStateToCurrentPlayers(clean, extraMessageData);
+    return { ok: true };
 }
-function clearWorldByAdmin(worldName, data, socket = null, player = null) {
+async function clearWorldByAdmin(worldName, data, socket = null, player = null) {
     const clean = cleanWorld(worldName);
     const currentState = ensureWorldState(clean);
     const successorBlockRevision = Math.min(Number.MAX_SAFE_INTEGER, getWorldBlockRevision(currentState) + 1);
@@ -17651,12 +17813,14 @@ function clearWorldByAdmin(worldName, data, socket = null, player = null) {
         nextState.foreground.set(key, { ...entry });
     }
     nextState.world_lock = sanitizeWorldLockState(currentState.world_lock || {});
-    replaceWorldStateAndBroadcast(clean, nextState, {
+    const replacement = await replaceWorldStateAndBroadcast(clean, nextState, {
         respawn_player: true,
         force_respawn: true,
         world_state_reason: "admin_clear",
     });
     return {
+        ok: replacement.ok === true,
+        reason: replacement.reason || "",
         removedCount,
         protectedCount: protectedEntries.size,
         snapshotId: snapshot?.snapshotId || "",
@@ -17664,7 +17828,7 @@ function clearWorldByAdmin(worldName, data, socket = null, player = null) {
         afterSummary: summarizeWorldAuditState(nextState),
     };
 }
-function resetWorldByAdmin(worldName, socket = null, player = null) {
+async function resetWorldByAdmin(worldName, socket = null, player = null) {
     const clean = cleanWorld(worldName);
     const currentState = ensureWorldState(clean);
     const successorBlockRevision = Math.min(Number.MAX_SAFE_INTEGER, getWorldBlockRevision(currentState) + 1);
@@ -17672,12 +17836,14 @@ function resetWorldByAdmin(worldName, socket = null, player = null) {
     const snapshot = createWorldSnapshot(clean, "before_reset_world", socket, player);
     const nextState = createEmptyWorldState();
     nextState.block_revision = successorBlockRevision;
-    replaceWorldStateAndBroadcast(clean, nextState, {
+    const replacement = await replaceWorldStateAndBroadcast(clean, nextState, {
         respawn_player: true,
         force_respawn: true,
         world_state_reason: "admin_reset",
     });
     return {
+        ok: replacement.ok === true,
+        reason: replacement.reason || "",
         snapshotId: snapshot?.snapshotId || "",
         beforeSummary,
         afterSummary: summarizeWorldAuditState(nextState),
@@ -19410,7 +19576,14 @@ async function handleDeveloperCommandRequestUnsafe(socket, player, data) {
     }
     if (commandName === "clear") {
         const commandWorld = getDeveloperCommandWorldName(player, data);
-        const result = clearWorldByAdmin(commandWorld, data, socket, player);
+        const result = await clearWorldByAdmin(commandWorld, data, socket, player);
+        if (!result.ok) {
+            deny("Could not save the cleared world. No changes were applied.", {
+                target_world: commandWorld,
+                reason: result.reason || "world_persistence_failed",
+            });
+            return;
+        }
         approve(`Server cleared ${commandWorld}. Removed ${result.removedCount} saved objects and preserved ${result.protectedCount} protected blocks.`, {
             target_world: commandWorld,
             affected_world: commandWorld,
@@ -19425,7 +19598,14 @@ async function handleDeveloperCommandRequestUnsafe(socket, player, data) {
     }
     if (commandName === "resetworld" || commandName === "reset_world" || commandName === "reworld") {
         const commandWorld = getDeveloperCommandWorldName(player, data);
-        const result = resetWorldByAdmin(commandWorld, socket, player);
+        const result = await resetWorldByAdmin(commandWorld, socket, player);
+        if (!result.ok) {
+            deny("Could not save the reset world. No changes were applied.", {
+                target_world: commandWorld,
+                reason: result.reason || "world_persistence_failed",
+            });
+            return;
+        }
         approve(`Server reset ${commandWorld}.`, {
             target_world: commandWorld,
             affected_world: commandWorld,
@@ -19779,8 +19959,18 @@ async function handleDeveloperCommandRequestUnsafe(socket, player, data) {
         const commandWorld = getDeveloperCommandWorldName(player, data);
         const state = ensureWorldState(commandWorld);
         const removedCount = state.drops.size;
-        state.drops.clear();
-        replaceWorldStateAndBroadcast(commandWorld, state);
+        const nextState = deserializeWorldState(commandWorld, serializeWorldState(commandWorld));
+        nextState.drops.clear();
+        const replacement = await replaceWorldStateAndBroadcast(commandWorld, nextState, {
+            world_state_reason: "admin_clear_drops",
+        });
+        if (!replacement.ok) {
+            deny("Could not save the drop cleanup. No drops were removed.", {
+                target_world: commandWorld,
+                reason: replacement.reason || "world_persistence_failed",
+            });
+            return;
+        }
         approve(`Cleared ${removedCount} drops in ${commandWorld}.`, {
             target_world: commandWorld,
             affected_world: commandWorld,
@@ -19793,9 +19983,16 @@ async function handleDeveloperCommandRequestUnsafe(socket, player, data) {
     }
     if (isProducerSpeedupCommandName(commandName)) {
         const speedupCommand = parseProducerSpeedupCommand(player, data, command);
-        const result = applyProducerSpeedupToWorld(speedupCommand.target_world, {
+        const result = await applyProducerSpeedupToWorld(speedupCommand.target_world, {
             remaining_seconds: speedupCommand.remaining_seconds,
         });
+        if (!result.ok) {
+            deny(result.message || "Could not save the producer speedup.", {
+                target_world: result.target_world || speedupCommand.target_world,
+                reason: result.reason || "world_persistence_failed",
+            });
+            return;
+        }
         const statsText = formatProducerSpeedupStats(result.stats);
         const remainingText = result.remaining_seconds <= 0
             ? "ready now"
@@ -19943,16 +20140,36 @@ async function handleDeveloperCommandRequestUnsafe(socket, player, data) {
     }
     if (commandName === "save") {
         const commandWorld = getDeveloperCommandWorldName(player, data);
-        saveWorldState(commandWorld);
-        savePlayerState(player.account_username);
-        flushPendingSaves();
+        const worldWrite = triggerPendingWorldSave(commandWorld) || saveWorldState(commandWorld, {
+            mutation: false,
+            reason: "developer_save",
+        });
+        const playerWrite = savePlayerState(player.account_username);
+        const [worldSaved, playerSaved] = await Promise.all([
+            Promise.resolve(worldWrite),
+            Promise.resolve(playerWrite),
+        ]);
+        const playerSaveRequired = isPostgresAuthoritativeReady();
+        if (worldSaved !== true || (playerSaveRequired && playerSaved !== true)) {
+            deny(`Could not durably save ${commandWorld}.`, {
+                target_world: commandWorld,
+                reason: worldSaved !== true ? "world_persistence_failed" : "player_persistence_failed",
+            });
+            return;
+        }
         approve(`Saved ${commandWorld} and pending player/account data.`, { target_world: commandWorld }, { command_type: "save_world", target_world: commandWorld });
         return;
     }
     if (commandName === "load" || commandName === "reload") {
         const commandWorld = getDeveloperCommandWorldName(player, data);
-        worldStates.delete(commandWorld);
-        ensureWorldState(commandWorld);
+        const refreshed = await refreshWorldStateFromPostgres(commandWorld, "admin_reload");
+        if (!refreshed?.ok) {
+            deny(`Could not reload ${commandWorld} from authoritative storage.`, {
+                target_world: commandWorld,
+                reason: refreshed?.reason || "world_load_failed",
+            });
+            return;
+        }
         broadcastFreshWorldStateToCurrentPlayers(commandWorld, {
             respawn_player: true,
             force_respawn: true,
@@ -19993,9 +20210,42 @@ async function handleDeveloperCommandRequestUnsafe(socket, player, data) {
             block_type: itemId,
             world: commandWorld,
         };
+        const rollback = captureWorldMutationRollback(commandWorld);
         applyBlockUpdateToWorldState(commandWorld, update);
-        queueWorldSave(commandWorld);
+        const changeEntry = {
+            ...getAuditActor(socket, player),
+            source_type: "developer_command",
+            source_id: requestId,
+            world: commandWorld,
+            action: "developer_spawn",
+            layer: "foreground",
+            x: gridX,
+            y: gridY,
+            block_type: itemId,
+            block_type_before: "",
+            block_type_after: itemId,
+            details: {
+                old_block_id: "",
+                new_block_id: itemId,
+            },
+        };
+        const worldCommit = await commitWorldStateWithBlockChanges(commandWorld, [changeEntry], {
+            player,
+            reason: "developer_spawn",
+        });
+        if (!worldCommit.ok) {
+            restoreWorldMutationRollback(commandWorld, rollback);
+            deny("Could not save the spawned block. No block was placed.", {
+                target_world: commandWorld,
+                item_id: itemId,
+                grid_x: gridX,
+                grid_y: gridY,
+                reason: worldCommit.reason || "world_persistence_failed",
+            });
+            return;
+        }
         queueWorldUpdateBroadcast(commandWorld, update);
+        logWorldChange(socket, player, changeEntry, { skipPostgres: worldCommit.postgres_committed });
         approve(`Spawned ${itemId} in ${commandWorld}.`, {
             target_world: commandWorld,
             affected_world: commandWorld,
@@ -23296,6 +23546,32 @@ function applyEntranceGateMoveToWorldState(worldName, state, oldGate, newGate) {
     repairEntranceGateState(state, worldName);
     return updates;
 }
+function buildEntranceGateMoveChangeEntries(socket, player, worldName, updates, sourceId, oldGate, newGate) {
+    return updates.map((blockUpdate) => {
+        const isPlace = blockUpdate.action === "place";
+        return {
+            ...getAuditActor(socket, player),
+            source_type: "entrance_gate_move",
+            source_id: sourceId,
+            world: cleanWorld(worldName),
+            action: `entrance_gate_${blockUpdate.action}`,
+            layer: blockUpdate.layer,
+            x: blockUpdate.x,
+            y: blockUpdate.y,
+            block_type: blockUpdate.block_type,
+            block_type_before: isPlace ? "" : blockUpdate.block_type,
+            block_type_after: isPlace ? blockUpdate.block_type : "",
+            details: {
+                old_x: oldGate.x,
+                old_y: oldGate.y,
+                new_x: newGate.x,
+                new_y: newGate.y,
+                old_block_id: isPlace ? "" : blockUpdate.block_type,
+                new_block_id: isPlace ? blockUpdate.block_type : "",
+            },
+        };
+    });
+}
 async function handleEntranceGateMoveUpdate(socket, player, worldName, update, requestId = "") {
     const validation = validateEntranceGateMove(socket, player, worldName, update);
     if (!validation.ok)
@@ -23320,19 +23596,61 @@ async function handleEntranceGateMoveUpdate(socket, player, worldName, update, r
             new_x: update.x,
             new_y: update.y,
         },
+        defer_commit: POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE,
     });
     if (!spendResult.ok) {
         sendActionRejected(socket, "world_interaction_update", spendResult.message);
         return false;
     }
-    const updates = applyEntranceGateMoveToWorldState(worldName, validation.state, validation.oldGate, { x: update.x, y: update.y });
-    saveWorldState(worldName);
-    logItemLedgerForState(socket, player, player.account_username, spendResult.state, "entrance_mover", "tool", -1, "entrance_gate_move", moveTransactionId, "gate_move_cost", worldName, {
+    const rollback = captureWorldMutationRollback(worldName);
+    const newGate = { x: update.x, y: update.y };
+    const updates = applyEntranceGateMoveToWorldState(worldName, validation.state, validation.oldGate, newGate);
+    const worldChanges = buildEntranceGateMoveChangeEntries(socket, player, worldName, updates, moveTransactionId, validation.oldGate, newGate);
+    let inventoryCommit = null;
+    let committedInventoryState = spendResult.state;
+    let inventoryDeltas = buildInventoryDeltaClientPayloads(spendResult.deltas, spendResult.state);
+    let postgresCommitted = Boolean(spendResult.postgres_committed);
+    if (spendResult.deferred_inventory_commit) {
+        const deferred = spendResult.deferred_inventory_commit;
+        const serializedWorld = serializeWorldState(worldName);
+        inventoryCommit = await commitPlayerInventoryState(socket, player, deferred.username, deferred.beforeState, deferred.afterState, {
+            ...(deferred.options || {}),
+            world: worldName,
+            world_state: serializedWorld,
+            world_changes: worldChanges,
+        });
+        if (!inventoryCommit.ok) {
+            restoreWorldMutationRollback(worldName, rollback);
+            sendActionRejected(socket, "world_interaction_update", inventoryCommit.message || "PostgreSQL rejected the entrance move.", {
+                reason: inventoryCommit.reason || "inventory_commit_failed",
+            });
+            return false;
+        }
+        committedInventoryState = inventoryCommit.state;
+        inventoryDeltas = buildInventoryDeltaClientPayloads(inventoryCommit.deltas, inventoryCommit.state);
+        postgresCommitted = Boolean(inventoryCommit.postgres_committed);
+        persistWorldStateAfterInventoryCommit(worldName, postgresCommitted, serializedWorld);
+    }
+    else {
+        const worldCommit = await commitWorldStateWithBlockChanges(worldName, worldChanges, {
+            player,
+            reason: "entrance_gate_move",
+        });
+        if (!worldCommit.ok) {
+            restoreWorldMutationRollback(worldName, rollback);
+            sendActionRejected(socket, "world_interaction_update", worldCommit.message || "Could not save the entrance move.", {
+                reason: worldCommit.reason || "world_commit_failed",
+            });
+            return false;
+        }
+        postgresCommitted = Boolean(worldCommit.postgres_committed);
+    }
+    logItemLedgerForState(socket, player, player.account_username, committedInventoryState, "entrance_mover", "tool", -1, "entrance_gate_move", moveTransactionId, "gate_move_cost", worldName, {
         old_x: validation.oldGate.x,
         old_y: validation.oldGate.y,
         new_x: update.x,
         new_y: update.y,
-    }, { skipPostgres: spendResult.postgres_committed });
+    }, { skipPostgres: postgresCommitted });
     logWorldChange(socket, player, {
         source_type: "entrance_gate_move",
         source_id: moveTransactionId,
@@ -23349,18 +23667,10 @@ async function handleEntranceGateMoveUpdate(socket, player, worldName, update, r
             new_y: update.y,
             update_count: updates.length,
         },
-    });
-    for (const blockUpdate of updates) {
-        logWorldChange(socket, player, {
-            source_type: "entrance_gate_move",
-            source_id: moveTransactionId,
-            world: worldName,
-            action: `entrance_gate_${blockUpdate.action}`,
-            layer: blockUpdate.layer,
-            x: blockUpdate.x,
-            y: blockUpdate.y,
-            block_type: blockUpdate.block_type,
-        });
+    }, { skipPostgres: postgresCommitted });
+    for (let index = 0; index < updates.length; index += 1) {
+        const blockUpdate = updates[index];
+        logWorldChange(socket, player, worldChanges[index], { skipPostgres: postgresCommitted });
         sendWorldUpdateToRequesterAndWorld(socket, player, worldName, blockUpdate);
     }
     sendInventoryTransactionResult(socket, {
@@ -23368,7 +23678,7 @@ async function handleEntranceGateMoveUpdate(socket, player, worldName, update, r
         action: "entrance_gate_move",
         message: "Entrance Gate moved.",
         username: player.account_username,
-        inventory_deltas: buildInventoryDeltaClientPayloads(spendResult.deltas, spendResult.state),
+        inventory_deltas: inventoryDeltas,
     });
     return true;
 }
@@ -24325,70 +24635,20 @@ async function handleBulkDropPickup(socket, player, data, worldName, requestId) 
                 continue;
             }
             const pickupTransactionId = makeAuditId("pickup");
-            const postgresPickup = await postgresStore.applyDropPickupTransaction({
-                account_username: player.account_username,
-                world: pickupPlan.world,
-                drop_id: pickupPlan.dropId,
-                item_type: pickupPlan.item_type,
-                item_category: pickupPlan.item_category,
-                amount: pickupPlan.pickedAmount,
-                expected_before_amount: pickupPlan.currentCount,
-                stack_limit: pickupPlan.stackLimit,
-                allow_state_repair: true,
-                allow_world_drop_repair: true,
-                request_id: requestId || bulkTransactionId,
-                source_id: pickupTransactionId,
-                drop_x: pickupPlan.drop.x,
-                drop_y: pickupPlan.drop.y,
-                stack_grid_x: pickupPlan.drop.stack_grid_x,
-                stack_grid_y: pickupPlan.drop.stack_grid_y,
-                pickup_delay: pickupPlan.drop.pickup_delay,
-                drop_amount: pickupPlan.dropAmount,
-                ip_address: getSocketAddress(socket),
-                user_agent: getSocketUserAgent(socket, data),
-                session_token_hash: cleanAccountName(sessionAccount.session_token_hash || ""),
-                device_info: getSocketDeviceInfo(socket, data),
-                at: new Date().toISOString(),
-            });
-            if (!postgresPickup.ok) {
-                const postgresPickupReason = DropContracts.getPostgresDropPickupFailureReason(postgresPickup);
-                logDropPickupInventoryIssue(postgresPickupReason, player, pickupPlan.world, entry.dropId, pickupPlan, postgresPickup);
-                if (DropContracts.isPostgresDropPickupUnavailableFailure(postgresPickup)) {
-                    const removal = removeUnavailableDropFromWorldState(pickupPlan.world, pickupPlan.dropId, pickupPlan);
-                    if (removal.ok && removal.payload) {
-                        worldUpdates.push({ world: pickupPlan.world, payload: removal.payload });
-                    }
-                }
-                pickupResults.push(makeBulkDropPickupFailure(entry.dropId, postgresPickupReason, getPostgresInventoryFailureMessage(postgresPickup, "Could not pick up that item right now.")));
+            const worldRollback = captureWorldMutationRollback(pickupPlan.world);
+            const worldApply = applyDropPickupWorldState(pickupPlan.world, pickupPlan);
+            if (!worldApply.ok) {
+                restoreWorldMutationRollback(pickupPlan.world, worldRollback);
+                pickupResults.push(makeBulkDropPickupFailure(entry.dropId, worldApply.reason || "not_available", "That drop is not available."));
                 continue;
             }
-            const pickupState = pickupPlan.playerState;
-            const inventoryField = getInventoryFieldForCategory(pickupPlan.item_category, pickupPlan.item_type);
-            if (!pickupState[inventoryField] || typeof pickupState[inventoryField] !== "object" || Array.isArray(pickupState[inventoryField])) {
-                pickupState[inventoryField] = {};
-            }
-            const committedAfterAmountRaw = Number(postgresPickup.after_amount);
-            const committedAfterAmount = Number.isFinite(committedAfterAmountRaw)
-                ? clampInteger(committedAfterAmountRaw, 0, pickupPlan.stackLimit)
-                : clampInteger(pickupPlan.currentCount + pickupPlan.pickedAmount, 0, pickupPlan.stackLimit);
-            pickupState[inventoryField][pickupPlan.item_type] = committedAfterAmount;
-            persistPlayerInventoryChange(player.account_username, pickupState, { postgresCommitted: true });
-            const committedDropAfterAmountRaw = Number(postgresPickup.drop_after_amount);
-            pickupPlan.remaining = Number.isFinite(committedDropAfterAmountRaw)
-                ? Math.max(0, Math.trunc(committedDropAfterAmountRaw))
-                : pickupPlan.remaining;
-            const worldApply = applyDropPickupWorldState(pickupPlan.world, pickupPlan);
-            const pickupUpdate = worldApply.ok
-                ? worldApply.payload
-                : removeUnavailableDropFromWorldState(pickupPlan.world, pickupPlan.dropId, pickupPlan).payload || null;
-            if (pickupUpdate) {
-                worldUpdates.push({ world: pickupPlan.world, payload: pickupUpdate });
-            }
+            advanceAuthoritativeWorldRevision(pickupPlan.world, "drop_pickup");
+            const serializedWorld = serializeWorldState(pickupPlan.world);
             const pickedDrop = {
                 ...pickupPlan.drop,
                 amount: pickupPlan.pickedAmount,
             };
-            logWorldChange(socket, player, {
+            const worldChange = {
                 source_type: "world_item_drop_pickup",
                 source_id: pickupTransactionId,
                 request_id: requestId,
@@ -24405,7 +24665,78 @@ async function handleBulkDropPickup(socket, player, data, worldName, requestId) 
                     bulk_request_id: bulkTransactionId,
                     remaining: pickupPlan.remaining,
                 },
-            }, { skipPostgres: true });
+            };
+            const persistence = await runOwnedWorldPersistence(pickupPlan.world, "drop_pickup", async (ownership) => postgresStore.applyDropPickupTransaction({
+                account_username: player.account_username,
+                world: pickupPlan.world,
+                drop_id: pickupPlan.dropId,
+                item_type: pickupPlan.item_type,
+                item_category: pickupPlan.item_category,
+                amount: pickupPlan.pickedAmount,
+                expected_before_amount: pickupPlan.currentCount,
+                expected_drop_before_amount: pickupPlan.dropAmount,
+                stack_limit: pickupPlan.stackLimit,
+                allow_state_repair: true,
+                allow_world_drop_repair: true,
+                request_id: requestId || bulkTransactionId,
+                source_id: pickupTransactionId,
+                drop_x: pickupPlan.drop.x,
+                drop_y: pickupPlan.drop.y,
+                stack_grid_x: pickupPlan.drop.stack_grid_x,
+                stack_grid_y: pickupPlan.drop.stack_grid_y,
+                pickup_delay: pickupPlan.drop.pickup_delay,
+                drop_amount: pickupPlan.dropAmount,
+                world_state: serializedWorld,
+                world_changes: [worldChange],
+                world_persistence: ownership,
+                ip_address: getSocketAddress(socket),
+                user_agent: getSocketUserAgent(socket, data),
+                session_token_hash: cleanAccountName(sessionAccount.session_token_hash || ""),
+                device_info: getSocketDeviceInfo(socket, data),
+                at: new Date().toISOString(),
+            }));
+            const postgresPickup = persistence.ok && persistence.value
+                ? persistence.value
+                : DropContracts.buildPostgresDropPickupFailure({
+                    reason: persistence.reason || "world_ownership_unverified",
+                });
+            if (!postgresPickup.ok) {
+                restoreWorldMutationRollback(pickupPlan.world, worldRollback);
+                const postgresPickupReason = DropContracts.getPostgresDropPickupFailureReason(postgresPickup);
+                logDropPickupInventoryIssue(postgresPickupReason, player, pickupPlan.world, entry.dropId, pickupPlan, postgresPickup);
+                if (DropContracts.isPostgresDropPickupUnavailableFailure(postgresPickup)) {
+                    const removal = removeUnavailableDropFromWorldState(pickupPlan.world, pickupPlan.dropId, pickupPlan);
+                    if (removal.ok && removal.payload) {
+                        worldUpdates.push({ world: pickupPlan.world, payload: removal.payload });
+                    }
+                }
+                pickupResults.push(makeBulkDropPickupFailure(entry.dropId, postgresPickupReason, getPostgresInventoryFailureMessage(postgresPickup, "Could not pick up that item right now.")));
+                continue;
+            }
+            markWorldRevisionPersisted(pickupPlan.world, postgresPickup.persisted_revision || serializedWorld.world_revision);
+            writeWorldStateJsonBackup(pickupPlan.world, serializedWorld);
+            const pickupState = pickupPlan.playerState;
+            const inventoryField = getInventoryFieldForCategory(pickupPlan.item_category, pickupPlan.item_type);
+            if (!pickupState[inventoryField] || typeof pickupState[inventoryField] !== "object" || Array.isArray(pickupState[inventoryField])) {
+                pickupState[inventoryField] = {};
+            }
+            const committedAfterAmountRaw = Number(postgresPickup.after_amount);
+            const committedAfterAmount = Number.isFinite(committedAfterAmountRaw)
+                ? clampInteger(committedAfterAmountRaw, 0, pickupPlan.stackLimit)
+                : clampInteger(pickupPlan.currentCount + pickupPlan.pickedAmount, 0, pickupPlan.stackLimit);
+            pickupState[inventoryField][pickupPlan.item_type] = committedAfterAmount;
+            persistPlayerInventoryChange(player.account_username, pickupState, { postgresCommitted: true });
+            const committedDropAfterAmountRaw = Number(postgresPickup.drop_after_amount);
+            pickupPlan.remaining = Number.isFinite(committedDropAfterAmountRaw)
+                ? Math.max(0, Math.trunc(committedDropAfterAmountRaw))
+                : pickupPlan.remaining;
+            const pickupUpdate = worldApply.ok
+                ? worldApply.payload
+                : removeUnavailableDropFromWorldState(pickupPlan.world, pickupPlan.dropId, pickupPlan).payload || null;
+            if (pickupUpdate) {
+                worldUpdates.push({ world: pickupPlan.world, payload: pickupUpdate });
+            }
+            logWorldChange(socket, player, worldChange, { skipPostgres: true });
             logItemLedgerForState(socket, player, player.account_username, pickupState, pickedDrop.item_type, pickedDrop.item_category, pickedDrop.amount, "world_item_drop_pickup", pickupTransactionId, "drop_pickup", pickupPlan.world, {
                 drop_id: pickedDrop.drop_id,
                 bulk_request_id: bulkTransactionId,
@@ -24441,15 +24772,6 @@ async function handleBulkDropPickup(socket, player, data, worldName, requestId) 
                 pickup_results: pickupResults,
             });
             return;
-        }
-        const postPickupWorldState = serializeWorldState(successWorld);
-        const worldPersistResult = await persistAuthoritativeWorldState(successWorld, postPickupWorldState, "drop_pickup_bulk");
-        if (!worldPersistResult.ok) {
-            console.warn("[drop_pickup_bulk_world_persist_failed]", {
-                world: successWorld,
-                bulk_pickup_transaction_id: bulkTransactionId,
-                reason: worldPersistResult.reason || "unknown",
-            });
         }
         const inventoryDeltas = buildInventoryDeltaClientPayloads(Array.from(deltaMap.values()), latestPickupState || ensureWritablePlayerState(player.account_username) || {});
         const bulkClientResultPayload = makeBulkDropPickupWorldResultPayload(successWorld, player, bulkUpdate.drop_ids, pickupResults, worldUpdates, successAmount);
@@ -25577,7 +25899,7 @@ function buildNetfoxWorldStateHttpPayload(worldName, reason = "netfox_server_wor
     };
 }
 function serializeWorldState(worldName) {
-    return WorldStateHelpers.serializeWorldState(worldName);
+    return PersistenceHelpers.clonePersistenceSnapshot(WorldStateHelpers.serializeWorldState(worldName));
 }
 function getWorldBlockTypeAt(worldName, x, y, layer = "foreground") {
     const state = ensureWorldState(worldName);
@@ -26100,27 +26422,6 @@ function buildActiveWorldEventSnapshot(state) {
         changed_tile_count: Array.isArray(state.event_changed_tiles) ? state.event_changed_tiles.length : 0,
     };
 }
-function hasLocalWorldPlayersForPersistence(worldName) {
-    return getWorldPlayerRecords(worldName, { requireOpenSocket: false }).length > 0;
-}
-function rememberWorldSaveRouteAuthorization(worldName, debounceMs = 0) {
-    const clean = cleanWorld(worldName);
-    if (!POSTGRES_ENABLED || !POSTGRES_AUTHORITATIVE || !WORLD_ROUTE_ENFORCEMENT_ENABLED)
-        return;
-    if (!ownedWorldRoutes.has(clean) && !hasLocalWorldPlayersForPersistence(clean))
-        return;
-    const ttlMs = Math.max(10000, Math.trunc(Number(debounceMs) || 0) + 5000);
-    worldSaveRouteAuthorizations.set(clean, Date.now() + ttlMs);
-}
-function isWorldSaveRouteAuthorized(worldName) {
-    const clean = cleanWorld(worldName);
-    const expiresAt = Number(worldSaveRouteAuthorizations.get(clean) || 0);
-    if (expiresAt > Date.now())
-        return true;
-    if (expiresAt > 0)
-        worldSaveRouteAuthorizations.delete(clean);
-    return false;
-}
 function warnWorldPersistenceGuard(worldName, reason) {
     const clean = cleanWorld(worldName);
     const now = Date.now();
@@ -26142,39 +26443,247 @@ function shouldPersistWholeWorldState(worldName, reason = "world_state_save") {
     const clean = cleanWorld(worldName);
     if (!POSTGRES_ENABLED || !POSTGRES_AUTHORITATIVE || !WORLD_ROUTE_ENFORCEMENT_ENABLED)
         return true;
-    if (ownedWorldRoutes.has(clean))
+    const ownership = worldPersistenceOwnership.get(clean);
+    if (ownedWorldRoutes.has(clean) && ownership?.verified && ownership.ownership_token !== "" && ownership.ownership_epoch > 0) {
         return true;
-    if (hasLocalWorldPlayersForPersistence(clean))
-        return true;
-    if (isWorldSaveRouteAuthorized(clean))
-        return true;
+    }
     warnWorldPersistenceGuard(clean, reason);
     return false;
 }
+function getWorldRevision(worldName) {
+    const state = ensureWorldState(cleanWorld(worldName));
+    return PersistenceHelpers.normalizeWorldRevision(state?.world_revision);
+}
+function rememberUnpersistedWorldRevision(worldName, revision) {
+    const clean = cleanWorld(worldName);
+    const normalizedRevision = PersistenceHelpers.normalizeWorldRevision(revision);
+    const ownership = worldPersistenceOwnership.get(clean);
+    worldUnpersistedRevisions.set(clean, {
+        revision: normalizedRevision,
+        ownership_token: ownership?.ownership_token || "",
+        ownership_epoch: ownership?.ownership_epoch || 0,
+    });
+}
+function markWorldRevisionPersisted(worldName, revision) {
+    const clean = cleanWorld(worldName);
+    const persistedRevision = PersistenceHelpers.normalizeWorldRevision(revision);
+    worldPersistedRevisions.set(clean, Math.max(PersistenceHelpers.normalizeWorldRevision(worldPersistedRevisions.get(clean)), persistedRevision));
+    const pending = worldUnpersistedRevisions.get(clean);
+    if (pending && pending.revision <= persistedRevision) {
+        worldUnpersistedRevisions.delete(clean);
+    }
+}
+function captureWorldMutationRollback(worldName) {
+    const clean = cleanWorld(worldName);
+    const pending = worldUnpersistedRevisions.get(clean);
+    return {
+        existed: worldStates.has(clean),
+        state: PersistenceHelpers.clonePersistenceSnapshot(serializeWorldState(clean)),
+        unpersisted: pending ? { ...pending } : null,
+    };
+}
+function restoreWorldMutationRollback(worldName, rollback) {
+    const clean = cleanWorld(worldName);
+    if (rollback.existed) {
+        worldStates.set(clean, deserializeWorldState(clean, rollback.state));
+    }
+    else {
+        worldStates.delete(clean);
+    }
+    if (rollback.unpersisted) {
+        worldUnpersistedRevisions.set(clean, { ...rollback.unpersisted });
+    }
+    else {
+        worldUnpersistedRevisions.delete(clean);
+    }
+    invalidateMovementCollisionCache(clean);
+    scheduleWorldEventEnd(clean);
+}
+function isMemoryWorldRevisionAuthoritative(worldName, revision, ownership) {
+    const clean = cleanWorld(worldName);
+    const normalizedRevision = PersistenceHelpers.normalizeWorldRevision(revision);
+    const pending = worldUnpersistedRevisions.get(clean);
+    if (!pending || pending.revision !== normalizedRevision || !ownership?.verified)
+        return false;
+    if (!ownership.require_owner)
+        return true;
+    return pending.ownership_token !== ""
+        && pending.ownership_token === ownership.ownership_token
+        && pending.ownership_epoch === ownership.ownership_epoch;
+}
+function advanceAuthoritativeWorldRevision(worldName, reason) {
+    const clean = cleanWorld(worldName);
+    const state = ensureWorldState(clean);
+    const previousRevision = PersistenceHelpers.normalizeWorldRevision(state?.world_revision);
+    if (previousRevision >= Number.MAX_SAFE_INTEGER) {
+        throw new Error(`World revision exhausted for ${clean}`);
+    }
+    const mutationRevision = previousRevision + 1;
+    state.world_revision = mutationRevision;
+    rememberUnpersistedWorldRevision(clean, mutationRevision);
+    const ownership = worldPersistenceOwnership.get(clean);
+    console.log("[world-persistence]", JSON.stringify({
+        event: "mutation",
+        world_id: clean,
+        server_instance: SERVER_INSTANCE_ID,
+        ownership_token: ownership?.ownership_token || "",
+        ownership_epoch: ownership?.ownership_epoch || 0,
+        loaded_revision: previousRevision,
+        mutation_revision: mutationRevision,
+        requested_save_revision: 0,
+        persisted_revision: 0,
+        affected_row_count: 0,
+        save_result: clampString(reason || "mutation") || "mutation",
+    }));
+    return mutationRevision;
+}
+async function verifyWorldPersistenceOwnership(worldName) {
+    const clean = cleanWorld(worldName);
+    const ownershipRequired = POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE && WORLD_ROUTE_ENFORCEMENT_ENABLED;
+    if (!ownershipRequired) {
+        return {
+            ok: true,
+            reason: "",
+            ownership: {
+                require_owner: false,
+                server_instance: SERVER_INSTANCE_ID,
+                ownership_token: "",
+                ownership_epoch: 0,
+                fallback: !redisStore.isReady(),
+                verified: true,
+            },
+        };
+    }
+    const localOwnership = worldPersistenceOwnership.get(clean);
+    if (!localOwnership?.verified || !ownedWorldRoutes.has(clean)) {
+        return {
+            ok: false,
+            reason: "world_ownership_not_claimed",
+            ownership: localOwnership || {
+                require_owner: true,
+                server_instance: SERVER_INSTANCE_ID,
+                ownership_token: "",
+                ownership_epoch: 0,
+                fallback: false,
+                verified: false,
+            },
+        };
+    }
+    if (!redisStore.isReady()) {
+        return { ok: false, reason: "world_ownership_redis_unavailable", ownership: localOwnership };
+    }
+    const route = await redisStore.getWorldRoute(clean);
+    const verified = Boolean(route?.ok &&
+        route.owner_instance_id === SERVER_INSTANCE_ID &&
+        route.ownership_token === localOwnership.ownership_token &&
+        Number(route.ownership_epoch || 0) === localOwnership.ownership_epoch);
+    if (!verified) {
+        ownedWorldRoutes.delete(clean);
+        worldPersistenceOwnership.delete(clean);
+        worldUnpersistedRevisions.delete(clean);
+        return { ok: false, reason: "world_ownership_lease_lost", ownership: localOwnership };
+    }
+    return { ok: true, reason: "", ownership: localOwnership };
+}
+async function runOwnedWorldPersistence(worldName, reason, operation) {
+    const clean = cleanWorld(worldName);
+    return worldPersistenceCoordinator.enqueue(clean, async () => {
+        const verification = await verifyWorldPersistenceOwnership(clean);
+        if (!verification.ok) {
+            warnWorldPersistenceGuard(clean, verification.reason || reason);
+            return { ok: false, reason: verification.reason || "world_ownership_unverified" };
+        }
+        try {
+            const value = await operation(verification.ownership);
+            return { ok: true, reason: "", value };
+        }
+        catch (error) {
+            const requestedRevision = getWorldRevision(clean);
+            console.warn("[world-persistence] operation failed", {
+                world_id: clean,
+                server_instance: SERVER_INSTANCE_ID,
+                ownership_token: verification.ownership.ownership_token,
+                ownership_epoch: verification.ownership.ownership_epoch,
+                loaded_revision: PersistenceHelpers.normalizeWorldRevision(worldPersistedRevisions.get(clean)),
+                mutation_revision: requestedRevision,
+                requested_save_revision: requestedRevision,
+                persisted_revision: PersistenceHelpers.normalizeWorldRevision(worldPersistedRevisions.get(clean)),
+                affected_row_count: 0,
+                save_result: "world_persistence_failed",
+                operation_reason: clampString(reason || "world_persistence_failed"),
+                error: getErrorMessage(error),
+            });
+            return { ok: false, reason: "world_persistence_failed" };
+        }
+    });
+}
 function queueWorldSave(worldName, options = {}) {
     const clean = cleanWorld(worldName);
+    if (options.mutation !== false) {
+        advanceAuthoritativeWorldRevision(clean, options.reason || "queued_world_mutation");
+    }
     const existingTimer = worldSaveTimers.get(clean);
-    if (existingTimer)
+    if (existingTimer) {
         clearTimeout(existingTimer);
+        worldSaveTimers.delete(clean);
+    }
+    // Authoritative state is captured immediately. The per-world coordinator
+    // serializes the database writes, so debouncing here only widens the crash
+    // window and risks serializing a later mutable state under an older intent.
+    if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE) {
+        return saveWorldState(clean, {
+            mutation: false,
+            reason: options.reason || "queued_world_save",
+        });
+    }
     const debounceMs = Math.max(0, Math.trunc(Number(options?.critical === true ? SAVE_DEBOUNCE_MS : WORLD_NON_CRITICAL_WORLD_SAVE_DEBOUNCE_MS) || SAVE_DEBOUNCE_MS));
-    rememberWorldSaveRouteAuthorization(clean, debounceMs);
     worldSaveTimers.set(clean, setTimeout(() => {
         worldSaveTimers.delete(clean);
-        saveWorldState(clean);
+        saveWorldState(clean, { mutation: false, reason: options.reason || "queued_world_save" });
     }, debounceMs));
+    return null;
 }
-function saveWorldState(worldName) {
+function saveWorldState(worldName, options = {}) {
     const clean = cleanWorld(worldName);
-    if (!shouldPersistWholeWorldState(clean, "saveWorldState"))
+    if (!shouldPersistWholeWorldState(clean, options.reason || "saveWorldState"))
         return null;
+    if (options.mutation !== false) {
+        advanceAuthoritativeWorldRevision(clean, options.reason || "direct_world_mutation");
+    }
     const serialized = serializeWorldState(clean);
-    writeWorldStateJsonBackup(clean, serialized);
-    if (postgresStore.isReady()) {
-        const write = trackPersistenceWrite(postgresStore.saveWorldState(clean, serialized), `world state ${clean}`);
+    if (isPostgresAuthoritativeReady() || (!POSTGRES_AUTHORITATIVE && postgresStore.isReady())) {
+        const operation = runOwnedWorldPersistence(clean, options.reason || "saveWorldState", async (ownership) => {
+            const saved = await postgresStore.saveWorldState(clean, serialized, ownership);
+            if (saved) {
+                markWorldRevisionPersisted(clean, serialized.world_revision);
+                writeWorldStateJsonBackup(clean, serialized);
+            }
+            return saved;
+        }).then((result) => result.ok && result.value === true);
+        const write = trackPersistenceWrite(operation, `world state ${clean}`);
         worldSaveWrites.set(clean, write);
         return write;
     }
-    return null;
+    writeWorldStateJsonBackup(clean, serialized);
+    if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE) {
+        console.warn("[world-persistence] authoritative save rejected while PostgreSQL is unavailable", {
+            world_id: clean,
+            server_instance: SERVER_INSTANCE_ID,
+            ownership_token: worldPersistenceOwnership.get(clean)?.ownership_token || "",
+            ownership_epoch: worldPersistenceOwnership.get(clean)?.ownership_epoch || 0,
+            loaded_revision: PersistenceHelpers.normalizeWorldRevision(worldPersistedRevisions.get(clean)),
+            mutation_revision: PersistenceHelpers.normalizeWorldRevision(serialized.world_revision),
+            requested_save_revision: PersistenceHelpers.normalizeWorldRevision(serialized.world_revision),
+            persisted_revision: PersistenceHelpers.normalizeWorldRevision(worldPersistedRevisions.get(clean)),
+            affected_row_count: 0,
+            save_result: "postgres_unavailable",
+        });
+        const failedWrite = trackPersistenceWrite(Promise.resolve(false), `world state ${clean}`);
+        worldSaveWrites.set(clean, failedWrite);
+        return failedWrite;
+    }
+    markWorldRevisionPersisted(clean, serialized.world_revision);
+    return Promise.resolve(true);
 }
 /**
  * @param {string} worldName
@@ -26184,18 +26693,21 @@ function saveWorldState(worldName) {
  */
 async function commitWorldStateWithBlockChanges(worldName, changes = [], options = {}) {
     const clean = cleanWorld(worldName);
+    advanceAuthoritativeWorldRevision(clean, options.reason || changes?.[0]?.action || "world_state_change");
     const serialized = serializeWorldState(clean);
     if (isPostgresAuthoritativeReady()) {
-        const result = await postgresStore.saveWorldStateWithWorldChanges(clean, serialized, changes);
-        if (!result || !result.ok) {
+        const persistence = await runOwnedWorldPersistence(clean, options.reason || "world_state_change", (ownership) => (postgresStore.saveWorldStateWithWorldChanges(clean, serialized, changes, ownership)));
+        const result = persistence.value;
+        if (!persistence.ok || !result || result.ok !== true) {
             return {
                 ok: false,
-                reason: result?.reason || "postgres_failed",
+                reason: persistence.reason || result?.reason || "postgres_failed",
                 message: result?.reason === "postgres_unavailable"
                     ? "PostgreSQL is not ready."
                     : "PostgreSQL rejected the world update.",
             };
         }
+        markWorldRevisionPersisted(clean, serialized.world_revision);
         writeWorldStateJsonBackup(clean, serialized);
         return { ok: true, postgres_committed: true, serialized };
     }
@@ -26205,7 +26717,7 @@ async function commitWorldStateWithBlockChanges(worldName, changes = [], options
     })) {
         return { ok: false, reason: "postgres_unavailable", message: "PostgreSQL is not ready." };
     }
-    saveWorldState(clean);
+    saveWorldState(clean, { mutation: false, reason: options.reason || "world_state_change" });
     return { ok: true, postgres_committed: false, serialized };
 }
 /**
@@ -26214,22 +26726,24 @@ async function commitWorldStateWithBlockChanges(worldName, changes = [], options
  */
 async function commitWorldEventStateOnly(worldName) {
     const clean = cleanWorld(worldName);
-    const serialized = serializeWorldState(clean);
     if (!shouldPersistWholeWorldState(clean, "world_event_state")) {
-        return { ok: true, postgres_committed: false, skipped: true, reason: "non_owner_route" };
+        return { ok: false, postgres_committed: false, skipped: true, reason: "non_owner_route" };
     }
+    advanceAuthoritativeWorldRevision(clean, "world_event_state");
+    const serialized = serializeWorldState(clean);
     if (isPostgresAuthoritativeReady()) {
-        const saved = await postgresStore.saveWorldState(clean, serialized);
-        if (!saved) {
+        const persistence = await runOwnedWorldPersistence(clean, "world_event_state", (ownership) => (postgresStore.saveWorldState(clean, serialized, ownership)));
+        if (!persistence.ok || persistence.value !== true) {
             return { ok: false, reason: "database_error", message: "PostgreSQL rejected the world event update." };
         }
+        markWorldRevisionPersisted(clean, serialized.world_revision);
         writeWorldStateJsonBackup(clean, serialized);
         return { ok: true, postgres_committed: true, serialized };
     }
     if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE) {
         return { ok: false, reason: "postgres_unavailable", message: "PostgreSQL is not ready." };
     }
-    saveWorldState(clean);
+    saveWorldState(clean, { mutation: false, reason: "world_event_state" });
     return { ok: true, postgres_committed: false, serialized };
 }
 function clearWorldEventState(state) {
@@ -27807,7 +28321,7 @@ function triggerPendingWorldSave(worldName) {
     if (timer) {
         clearTimeout(timer);
         worldSaveTimers.delete(clean);
-        return saveWorldState(clean);
+        return saveWorldState(clean, { mutation: false, reason: "flush_pending_world_save" });
     }
     return worldSaveWrites.get(clean) || null;
 }
@@ -27846,7 +28360,9 @@ async function flushPendingSessionPersistence(username = "", worldName = "", rea
     let flushedWriteCount = writes.length;
     if (failed) {
         const retryWrites = [];
-        const worldRetry = cleanWorldName === "" ? null : saveWorldState(cleanWorldName);
+        const worldRetry = cleanWorldName === ""
+            ? null
+            : saveWorldState(cleanWorldName, { mutation: false, reason: "session_flush_retry" });
         const playerRetry = cleanUsername === "" ? null : savePlayerState(cleanUsername);
         if (worldRetry && typeof worldRetry.then === "function")
             retryWrites.push(worldRetry);
@@ -28156,23 +28672,84 @@ async function claimWorldRouteForCurrentInstance(worldName) {
         return { ok: false, fallback: false, reason: "invalid_world_route", world: clean };
     }
     if (!redisStore.isReady()) {
+        if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE && WORLD_ROUTE_ENFORCEMENT_ENABLED) {
+            ownedWorldRoutes.delete(clean);
+            worldPersistenceOwnership.delete(clean);
+            worldUnpersistedRevisions.delete(clean);
+            return {
+                ok: false,
+                fallback: true,
+                reason: "world_route_redis_unavailable",
+                world: clean,
+                owner_instance_id: "",
+                ws_url: "",
+            };
+        }
+        const fallbackOwnership = {
+            require_owner: false,
+            server_instance: SERVER_INSTANCE_ID,
+            ownership_token: `${SERVER_PROCESS_OWNERSHIP_ID}:0`,
+            ownership_epoch: 0,
+            fallback: true,
+            verified: true,
+        };
         ownedWorldRoutes.add(clean);
+        worldPersistenceOwnership.set(clean, fallbackOwnership);
         return {
             ok: true,
             fallback: true,
             world: clean,
             owner_instance_id: SERVER_INSTANCE_ID,
             ws_url: SERVER_INSTANCE_WS_URL,
+            ownership_token: fallbackOwnership.ownership_token,
+            ownership_epoch: fallbackOwnership.ownership_epoch,
         };
     }
-    const route = await redisStore.claimWorldRoute(clean, SERVER_INSTANCE_ID, SERVER_INSTANCE_WS_URL, WORLD_ROUTE_TTL_MS);
+    const route = await redisStore.claimWorldRoute(clean, SERVER_INSTANCE_ID, SERVER_INSTANCE_WS_URL, WORLD_ROUTE_TTL_MS, SERVER_PROCESS_OWNERSHIP_ID);
     if (route.ok) {
+        const ownership = {
+            require_owner: POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE && WORLD_ROUTE_ENFORCEMENT_ENABLED,
+            server_instance: SERVER_INSTANCE_ID,
+            ownership_token: clampString(route.ownership_token || ""),
+            ownership_epoch: Math.max(0, Math.trunc(Number(route.ownership_epoch) || 0)),
+            fallback: route.fallback === true,
+            verified: route.fallback !== true,
+        };
+        if (ownership.require_owner) {
+            if (ownership.ownership_token === "" || ownership.ownership_epoch <= 0) {
+                ownedWorldRoutes.delete(clean);
+                worldPersistenceOwnership.delete(clean);
+                worldUnpersistedRevisions.delete(clean);
+                return { ...route, ok: false, reason: "world_route_missing_fence" };
+            }
+            const existing = worldPersistenceOwnership.get(clean);
+            const alreadyFenced = existing?.verified
+                && existing.ownership_token === ownership.ownership_token
+                && existing.ownership_epoch === ownership.ownership_epoch;
+            if (!alreadyFenced) {
+                worldUnpersistedRevisions.delete(clean);
+                const claimed = await postgresStore.claimWorldPersistenceOwnership(clean, ownership);
+                if (!claimed?.ok) {
+                    await redisStore.releaseWorldRoute(clean, SERVER_INSTANCE_ID, ownership.ownership_token);
+                    ownedWorldRoutes.delete(clean);
+                    worldPersistenceOwnership.delete(clean);
+                    worldUnpersistedRevisions.delete(clean);
+                    return {
+                        ...route,
+                        ok: false,
+                        reason: claimed?.reason || "world_persistence_fence_failed",
+                    };
+                }
+                worldPersistedRevisions.set(clean, PersistenceHelpers.normalizeWorldRevision(claimed.persisted_revision ?? claimed.loaded_revision));
+            }
+        }
         ownedWorldRoutes.add(clean);
+        worldPersistenceOwnership.set(clean, ownership);
         return route;
     }
-    if (route.owner_instance_id !== SERVER_INSTANCE_ID) {
-        ownedWorldRoutes.delete(clean);
-    }
+    ownedWorldRoutes.delete(clean);
+    worldPersistenceOwnership.delete(clean);
+    worldUnpersistedRevisions.delete(clean);
     return route;
 }
 /**
@@ -28243,16 +28820,105 @@ async function refreshWorldRouteForPlayer(player) {
         warnWorldRouteConflict("presence refresh could not renew local world route", clean, route);
     }
 }
+async function refreshOwnedWorldPersistenceLeases() {
+    const worldNames = Array.from(ownedWorldRoutes.values());
+    let refreshed = 0;
+    let failed = 0;
+    for (const worldName of worldNames) {
+        const previousOwnership = worldPersistenceOwnership.get(worldName);
+        const route = await claimWorldRouteForCurrentInstance(worldName);
+        if (route?.ok) {
+            refreshed += 1;
+            continue;
+        }
+        failed += 1;
+        console.warn("[world-persistence] active ownership lease refresh failed", {
+            world_id: worldName,
+            server_instance: SERVER_INSTANCE_ID,
+            ownership_token: previousOwnership?.ownership_token || "",
+            ownership_epoch: previousOwnership?.ownership_epoch || 0,
+            loaded_revision: PersistenceHelpers.normalizeWorldRevision(worldPersistedRevisions.get(worldName)),
+            mutation_revision: worldStates.has(worldName) ? getWorldRevision(worldName) : 0,
+            requested_save_revision: 0,
+            persisted_revision: PersistenceHelpers.normalizeWorldRevision(worldPersistedRevisions.get(worldName)),
+            affected_row_count: 0,
+            save_result: route?.reason || "lease_refresh_failed",
+        });
+    }
+    return { ok: failed === 0, refreshed, failed };
+}
 async function releaseOwnedWorldRouteIfEmpty(worldName) {
     const clean = cleanIndexedWorldName(worldName || "");
     if (clean === "")
         return;
     if (getWorldAdmissionCount(clean) > 0)
         return;
-    ownedWorldRoutes.delete(clean);
-    if (!redisStore.isReady())
+    const pendingSave = triggerPendingWorldSave(clean);
+    if (pendingSave) {
+        const saved = await pendingSave;
+        if (saved !== true) {
+            queueWorldSave(clean, { critical: true, mutation: false, reason: "route_release_retry" });
+            console.warn("[world-persistence] retaining route after failed final save", {
+                world_id: clean,
+                server_instance: SERVER_INSTANCE_ID,
+                save_result: "route_release_save_failed",
+            });
+            return;
+        }
+    }
+    await worldPersistenceCoordinator.wait(clean);
+    if (getWorldAdmissionCount(clean) > 0)
         return;
-    await redisStore.releaseWorldRoute(clean, SERVER_INSTANCE_ID);
+    const ownership = worldPersistenceOwnership.get(clean);
+    const persistedRevision = PersistenceHelpers.normalizeWorldRevision(worldPersistedRevisions.get(clean));
+    const mutationRevision = worldStates.has(clean) ? getWorldRevision(clean) : persistedRevision;
+    if (redisStore.isReady() && ownership?.ownership_token) {
+        const released = await redisStore.releaseWorldRoute(clean, SERVER_INSTANCE_ID, ownership.ownership_token);
+        if (!released?.released && !released?.fallback) {
+            console.warn("[world-persistence] route release fence rejected", {
+                world_id: clean,
+                server_instance: SERVER_INSTANCE_ID,
+                ownership_token: ownership.ownership_token,
+                ownership_epoch: ownership.ownership_epoch,
+                save_result: released?.reason || "route_release_rejected",
+            });
+        }
+    }
+    if (getWorldAdmissionCount(clean) > 0) {
+        await claimWorldRouteForCurrentInstance(clean);
+        return;
+    }
+    ownedWorldRoutes.delete(clean);
+    worldPersistenceOwnership.delete(clean);
+    worldUnpersistedRevisions.delete(clean);
+    worldPersistedRevisions.delete(clean);
+    worldSaveWrites.delete(clean);
+    const eventTimer = worldEventTimers.get(clean);
+    if (eventTimer)
+        clearTimeout(eventTimer);
+    worldEventTimers.delete(clean);
+    clearWorldEventCountdownTimers(clean);
+    const broadcastTimer = pendingWorldUpdateBroadcastTimers.get(clean);
+    if (broadcastTimer)
+        clearTimeout(broadcastTimer);
+    pendingWorldUpdateBroadcastTimers.delete(clean);
+    pendingWorldUpdateBroadcasts.delete(clean);
+    movementCollisionCacheByWorld.delete(clean);
+    movementCollisionWorldRevision.delete(clean);
+    worldStates.delete(clean);
+    console.log("[world-persistence]", JSON.stringify({
+        event: "idle_unload",
+        world_id: clean,
+        server_instance: SERVER_INSTANCE_ID,
+        ownership_token: ownership?.ownership_token || "",
+        ownership_epoch: ownership?.ownership_epoch || 0,
+        loaded_revision: persistedRevision,
+        mutation_revision: mutationRevision,
+        requested_save_revision: 0,
+        persisted_revision: persistedRevision,
+        affected_row_count: 0,
+        save_result: "unloaded_after_route_release",
+    }));
 }
 function getWorldPopulationCount(worldName, excludePlayerId = "") {
     const clean = cleanWorld(worldName || "START");

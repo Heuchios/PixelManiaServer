@@ -417,6 +417,7 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
   function createEmptyWorldState(): JsonRecord {
     return {
       world_generation_version: currentWorldGenerationVersion,
+      world_revision: 0,
       block_revision: 0,
       cleared: false,
       foreground: new Map(),
@@ -964,6 +965,7 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
       legacyWorldGenerationVersion,
       currentWorldGenerationVersion
     );
+    state.world_revision = Math.max(0, Math.trunc(Number(data.world_revision) || 0));
     state.block_revision = Math.max(0, Math.trunc(Number(data.block_revision) || 0));
     loadSavedWorldGridData(state, data);
     for (const layerName of ["foreground", "background", "removed_foreground", "removed_background"]) {
@@ -2418,6 +2420,7 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
         legacyWorldGenerationVersion,
         currentWorldGenerationVersion
       ),
+      world_revision: Math.max(0, Math.trunc(Number(state.world_revision) || 0)),
       block_revision: Math.max(0, Math.trunc(Number(state.block_revision) || 0)),
       world_name: cleanWorld(worldName),
       saved_at: new Date().toISOString(),

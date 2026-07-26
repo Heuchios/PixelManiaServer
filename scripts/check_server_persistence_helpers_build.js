@@ -9,6 +9,15 @@ const path = require("node:path");
 
 const PersistenceHelpers = require("../server_persistence_helpers");
 
+function createDeferred() {
+  /** @type {(value?: unknown) => void} */
+  let resolve = () => undefined;
+  const promise = new Promise((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
 async function main() {
   const repoRoot = path.join(__dirname, "..");
   const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
@@ -49,6 +58,60 @@ async function main() {
     assert.equal(PersistenceHelpers.getJsonContentScore({ foreground: [{}, {}], drops: [{}] }), 3);
     assert.equal(PersistenceHelpers.getJsonContentScore({ accounts: [{}, {}, {}] }), 3);
 
+    const mutableSnapshot = { foreground: [{ x: 1, y: 2, block_type: "dirt" }] };
+    const frozenSnapshot = PersistenceHelpers.clonePersistenceSnapshot(mutableSnapshot);
+    mutableSnapshot.foreground[0].block_type = "lava";
+    assert.equal(frozenSnapshot.foreground[0].block_type, "dirt");
+
+    assert.deepEqual(PersistenceHelpers.resolveWorldLoadRevision({
+      memory_exists: true,
+      memory_revision: 12,
+      database_found: true,
+      database_revision: 10,
+      memory_authoritative: true,
+    }), { source: "memory", reason: "owned_memory_revision_newer" });
+    assert.deepEqual(PersistenceHelpers.resolveWorldLoadRevision({
+      memory_exists: true,
+      memory_revision: 12,
+      database_found: true,
+      database_revision: 10,
+      memory_authoritative: false,
+    }), { source: "database", reason: "uncommitted_memory_rejected" });
+    assert.deepEqual(PersistenceHelpers.resolveWorldLoadRevision({
+      memory_exists: true,
+      memory_revision: 12,
+      database_found: true,
+      database_revision: 13,
+      memory_authoritative: true,
+    }), { source: "database", reason: "database_revision_current" });
+    assert.deepEqual(PersistenceHelpers.resolveWorldLoadRevision({
+      memory_exists: true,
+      memory_revision: 12,
+      database_found: false,
+      database_revision: 0,
+      memory_authoritative: false,
+    }), { source: "empty", reason: "database_missing" });
+
+    const coordinator = PersistenceHelpers.createWorldPersistenceCoordinator();
+    const firstSaveGate = createDeferred();
+    /** @type {string[]} */
+    const saveOrder = [];
+    const firstSave = coordinator.enqueue("TEST", async () => {
+      saveOrder.push("first:start");
+      await firstSaveGate.promise;
+      saveOrder.push("first:end");
+    });
+    const secondSave = coordinator.enqueue("test", async () => {
+      saveOrder.push("second:start");
+      saveOrder.push("second:end");
+    });
+    await new Promise((resolve) => setImmediate(resolve));
+    assert.deepEqual(saveOrder, ["first:start"]);
+    firstSaveGate.resolve();
+    await Promise.all([firstSave, secondSave]);
+    assert.deepEqual(saveOrder, ["first:start", "first:end", "second:start", "second:end"]);
+    assert.equal(coordinator.pendingCount(), 0);
+
     const sourcePath = path.join(tempRoot, "source.json");
     const targetPath = path.join(tempRoot, "target", "state.json");
     PersistenceHelpers.writeJsonFileAtomic(sourcePath, {
@@ -83,6 +146,21 @@ async function main() {
     await PersistenceHelpers.waitForPersistenceWrites(pending);
     assert.equal(pending.size, 0);
     assert.equal(warnings.some((line) => line.includes("[persistence] bad failed: boom")), true);
+
+    const retainedFailures = new Set();
+    PersistenceHelpers.trackPersistenceWrite(
+      pending,
+      Promise.resolve(false),
+      "database-world-save",
+      warn,
+      /** @type {any} */ (retainedFailures),
+    );
+    const failedSummary = await PersistenceHelpers.waitForPersistenceWrites(
+      pending,
+      /** @type {any} */ (retainedFailures),
+    );
+    assert.deepEqual(failedSummary, { ok: false, total: 1, failed: 1 });
+    assert.equal(retainedFailures.has("database-world-save"), true);
 
     assert.equal(PersistenceHelpers.trackPersistenceWrite(pending, 123, "noop", warn), 123);
   } finally {

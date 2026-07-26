@@ -4,7 +4,7 @@ function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
 function createServerPhase11bLifecycle(deps) {
-    const { ACCOUNTS_SAVE_PATH, ADMIN_LOG_PATH, ALLOW_LEGACY_WORLD_STATE_IMPORT, ANTI_DUPE_AUDIT_INTERVAL_MS, ANTI_DUPE_AUDIT_LIMIT, ANTI_DUPE_AUDIT_LOG_CLEAN, CRASH_REPORT_PATH, INTEGRITY_LOG_FOLDER, LEGACY_DATA_FOLDERS, PERIODIC_SAVE_MS, PLAYER_SAVE_FOLDER, WORLD_SAVE_FOLDER, WORLD_SNAPSHOT_FOLDER, WORLD_SNAPSHOT_INTERVAL_MINUTES, WORLD_SNAPSHOT_INTERVAL_MS, WORLD_SNAPSHOT_MAX_WORLDS_PER_CYCLE, WORLD_SNAPSHOT_STARTUP_RUN, accountKey, accounts, assertAuthoritativePostgresReady, clampInteger, cleanAccountName, cleanText, cleanWorld, createWorldSnapshot, deserializeWorldState, errorToCrashDetails, exitProcess, fileSystem, flushWorldStateJsonBackups, getAccountsSaveTimer, getCrashRuntimeState, getFatalCrashReportWritten, isPostgresAuthoritativeReady, loadAccountsFromJson, logger, markFatalCrashReportWritten, pathModule, pendingPersistenceWrites, persistenceHelpers, playerSaveTimers, playerStates, postgresStore, processRuntime, redisStore, safeFileName, sanitizeAccountState, sanitizePlayerState, saveAccounts, savePlayerState, saveWorldState, serializeWorldState, setAccountsSaveTimer, stopGameplaySchedulers, waitForPersistenceWrites, worldSaveTimers, worldSnapshotSchedulerState, worldStates, writeCrashReport, } = deps;
+    const { ACCOUNTS_SAVE_PATH, ADMIN_LOG_PATH, ALLOW_LEGACY_WORLD_STATE_IMPORT, ANTI_DUPE_AUDIT_INTERVAL_MS, ANTI_DUPE_AUDIT_LIMIT, ANTI_DUPE_AUDIT_LOG_CLEAN, CRASH_REPORT_PATH, INTEGRITY_LOG_FOLDER, LEGACY_DATA_FOLDERS, PERIODIC_SAVE_MS, PLAYER_SAVE_FOLDER, WORLD_SAVE_FOLDER, WORLD_SNAPSHOT_FOLDER, WORLD_SNAPSHOT_INTERVAL_MINUTES, WORLD_SNAPSHOT_INTERVAL_MS, WORLD_SNAPSHOT_MAX_WORLDS_PER_CYCLE, WORLD_SNAPSHOT_STARTUP_RUN, accountKey, accounts, assertAuthoritativePostgresReady, clampInteger, cleanAccountName, cleanText, cleanWorld, createWorldSnapshot, deserializeWorldState, errorToCrashDetails, exitProcess, fileSystem, flushWorldStateJsonBackups, getAccountsSaveTimer, getCrashRuntimeState, getFatalCrashReportWritten, getOwnedWorldNames, isPostgresAuthoritativeReady, loadAccountsFromJson, logger, markFatalCrashReportWritten, pathModule, pendingPersistenceWrites, persistenceHelpers, playerSaveTimers, playerStates, postgresStore, processRuntime, redisStore, refreshOwnedWorldRoutes, safeFileName, sanitizeAccountState, sanitizePlayerState, saveAccounts, savePlayerState, saveWorldState, serializeWorldState, setAccountsSaveTimer, stopGameplaySchedulers, waitForPersistenceWrites, waitForWorldPersistence, WORLD_ROUTE_TTL_MS, worldSaveTimers, worldSnapshotSchedulerState, worldStates, writeCrashReport, } = deps;
     const timerApi = deps.timerApi || {
         clearInterval,
         clearTimeout,
@@ -19,6 +19,7 @@ function createServerPhase11bLifecycle(deps) {
     let worldSnapshotSchedulerRunning = false;
     let worldSnapshotSchedulerCursor = 0;
     let periodicSaveTimer = null;
+    let worldRouteLeaseRefreshTimer = null;
     let shutdownStarted = false;
     let shutdownHandlersInstalled = false;
     function unrefTimer(timer) {
@@ -187,22 +188,32 @@ function createServerPhase11bLifecycle(deps) {
             logger.log(`[postgres] reconciled item instances for ${itemInstanceReconcile.player_count} player state(s).`);
         }
         const dbWorlds = await postgresStore.loadWorldStates();
-        const allowLegacyWorldImport = !deps.POSTGRES_AUTHORITATIVE || ALLOW_LEGACY_WORLD_STATE_IMPORT;
+        const postgresAuthoritative = deps.POSTGRES_AUTHORITATIVE === true;
+        const allowLegacyWorldImport = !postgresAuthoritative || ALLOW_LEGACY_WORLD_STATE_IMPORT;
+        const databaseWorldNames = new Set(dbWorlds.map((entry) => (cleanWorld(entry.world_name || entry.state?.world_name || "START"))));
         if (dbWorlds.length > 0) {
             worldStates.clear();
-            for (const entry of dbWorlds) {
-                const cleanWorldName = cleanWorld(entry.world_name || entry.state?.world_name || "START");
-                worldStates.set(cleanWorldName, deserializeWorldState(cleanWorldName, entry.state || {}));
+            if (postgresAuthoritative) {
+                logger.log(`[postgres] indexed ${dbWorlds.length} world state(s); authoritative worlds load on demand after route ownership is claimed.`);
             }
-            logger.log(`[postgres] loaded ${worldStates.size} world state(s) from PostgreSQL.`);
+            else {
+                for (const entry of dbWorlds) {
+                    const cleanWorldName = cleanWorld(entry.world_name || entry.state?.world_name || "START");
+                    worldStates.set(cleanWorldName, deserializeWorldState(cleanWorldName, entry.state || {}));
+                }
+                logger.log(`[postgres] loaded ${worldStates.size} world state(s) from PostgreSQL.`);
+            }
             const jsonWorldEntries = readWorldStatesFromJsonFolder();
-            const missingWorldEntries = jsonWorldEntries.filter((entry) => !worldStates.has(entry.worldName));
+            const missingWorldEntries = jsonWorldEntries.filter((entry) => !databaseWorldNames.has(entry.worldName));
             if (allowLegacyWorldImport) {
                 for (const entry of missingWorldEntries) {
                     worldStates.set(entry.worldName, entry.state);
-                }
-                for (const entry of missingWorldEntries) {
-                    await postgresStore.saveWorldState(entry.worldName, serializeWorldState(entry.worldName));
+                    const imported = await postgresStore.saveWorldState(entry.worldName, serializeWorldState(entry.worldName));
+                    if (imported !== true) {
+                        throw new Error(`PostgreSQL rejected legacy world import for ${entry.worldName}`);
+                    }
+                    if (postgresAuthoritative)
+                        worldStates.delete(entry.worldName);
                 }
                 if (missingWorldEntries.length > 0) {
                     logger.log(`[postgres] imported ${missingWorldEntries.length} missing JSON world state(s) into PostgreSQL.`);
@@ -215,8 +226,13 @@ function createServerPhase11bLifecycle(deps) {
         else if (allowLegacyWorldImport) {
             const importedWorlds = loadWorldStatesFromJsonFolder();
             for (const [worldName] of worldStates.entries()) {
-                await postgresStore.saveWorldState(worldName, serializeWorldState(worldName));
+                const imported = await postgresStore.saveWorldState(worldName, serializeWorldState(worldName));
+                if (imported !== true) {
+                    throw new Error(`PostgreSQL rejected legacy world import for ${worldName}`);
+                }
             }
+            if (postgresAuthoritative)
+                worldStates.clear();
             if (importedWorlds > 0) {
                 logger.log(`[postgres] imported ${importedWorlds} JSON world state(s) into PostgreSQL.`);
             }
@@ -299,7 +315,9 @@ function createServerPhase11bLifecycle(deps) {
         worldSnapshotSchedulerState.last_error = "";
         worldSnapshotSchedulerState.last_run_at = new Date(startedAt).toISOString();
         try {
-            const loadedWorldNames = Array.from(worldStates.keys()).sort((left, right) => (left.localeCompare(right)));
+            const loadedWorldNames = (typeof getOwnedWorldNames === "function"
+                ? getOwnedWorldNames()
+                : Array.from(worldStates.keys())).map((worldName) => cleanWorld(worldName)).sort((left, right) => (left.localeCompare(right)));
             const scheduledWorldNames = selectWorldsForSnapshotCycle(loadedWorldNames);
             let createdCount = 0;
             let failedCount = 0;
@@ -312,7 +330,9 @@ function createServerPhase11bLifecycle(deps) {
                 });
                 if (snapshot?.snapshotId) {
                     createdCount += 1;
-                    await waitForPersistenceWrites();
+                    const waitSummary = await waitForPersistenceWrites();
+                    if (waitSummary?.ok === false)
+                        failedCount += 1;
                 }
                 else {
                     failedCount += 1;
@@ -367,15 +387,25 @@ function createServerPhase11bLifecycle(deps) {
         logger.log(`[snapshot] periodic world checkpoint every ${WORLD_SNAPSHOT_INTERVAL_MINUTES} minute(s), max ${WORLD_SNAPSHOT_MAX_WORLDS_PER_CYCLE || "all"} world(s) per cycle.`);
     }
     function startPeriodicSaveScheduler() {
-        if (periodicSaveTimer || PERIODIC_SAVE_MS <= 0)
-            return;
-        periodicSaveTimer = timerApi.setInterval(() => {
-            flushPendingSaves();
-        }, PERIODIC_SAVE_MS);
-        unrefTimer(periodicSaveTimer);
+        if (!periodicSaveTimer && PERIODIC_SAVE_MS > 0) {
+            periodicSaveTimer = timerApi.setInterval(() => {
+                flushPendingSaves();
+            }, PERIODIC_SAVE_MS);
+            unrefTimer(periodicSaveTimer);
+        }
+        if (!worldRouteLeaseRefreshTimer && WORLD_ROUTE_TTL_MS > 0 && typeof refreshOwnedWorldRoutes === "function") {
+            const refreshIntervalMs = Math.max(1000, Math.floor(WORLD_ROUTE_TTL_MS / 3));
+            worldRouteLeaseRefreshTimer = timerApi.setInterval(() => {
+                Promise.resolve(refreshOwnedWorldRoutes()).catch((error) => {
+                    logger.warn("[world-persistence] ownership lease heartbeat failed:", getErrorMessage(error));
+                });
+            }, refreshIntervalMs);
+            unrefTimer(worldRouteLeaseRefreshTimer);
+        }
     }
     function stopLifecycleSchedulers() {
         periodicSaveTimer = clearIntervalTimer(periodicSaveTimer);
+        worldRouteLeaseRefreshTimer = clearIntervalTimer(worldRouteLeaseRefreshTimer);
         antiDupeAuditTimer = clearIntervalTimer(antiDupeAuditTimer);
         antiDupeAuditStartupTimer = clearTimeoutTimer(antiDupeAuditStartupTimer);
         worldSnapshotSchedulerTimer = clearIntervalTimer(worldSnapshotSchedulerTimer);
@@ -389,7 +419,7 @@ function createServerPhase11bLifecycle(deps) {
         const syncLocalJson = options.syncLocalJson === true;
         for (const [worldName, timer] of worldSaveTimers.entries()) {
             timerApi.clearTimeout(timer);
-            saveWorldState(worldName);
+            saveWorldState(worldName, { mutation: false, reason: "periodic_flush" });
         }
         worldSaveTimers.clear();
         flushWorldStateJsonBackups({ sync: syncLocalJson });
@@ -417,9 +447,19 @@ function createServerPhase11bLifecycle(deps) {
         stopLifecycleSchedulers();
         stopGameplaySchedulers();
         flushPendingSaves();
-        await waitForPersistenceWrites();
+        if (typeof waitForWorldPersistence === "function")
+            await waitForWorldPersistence();
+        const waitSummary = await waitForPersistenceWrites();
         await postgresStore.close();
         await redisStore.close();
+        if (waitSummary?.ok === false) {
+            logger.error("[persistence] shutdown detected failed writes", {
+                total: waitSummary.total,
+                failed: waitSummary.failed,
+            });
+            exitProcess(1);
+            return;
+        }
         exitProcess(0);
     }
     function handleShutdownSignal(signal) {
@@ -463,6 +503,7 @@ function createServerPhase11bLifecycle(deps) {
             anti_dupe_audit_running: antiDupeAuditRunning,
             anti_dupe_audit_scheduled: Boolean(antiDupeAuditTimer),
             periodic_save_scheduled: Boolean(periodicSaveTimer),
+            world_route_lease_refresh_scheduled: Boolean(worldRouteLeaseRefreshTimer),
             shutdown_handlers_installed: shutdownHandlersInstalled,
             shutdown_started: shutdownStarted,
             world_snapshot_running: worldSnapshotSchedulerRunning,

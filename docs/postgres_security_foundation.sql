@@ -156,6 +156,10 @@ CREATE TABLE IF NOT EXISTS worlds (
 	is_active boolean NOT NULL DEFAULT true,
 	world_checksum text,
 	world_state jsonb NOT NULL DEFAULT '{}'::jsonb,
+	world_revision bigint NOT NULL DEFAULT 0 CHECK (world_revision >= 0),
+	world_owner_epoch bigint NOT NULL DEFAULT 0 CHECK (world_owner_epoch >= 0),
+	world_owner_token text NOT NULL DEFAULT '',
+	world_owner_instance text NOT NULL DEFAULT '',
 	created_at timestamptz NOT NULL DEFAULT now(),
 	updated_at timestamptz NOT NULL DEFAULT now()
 );
@@ -189,7 +193,11 @@ ADD COLUMN IF NOT EXISTS inventory_hash_algorithm text NOT NULL DEFAULT 'sha256:
 ADD COLUMN IF NOT EXISTS inventory_hash_updated_at timestamptz;
 
 ALTER TABLE worlds
-ADD COLUMN IF NOT EXISTS world_state jsonb NOT NULL DEFAULT '{}'::jsonb;
+ADD COLUMN IF NOT EXISTS world_state jsonb NOT NULL DEFAULT '{}'::jsonb,
+ADD COLUMN IF NOT EXISTS world_revision bigint NOT NULL DEFAULT 0,
+ADD COLUMN IF NOT EXISTS world_owner_epoch bigint NOT NULL DEFAULT 0,
+ADD COLUMN IF NOT EXISTS world_owner_token text NOT NULL DEFAULT '',
+ADD COLUMN IF NOT EXISTS world_owner_instance text NOT NULL DEFAULT '';
 
 ALTER TABLE sessions
 ADD COLUMN IF NOT EXISTS refresh_token_hash text,

@@ -24,6 +24,23 @@ type PostgresError = Error & {
 type RuntimeRecord = Record<string, any>;
 type TransactionWork<T> = (client: PoolClient) => Promise<T>;
 type DetachedWork = () => Promise<unknown>;
+type WorldPersistenceMetadata = {
+  require_owner: boolean;
+  server_instance: string;
+  ownership_token: string;
+  ownership_epoch: number;
+  requested_revision: number;
+};
+type WorldPersistenceResult = {
+  ok: boolean;
+  reason: string;
+  world_id: string | null;
+  loaded_revision: number;
+  requested_revision: number;
+  persisted_revision: number;
+  affected_rows: number;
+  idempotent?: boolean;
+};
 type ItemInstanceMovement = RuntimeRecord;
 type InventoryLedgerEntry = {
   item_type: string;
@@ -251,6 +268,34 @@ function toInt(value: unknown, fallback = 0): number {
 
 function cleanName(value: unknown): string {
   return String(value || "").trim();
+}
+
+function normalizeWorldRevision(value: unknown): number {
+  const revision = Number(value);
+  if (!Number.isSafeInteger(revision) || revision < 0) return 0;
+  return revision;
+}
+
+function normalizeWorldPersistenceMetadata(value: unknown, worldState: RuntimeRecord = {}): WorldPersistenceMetadata {
+  const metadata = toObject(value);
+  return {
+    require_owner: metadata.require_owner === true,
+    server_instance: cleanName(metadata.server_instance || metadata.server_instance_id || ""),
+    ownership_token: cleanName(metadata.ownership_token || ""),
+    ownership_epoch: normalizeWorldRevision(metadata.ownership_epoch),
+    requested_revision: normalizeWorldRevision(metadata.requested_revision ?? worldState.world_revision),
+  };
+}
+
+function worldStateForPersistenceChecksum(value: unknown): RuntimeRecord {
+  const state = clonePlainJson(safeJson(value));
+  delete state.saved_at;
+  delete state.last_saved_at;
+  return state;
+}
+
+function worldPersistenceChecksum(value: unknown): string {
+  return jsonChecksum(worldStateForPersistenceChecksum(value));
 }
 
 function normalizeDbRole(value: unknown): string {
@@ -798,7 +843,11 @@ class PostgresStore {
         ADD COLUMN IF NOT EXISTS inventory_hash_updated_at timestamptz;
 
       ALTER TABLE ${this.table("worlds")}
-        ADD COLUMN IF NOT EXISTS world_state jsonb NOT NULL DEFAULT '{}'::jsonb;
+        ADD COLUMN IF NOT EXISTS world_state jsonb NOT NULL DEFAULT '{}'::jsonb,
+        ADD COLUMN IF NOT EXISTS world_revision bigint NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS world_owner_epoch bigint NOT NULL DEFAULT 0,
+        ADD COLUMN IF NOT EXISTS world_owner_token text NOT NULL DEFAULT '',
+        ADD COLUMN IF NOT EXISTS world_owner_instance text NOT NULL DEFAULT '';
 
       ALTER TABLE ${this.table("world_snapshots")}
         ADD COLUMN IF NOT EXISTS reason text NOT NULL DEFAULT 'snapshot',
@@ -4850,50 +4899,446 @@ class PostgresStore {
     }
   }
 
-  async upsertWorldState(client: PoolClient, worldName: unknown, worldState: RuntimeRecord) {
+  logWorldPersistence(event: unknown, details: RuntimeRecord = {}): void {
+    const payload = toObject(details);
+    this.logger("[world-persistence]", JSON.stringify({
+      event: cleanName(event || "world_persistence"),
+      world_id: cleanName(payload.world_id || payload.world_name || ""),
+      server_instance: cleanName(payload.server_instance || ""),
+      ownership_token: cleanName(payload.ownership_token || ""),
+      ownership_epoch: normalizeWorldRevision(payload.ownership_epoch),
+      loaded_revision: normalizeWorldRevision(payload.loaded_revision),
+      mutation_revision: normalizeWorldRevision(payload.mutation_revision),
+      requested_save_revision: normalizeWorldRevision(payload.requested_save_revision),
+      persisted_revision: normalizeWorldRevision(payload.persisted_revision),
+      affected_row_count: Math.max(0, toInt(payload.affected_row_count, 0)),
+      save_result: cleanName(payload.save_result || payload.result || "unknown"),
+    }));
+  }
+
+  async claimWorldPersistenceOwnership(worldName: unknown, ownership: unknown = {}): Promise<WorldPersistenceResult> {
+    if (!this.isReady()) {
+      return {
+        ok: false,
+        reason: "postgres_unavailable",
+        world_id: null,
+        loaded_revision: 0,
+        requested_revision: 0,
+        persisted_revision: 0,
+        affected_rows: 0,
+      };
+    }
+
+    const cleanWorldName = cleanName(worldName || "");
+    const metadata = normalizeWorldPersistenceMetadata({ ...toObject(ownership), require_owner: true });
+    if (
+      cleanWorldName === "" ||
+      metadata.server_instance === "" ||
+      metadata.ownership_token === "" ||
+      metadata.ownership_epoch <= 0
+    ) {
+      return {
+        ok: false,
+        reason: "invalid_world_ownership",
+        world_id: null,
+        loaded_revision: 0,
+        requested_revision: 0,
+        persisted_revision: 0,
+        affected_rows: 0,
+      };
+    }
+
+    try {
+      const result = await this.withTransaction(async (client): Promise<WorldPersistenceResult> => {
+        await client.query(
+          `
+          INSERT INTO ${this.table("worlds")} (
+            world_name,
+            width,
+            height,
+            world_data_version,
+            last_saved_at,
+            is_active,
+            world_checksum,
+            world_state,
+            world_revision,
+            world_owner_epoch,
+            world_owner_token,
+            world_owner_instance,
+            created_at,
+            updated_at
+          )
+          VALUES ($1, 100, 70, 1, now(), true, '', '{}'::jsonb, 0, $2, $3, $4, now(), now())
+          ON CONFLICT (world_name) DO NOTHING
+          `,
+          [cleanWorldName, metadata.ownership_epoch, metadata.ownership_token, metadata.server_instance]
+        );
+
+        const locked = await client.query(
+          `
+          SELECT world_id::text AS world_id,
+                 world_revision,
+                 world_owner_epoch,
+                 world_owner_token,
+                 world_owner_instance
+            FROM ${this.table("worlds")}
+           WHERE world_name = $1
+           FOR UPDATE
+          `,
+          [cleanWorldName]
+        );
+        const row = locked.rows[0];
+        const loadedRevision = normalizeWorldRevision(row?.world_revision);
+        const currentEpoch = normalizeWorldRevision(row?.world_owner_epoch);
+        const currentToken = cleanName(row?.world_owner_token || "");
+        const currentInstance = cleanName(row?.world_owner_instance || "");
+        const sameOwner = currentEpoch === metadata.ownership_epoch
+          && currentToken === metadata.ownership_token
+          && currentInstance === metadata.server_instance;
+
+        if (!sameOwner && currentEpoch >= metadata.ownership_epoch) {
+          return {
+            ok: false,
+            reason: "world_ownership_fence_rejected",
+            world_id: cleanName(row?.world_id || "") || null,
+            loaded_revision: loadedRevision,
+            requested_revision: loadedRevision,
+            persisted_revision: loadedRevision,
+            affected_rows: 0,
+          };
+        }
+
+        let affectedRows = 0;
+        if (!sameOwner) {
+          const updated = await client.query(
+            `
+            UPDATE ${this.table("worlds")}
+               SET world_owner_epoch = $2,
+                   world_owner_token = $3,
+                   world_owner_instance = $4,
+                   updated_at = now()
+             WHERE world_name = $1
+               AND world_owner_epoch < $2
+            RETURNING world_id::text AS world_id, world_revision
+            `,
+            [cleanWorldName, metadata.ownership_epoch, metadata.ownership_token, metadata.server_instance]
+          );
+          affectedRows = Math.max(0, toInt(updated.rowCount, 0));
+          if (affectedRows !== 1) {
+            return {
+              ok: false,
+              reason: "world_ownership_fence_race",
+              world_id: cleanName(row?.world_id || "") || null,
+              loaded_revision: loadedRevision,
+              requested_revision: loadedRevision,
+              persisted_revision: loadedRevision,
+              affected_rows: affectedRows,
+            };
+          }
+        }
+
+        return {
+          ok: true,
+          reason: "",
+          world_id: cleanName(row?.world_id || "") || null,
+          loaded_revision: loadedRevision,
+          requested_revision: loadedRevision,
+          persisted_revision: loadedRevision,
+          affected_rows: affectedRows,
+          idempotent: sameOwner,
+        };
+      });
+      const claimResult = result || {
+        ok: false,
+        reason: "world_ownership_claim_failed",
+        world_id: null,
+        loaded_revision: 0,
+        requested_revision: 0,
+        persisted_revision: 0,
+        affected_rows: 0,
+      };
+      this.logWorldPersistence("ownership_claim", {
+        world_id: cleanWorldName,
+        server_instance: metadata.server_instance,
+        ownership_token: metadata.ownership_token,
+        ownership_epoch: metadata.ownership_epoch,
+        loaded_revision: claimResult.loaded_revision,
+        requested_save_revision: claimResult.requested_revision,
+        persisted_revision: claimResult.persisted_revision,
+        affected_row_count: claimResult.affected_rows,
+        save_result: claimResult.ok ? (claimResult.idempotent ? "owner_refreshed" : "owner_claimed") : claimResult.reason,
+      });
+      return claimResult;
+    } catch (error) {
+      this.logWorldPersistence("ownership_claim", {
+        world_id: cleanWorldName,
+        server_instance: metadata.server_instance,
+        ownership_token: metadata.ownership_token,
+        ownership_epoch: metadata.ownership_epoch,
+        loaded_revision: 0,
+        mutation_revision: 0,
+        requested_save_revision: 0,
+        persisted_revision: 0,
+        affected_row_count: 0,
+        save_result: "database_error",
+      });
+      this.logger("[postgres] world ownership claim failed:", getErrorMessage(error));
+      return {
+        ok: false,
+        reason: "database_error",
+        world_id: null,
+        loaded_revision: 0,
+        requested_revision: 0,
+        persisted_revision: 0,
+        affected_rows: 0,
+      };
+    }
+  }
+
+  async upsertWorldState(
+    client: PoolClient,
+    worldName: unknown,
+    worldState: RuntimeRecord,
+    ownership: unknown = {}
+  ): Promise<WorldPersistenceResult> {
     const cleanWorldName = cleanName(worldName || worldState?.world_name || "START") || "START";
     const state = safeJson({ ...toObject(worldState), world_name: cleanWorldName });
-    const checksum = jsonChecksum(state);
+    const metadata = normalizeWorldPersistenceMetadata(ownership, state);
+    const requestedRevision = metadata.requested_revision;
+    state.world_revision = requestedRevision;
+    const checksum = worldPersistenceChecksum(state);
 
-    const result = await client.query(
+    const locked = await client.query(
       `
-      INSERT INTO ${this.table("worlds")} (
-        world_name,
-        width,
-        height,
-        world_data_version,
-        last_saved_at,
-        is_active,
-        world_checksum,
-        world_state,
-        created_at,
-        updated_at
-      )
-      VALUES ($1, $2, $3, $4, now(), true, $5, $6::jsonb, now(), now())
-      ON CONFLICT (world_name) DO UPDATE
-        SET width = EXCLUDED.width,
-            height = EXCLUDED.height,
-            world_data_version = EXCLUDED.world_data_version,
-            last_saved_at = now(),
-            is_active = true,
-            world_checksum = EXCLUDED.world_checksum,
-            world_state = EXCLUDED.world_state,
-            updated_at = now()
-      RETURNING world_id
+      SELECT world_id::text AS world_id,
+             world_revision,
+             world_owner_epoch,
+             world_owner_token,
+             world_owner_instance,
+             world_state
+        FROM ${this.table("worlds")}
+       WHERE world_name = $1
+       FOR UPDATE
       `,
-      [
-        cleanWorldName,
-        Math.max(1, toInt(state.width || state.world_width, 100)),
-        Math.max(1, toInt(state.height || state.world_height, 70)),
-        Math.max(1, toInt(state.world_state_version || state.world_data_version, 1)),
-        checksum,
-        JSON.stringify(state),
-      ]
+      [cleanWorldName]
     );
+    const row = locked.rows[0];
+    const persistedRevision = normalizeWorldRevision(row?.world_revision);
+    const worldId = cleanName(row?.world_id || "") || null;
 
-    const worldId = result.rows[0]?.world_id || null;
-    await this.mirrorWorldDropsState(client, worldId, state);
-    return worldId;
+    const rowHasOwnershipFence = Boolean(
+      normalizeWorldRevision(row?.world_owner_epoch) > 0
+      || cleanName(row?.world_owner_token || "") !== ""
+      || cleanName(row?.world_owner_instance || "") !== ""
+    );
+    if (rowHasOwnershipFence && !metadata.require_owner) {
+      const rejected: WorldPersistenceResult = {
+        ok: false,
+        reason: "world_ownership_required",
+        world_id: worldId,
+        loaded_revision: persistedRevision,
+        requested_revision: requestedRevision,
+        persisted_revision: persistedRevision,
+        affected_rows: 0,
+      };
+      this.logWorldPersistence("save", {
+        world_id: cleanWorldName,
+        server_instance: metadata.server_instance,
+        ownership_token: metadata.ownership_token,
+        ownership_epoch: metadata.ownership_epoch,
+        loaded_revision: persistedRevision,
+        requested_save_revision: requestedRevision,
+        persisted_revision: persistedRevision,
+        affected_row_count: 0,
+        save_result: rejected.reason,
+      });
+      return rejected;
+    }
+
+    if (metadata.require_owner) {
+      const ownerMatches = metadata.server_instance !== ""
+        && metadata.ownership_token !== ""
+        && metadata.ownership_epoch > 0
+        && cleanName(row?.world_owner_instance || "") === metadata.server_instance
+        && cleanName(row?.world_owner_token || "") === metadata.ownership_token
+        && normalizeWorldRevision(row?.world_owner_epoch) === metadata.ownership_epoch;
+      if (!ownerMatches) {
+        const rejected: WorldPersistenceResult = {
+          ok: false,
+          reason: "world_ownership_fence_rejected",
+          world_id: worldId,
+          loaded_revision: persistedRevision,
+          requested_revision: requestedRevision,
+          persisted_revision: persistedRevision,
+          affected_rows: 0,
+        };
+        this.logWorldPersistence("save", {
+          world_id: cleanWorldName,
+          server_instance: metadata.server_instance,
+          ownership_token: metadata.ownership_token,
+          ownership_epoch: metadata.ownership_epoch,
+          loaded_revision: persistedRevision,
+          requested_save_revision: requestedRevision,
+          persisted_revision: persistedRevision,
+          affected_row_count: 0,
+          save_result: rejected.reason,
+        });
+        return rejected;
+      }
+    }
+
+    if (row && requestedRevision < persistedRevision) {
+      const stale: WorldPersistenceResult = {
+        ok: false,
+        reason: "stale_world_revision",
+        world_id: worldId,
+        loaded_revision: persistedRevision,
+        requested_revision: requestedRevision,
+        persisted_revision: persistedRevision,
+        affected_rows: 0,
+      };
+      this.logWorldPersistence("save", {
+        world_id: cleanWorldName,
+        server_instance: metadata.server_instance,
+        ownership_token: metadata.ownership_token,
+        ownership_epoch: metadata.ownership_epoch,
+        loaded_revision: persistedRevision,
+        requested_save_revision: requestedRevision,
+        persisted_revision: persistedRevision,
+        affected_row_count: 0,
+        save_result: stale.reason,
+      });
+      return stale;
+    }
+
+    if (row && requestedRevision === persistedRevision) {
+      const sameState = worldPersistenceChecksum(toObject(row.world_state)) === checksum;
+      const equalRevision: WorldPersistenceResult = {
+        ok: sameState,
+        reason: sameState ? "" : "world_revision_content_conflict",
+        world_id: worldId,
+        loaded_revision: persistedRevision,
+        requested_revision: requestedRevision,
+        persisted_revision: persistedRevision,
+        affected_rows: 0,
+        idempotent: sameState,
+      };
+      this.logWorldPersistence("save", {
+        world_id: cleanWorldName,
+        server_instance: metadata.server_instance,
+        ownership_token: metadata.ownership_token,
+        ownership_epoch: metadata.ownership_epoch,
+        loaded_revision: persistedRevision,
+        requested_save_revision: requestedRevision,
+        persisted_revision: persistedRevision,
+        affected_row_count: 0,
+        save_result: sameState ? "idempotent" : equalRevision.reason,
+      });
+      return equalRevision;
+    }
+
+    let result: QueryResult;
+    if (!row) {
+      result = await client.query(
+        `
+        INSERT INTO ${this.table("worlds")} (
+          world_name,
+          width,
+          height,
+          world_data_version,
+          last_saved_at,
+          is_active,
+          world_checksum,
+          world_state,
+          world_revision,
+          world_owner_epoch,
+          world_owner_token,
+          world_owner_instance,
+          created_at,
+          updated_at
+        )
+        VALUES ($1, $2, $3, $4, now(), true, $5, $6::jsonb, $7, $8, $9, $10, now(), now())
+        ON CONFLICT (world_name) DO NOTHING
+        RETURNING world_id::text AS world_id, world_revision
+        `,
+        [
+          cleanWorldName,
+          Math.max(1, toInt(state.width || state.world_width, 100)),
+          Math.max(1, toInt(state.height || state.world_height, 70)),
+          Math.max(1, toInt(state.world_state_version || state.world_data_version, 1)),
+          checksum,
+          JSON.stringify(state),
+          requestedRevision,
+          metadata.ownership_epoch,
+          metadata.ownership_token,
+          metadata.server_instance,
+        ]
+      );
+    } else {
+      const ownerPredicate = metadata.require_owner
+        ? "AND world_owner_epoch = $8 AND world_owner_token = $9 AND world_owner_instance = $10"
+        : "";
+      result = await client.query(
+        `
+        UPDATE ${this.table("worlds")}
+           SET width = $2,
+               height = $3,
+               world_data_version = $4,
+               last_saved_at = now(),
+               is_active = true,
+               world_checksum = $5,
+               world_state = $6::jsonb,
+               world_revision = $7,
+               updated_at = now()
+         WHERE world_name = $1
+           AND world_revision = $11
+           ${ownerPredicate}
+        RETURNING world_id::text AS world_id, world_revision
+        `,
+        [
+          cleanWorldName,
+          Math.max(1, toInt(state.width || state.world_width, 100)),
+          Math.max(1, toInt(state.height || state.world_height, 70)),
+          Math.max(1, toInt(state.world_state_version || state.world_data_version, 1)),
+          checksum,
+          JSON.stringify(state),
+          requestedRevision,
+          metadata.ownership_epoch,
+          metadata.ownership_token,
+          metadata.server_instance,
+          persistedRevision,
+        ]
+      );
+    }
+
+    const affectedRows = Math.max(0, toInt(result.rowCount, 0));
+    const savedWorldId = cleanName(result.rows[0]?.world_id || worldId || "") || null;
+    const savedRevision = normalizeWorldRevision(result.rows[0]?.world_revision ?? persistedRevision);
+    const saved = affectedRows === 1;
+    if (saved && savedWorldId) {
+      await this.mirrorWorldDropsState(client, savedWorldId, state);
+    }
+    const saveResult: WorldPersistenceResult = {
+      ok: saved,
+      reason: saved ? "" : "world_revision_cas_rejected",
+      world_id: savedWorldId,
+      loaded_revision: persistedRevision,
+      requested_revision: requestedRevision,
+      persisted_revision: saved ? requestedRevision : savedRevision,
+      affected_rows: affectedRows,
+    };
+    this.logWorldPersistence("save", {
+      world_id: cleanWorldName,
+      server_instance: metadata.server_instance,
+      ownership_token: metadata.ownership_token,
+      ownership_epoch: metadata.ownership_epoch,
+      loaded_revision: persistedRevision,
+      requested_save_revision: requestedRevision,
+      persisted_revision: saveResult.persisted_revision,
+      affected_row_count: affectedRows,
+      save_result: saved ? "persisted" : saveResult.reason,
+    });
+    return saveResult;
   }
 
   /**
@@ -5333,18 +5778,46 @@ class PostgresStore {
     }
   }
 
-  async saveWorldState(worldName: unknown, state: RuntimeRecord) {
-    if (!this.isReady()) return false;
+  async saveWorldState(worldName: unknown, state: RuntimeRecord, ownership: unknown = {}) {
     const cleanWorldName = cleanName(worldName || state?.world_name || "START") || "START";
+    const metadata = normalizeWorldPersistenceMetadata(ownership, state);
+    const requestedRevision = normalizeWorldRevision(state?.world_revision);
+    if (!this.isReady()) {
+      this.logWorldPersistence("save", {
+        world_id: cleanWorldName,
+        server_instance: metadata.server_instance,
+        ownership_token: metadata.ownership_token,
+        ownership_epoch: metadata.ownership_epoch,
+        mutation_revision: requestedRevision,
+        requested_save_revision: requestedRevision,
+        persisted_revision: 0,
+        affected_row_count: 0,
+        save_result: "postgres_unavailable",
+      });
+      return false;
+    }
 
     try {
-      await this.withTransaction(async (client) => {
-        const worldId = await this.upsertWorldState(client, cleanWorldName, state);
-        await this.mirrorWorldLockState(client, worldId, state);
-        await this.mirrorWorldAreaLocksState(client, worldId, state);
+      const result = await this.withTransaction(async (client) => {
+        const persisted = await this.upsertWorldState(client, cleanWorldName, state, ownership);
+        if (!persisted.ok || !persisted.world_id) return persisted;
+        await this.mirrorWorldLockState(client, persisted.world_id, state);
+        await this.mirrorWorldAreaLocksState(client, persisted.world_id, state);
+        return persisted;
       });
-      return true;
+      return Boolean(result?.ok);
     } catch (error) {
+      this.logWorldPersistence("save", {
+        world_id: cleanWorldName,
+        server_instance: metadata.server_instance,
+        ownership_token: metadata.ownership_token,
+        ownership_epoch: metadata.ownership_epoch,
+        mutation_revision: requestedRevision,
+        requested_save_revision: requestedRevision,
+        persisted_revision: 0,
+        affected_row_count: 0,
+        save_result: "database_error",
+      });
       this.logger("[postgres] world state save failed:", getErrorMessage(error));
       return false;
     }
@@ -5633,7 +6106,7 @@ class PostgresStore {
 
     const result = await client.query(
       `
-      SELECT world_state
+      SELECT world_state, world_revision
         FROM ${this.table("worlds")}
        WHERE world_name = $1
        FOR UPDATE
@@ -5641,18 +6114,40 @@ class PostgresStore {
       [cleanWorldName]
     );
 
-    return toObject(result.rows[0]?.world_state);
+    const row = result.rows[0];
+    const state = toObject(row?.world_state);
+    if (row) state.world_revision = Math.max(
+      normalizeWorldRevision(state.world_revision),
+      normalizeWorldRevision(row.world_revision)
+    );
+    return state;
   }
 
   async loadWorldState(worldName: unknown) {
-    if (!this.isReady()) return { ok: false, found: false, reason: "postgres_unavailable" };
     const cleanWorldName = cleanName(worldName || "");
     if (cleanWorldName === "") return { ok: false, found: false, reason: "invalid_world" };
+    if (!this.isReady()) {
+      this.logWorldPersistence("load", {
+        world_id: cleanWorldName,
+        loaded_revision: 0,
+        persisted_revision: 0,
+        affected_row_count: 0,
+        save_result: "postgres_unavailable",
+      });
+      return { ok: false, found: false, reason: "postgres_unavailable" };
+    }
 
     try {
       const result = await this.db.query(
         `
-        SELECT world_name::text AS world_name, world_state, updated_at, last_saved_at
+        SELECT world_name::text AS world_name,
+               world_state,
+               world_revision,
+               world_owner_epoch,
+               world_owner_token,
+               world_owner_instance,
+               updated_at,
+               last_saved_at
           FROM ${this.table("worlds")}
          WHERE world_name = $1
            AND is_active = true
@@ -5665,6 +6160,13 @@ class PostgresStore {
 
       const row = result.rows[0];
       if (!row) {
+        this.logWorldPersistence("load", {
+          world_id: cleanWorldName,
+          loaded_revision: 0,
+          persisted_revision: 0,
+          affected_row_count: 0,
+          save_result: "world_not_found",
+        });
         return { ok: true, found: false, world_name: cleanWorldName };
       }
 
@@ -5672,6 +6174,10 @@ class PostgresStore {
       const state: RuntimeRecord = {
         ...rawWorldState,
         world_name: cleanName(rawWorldState.world_name || row.world_name || cleanWorldName) || cleanWorldName,
+        world_revision: Math.max(
+          normalizeWorldRevision(rawWorldState.world_revision),
+          normalizeWorldRevision(row.world_revision)
+        ),
       };
 
       const worldLockResult = await this.db.query(
@@ -5725,15 +6231,37 @@ class PostgresStore {
         this.logger("[postgres] active world drops load failed during world state load:", activeDrops?.reason || "unknown");
       }
 
+      const loadedRevision = normalizeWorldRevision(state.world_revision);
+      this.logWorldPersistence("load", {
+        world_id: cleanWorldName,
+        server_instance: cleanName(row.world_owner_instance || ""),
+        ownership_token: cleanName(row.world_owner_token || ""),
+        ownership_epoch: normalizeWorldRevision(row.world_owner_epoch),
+        loaded_revision: loadedRevision,
+        persisted_revision: loadedRevision,
+        affected_row_count: 1,
+        save_result: "loaded",
+      });
       return {
         ok: true,
         found: true,
         world_name: cleanWorldName,
         state,
+        world_revision: loadedRevision,
+        world_owner_epoch: normalizeWorldRevision(row.world_owner_epoch),
+        world_owner_token: cleanName(row.world_owner_token || ""),
+        world_owner_instance: cleanName(row.world_owner_instance || ""),
         updated_at: normalizeOptionalTimestamp(row.updated_at),
         last_saved_at: normalizeOptionalTimestamp(row.last_saved_at),
       };
     } catch (error) {
+      this.logWorldPersistence("load", {
+        world_id: cleanWorldName,
+        loaded_revision: 0,
+        persisted_revision: 0,
+        affected_row_count: 0,
+        save_result: "database_error",
+      });
       this.logger("[postgres] single world state load failed:", getErrorMessage(error));
       return { ok: false, found: false, reason: "database_error", message: getErrorMessage(error) };
     }
@@ -5786,16 +6314,34 @@ class PostgresStore {
   async saveWorldStateWithWorldChanges(
     worldName: unknown,
     state: RuntimeRecord,
-    changes: RuntimeRecord[] = []
+    changes: RuntimeRecord[] = [],
+    ownership: unknown = {}
   ) {
-    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
     const cleanWorldName = cleanName(worldName || state?.world_name || "START") || "START";
     const worldChanges = Array.isArray(changes) ? changes : [];
+    const metadata = normalizeWorldPersistenceMetadata(ownership, state);
+    const requestedRevision = normalizeWorldRevision(state?.world_revision);
+    if (!this.isReady()) {
+      this.logWorldPersistence("save_with_changes", {
+        world_id: cleanWorldName,
+        server_instance: metadata.server_instance,
+        ownership_token: metadata.ownership_token,
+        ownership_epoch: metadata.ownership_epoch,
+        mutation_revision: requestedRevision,
+        requested_save_revision: requestedRevision,
+        persisted_revision: 0,
+        affected_row_count: 0,
+        save_result: "postgres_unavailable",
+      });
+      return { ok: false, reason: "postgres_unavailable" };
+    }
 
     try {
-      await this.withTransaction(async (client) => {
+      const result = await this.withTransaction(async (client) => {
         const previousWorldState = await this.loadWorldStateForUpdate(client, cleanWorldName);
-        const worldId = await this.upsertWorldState(client, cleanWorldName, state);
+        const persisted = await this.upsertWorldState(client, cleanWorldName, state, ownership);
+        if (!persisted.ok || !persisted.world_id) return persisted;
+        const worldId = persisted.world_id;
         await this.mirrorWorldLockState(client, worldId, state);
         await this.mirrorWorldAreaLocksState(client, worldId, state);
 
@@ -5812,9 +6358,24 @@ class PostgresStore {
         for (const change of [...worldChanges, ...inferredObjectChanges]) {
           await this.recordWorldChangeAndTrackedDrops(client, worldId, change);
         }
+        return persisted;
       });
-      return { ok: true };
+      if (!result?.ok) {
+        return { ok: false, reason: result?.reason || "world_state_save_failed" };
+      }
+      return { ok: true, persisted_revision: result.persisted_revision };
     } catch (error) {
+      this.logWorldPersistence("save_with_changes", {
+        world_id: cleanWorldName,
+        server_instance: metadata.server_instance,
+        ownership_token: metadata.ownership_token,
+        ownership_epoch: metadata.ownership_epoch,
+        mutation_revision: requestedRevision,
+        requested_save_revision: requestedRevision,
+        persisted_revision: 0,
+        affected_row_count: 0,
+        save_result: "database_error",
+      });
       this.logger("[postgres] world state/change transaction failed:", getErrorMessage(error));
       return { ok: false, reason: "database_error", message: getErrorMessage(error) };
     }
@@ -5825,7 +6386,14 @@ class PostgresStore {
 
     try {
       const result = await this.queryReadWithRetry("world states load", `
-        SELECT world_name::text AS world_name, world_state, updated_at, last_saved_at
+        SELECT world_name::text AS world_name,
+               world_state,
+               world_revision,
+               world_owner_epoch,
+               world_owner_token,
+               world_owner_instance,
+               updated_at,
+               last_saved_at
           FROM ${this.table("worlds")}
          WHERE is_active = true
            AND world_state IS NOT NULL
@@ -5906,6 +6474,10 @@ class PostgresStore {
         const state: RuntimeRecord = {
           ...toObject(row.world_state),
           world_name: cleanName(toObject(row.world_state).world_name || row.world_name),
+          world_revision: Math.max(
+            normalizeWorldRevision(toObject(row.world_state).world_revision),
+            normalizeWorldRevision(row.world_revision)
+          ),
         };
         const normalizedWorldLock = normalizedWorldLocksByWorld.get(worldName) || {};
         const savedWorldLock = toObject(state.world_lock);
@@ -5933,6 +6505,10 @@ class PostgresStore {
         return {
           world_name: worldName,
           state,
+          world_revision: normalizeWorldRevision(state.world_revision),
+          world_owner_epoch: normalizeWorldRevision(row.world_owner_epoch),
+          world_owner_token: cleanName(row.world_owner_token || ""),
+          world_owner_instance: cleanName(row.world_owner_instance || ""),
           updated_at: normalizeOptionalTimestamp(row.updated_at),
           last_saved_at: normalizeOptionalTimestamp(row.last_saved_at),
         };
@@ -6062,18 +6638,57 @@ class PostgresStore {
   async saveWorldSnapshot(worldName: unknown, snapshot: RuntimeRecord, options: any = {}) {
     if (!this.isReady()) return false;
     const cleanWorldName = cleanName(worldName || snapshot?.world_name || "START") || "START";
-    const snapshotData = safeJson(snapshot);
-    const checksum = jsonChecksum(snapshotData);
-    const snapshotHash = integrityHash(snapshotData);
     const storeSnapshotData = options.storeSnapshotData !== false;
-    const snapshotJson = storeSnapshotData ? JSON.stringify(snapshotData) : null;
+    const ownership = normalizeWorldPersistenceMetadata(options.ownership || options, snapshot);
 
     try {
-      await this.withTransaction(async (client) => {
-        const worldId = await this.upsertWorldState(client, cleanWorldName, snapshotData);
-        if (!worldId) return;
+      const result = await this.withTransaction(async (client) => {
+        const canonical = await client.query(
+          `
+          SELECT world_id::text AS world_id,
+                 world_state,
+                 world_revision,
+                 world_owner_epoch,
+                 world_owner_token,
+                 world_owner_instance
+            FROM ${this.table("worlds")}
+           WHERE world_name = $1
+             AND is_active = true
+           FOR SHARE
+          `,
+          [cleanWorldName]
+        );
+        const row = canonical.rows[0];
+        if (!row) return { ok: false, reason: "world_not_found", affected_rows: 0, persisted_revision: 0 };
+        if (
+          ownership.require_owner &&
+          (
+            ownership.server_instance === "" ||
+            ownership.ownership_token === "" ||
+            ownership.ownership_epoch <= 0 ||
+            cleanName(row.world_owner_instance || "") !== ownership.server_instance ||
+            cleanName(row.world_owner_token || "") !== ownership.ownership_token ||
+            normalizeWorldRevision(row.world_owner_epoch) !== ownership.ownership_epoch
+          )
+        ) {
+          return {
+            ok: false,
+            reason: "world_ownership_fence_rejected",
+            affected_rows: 0,
+            persisted_revision: normalizeWorldRevision(row.world_revision),
+          };
+        }
 
-        await client.query(
+        const snapshotData = safeJson(row.world_state);
+        snapshotData.world_revision = Math.max(
+          normalizeWorldRevision(snapshotData.world_revision),
+          normalizeWorldRevision(row.world_revision)
+        );
+        const checksum = worldPersistenceChecksum(snapshotData);
+        const snapshotHash = integrityHash(snapshotData);
+        const snapshotJson = storeSnapshotData ? JSON.stringify(snapshotData) : null;
+
+        const inserted = await client.query(
           `
           INSERT INTO ${this.table("world_snapshots")} (
             world_id,
@@ -6102,7 +6717,7 @@ class PostgresStore {
           WHERE world_id = $1
           `,
           [
-            worldId,
+            cleanName(row.world_id),
             checksum,
             snapshotHash,
             INTEGRITY_HASH_ALGORITHM,
@@ -6112,9 +6727,35 @@ class PostgresStore {
             cleanName(options.createdBy || "system"),
           ]
         );
+        return {
+          ok: Math.max(0, toInt(inserted.rowCount, 0)) === 1,
+          reason: Math.max(0, toInt(inserted.rowCount, 0)) === 1 ? "" : "snapshot_insert_failed",
+          affected_rows: Math.max(0, toInt(inserted.rowCount, 0)),
+          persisted_revision: normalizeWorldRevision(snapshotData.world_revision),
+        };
       });
-      return true;
+      this.logWorldPersistence("snapshot", {
+        world_id: cleanWorldName,
+        server_instance: ownership.server_instance,
+        ownership_token: ownership.ownership_token,
+        ownership_epoch: ownership.ownership_epoch,
+        requested_save_revision: normalizeWorldRevision(snapshot?.world_revision),
+        persisted_revision: normalizeWorldRevision(result?.persisted_revision),
+        affected_row_count: Math.max(0, toInt(result?.affected_rows, 0)),
+        save_result: result?.ok ? "snapshot_persisted" : cleanName(result?.reason || "snapshot_failed"),
+      });
+      return Boolean(result?.ok);
     } catch (error) {
+      this.logWorldPersistence("snapshot", {
+        world_id: cleanWorldName,
+        server_instance: ownership.server_instance,
+        ownership_token: ownership.ownership_token,
+        ownership_epoch: ownership.ownership_epoch,
+        requested_save_revision: normalizeWorldRevision(snapshot?.world_revision),
+        persisted_revision: 0,
+        affected_row_count: 0,
+        save_result: "database_error",
+      });
       this.logger("[postgres] world snapshot save failed:", getErrorMessage(error));
       return false;
     }
@@ -8304,6 +8945,7 @@ class PostgresStore {
     const strictItemInstances = e.strict_item_instances !== false;
     const playerState = toObject(e.player_state);
     const metadata = safeJson(e.metadata);
+    const worldPersistence = normalizeWorldPersistenceMetadata(metadata.world_persistence, toObject(e.world_state));
     const worldState = toObject(e.world_state);
     const worldChanges = Array.isArray(e.world_changes) ? e.world_changes : [];
     const ipAddress = cleanName(e.ip_address || e.ip || "");
@@ -8669,8 +9311,17 @@ class PostgresStore {
         let previousWorldState = {};
         if (Object.keys(worldState).length > 0) {
           previousWorldState = await this.loadWorldStateForUpdate(client, worldName);
-          const savedWorldId = await this.upsertWorldState(client, worldName, worldState);
-          worldId = savedWorldId || worldId;
+          const persisted = await this.upsertWorldState(client, worldName, worldState, worldPersistence);
+          if (!persisted.ok || !persisted.world_id) {
+            const persistenceError = new Error(persisted.reason || "world_state_save_failed") as Error & {
+              code?: string;
+              world_persistence_result?: WorldPersistenceResult;
+            };
+            persistenceError.code = "PIXELMANIA_WORLD_PERSISTENCE_REJECTED";
+            persistenceError.world_persistence_result = persisted;
+            throw persistenceError;
+          }
+          worldId = persisted.world_id;
           await this.mirrorWorldLockState(client, worldId, worldState);
           await this.mirrorWorldAreaLocksState(client, worldId, worldState);
         }
@@ -8716,6 +9367,12 @@ class PostgresStore {
         });
       });
     } catch (error) {
+      const persistenceResult = (error as Error & { world_persistence_result?: WorldPersistenceResult })?.world_persistence_result;
+      if (persistenceResult) {
+        return InventoryContracts.buildPostgresInventoryDeltaTransactionFailure({
+          reason: persistenceResult.reason || "world_state_save_failed",
+        });
+      }
       const trackedErrorResult = resultForTrackedItemMovementError(error);
       if (trackedErrorResult) return trackedErrorResult;
       const pgError = postgresError(error);
@@ -9180,6 +9837,11 @@ class PostgresStore {
     const expectedBeforeRaw = Number(e.expected_before_amount);
     const hasExpectedBefore = Number.isFinite(expectedBeforeRaw) && expectedBeforeRaw >= 0;
     const expectedBeforeAmount = hasExpectedBefore ? Math.max(0, toInt(expectedBeforeRaw, 0)) : 0;
+    const expectedDropBeforeRaw = Number(e.expected_drop_before_amount);
+    const hasExpectedDropBefore = Number.isFinite(expectedDropBeforeRaw) && expectedDropBeforeRaw >= 0;
+    const expectedDropBeforeAmount = hasExpectedDropBefore
+      ? Math.max(0, toInt(expectedDropBeforeRaw, 0))
+      : 0;
     const requestedStackLimit = getInventoryStackLimitForItem(itemType, e.stack_limit || DEFAULT_INVENTORY_STACK_LIMIT);
     const allowStateRepair = Boolean(e.allow_state_repair);
     const requestId = cleanName(e.request_id);
@@ -9192,6 +9854,9 @@ class PostgresStore {
     const userAgent = cleanName(e.user_agent || "");
     const sessionTokenHash = cleanName(e.session_token_hash || "");
     const deviceInfo = safeJson(e.device_info);
+    const worldState = toObject(e.world_state);
+    const worldChanges = Array.isArray(e.world_changes) ? e.world_changes : [];
+    const worldPersistence = normalizeWorldPersistenceMetadata(e.world_persistence, worldState);
 
     if (username === "" || itemType === "" || amount <= 0 || dropId === "") {
       return DropContracts.buildPostgresDropPickupFailure({ reason: "invalid_payload" });
@@ -9292,6 +9957,14 @@ class PostgresStore {
             drop_id: dropId,
             item_type: dropItemType,
             item_category: dropItemCategory,
+          });
+        }
+        if (hasExpectedDropBefore && dropBeforeAmount !== expectedDropBeforeAmount) {
+          return DropContracts.buildPostgresDropPickupFailure({
+            reason: "drop_amount_changed",
+            drop_id: dropId,
+            available_amount: dropBeforeAmount,
+            requested_amount: amount,
           });
         }
         if (dropBeforeAmount < amount) {
@@ -9593,6 +10266,41 @@ class PostgresStore {
           },
         });
 
+        let persistedWorld: WorldPersistenceResult | null = null;
+        if (Object.keys(worldState).length > 0) {
+          const previousWorldState = await this.loadWorldStateForUpdate(client, worldName);
+          persistedWorld = await this.upsertWorldState(client, worldName, worldState, worldPersistence);
+          if (!persistedWorld.ok || !persistedWorld.world_id) {
+            const persistenceError = new Error(
+              persistedWorld.reason || "world_state_save_failed"
+            ) as Error & {
+              code?: string;
+              world_persistence_result?: WorldPersistenceResult;
+            };
+            persistenceError.code = "PIXELMANIA_WORLD_PERSISTENCE_REJECTED";
+            persistenceError.world_persistence_result = persistedWorld;
+            throw persistenceError;
+          }
+          await this.mirrorWorldLockState(client, persistedWorld.world_id, worldState);
+          await this.mirrorWorldAreaLocksState(client, persistedWorld.world_id, worldState);
+
+          const hasExplicitObjectChanges = worldChanges.some((change) => this.isWorldObjectChangeEntry(change));
+          const inferredObjectChanges = hasExplicitObjectChanges
+            ? []
+            : this.buildWorldObjectChangesFromStateDiff(previousWorldState, worldState, {
+              actor_username: username,
+              source_type: "world_item_drop_pickup",
+              source_id: sourceId,
+              request_id: requestId,
+              world: worldName,
+              action: "drop_pickup",
+              at,
+            });
+          for (const change of [...worldChanges, ...inferredObjectChanges]) {
+            await this.recordWorldChangeAndTrackedDrops(client, persistedWorld.world_id, change);
+          }
+        }
+
         return DropContracts.buildPostgresDropPickupSuccess({
           before_amount: beforeAmount,
           after_amount: afterAmount,
@@ -9602,9 +10310,19 @@ class PostgresStore {
           drop_before_amount: dropBeforeAmount,
           drop_after_amount: dropAfterAmount,
           item_instances: pickedUpItemInstances,
+          persisted_revision: normalizeWorldRevision(persistedWorld?.persisted_revision),
         });
       });
     } catch (error) {
+      const persistenceResult = (error as Error & {
+        world_persistence_result?: WorldPersistenceResult;
+      })?.world_persistence_result;
+      if (persistenceResult) {
+        return DropContracts.buildPostgresDropPickupFailure({
+          reason: persistenceResult.reason || "world_state_save_failed",
+          persisted_revision: persistenceResult.persisted_revision,
+        });
+      }
       const trackedErrorResult = resultForTrackedItemMovementError(error);
       if (trackedErrorResult) {
         return DropContracts.buildPostgresDropPickupFailure({
@@ -10532,6 +11250,9 @@ class PostgresStore {
     const userAgent = cleanName(e.user_agent || "");
     const sessionTokenHash = cleanName(e.session_token_hash || "");
     const deviceInfo = safeJson(e.device_info);
+    const worldState = toObject(e.world_state);
+    const worldChanges = Array.isArray(e.world_changes) ? e.world_changes : [];
+    const worldPersistence = normalizeWorldPersistenceMetadata(e.world_persistence, worldState);
 
     if (owner === "" || buyer === "" || itemType === "" || amount <= 0 || priceWls <= 0) {
       return { ok: false, reason: "invalid_payload" };
@@ -10609,38 +11330,6 @@ class PostgresStore {
         if (beforeLock < priceWls || afterLock < 0) {
           return { ok: false, reason: "insufficient_inventory", item_type: "world_lock", item_category: "block" };
         }
-        if (lockInventory) {
-          await client.query(
-            `
-            UPDATE ${this.table("inventory")}
-               SET amount = $2,
-                   stack_limit = $3,
-                   row_version = ${this.table("inventory")}.row_version + 1,
-                   updated_at = now()
-             WHERE player_id = $1
-               AND item_type = 'world_lock'
-               AND item_category = 'block'
-            `,
-            [buyerId, afterLock, lockStack]
-          );
-        } else {
-          await client.query(
-            `
-            INSERT INTO ${this.table("inventory")} (
-              player_id,
-              item_type,
-              item_category,
-              amount,
-              stack_limit,
-              row_version,
-              updated_at
-            )
-            VALUES ($1, 'world_lock', 'block', $2, $3, 1, now())
-            `,
-            [buyerId, afterLock, lockStack]
-          );
-        }
-
         const itemRow = await client.query(
           `
           SELECT amount, stack_limit
@@ -10673,6 +11362,41 @@ class PostgresStore {
 
         if (afterItem > itemStack) {
           return { ok: false, reason: "insufficient_capacity", item_type: itemType, item_category: itemCategory };
+        }
+
+        // Validate both inventory legs before writing either one. Returning a
+        // normal failure after the first UPDATE would otherwise commit a
+        // partial purchase when the transaction callback resolves normally.
+        if (lockInventory) {
+          await client.query(
+            `
+            UPDATE ${this.table("inventory")}
+               SET amount = $2,
+                   stack_limit = $3,
+                   row_version = ${this.table("inventory")}.row_version + 1,
+                   updated_at = now()
+             WHERE player_id = $1
+               AND item_type = 'world_lock'
+               AND item_category = 'block'
+            `,
+            [buyerId, afterLock, lockStack]
+          );
+        } else {
+          await client.query(
+            `
+            INSERT INTO ${this.table("inventory")} (
+              player_id,
+              item_type,
+              item_category,
+              amount,
+              stack_limit,
+              row_version,
+              updated_at
+            )
+            VALUES ($1, 'world_lock', 'block', $2, $3, 1, now())
+            `,
+            [buyerId, afterLock, lockStack]
+          );
         }
 
         if (itemInventory) {
@@ -11071,6 +11795,41 @@ class PostgresStore {
           },
         });
 
+        let persistedWorld: WorldPersistenceResult | null = null;
+        if (Object.keys(worldState).length > 0) {
+          const previousWorldState = await this.loadWorldStateForUpdate(client, worldName);
+          persistedWorld = await this.upsertWorldState(client, worldName, worldState, worldPersistence);
+          if (!persistedWorld.ok || !persistedWorld.world_id) {
+            const persistenceError = new Error(
+              persistedWorld.reason || "world_state_save_failed"
+            ) as Error & {
+              code?: string;
+              world_persistence_result?: WorldPersistenceResult;
+            };
+            persistenceError.code = "PIXELMANIA_WORLD_PERSISTENCE_REJECTED";
+            persistenceError.world_persistence_result = persistedWorld;
+            throw persistenceError;
+          }
+          await this.mirrorWorldLockState(client, persistedWorld.world_id, worldState);
+          await this.mirrorWorldAreaLocksState(client, persistedWorld.world_id, worldState);
+
+          const hasExplicitObjectChanges = worldChanges.some((change) => this.isWorldObjectChangeEntry(change));
+          const inferredObjectChanges = hasExplicitObjectChanges
+            ? []
+            : this.buildWorldObjectChangesFromStateDiff(previousWorldState, worldState, {
+              actor_username: buyer,
+              source_type: "vending",
+              source_id: transactionId,
+              request_id: requestId,
+              world: worldName,
+              action: "vending_buy",
+              at,
+            });
+          for (const change of [...worldChanges, ...inferredObjectChanges]) {
+            await this.recordWorldChangeAndTrackedDrops(client, persistedWorld.world_id, change);
+          }
+        }
+
         return {
           ok: true,
           buyer: {
@@ -11086,9 +11845,20 @@ class PostgresStore {
             ...(soldItemTransferResult.item_instances || []),
           ],
           world_id: worldId,
+          persisted_revision: normalizeWorldRevision(persistedWorld?.persisted_revision),
         };
       });
     } catch (error) {
+      const persistenceResult = (error as Error & {
+        world_persistence_result?: WorldPersistenceResult;
+      })?.world_persistence_result;
+      if (persistenceResult) {
+        return {
+          ok: false,
+          reason: persistenceResult.reason || "world_state_save_failed",
+          persisted_revision: persistenceResult.persisted_revision,
+        };
+      }
       const trackedErrorResult = resultForTrackedItemMovementError(error);
       if (trackedErrorResult) return trackedErrorResult;
       this.logger("[postgres] vend buy transaction failed:", getErrorMessage(error));

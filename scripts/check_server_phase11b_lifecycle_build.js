@@ -142,6 +142,7 @@ function createFixture(name, overrides = {}) {
     WORLD_SNAPSHOT_INTERVAL_MS: 900000,
     WORLD_SNAPSHOT_MAX_WORLDS_PER_CYCLE: 2,
     WORLD_SNAPSHOT_STARTUP_RUN: true,
+    WORLD_ROUTE_TTL_MS: 45000,
     accountKey: (/** @type {unknown} */ value) => String(value || "").trim().toLowerCase(),
     assertAuthoritativePostgresReady: () => calls.push("postgres:assert"),
     clampInteger: (/** @type {unknown} */ value, /** @type {number} */ min, /** @type {number} */ max) => (
@@ -167,6 +168,7 @@ function createFixture(name, overrides = {}) {
     getAccountsSaveTimer: () => accountsSaveTimerRef.value,
     getCrashRuntimeState: () => ({ ok: true }),
     getFatalCrashReportWritten: () => fatalCrashReportWritten,
+    getOwnedWorldNames: () => Array.from(worldStates.keys()),
     isPostgresAuthoritativeReady: () => true,
     loadAccountsFromJson: () => calls.push("accounts:load-json"),
     logger: {
@@ -202,7 +204,16 @@ function createFixture(name, overrides = {}) {
       accountsSaveTimerRef.value = timer;
     },
     stopGameplaySchedulers: () => calls.push("gameplay-schedulers:stop"),
-    waitForPersistenceWrites: async () => calls.push("persistence:wait"),
+    waitForPersistenceWrites: async () => {
+      calls.push("persistence:wait");
+      return { ok: true, total: 0, failed: 0 };
+    },
+    waitForWorldPersistence: async () => {
+      calls.push("world-persistence:wait");
+    },
+    refreshOwnedWorldRoutes: async () => {
+      calls.push("routes:refresh");
+    },
     writeCrashReport: (/** @type {string} */ event, /** @type {Record<string, any>} */ details) => {
       crashReports.push({ event, details });
     },
@@ -304,9 +315,12 @@ function createFixture(name, overrides = {}) {
     assert.equal(authorityAccounts.has("legacy-account"), true);
     assert.equal(authorityPlayers.has("db-player"), true);
     assert.equal(authorityPlayers.has("legacy-player"), true);
-    assert.equal(authorityWorlds.has("DBWORLD"), true);
+    assert.equal(authorityWorlds.has("DBWORLD"), false);
     assert.equal(authorityWorlds.has("LEGACYWORLD"), false);
     assert.deepEqual(authorityCalls.slice(0, 2), ["accounts:1", "players:1"]);
+    assert.equal(authorityFixture.logLines.some((line) => (
+      line.includes("indexed 1 world state(s)") && line.includes("load on demand")
+    )), true);
     assert.equal(authorityFixture.logLines.some((line) => line.includes("skipped 1 legacy JSON world import")), true);
 
     const fallbackFixture = createFixture("fallback", {
@@ -335,6 +349,20 @@ function createFixture(name, overrides = {}) {
     await schedulerFixture.lifecycle.runWorldSnapshotCycleNow();
     assert.equal(schedulerFixture.calls.filter((call) => call.startsWith("snapshot:")).length, 2);
     assert.equal(schedulerFixture.deps.worldSnapshotSchedulerState.last_world_count, 2);
+
+    const ownedSnapshotFixture = createFixture("owned-snapshots", {
+      worldStates: new Map([
+        ["ALPHA", {}],
+        ["BRAVO", {}],
+      ]),
+      getOwnedWorldNames: () => ["BRAVO"],
+    });
+    await ownedSnapshotFixture.lifecycle.runWorldSnapshotCycleNow();
+    assert.deepEqual(
+      ownedSnapshotFixture.calls.filter((call) => call.startsWith("snapshot:")),
+      ["snapshot:BRAVO"],
+    );
+
     schedulerFixture.lifecycle.startAntiDupeAuditScanner();
     schedulerFixture.lifecycle.startPeriodicWorldSnapshotScheduler();
     schedulerFixture.lifecycle.startPeriodicSaveScheduler();
@@ -342,6 +370,12 @@ function createFixture(name, overrides = {}) {
     assert.equal(schedulerFixture.lifecycle.getLifecycleState().world_snapshot_scheduled, true);
     assert.equal(schedulerFixture.lifecycle.getLifecycleState().periodic_save_scheduled, true);
     assert.equal(schedulerFixture.timerHandles.every((handle) => handle.unrefCalled), true);
+    const routeHeartbeat = schedulerFixture.timerHandles.find((handle) => (
+      handle.kind === "interval" && handle.ms === 15000
+    ));
+    assert.ok(routeHeartbeat, "world ownership leases must refresh before their TTL expires");
+    await routeHeartbeat.callback();
+    assert.equal(schedulerFixture.calls.includes("routes:refresh"), true);
 
     const flushFixture = createFixture("flush", {
       playerSaveTimers: new Map([["alice", { id: 11 }]]),
@@ -364,6 +398,7 @@ function createFixture(name, overrides = {}) {
     assert.equal(schedulerFixture.processListeners.exit.length, 1);
     await schedulerFixture.lifecycle.shutdown("SIGTERM");
     assert.equal(schedulerFixture.calls.includes("gameplay-schedulers:stop"), true);
+    assert.equal(schedulerFixture.calls.includes("world-persistence:wait"), true);
     assert.equal(schedulerFixture.calls.includes("persistence:wait"), true);
     assert.equal(schedulerFixture.calls.includes("postgres:close"), true);
     assert.equal(schedulerFixture.calls.includes("redis:close"), true);
@@ -371,6 +406,16 @@ function createFixture(name, overrides = {}) {
     assert.equal(schedulerFixture.lifecycle.getLifecycleState().shutdown_started, true);
     assert.equal(schedulerFixture.lifecycle.getLifecycleState().periodic_save_scheduled, false);
     assert.ok(schedulerFixture.clearedTimers.length >= 3);
+
+    const failedShutdownFixture = createFixture("failed-shutdown", {
+      waitForPersistenceWrites: async () => ({ ok: false, total: 1, failed: 1 }),
+    });
+    await failedShutdownFixture.lifecycle.shutdown("SIGTERM");
+    assert.equal(failedShutdownFixture.calls.includes("exit:1"), true);
+    assert.equal(
+      failedShutdownFixture.logLines.some((line) => line.includes("shutdown detected failed writes")),
+      true,
+    );
 
     const exitFixture = createFixture("exit-handler");
     exitFixture.lifecycle.installShutdownHandlers();

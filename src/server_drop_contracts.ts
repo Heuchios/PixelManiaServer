@@ -98,6 +98,7 @@ interface PostgresDropPickupFailureInput {
   requested_amount?: number;
   message?: string;
   item_instances?: Array<Record<string, unknown>>;
+  persisted_revision?: number;
 }
 
 function buildSanitizedDropCreate(input: SanitizedDropCreateInput): SanitizedDropCreate {
@@ -250,6 +251,7 @@ function buildPostgresDropPickupFailure(input: PostgresDropPickupFailureInput): 
   if (Object.prototype.hasOwnProperty.call(input, "requested_amount")) result.requested_amount = input.requested_amount;
   if (Object.prototype.hasOwnProperty.call(input, "message")) result.message = input.message;
   if (Object.prototype.hasOwnProperty.call(input, "item_instances")) result.item_instances = input.item_instances;
+  if (Object.prototype.hasOwnProperty.call(input, "persisted_revision")) result.persisted_revision = input.persisted_revision;
 
   return result;
 }
@@ -265,6 +267,7 @@ function buildPostgresDropPickupSuccess(input: Omit<PostgresDropPickupSuccess, "
     drop_before_amount: input.drop_before_amount,
     drop_after_amount: input.drop_after_amount,
     item_instances: input.item_instances,
+    persisted_revision: input.persisted_revision,
   };
 }
 

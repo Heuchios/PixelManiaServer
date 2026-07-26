@@ -88,7 +88,53 @@ async function main() {
     world: "START",
     owner_instance_id: "instance-1",
     ws_url: "wss://example.test/ws",
+    ownership_token: "instance-1:local:0",
+    ownership_epoch: 0,
   });
+
+  /** @type {string[][]} */
+  const routeCommands = [];
+  const routeStore = new RedisStore({
+    enabled: true,
+    keyPrefix: "Pixel Test",
+    logger: () => {},
+  });
+  routeStore.client = {
+    isOpen: true,
+    connect: async () => undefined,
+    quit: async () => undefined,
+    on: () => undefined,
+    sendCommand: async (/** @type {string[]} */ command) => {
+      routeCommands.push(command);
+      if (command[0] !== "EVAL") throw new Error(`Unexpected Redis command: ${command[0]}`);
+      if (command[2] === "4") return [1, "instance-1", "wss://example.test/ws", "process-a:7", 7];
+      if (command[2] === "3") return 3;
+      throw new Error(`Unexpected Redis EVAL key count: ${command[2]}`);
+    },
+  };
+  routeStore.ready = true;
+  assert.deepEqual(
+    await routeStore.claimWorldRoute("START", "instance-1", "wss://example.test/ws", 45000, "process-a"),
+    {
+      ok: true,
+      fallback: false,
+      reason: "",
+      world: "START",
+      owner_instance_id: "instance-1",
+      ws_url: "wss://example.test/ws",
+      owner_key: "pixel_test:world_route_owner:start",
+      target_key: "pixel_test:world_route_target:start",
+      ownership_token: "process-a:7",
+      ownership_epoch: 7,
+      token_key: "pixel_test:world_route_token:start",
+      epoch_key: "pixel_test:world_route_epoch:start",
+    },
+  );
+  assert.equal(routeCommands[0][2], "4");
+  assert.equal(routeCommands[0][10], "process-a");
+  assert.equal(await routeStore.releaseWorldRoute("START", "instance-1", "process-a:7").then((result) => result.released), true);
+  assert.equal(routeCommands[1][2], "3");
+  assert.equal(routeCommands[1][7], "process-a:7");
   assert.deepEqual(await store.getNetfoxMovementRoute("START"), {
     ok: false,
     fallback: true,
