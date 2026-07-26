@@ -102,7 +102,9 @@ const checks = [
     ok: files.server.includes("async function maybeApplyReciprocalDoorLink")
       && files.server.includes("door_reciprocal_link")
       && files.server.includes("action: \"vending_buy\"")
-      && files.server.includes("[world-journal] vending buy world save failed"),
+      && files.server.includes("world_changes: [worldChange]")
+      && files.server.includes("world_persistence: ownership")
+      && files.postgres.includes("recordWorldChangeAndTrackedDrops(client, persistedWorld.world_id, change)"),
   },
   {
     name: "JSON mirror carries object old/new details",
