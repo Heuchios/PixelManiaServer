@@ -68,6 +68,7 @@ interface Phase8PlayerSessionDeps {
   clearTrustedMovementBaseline(player: PlayerRecord): unknown;
   commitWorldAdmissionReservation(admission: unknown, player: PlayerRecord, oldWorld: unknown): Promise<unknown>;
   ensurePlayerState(username: string): unknown;
+  ensureWritablePlayerState(username: string): unknown;
   endWorldHonorVisit(player: PlayerRecord, worldName: unknown, reason: string): Promise<unknown>;
   ensureWorldRouteForAction(socket: unknown, player: PlayerRecord, worldName: string, action: string): Promise<unknown>;
   getEquipmentSlotsFromPlayerState(state: unknown): unknown;
@@ -103,6 +104,7 @@ interface Phase8PlayerSessionDeps {
   setPlayerWorldEntrySpawnGuard(player: PlayerRecord, worldName: unknown, spawn: unknown): unknown;
   sanitizeEquipmentSlots(slots: unknown, username: string, state?: unknown): unknown;
   sanitizePlayerState(data: PacketRecord, username: string): unknown;
+  sanitizeProfileBio(value: unknown): string;
   seedDropInterestForReceiverFromWorldState(player: PlayerRecord, worldName: unknown): unknown;
   sendActionRejected(socket: unknown, action: string, message: string, extra?: PacketRecord): unknown;
   sendActiveWorldEventState(socket: unknown, worldName: unknown): unknown;
@@ -205,6 +207,7 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       online: true,
       world: player.world || "",
       current_world: player.world || "",
+      created_at: publicProfile.created_at || "",
       last_seen_at: publicProfile.last_seen_at || "",
       friend_status: deps.getFriendStatus(player.account_username, username),
       account: publicProfile.account || { username },
@@ -254,6 +257,57 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       username,
       player_data: serverState,
     });
+  }
+
+  async function handlePlayerProfileUpdate(socket: unknown, player: PlayerRecord, data: PacketRecord): Promise<void> {
+    if (!deps.requireAuthenticated(socket, player, "update player profile")) return;
+
+    const requestId = deps.makeRequestId(data);
+    const username = deps.cleanAccountName(data.username || player.account_username || player.name);
+    if (username === "" || !deps.isPlayerOwnAccount(player, username)) {
+      deps.sendActionRejected(socket, "player_profile_update", "You can only edit your own profile.", {
+        request_id: requestId,
+        reason: "profile_owner_required",
+      });
+      return;
+    }
+
+    const playerRefresh = toRecord(await deps.refreshPlayerStateFromPostgres(username, "player_profile_update"));
+    if (!playerRefresh.ok) {
+      deps.sendActionRejected(socket, "player_profile_update", "Profile data is still loading. Try again.", {
+        request_id: requestId,
+        reason: playerRefresh.reason || "player_state_refresh_failed",
+      });
+      return;
+    }
+
+    const state = toRecord(deps.ensureWritablePlayerState(username));
+    if (!Object.keys(state).length) {
+      deps.sendActionRejected(socket, "player_profile_update", "Could not load your profile.", {
+        request_id: requestId,
+        reason: "player_state_unavailable",
+      });
+      return;
+    }
+
+    state.profile_bio = deps.sanitizeProfileBio(data.profile_bio);
+    state.saved_at = new Date().toISOString();
+    deps.setPlayerState(username, state);
+    deps.queuePlayerSave(username);
+
+    const persistence = toRecord(await deps.flushPendingSessionPersistence(username, "", "player_profile_update_commit"));
+    if (!persistence.ok) {
+      deps.sendActionRejected(socket, "player_profile_update", "Could not save your profile. Try again.", {
+        request_id: requestId,
+        reason: persistence.reason || "profile_persistence_failed",
+      });
+      return;
+    }
+
+    const publicProfile = toRecord(deps.buildPublicPlayerProfilePayload(username, requestId, "local_player_profile"));
+    publicProfile.ok = true;
+    publicProfile.message = "Profile saved.";
+    deps.sendJson(socket, publicProfile);
   }
 
   async function handleJoinWorld(socket: unknown, player: PlayerRecord, data: PacketRecord, context: RouteContext): Promise<void> {
@@ -491,6 +545,7 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
   return {
     handlePlayerStateRequest,
     handlePlayerStateSave,
+    handlePlayerProfileUpdate,
     handleJoinWorld,
     handleLeaveWorld,
   };

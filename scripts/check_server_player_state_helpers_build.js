@@ -92,6 +92,7 @@ const helpers = /** @type {any} */ (PlayerStateHelpersModule.createPlayerStateHe
   playerLevelMax: 100,
   playerXpFirstLevel: 300,
   hotbarSlotCount: 6,
+  maxProfileBioLength: 160,
 }));
 
 assert.equal(helpers.getXpNeededForLevel(1), 300);
@@ -117,6 +118,7 @@ assert.deepEqual(helpers.normalizeInventoryAmountEntry({ item_type: "gem", amoun
 
 const state = /** @type {Record<string, any>} */ (helpers.sanitizePlayerState({
   account_username: " uso ",
+  profile_bio: "Building tiny worlds.",
   inventory: { dirt: 5 },
   currency_inventory: { gem: 10 },
   tool_inventory: { wrench: 1, secret: 1 },
@@ -132,6 +134,7 @@ const state = /** @type {Record<string, any>} */ (helpers.sanitizePlayerState({
 assert.ok(state);
 
 assert.equal(state.account_username, "uso");
+assert.equal(state.profile_bio, "Building tiny worlds.");
 assert.equal(state.equipped_tool, "wrench");
 assert.equal(state.equipped_back_item, "wings");
 assert.equal(state.equipped_hat_item, "");

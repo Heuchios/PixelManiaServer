@@ -138,6 +138,7 @@ const PLAYER_INTEREST_LEAVE_RADIUS_PIXELS = Math.max(PLAYER_INTEREST_RADIUS_PIXE
 const PLAYER_ACTION_INTEREST_MANAGEMENT_ENABLED = !["0", "false", "no"].includes(String(process.env.PLAYER_ACTION_INTEREST_MANAGEMENT_ENABLED || "true").trim().toLowerCase());
 const MAX_BLOCK_HIT_METRIC = 1024;
 const MAX_CHAT_LENGTH = 220;
+const MAX_PROFILE_BIO_LENGTH = 160;
 const MAX_SIGN_TEXT_LENGTH = 500;
 const MAX_MAILBOX_MESSAGE_LENGTH = 128;
 const MAX_BULLETIN_BOARD_MESSAGE_LENGTH = 220;
@@ -289,6 +290,7 @@ const PlayerStateHelpers = PlayerStateHelpersModule.createPlayerStateHelpers({
     playerLevelMax: PLAYER_LEVEL_MAX,
     playerXpFirstLevel: PLAYER_XP_FIRST_LEVEL,
     hotbarSlotCount: HOTBAR_SLOT_COUNT,
+    maxProfileBioLength: MAX_PROFILE_BIO_LENGTH,
 });
 const MAX_TRADE_DISTANCE_PIXELS = TILE_SIZE * 10;
 const PLAYER_PUNCH_RANGE_PIXELS = TILE_SIZE * 2.25;
@@ -1139,6 +1141,7 @@ function getServerPhase8PlayerSessionRoutes() {
             clearTrustedMovementBaseline,
             commitWorldAdmissionReservation,
             ensurePlayerState,
+            ensureWritablePlayerState,
             endWorldHonorVisit,
             ensureWorldRouteForAction,
             getEquipmentSlotsFromPlayerState,
@@ -1174,6 +1177,7 @@ function getServerPhase8PlayerSessionRoutes() {
             setPlayerWorldEntrySpawnGuard,
             sanitizeEquipmentSlots,
             sanitizePlayerState,
+            sanitizeProfileBio,
             seedDropInterestForReceiverFromWorldState,
             sendActionRejected,
             sendActiveWorldEventState,
@@ -1708,6 +1712,7 @@ const ServerPhase7Dispatcher = ServerPhase7DispatcherModule.createServerPhase7Di
         trade_final_confirm: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleTradeFinalConfirmRoute(socket, player, data, context),
         trade_cancel: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleTradeCancelRoute(socket, player, data, context),
         player_state_request: (socket, player, data, context) => getServerPhase9RemainingRoutes().handlePlayerStateRequest(socket, player, data, context),
+        player_profile_update: (socket, player, data) => getServerPhase8PlayerSessionRoutes().handlePlayerProfileUpdate(socket, player, data),
         owned_locked_worlds_request: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleOwnedLockedWorldsRequestRoute(socket, player, data, context),
         pull_player_request: (socket, player, data, context) => getServerPhase9RemainingRoutes().handlePullPlayerRequestRoute(socket, player, data, context),
         door_enter: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleDoorEnter(socket, player, data, context),
@@ -13091,6 +13096,17 @@ function clampInteger(value, min, max) {
 function clampString(value, limit = MAX_ITEM_ID_LENGTH) {
     return TextHelpers.clampString(value, limit);
 }
+function sanitizeProfileBio(value) {
+    const normalized = String(value || "")
+        .replace(/\r\n?/g, "\n")
+        .replace(/[\u0000-\u0008\u000B\u000C\u000E-\u001F\u007F]/g, "")
+        .split("\n")
+        .map((line) => line.replace(/[ \t]+/g, " ").trim())
+        .join("\n")
+        .replace(/\n{3,}/g, "\n\n")
+        .trim();
+    return Array.from(normalized).slice(0, MAX_PROFILE_BIO_LENGTH).join("");
+}
 function cleanText(value, limit = 500) {
     return TextHelpers.clampString(value, limit);
 }
@@ -19213,6 +19229,7 @@ function buildPublicPlayerData(state) {
     return {
         player_data_version: Math.max(1, Math.trunc(Number(state.player_data_version) || 1)),
         account_username: cleanAccountName(state.account_username || state.username || ""),
+        profile_bio: sanitizeProfileBio(state.profile_bio || ""),
         player_level: progression.player_level,
         player_xp: progression.player_xp,
         player_xp_needed: progression.player_xp_needed,
@@ -19244,10 +19261,12 @@ function buildPublicPlayerProfilePayload(username, requestId = "", purpose = "")
         world: onlinePlayer?.world || "",
         current_world: onlinePlayer?.world || "",
         role: onlinePlayer ? getPublicPlayerRole(onlinePlayer) : getAccountRole(displayUsername),
+        created_at: account ? String(account.created_at || "") : "",
         last_seen_at: account ? String(account.last_seen_at || "") : "",
         account: found ? {
             username: displayUsername,
             role: getAccountRole(displayUsername),
+            created_at: account ? String(account.created_at || "") : "",
             last_seen_at: account ? String(account.last_seen_at || "") : "",
         } : {},
         player_data: publicData,

@@ -28,6 +28,7 @@ const POST_ACTION_HANDLER_ROUTE_TYPES = Object.freeze([
     "trade_final_confirm",
     "trade_cancel",
     "player_state_request",
+    "player_profile_update",
     "owned_locked_worlds_request",
     "pull_player_request",
     "door_enter",

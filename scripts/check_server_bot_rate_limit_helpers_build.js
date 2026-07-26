@@ -38,6 +38,7 @@ assert.equal(tables.botRateLimits.chat_message.limit, 2);
 assert.equal(tables.messageRateLimits.chat.limit, 2);
 assert.equal(tables.inventoryTransactionActionRateLimits.seed_place.limit, 60);
 assert.deepEqual(tables.messageRateLimits.inventory_transaction_request, { limit: 150, windowMs: 5000 });
+assert.deepEqual(tables.messageRateLimits.player_profile_update, { limit: 6, windowMs: 60000 });
 assert.deepEqual(tables.messageRateLimits.broadcast, { limit: 70, windowMs: 10000 });
 assert.deepEqual(tables.messageRateLimits.world_block_update, { limit: 75, windowMs: 1000 });
 assert.equal(tables.botRateLimitSecurityLogWindowMs, 2500);

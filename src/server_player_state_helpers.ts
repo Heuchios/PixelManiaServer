@@ -36,6 +36,7 @@ interface PlayerStateHelperConfig {
   playerLevelMax: number;
   playerXpFirstLevel: number;
   hotbarSlotCount: number;
+  maxProfileBioLength: number;
 }
 
 interface InventoryAmountEntry {
@@ -128,6 +129,7 @@ function createPlayerStateHelpers(config: PlayerStateHelperConfig): PlayerStateH
   const cleanAccountName = config.cleanAccountName;
   const clampInteger = config.clampInteger;
   const clampString = config.clampString;
+  const maxProfileBioLength = Math.max(1, Math.trunc(Number(config.maxProfileBioLength) || 160));
 
   function cleanInventoryCategory(value: unknown): string {
     return itemDatabase.cleanCategory(value);
@@ -496,6 +498,7 @@ function createPlayerStateHelpers(config: PlayerStateHelperConfig): PlayerStateH
     const state: JsonRecord = {
       player_data_version: Math.max(1, Math.trunc(Number(rawState.player_data_version) || 1)),
       account_username: accountUsername,
+      profile_bio: clampString(rawState.profile_bio || "", maxProfileBioLength),
       player_level: progression.player_level,
       player_xp: progression.player_xp,
       player_xp_needed: progression.player_xp_needed,

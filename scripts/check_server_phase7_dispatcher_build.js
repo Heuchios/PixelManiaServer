@@ -138,10 +138,12 @@ const dispatcher = Phase7DispatcherModule.createServerPhase7Dispatcher({
   const routeCatalog = dispatcher.getRouteCatalog();
   assert.ok(routeCatalog.handled_routes.includes("chat"));
   assert.ok(routeCatalog.handled_routes.includes("player_punch"));
+  assert.ok(routeCatalog.handled_routes.includes("player_profile_update"));
   assert.ok(routeCatalog.handled_routes.includes("world_block_update"));
   assert.deepEqual(routeCatalog.fallback_routes, []);
   assert.equal(Object.hasOwn(routeCatalog, "phase8_legacy_routes"), false);
   assert.ok(routeCatalog.post_action_position_routes.includes("developer_command_request"));
+  assert.ok(routeCatalog.post_action_position_routes.includes("player_profile_update"));
   assert.ok(!routeCatalog.post_action_position_routes.includes("world_block_update"));
 
   assert.equal(

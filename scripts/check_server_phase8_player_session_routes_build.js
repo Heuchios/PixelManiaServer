@@ -55,7 +55,7 @@ const deps = {
   buildNetfoxSpawnTicketPayload: async () => ({ ticket: "netfox" }),
   buildPlayerStateForClient: (/** @type {unknown} */ state, /** @type {unknown} */ options = {}) => ({ state, options }),
   buildPublicPlayerPresencePayload: (/** @type {string} */ type, /** @type {unknown} */ _player, /** @type {unknown} */ world) => ({ type, world }),
-  buildPublicPlayerProfilePayload: (/** @type {string} */ username, /** @type {string} */ requestId, /** @type {string} */ purpose) => ({ type: "player_profile", username, request_id: requestId, purpose, last_seen_at: "now", account: { username } }),
+  buildPublicPlayerProfilePayload: (/** @type {string} */ username, /** @type {string} */ requestId, /** @type {string} */ purpose) => ({ type: "player_profile", username, request_id: requestId, purpose, created_at: "2026-01-01T00:00:00.000Z", last_seen_at: "now", account: { username, created_at: "2026-01-01T00:00:00.000Z" } }),
   cancelActiveTradeForPlayer: (/** @type {string} */ playerId) => record(`cancel_trade:${playerId}`),
   cleanAccountName: (/** @type {unknown} */ value) => String(value || "").trim().toLowerCase(),
   cleanWorld: (/** @type {unknown} */ value) => String(value || "START").trim().toUpperCase(),
@@ -68,6 +68,7 @@ const deps = {
   clearTrustedMovementBaseline: () => record("clear_trusted"),
   commitWorldAdmissionReservation: async () => record("commit_admission"),
   ensurePlayerState: (/** @type {string} */ username) => savedStates.get(username) || { username, inventory: [] },
+  ensureWritablePlayerState: (/** @type {string} */ username) => savedStates.get(username) || { username, inventory: [] },
   endWorldHonorVisit: async (/** @type {unknown} */ _player, /** @type {unknown} */ world, /** @type {string} */ reason) => record(`honor_end:${world}:${reason}`),
   ensureWorldRouteForAction: async () => ({ ok: true }),
   getEquipmentSlotsFromPlayerState: (/** @type {any} */ state) => state.equipment_slots || {},
@@ -87,7 +88,7 @@ const deps = {
   handleAdminTransactionLedgerLookupRequest: async () => record("admin_tx"),
   isNetfoxRealMode: () => false,
   isPlayerOwnAccount: (/** @type {any} */ player, /** @type {string} */ username) => String(player.account_username || "").toLowerCase() === username,
-  makeRequestId: () => "req-1",
+  makeRequestId: (/** @type {any} */ data) => String(data?.request_id || "req-1"),
   mergeClientPlayerStateIntoServerState: (/** @type {string} */ username, /** @type {unknown} */ state) => ({ username, state, equipment_slots: { hand: "wrench" } }),
   notifyOnlineFriendsOfFriendState: (/** @type {unknown} */ username) => record(`friends:${username}`),
   publishPlayerPresenceUpdate: (/** @type {unknown} */ _socket, /** @type {unknown} */ _player, /** @type {unknown} */ world, /** @type {string} */ type) => record(`presence:${type}:${world}`),
@@ -114,6 +115,7 @@ const deps = {
   setPlayerWorldEntrySpawnGuard: (/** @type {unknown} */ _player, /** @type {unknown} */ world, /** @type {any} */ spawn) => record(`guard_spawn:${world}:${spawn.x}:${spawn.y}`),
   sanitizeEquipmentSlots: (/** @type {unknown} */ slots) => slots,
   sanitizePlayerState: (/** @type {unknown} */ data) => data,
+  sanitizeProfileBio: (/** @type {unknown} */ value) => String(value || "").trim().slice(0, 160),
   seedDropInterestForReceiverFromWorldState: () => record("seed_drop_interest"),
   sendActionRejected: (/** @type {unknown} */ _socket, /** @type {string} */ action, /** @type {string} */ message) => rejected.push({ action, message }),
   sendActiveWorldEventState: (/** @type {unknown} */ _socket, /** @type {unknown} */ world) => record(`events:${world}`),
@@ -134,7 +136,10 @@ const socket = {};
   const player = /** @type {any} */ ({ id: "p1", account_username: "uso", account_email: "u@example.com", name: "USO", equipment_slots: { hand: "old" } });
   await routes.handlePlayerStateRequest(socket, player, { type: "player_state_request", username: "uso", purpose: "active_profile" }, { playerId: "p1" });
   assert.equal(sent.length, 1);
-  assert.equal(/** @type {any} */ (sent.pop()).type, "player_state");
+  const initialStateResponse = /** @type {any} */ (sent.pop());
+  assert.equal(initialStateResponse.type, "player_state");
+  assert.equal(initialStateResponse.created_at, "2026-01-01T00:00:00.000Z");
+  assert.equal(initialStateResponse.account.created_at, "2026-01-01T00:00:00.000Z");
 
   tradeByPlayerId.set("p1", {});
   await routes.handlePlayerStateSave(socket, player, { type: "player_state_save", username: "uso" }, { playerId: "p1" });
@@ -144,6 +149,21 @@ const socket = {};
   await routes.handlePlayerStateSave(socket, player, { type: "player_state_save", username: "uso", legacy_client_inventory_import_revision: 3 }, { playerId: "p1" });
   assert.deepEqual(player.equipment_slots, { hand: "wrench" });
   assert.equal(/** @type {any} */ (sent.pop()).type, "player_state");
+
+  await routes.handlePlayerProfileUpdate(socket, player, {
+    type: "player_profile_update",
+    request_id: "bio-1",
+    username: "uso",
+    profile_bio: "Building tiny worlds.",
+  });
+  const profileUpdate = /** @type {any} */ (sent.pop());
+  assert.equal(profileUpdate.request_id, "bio-1");
+  assert.equal(profileUpdate.purpose, "local_player_profile");
+  assert.equal(profileUpdate.created_at, "2026-01-01T00:00:00.000Z");
+  assert.equal(profileUpdate.account.created_at, "2026-01-01T00:00:00.000Z");
+  assert.equal(/** @type {any} */ (savedStates.get("uso")).profile_bio, "Building tiny worlds.");
+  assert.ok(events.includes("save:uso"));
+  assert.ok(events.includes("flush:uso::player_profile_update_commit"));
 
   await routes.handlePlayerStateRequest(socket, { account_username: "admin", name: "admin" }, { type: "player_state_request", username: "uso", purpose: "admin_item_instance_lookup" }, { playerId: "admin" });
   assert.ok(events.includes("admin_item"));
@@ -235,6 +255,7 @@ const socket = {};
   assert.deepEqual(buildConfig.include, ["src/server_phase8_player_session_routes.ts"]);
   assert.match(helperSource, /function createServerPhase8PlayerSessionRoutes/);
   assert.match(helperSource, /function handlePlayerStateRequest/);
+  assert.match(helperSource, /function handlePlayerProfileUpdate/);
   assert.match(helperSource, /function handleJoinWorld/);
   assert.match(helperSource, /sendWorldStateToSocket/);
   assert.match(helperSource, /flushPendingSessionPersistence/);

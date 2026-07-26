@@ -64,6 +64,7 @@ function createServerBotRateLimitTables(deps = {}) {
         friend_request: { limit: 60, windowMs: 5000 },
         friend_response: { limit: 60, windowMs: 5000 },
         player_state_request: { limit: 30, windowMs: 10000 },
+        player_profile_update: { limit: 6, windowMs: 60000 },
         pull_player_request: { limit: 45, windowMs: 5000 },
         player_state_save: { limit: 30, windowMs: 10000 },
         inventory_upgrade_purchase: { limit: 30, windowMs: 5000 },
