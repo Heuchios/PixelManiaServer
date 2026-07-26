@@ -98,7 +98,10 @@ function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
     PLAYER_POSITION_BATCH_MAX_ITEMS,
     PLAYER_POSITION_BATCH_MIN_CLIENT_VERSION,
     PLAYER_POSITION_BROADCAST_INTERVAL_MS,
+    PLAYER_POSITION_DELIVERY_RETRY_MS,
     PLAYER_POSITION_IDLE_HEARTBEAT_MS,
+    PLAYER_POSITION_MAX_BUFFERED_AMOUNT,
+    PLAYER_POSITION_RESUME_BUFFERED_AMOUNT,
     PORT,
     POSTGRES_AUTHORITATIVE,
     POSTGRES_ENABLED,
@@ -329,6 +332,9 @@ function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
         ).toFixed(3))
         : 0,
       inbound_message_queue_wait_max_ms: Number(playerNetworkStats.inbound_message_queue_wait_max_ms || 0),
+      coalesced_inbound_player_position_messages: Number(
+        playerNetworkStats.coalesced_inbound_player_position_messages || 0,
+      ),
       player_position_queue_wait_samples: Number(playerNetworkStats.player_position_queue_wait_samples || 0),
       player_position_queue_wait_avg_ms: Number(playerNetworkStats.player_position_queue_wait_samples || 0) > 0
         ? Number((
@@ -368,6 +374,19 @@ function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
       outbound_packet_type_stats: outboundPacketTypeStats,
       outbound_backpressure_skips: Number(playerNetworkStats.outbound_backpressure_skips || 0),
       outbound_send_failures: Number(playerNetworkStats.outbound_send_failures || 0),
+      movement_backpressure_queued_batches: Number(
+        playerNetworkStats.movement_backpressure_queued_batches || 0,
+      ),
+      movement_backpressure_coalesced_batches: Number(
+        playerNetworkStats.movement_backpressure_coalesced_batches || 0,
+      ),
+      movement_backpressure_replaced_items: Number(
+        playerNetworkStats.movement_backpressure_replaced_items || 0,
+      ),
+      movement_backpressure_flushes: Number(playerNetworkStats.movement_backpressure_flushes || 0),
+      movement_backpressure_dropped_items: Number(
+        playerNetworkStats.movement_backpressure_dropped_items || 0,
+      ),
       message_rate_limit_rejections: Number(playerNetworkStats.message_rate_limit_rejections || 0),
       bot_rate_limit_rejections: Number(playerNetworkStats.bot_rate_limit_rejections || 0),
       rate_limit_checks_by_bucket: copyCounterRecord(playerNetworkStats.rate_limit_checks_by_bucket),
@@ -394,6 +413,9 @@ function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
         position_batch_max_items: PLAYER_POSITION_BATCH_MAX_ITEMS,
         position_broadcast_interval_ms: PLAYER_POSITION_BROADCAST_INTERVAL_MS,
         position_idle_heartbeat_ms: PLAYER_POSITION_IDLE_HEARTBEAT_MS,
+        position_max_buffered_amount: PLAYER_POSITION_MAX_BUFFERED_AMOUNT,
+        position_resume_buffered_amount: PLAYER_POSITION_RESUME_BUFFERED_AMOUNT,
+        position_delivery_retry_ms: PLAYER_POSITION_DELIVERY_RETRY_MS,
         max_move_pixels_per_second: MAX_MOVE_PIXELS_PER_SECOND,
         max_move_accel_pixels_per_second2: MAX_MOVE_ACCEL_PIXELS_PER_SECOND2,
         movement_distance_grace_pixels: MOVEMENT_DISTANCE_GRACE_PIXELS,

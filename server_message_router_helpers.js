@@ -23,6 +23,17 @@ function createServerMessageRouterHelpers(config) {
     function getInboundMessageType(data) {
         return isRecord(data) ? config.normalizePacketTypeName(data.type) : "invalid";
     }
+    function coalesceQueuedPlayerPosition(pending, incoming) {
+        if (incoming.messageType !== "player_position"
+            || pending?.messageType !== "player_position"
+            || pending.started === true) {
+            return false;
+        }
+        pending.data = incoming.data;
+        pending.enqueuedAt = incoming.enqueuedAt;
+        pending.messageBytes = incoming.messageBytes;
+        return true;
+    }
     function makeRequestId(data) {
         const raw = toRecord(data);
         const requestId = String(raw.request_id || "").trim();
@@ -349,6 +360,7 @@ function createServerMessageRouterHelpers(config) {
         buildIdempotencyClaimMetadata,
         buildRateLimitedPayload,
         buildRateLimitSecurityEventDetails,
+        coalesceQueuedPlayerPosition,
         failedTransactionLedgerSourceForAction,
         failedTransactionLedgerTypeForAction,
         getBotRateLimitAction,

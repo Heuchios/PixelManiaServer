@@ -24,6 +24,15 @@ const stats = {
   outbound_oversize_packets: 0,
   outbound_backpressure_skips: 0,
   outbound_send_failures: 0,
+  batch_presence_packets_sent: 0,
+  batch_player_items_sent: 0,
+  batch_left_items_sent: 0,
+  interest_culls_sent: 0,
+  movement_backpressure_queued_batches: 0,
+  movement_backpressure_coalesced_batches: 0,
+  movement_backpressure_replaced_items: 0,
+  movement_backpressure_flushes: 0,
+  movement_backpressure_dropped_items: 0,
 };
 /** @type {{ direction: "outbound", rawMessageType: string, rawBytes: number }[]} */
 const packetStats = [];
@@ -35,6 +44,9 @@ const helpers = SocketDeliveryHelpersModule.createServerSocketDeliveryHelpers({
   websocketOpenState: OPEN,
   maxPacketBytes: 64,
   maxBufferedAmount: 32,
+  movementMaxBufferedAmount: 16,
+  movementResumeBufferedAmount: 4,
+  movementRetryMs: 60000,
   playerNetworkStats: stats,
   getRawLength(/** @type {unknown} */ raw) {
     return Buffer.byteLength(String(raw || ""), "utf8");
@@ -124,6 +136,57 @@ assert.equal(helpers.shouldLogSocketPacketWarning(warningSocket, "same", 10000),
 assert.equal(helpers.shouldLogSocketBackpressure(warningSocket), true);
 assert.equal(helpers.shouldLogSocketBackpressure(warningSocket), false);
 
+const directMovementSocket = makeSocket();
+assert.equal(helpers.sendPlayerPositionBatch(directMovementSocket, {
+  type: "player_position_batch",
+  world: "START",
+  players: [{ player_id: "p2", x: 1 }],
+}, 64), true);
+assert.equal(directMovementSocket.sent.length, 1);
+assert.equal(stats.batch_presence_packets_sent, 1);
+assert.equal(stats.batch_player_items_sent, 1);
+
+const slowMovementSocket = makeSocket({ bufferedAmount: 20 });
+assert.equal(helpers.sendPlayerPositionBatch(slowMovementSocket, {
+  type: "player_position_batch",
+  world: "START",
+  players: [{ player_id: "p2", x: 2 }],
+}, 64), true);
+assert.equal(helpers.sendPlayerPositionBatch(slowMovementSocket, {
+  type: "player_position_batch",
+  world: "START",
+  players: [
+    { player_id: "p2", x: 3 },
+    { player_id: "p3", x: 4 },
+  ],
+  left: [{ type: "player_left", player_id: "p2" }],
+}, 64), true);
+assert.equal(slowMovementSocket.sent.length, 0);
+assert.equal(stats.movement_backpressure_queued_batches, 2);
+assert.equal(stats.movement_backpressure_coalesced_batches, 1);
+assert.equal(stats.movement_backpressure_replaced_items, 2);
+
+slowMovementSocket.bufferedAmount = 0;
+assert.equal(helpers.flushPendingPlayerPositionBatch(slowMovementSocket), true);
+assert.equal(slowMovementSocket.sent.length, 1);
+const flushedMovement = JSON.parse(slowMovementSocket.sent[0]);
+assert.deepEqual(flushedMovement.players, [{ player_id: "p3", x: 4 }]);
+assert.deepEqual(flushedMovement.left, [{ type: "player_left", player_id: "p2" }]);
+assert.equal(stats.batch_presence_packets_sent, 2);
+assert.equal(stats.batch_player_items_sent, 2);
+assert.equal(stats.batch_left_items_sent, 1);
+assert.equal(stats.interest_culls_sent, 1);
+assert.equal(stats.movement_backpressure_flushes, 1);
+
+const abandonedMovementSocket = makeSocket({ bufferedAmount: 20 });
+helpers.sendPlayerPositionBatch(abandonedMovementSocket, {
+  type: "player_position_batch",
+  world: "START",
+  players: [{ player_id: "p4", x: 5 }],
+}, 64);
+helpers.clearPlayerPositionDeliveryState(abandonedMovementSocket);
+assert.equal(stats.movement_backpressure_dropped_items, 1);
+
 assert.equal(
   packageJson.scripts["build:server-socket-delivery-helpers"],
   "tsc --project tsconfig.server-socket-delivery-helpers.json && node scripts/sync_server_socket_delivery_helpers_build.js"
@@ -136,6 +199,8 @@ assert.match(packageJson.scripts["check:typescript"], /npm run check:server-sock
 assert.deepEqual(buildConfig.include, ["src/server_socket_delivery_helpers.ts"]);
 assert.match(helperSource, /function createServerSocketDeliveryHelpers/);
 assert.match(helperSource, /function sendRawJsonToSocket/);
+assert.match(helperSource, /function sendPlayerPositionBatch/);
+assert.match(helperSource, /function mergeMovementBatch/);
 assert.match(generatedSource, /Generated from src\/server_socket_delivery_helpers\.ts/);
 assert.match(generatedSource, /module\.exports = \{/);
 assert.match(syncSource, /server_socket_delivery_helpers\.js/);

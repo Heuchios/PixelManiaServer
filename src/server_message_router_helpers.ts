@@ -53,6 +53,14 @@ interface RateLimitResultLike {
   fallback?: unknown;
 }
 
+interface CoalescibleInboundMessage {
+  data: PacketRecord;
+  enqueuedAt: number;
+  messageBytes: number;
+  messageType: string;
+  started?: boolean;
+}
+
 function isRecord(value: unknown): value is PacketRecord {
   return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -79,6 +87,24 @@ function createServerMessageRouterHelpers(config: MessageRouterConfig) {
 
   function getInboundMessageType(data: unknown): string {
     return isRecord(data) ? config.normalizePacketTypeName(data.type) : "invalid";
+  }
+
+  function coalesceQueuedPlayerPosition(
+    pending: CoalescibleInboundMessage | null | undefined,
+    incoming: CoalescibleInboundMessage
+  ): boolean {
+    if (
+      incoming.messageType !== "player_position"
+      || pending?.messageType !== "player_position"
+      || pending.started === true
+    ) {
+      return false;
+    }
+
+    pending.data = incoming.data;
+    pending.enqueuedAt = incoming.enqueuedAt;
+    pending.messageBytes = incoming.messageBytes;
+    return true;
   }
 
   function makeRequestId(data: unknown): string {
@@ -417,6 +443,7 @@ function createServerMessageRouterHelpers(config: MessageRouterConfig) {
     buildIdempotencyClaimMetadata,
     buildRateLimitedPayload,
     buildRateLimitSecurityEventDetails,
+    coalesceQueuedPlayerPosition,
     failedTransactionLedgerSourceForAction,
     failedTransactionLedgerTypeForAction,
     getBotRateLimitAction,

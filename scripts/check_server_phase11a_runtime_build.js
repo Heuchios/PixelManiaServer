@@ -73,6 +73,7 @@ const playerNetworkStats = {
   inbound_message_queue_wait_samples: 4,
   inbound_message_queue_wait_total_ms: 50,
   inbound_message_queue_wait_max_ms: 25,
+  coalesced_inbound_player_position_messages: 7,
   player_position_queue_wait_samples: 2,
   player_position_queue_wait_total_ms: 30,
   player_position_queue_wait_max_ms: 20,
@@ -171,7 +172,10 @@ const deps = new Proxy({
   PLAYER_POSITION_BATCH_MAX_ITEMS: 64,
   PLAYER_POSITION_BATCH_MIN_CLIENT_VERSION: "1.0.3",
   PLAYER_POSITION_BROADCAST_INTERVAL_MS: 16,
+  PLAYER_POSITION_DELIVERY_RETRY_MS: 25,
   PLAYER_POSITION_IDLE_HEARTBEAT_MS: 1000,
+  PLAYER_POSITION_MAX_BUFFERED_AMOUNT: 262144,
+  PLAYER_POSITION_RESUME_BUFFERED_AMOUNT: 65536,
   PORT: 8080,
   POSTGRES_AUTHORITATIVE: true,
   POSTGRES_ENABLED: true,
@@ -311,6 +315,7 @@ assert.equal(networkSnapshot.inbound_message_queue_pending_max, 8);
 assert.equal(networkSnapshot.inbound_message_queue_max_socket_depth, 5);
 assert.equal(networkSnapshot.inbound_message_queue_wait_avg_ms, 12.5);
 assert.equal(networkSnapshot.inbound_message_queue_wait_max_ms, 25);
+assert.equal(networkSnapshot.coalesced_inbound_player_position_messages, 7);
 assert.equal(networkSnapshot.player_position_queue_wait_avg_ms, 15);
 assert.equal(networkSnapshot.player_position_queue_wait_max_ms, 20);
 assert.equal(networkSnapshot.player_position_queue_wait_over_250ms, 1);
@@ -322,6 +327,9 @@ assert.equal(networkSnapshot.rate_limit_rejections_by_subject_kind.account, 2);
 assert.equal(networkSnapshot.rate_limit_store_fallback_allows, 1);
 assert.equal(networkSnapshot.rate_limit_last_rejection.store, "socket_token_bucket");
 assert.equal(networkSnapshot.rate_limit_last_rejection.capacity, 300);
+assert.equal(networkSnapshot.config.position_max_buffered_amount, 262144);
+assert.equal(networkSnapshot.config.position_resume_buffered_amount, 65536);
+assert.equal(networkSnapshot.config.position_delivery_retry_ms, 25);
 assert.equal(Object.hasOwn(networkSnapshot.rate_limit_checks_by_bucket, "empty"), false);
 
 runtime.writeCrashReport("phase11a_test", { detail: "ok" });

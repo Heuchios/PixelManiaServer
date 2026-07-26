@@ -93,6 +93,9 @@ const checks = [
       && files.server.includes("PLAYER_POSITION_BATCHING_ENABLED")
       && files.server.includes("queuePlayerPositionBroadcast")
       && files.server.includes("flushQueuedPlayerPositionBroadcasts")
+      && files.server.includes("coalesceQueuedPlayerPosition")
+      && files.socketDeliveryHelpers.includes("sendPlayerPositionBatch")
+      && files.socketDeliveryHelpers.includes("movementResumeBufferedAmount")
       && files.server.includes("syncPlayerInterestForReceiver")
       && (serverAndSessionRouteSources.includes("getPlayersInWorld(player.world, playerId, player)")
         || serverAndSessionRouteSources.includes("getPlayersInWorld(player.world, context.playerId, player)"))
@@ -238,7 +241,9 @@ const checks = [
       && files.envExample.includes("PLAYER_INTEREST_MANAGEMENT_ENABLED=true")
       && files.envExample.includes("WORLD_UPDATE_BATCHING_ENABLED=true")
       && files.envExample.includes("DROP_INTEREST_MANAGEMENT_ENABLED=true")
-      && files.envExample.includes("SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT"),
+      && files.envExample.includes("SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT")
+      && files.envExample.includes("PLAYER_POSITION_MAX_BUFFERED_AMOUNT=262144")
+      && files.envExample.includes("PLAYER_POSITION_RESUME_BUFFERED_AMOUNT=65536"),
   },
   {
     name: "health endpoint reports player/world network stats for live monitoring",

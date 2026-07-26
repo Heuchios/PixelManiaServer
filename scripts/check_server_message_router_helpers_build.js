@@ -78,6 +78,46 @@ assert.equal(helpers.getRawLength(Buffer.from("abc")), 3);
 assert.equal(helpers.getRawLength("abcd"), 4);
 assert.equal(helpers.getInboundMessageType({ type: " Chat " }), "chat");
 assert.equal(helpers.getInboundMessageType(null), "invalid");
+
+const queuedPosition = {
+  data: { type: "player_position", x: 1 },
+  enqueuedAt: 10,
+  messageBytes: 40,
+  messageType: "player_position",
+  started: false,
+};
+assert.equal(helpers.coalesceQueuedPlayerPosition(queuedPosition, {
+  data: { type: "player_position", x: 2 },
+  enqueuedAt: 20,
+  messageBytes: 42,
+  messageType: "player_position",
+}), true);
+assert.equal(queuedPosition.data.x, 2);
+assert.equal(queuedPosition.enqueuedAt, 20);
+assert.equal(queuedPosition.messageBytes, 42);
+assert.equal(helpers.coalesceQueuedPlayerPosition({
+  data: { type: "chat" },
+  enqueuedAt: 30,
+  messageBytes: 20,
+  messageType: "chat",
+}, {
+  data: { type: "player_position", x: 3 },
+  enqueuedAt: 40,
+  messageBytes: 42,
+  messageType: "player_position",
+}), false);
+assert.equal(helpers.coalesceQueuedPlayerPosition({
+  data: { type: "player_position", x: 3 },
+  enqueuedAt: 40,
+  messageBytes: 42,
+  messageType: "player_position",
+  started: true,
+}, {
+  data: { type: "player_position", x: 4 },
+  enqueuedAt: 50,
+  messageBytes: 42,
+  messageType: "player_position",
+}), false);
 assert.equal(helpers.makeRequestId({ request_id: " req-1 " }), "req-1");
 assert.equal(helpers.makeRequestId({ action_id: " act-1 " }), "act-1");
 assert.equal(helpers.makeMessageIdempotencyScope({
@@ -203,6 +243,7 @@ assert.deepEqual(buildConfig.include, ["src/server_message_router_helpers.ts"]);
 assert.match(helperSource, /function createServerMessageRouterHelpers/);
 assert.match(helperSource, /function makeMessageIdempotencyScope/);
 assert.match(helperSource, /function getBotRateLimitAction/);
+assert.match(helperSource, /function coalesceQueuedPlayerPosition/);
 assert.match(generatedSource, /Generated from src\/server_message_router_helpers\.ts/);
 assert.match(generatedSource, /module\.exports = \{/);
 assert.match(syncSource, /server_message_router_helpers\.js/);

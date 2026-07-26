@@ -469,6 +469,9 @@ const SNOW_STORM_MAX_CHANGED_TILES = Math.max(100, Math.min(WORLD_WIDTH * WORLD_
 const CONFIGURED_SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS = Number(process.env.SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS);
 const SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS = Math.max(0, Math.min(10000, Math.trunc(Number.isFinite(CONFIGURED_SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS) ? CONFIGURED_SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS : 1000)));
 const SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT = Math.max(256 * 1024, Math.min(32 * 1024 * 1024, Math.trunc(Number(process.env.SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT) || (4 * 1024 * 1024))));
+const PLAYER_POSITION_MAX_BUFFERED_AMOUNT = Math.max(64 * 1024, Math.min(SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT, Math.trunc(Number(process.env.PLAYER_POSITION_MAX_BUFFERED_AMOUNT) || (256 * 1024))));
+const PLAYER_POSITION_RESUME_BUFFERED_AMOUNT = Math.max(16 * 1024, Math.min(PLAYER_POSITION_MAX_BUFFERED_AMOUNT, Math.trunc(Number(process.env.PLAYER_POSITION_RESUME_BUFFERED_AMOUNT) || (64 * 1024))));
+const PLAYER_POSITION_DELIVERY_RETRY_MS = Math.max(5, Math.min(1000, Math.trunc(Number(process.env.PLAYER_POSITION_DELIVERY_RETRY_MS) || 25)));
 const SERVER_TERRAIN_SURFACE_VERTICAL_OFFSET = -8;
 const SERVER_TERRAIN_EXTRA_HILL_RANGE = 3;
 const SERVER_BOTTOM_LAVA_STONE_HEIGHT = 4;
@@ -1865,6 +1868,7 @@ const playerNetworkStats = {
     inbound_message_queue_wait_samples: 0,
     inbound_message_queue_wait_total_ms: 0,
     inbound_message_queue_wait_max_ms: 0,
+    coalesced_inbound_player_position_messages: 0,
     player_position_queue_wait_samples: 0,
     player_position_queue_wait_total_ms: 0,
     player_position_queue_wait_max_ms: 0,
@@ -1893,6 +1897,11 @@ const playerNetworkStats = {
     outbound_oversize_packets: 0,
     outbound_backpressure_skips: 0,
     outbound_send_failures: 0,
+    movement_backpressure_queued_batches: 0,
+    movement_backpressure_coalesced_batches: 0,
+    movement_backpressure_replaced_items: 0,
+    movement_backpressure_flushes: 0,
+    movement_backpressure_dropped_items: 0,
     outbound_packet_type_stats: {},
     message_rate_limit_rejections: 0,
     bot_rate_limit_rejections: 0,
@@ -1908,6 +1917,9 @@ const ServerSocketDeliveryHelpers = ServerSocketDeliveryHelpersModule.createServ
     websocketOpenState: WebSocket.OPEN,
     maxPacketBytes: MAX_PACKET_BYTES,
     maxBufferedAmount: SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT,
+    movementMaxBufferedAmount: PLAYER_POSITION_MAX_BUFFERED_AMOUNT,
+    movementResumeBufferedAmount: PLAYER_POSITION_RESUME_BUFFERED_AMOUNT,
+    movementRetryMs: PLAYER_POSITION_DELIVERY_RETRY_MS,
     playerNetworkStats,
     getRawLength,
     normalizePacketTypeName,
@@ -2092,7 +2104,10 @@ const ServerPhase11aRuntime = ServerPhase11aRuntimeModule.createServerPhase11aRu
     PLAYER_POSITION_BATCH_MAX_ITEMS,
     PLAYER_POSITION_BATCH_MIN_CLIENT_VERSION,
     PLAYER_POSITION_BROADCAST_INTERVAL_MS,
+    PLAYER_POSITION_DELIVERY_RETRY_MS,
     PLAYER_POSITION_IDLE_HEARTBEAT_MS,
+    PLAYER_POSITION_MAX_BUFFERED_AMOUNT,
+    PLAYER_POSITION_RESUME_BUFFERED_AMOUNT,
     PORT,
     POSTGRES_AUTHORITATIVE,
     POSTGRES_ENABLED,
@@ -2431,6 +2446,7 @@ wss.on("connection", (socket, request = null) => {
     socket.authRequiredNotices = new Map();
     socket.inboundMessageQueue = Promise.resolve();
     socket.inboundMessageQueueDepth = 0;
+    socket.pendingInboundMessageTail = null;
     socket.on("error", (error) => {
         console.warn("[socket_error]", {
             player_id: playerId,
@@ -2443,50 +2459,70 @@ wss.on("connection", (socket, request = null) => {
     });
     socket.on("message", (raw) => {
         const enqueuedAt = Date.now();
+        const messageBytes = getRawLength(raw);
+        playerNetworkStats.inbound_messages_received += 1;
+        playerNetworkStats.inbound_bytes_received += Math.max(0, Math.trunc(messageBytes || 0));
+        if (isPacketTypeTelemetryEnabled()) {
+            recordPacketTypeSize("inbound", "raw", messageBytes);
+        }
+        if (messageBytes > MAX_PACKET_BYTES) {
+            playerNetworkStats.inbound_messages_oversize_rejected += 1;
+            if (shouldLogSocketPacketWarning(socket, "inbound_oversize")) {
+                console.warn("[socket_oversize_receive]", {
+                    player_id: playerId,
+                    world: cleanWorld(playerId && players.get(playerId) ? players.get(playerId).world || "START" : "START"),
+                    packet_bytes: messageBytes,
+                    max_packet_bytes: MAX_PACKET_BYTES,
+                });
+            }
+            socket.close(1009, "Packet too large");
+            return;
+        }
+        let parsedData;
+        try {
+            parsedData = JSON.parse(String(raw));
+        }
+        catch {
+            return;
+        }
+        if (!parsedData || typeof parsedData !== "object" || Array.isArray(parsedData))
+            return;
+        const data = parsedData;
+        const incomingMessageType = ServerMessageRouterHelpers.getInboundMessageType(data);
+        recordPacketTypeSize("inbound", incomingMessageType, messageBytes);
+        const envelope = {
+            data,
+            enqueuedAt,
+            messageBytes,
+            messageType: incomingMessageType,
+            queueDepthAtEnqueue: 0,
+            started: false,
+        };
+        if (ServerMessageRouterHelpers.coalesceQueuedPlayerPosition(socket.pendingInboundMessageTail, envelope)) {
+            playerNetworkStats.coalesced_inbound_player_position_messages += 1;
+            return;
+        }
         const queueDepthAtEnqueue = Math.max(1, Math.trunc(Number(socket.inboundMessageQueueDepth) || 0) + 1);
+        envelope.queueDepthAtEnqueue = queueDepthAtEnqueue;
         socket.inboundMessageQueueDepth = queueDepthAtEnqueue;
+        socket.pendingInboundMessageTail = envelope;
         playerNetworkStats.inbound_message_queue_pending = Math.max(0, Math.trunc(Number(playerNetworkStats.inbound_message_queue_pending) || 0) + 1);
         playerNetworkStats.inbound_message_queue_pending_max = Math.max(Number(playerNetworkStats.inbound_message_queue_pending_max) || 0, playerNetworkStats.inbound_message_queue_pending);
         playerNetworkStats.inbound_message_queue_max_socket_depth = Math.max(Number(playerNetworkStats.inbound_message_queue_max_socket_depth) || 0, queueDepthAtEnqueue);
         const processMessage = async () => {
+            envelope.started = true;
+            if (socket.pendingInboundMessageTail === envelope)
+                socket.pendingInboundMessageTail = null;
             const processingStartedAt = Date.now();
-            const queueWaitMs = Math.max(0, processingStartedAt - enqueuedAt);
+            const queueWaitMs = Math.max(0, processingStartedAt - envelope.enqueuedAt);
+            const data = envelope.data;
+            const incomingMessageType = envelope.messageType;
             socket.inboundMessageQueueDepth = Math.max(0, Math.trunc(Number(socket.inboundMessageQueueDepth) || 0) - 1);
             playerNetworkStats.inbound_message_queue_pending = Math.max(0, Math.trunc(Number(playerNetworkStats.inbound_message_queue_pending) || 0) - 1);
             playerNetworkStats.inbound_message_queue_wait_samples += 1;
             playerNetworkStats.inbound_message_queue_wait_total_ms += queueWaitMs;
             playerNetworkStats.inbound_message_queue_wait_max_ms = Math.max(Number(playerNetworkStats.inbound_message_queue_wait_max_ms) || 0, queueWaitMs);
             try {
-                const messageBytes = getRawLength(raw);
-                playerNetworkStats.inbound_messages_received += 1;
-                playerNetworkStats.inbound_bytes_received += Math.max(0, Math.trunc(messageBytes || 0));
-                if (isPacketTypeTelemetryEnabled()) {
-                    recordPacketTypeSize("inbound", "raw", messageBytes);
-                }
-                if (messageBytes > MAX_PACKET_BYTES) {
-                    playerNetworkStats.inbound_messages_oversize_rejected += 1;
-                    if (shouldLogSocketPacketWarning(socket, "inbound_oversize")) {
-                        console.warn("[socket_oversize_receive]", {
-                            player_id: playerId,
-                            world: cleanWorld(playerId && players.get(playerId) ? players.get(playerId).world || "START" : "START"),
-                            packet_bytes: messageBytes,
-                            max_packet_bytes: MAX_PACKET_BYTES,
-                        });
-                    }
-                    socket.close(1009, "Packet too large");
-                    return;
-                }
-                let data;
-                try {
-                    data = JSON.parse(String(raw));
-                }
-                catch {
-                    return;
-                }
-                const incomingMessageType = ServerMessageRouterHelpers.getInboundMessageType(data);
-                recordPacketTypeSize("inbound", incomingMessageType, messageBytes);
-                if (!data || typeof data !== "object" || Array.isArray(data))
-                    return;
                 if (incomingMessageType === "player_position") {
                     playerNetworkStats.player_position_queue_wait_samples += 1;
                     playerNetworkStats.player_position_queue_wait_total_ms += queueWaitMs;
@@ -2497,7 +2533,7 @@ wss.on("connection", (socket, request = null) => {
                             at: new Date(processingStartedAt).toISOString(),
                             player_id: playerId,
                             queue_wait_ms: queueWaitMs,
-                            queue_depth_at_enqueue: queueDepthAtEnqueue,
+                            queue_depth_at_enqueue: envelope.queueDepthAtEnqueue,
                             socket_queue_depth_at_start: socket.inboundMessageQueueDepth,
                         };
                     }
@@ -2542,6 +2578,8 @@ wss.on("connection", (socket, request = null) => {
         if (socket.closeCleanupStarted)
             return;
         socket.closeCleanupStarted = true;
+        socket.pendingInboundMessageTail = null;
+        ServerSocketDeliveryHelpers.clearPlayerPositionDeliveryState(socket);
         void (async () => {
             const player = players.get(playerId);
             const closedUsername = player ? player.account_username : "";
@@ -28595,11 +28633,7 @@ function flushPlayerPositionBatches(batches) {
                 payload.players = players;
             if (left.length > 0)
                 payload.left = left;
-            sendJson(batch.socket, payload);
-            playerNetworkStats.batch_presence_packets_sent += 1;
-            playerNetworkStats.batch_player_items_sent += players.length;
-            playerNetworkStats.batch_left_items_sent += left.length;
-            playerNetworkStats.interest_culls_sent += left.length;
+            ServerSocketDeliveryHelpers.sendPlayerPositionBatch(batch.socket, payload, maxItems);
         }
     }
 }
