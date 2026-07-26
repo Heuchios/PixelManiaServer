@@ -25,6 +25,14 @@ type StationRecipe = {
   cost: ReadonlyArray<Record<string, any>>;
 };
 
+function atlasImage(cell: ReadonlyArray<number>): Readonly<Record<string, any>> {
+  return Object.freeze({
+    atlas: "res://image.png",
+    cell: Object.freeze(Array.from(cell)),
+    cell_size: Object.freeze([32, 32]),
+  });
+}
+
 const CATEGORY_TO_FIELD: Readonly<Record<string, string>> = Object.freeze({
   block: "inventory",
   seed: "seed_inventory",
@@ -239,25 +247,48 @@ function makeWaterWellDropRules(): DropRule {
   };
 }
 
-function makeConfiguredSeedDropRules(blockId: unknown, seedId: unknown, blockChance: unknown, seedChance: unknown): DropRule {
+function makeConfiguredSeedDropRules(
+  blockId: unknown,
+  seedId: unknown,
+  blockChance: unknown,
+  seedChance: unknown,
+  gemRange: AmountRange = Object.freeze([]),
+  blockRange: AmountRange = Object.freeze([]),
+  seedRange: AmountRange = Object.freeze([]),
+): DropRule {
+  const fixedDrops: Record<string, any>[] = [];
+  if (Array.isArray(blockRange) && blockRange.length >= 2) {
+    fixedDrops.push(Object.freeze({ item_id: blockId, item_category: "block", amount_range: Object.freeze(blockRange) }));
+  } else {
+    fixedDrops.push(Object.freeze({ item_id: blockId, item_category: "block", amount: 1, chance: Math.max(0, Math.min(1, Number(blockChance) || 0)) }));
+  }
+  if (Array.isArray(seedRange) && seedRange.length >= 2) {
+    fixedDrops.push(Object.freeze({ item_id: seedId, item_category: "seed", amount_range: Object.freeze(seedRange) }));
+  } else {
+    fixedDrops.push(Object.freeze({ item_id: seedId, item_category: "seed", amount: 1, chance: Math.max(0, Math.min(1, Number(seedChance) || 0)) }));
+  }
+  if (Array.isArray(gemRange) && gemRange.length >= 2) {
+    fixedDrops.push(Object.freeze({ item_id: "gem", item_category: "currency", amount_range: Object.freeze(gemRange) }));
+  }
   return {
     seed_chance: 0,
     gem_range: [0, 0],
-    fixed_drops: Object.freeze([
-      Object.freeze({ item_id: blockId, item_category: "block", amount: 1, chance: Math.max(0, Math.min(1, Number(blockChance) || 0)) }),
-      Object.freeze({ item_id: seedId, item_category: "seed", amount: 1, chance: Math.max(0, Math.min(1, Number(seedChance) || 0)) }),
-    ]),
+    fixed_drops: Object.freeze(fixedDrops),
   };
 }
 
-function makeConfiguredTreeDropRules(blockId: unknown, seedId: unknown, blockRange: AmountRange, seedRange: AmountRange): DropRule {
+function makeConfiguredTreeDropRules(blockId: unknown, seedId: unknown, blockRange: AmountRange, seedRange: AmountRange, gemRange: AmountRange = Object.freeze([])): DropRule {
+  const fixedDrops: Record<string, any>[] = [
+    Object.freeze({ item_id: blockId, item_category: "block", amount_range: Object.freeze(blockRange) }),
+    Object.freeze({ item_id: seedId, item_category: "seed", amount_range: Object.freeze(seedRange) }),
+  ];
+  if (Array.isArray(gemRange) && gemRange.length >= 2) {
+    fixedDrops.push(Object.freeze({ item_id: "gem", item_category: "currency", amount_range: Object.freeze(gemRange) }));
+  }
   return {
     seed_chance: 0,
     gem_range: [0, 0],
-    fixed_drops: Object.freeze([
-      Object.freeze({ item_id: blockId, item_category: "block", amount_range: Object.freeze(blockRange) }),
-      Object.freeze({ item_id: seedId, item_category: "seed", amount_range: Object.freeze(seedRange) }),
-    ]),
+    fixed_drops: Object.freeze(fixedDrops),
   };
 }
 
@@ -296,9 +327,21 @@ const TIER_1_SPLICE_BALANCE = Object.freeze({
   wooden_door: Object.freeze({ grow_time: 175, block_drop_chance: 0.52, seed_drop_chance: 0.14, tree_block_range: Object.freeze([2, 5]), tree_seed_range: Object.freeze([0, 4]) }),
   wooden_frame: Object.freeze({ grow_time: 190, block_drop_chance: 0.50, seed_drop_chance: 0.12, tree_block_range: Object.freeze([2, 5]), tree_seed_range: Object.freeze([0, 4]) }),
   mushroom: Object.freeze({ grow_time: 205, block_drop_chance: 0.48, seed_drop_chance: 0.10, tree_block_range: Object.freeze([1, 4]), tree_seed_range: Object.freeze([0, 4]) }),
-  stone_brick: Object.freeze({ grow_time: 225, block_drop_chance: 0.45, seed_drop_chance: 0.08, tree_block_range: Object.freeze([1, 4]), tree_seed_range: Object.freeze([0, 4]) }),
+  stone_brick: Object.freeze({ grow_time: 225, block_drop_chance: 0.45, seed_drop_chance: 0.08, tree_block_range: Object.freeze([1, 4]), tree_seed_range: Object.freeze([0, 4]), break_gem_range: Object.freeze([1, 5]) }),
   glass_panel: Object.freeze({ grow_time: 250, block_drop_chance: 0.42, seed_drop_chance: 0.07, tree_block_range: Object.freeze([1, 4]), tree_seed_range: Object.freeze([0, 4]) }),
   gem_block: Object.freeze({ grow_time: 300, block_drop_chance: 0.35, seed_drop_chance: 0.05, tree_block_range: Object.freeze([1, 4]), tree_seed_range: Object.freeze([0, 4]) }),
+  red_brick: Object.freeze({ grow_time: 225, block_drop_chance: 0.45, seed_drop_chance: 0.08, tree_block_range: Object.freeze([1, 4]), tree_seed_range: Object.freeze([0, 4]), break_gem_range: Object.freeze([1, 5]) }),
+  green_brick: Object.freeze({ grow_time: 225, block_drop_chance: 0.45, seed_drop_chance: 0.08, tree_block_range: Object.freeze([1, 4]), tree_seed_range: Object.freeze([0, 4]), break_gem_range: Object.freeze([1, 5]) }),
+  green_moss_brick: Object.freeze({ grow_time: 225, block_drop_chance: 0.45, seed_drop_chance: 0.08, tree_block_range: Object.freeze([1, 4]), tree_seed_range: Object.freeze([0, 4]), break_gem_range: Object.freeze([1, 5]) }),
+  red_brick_wall: Object.freeze({ grow_time: 225, block_drop_chance: 0.45, seed_drop_chance: 0.08, tree_block_range: Object.freeze([1, 4]), tree_seed_range: Object.freeze([0, 4]), break_gem_range: Object.freeze([1, 5]) }),
+  stone_brick_wall: Object.freeze({ grow_time: 225, block_drop_chance: 0.45, seed_drop_chance: 0.08, tree_block_range: Object.freeze([1, 4]), tree_seed_range: Object.freeze([0, 4]), break_gem_range: Object.freeze([1, 5]) }),
+  green_brick_wall: Object.freeze({ grow_time: 225, block_drop_chance: 0.45, seed_drop_chance: 0.08, tree_block_range: Object.freeze([1, 4]), tree_seed_range: Object.freeze([0, 4]), break_gem_range: Object.freeze([1, 5]) }),
+  green_moss_brick_wall: Object.freeze({ grow_time: 225, block_drop_chance: 0.45, seed_drop_chance: 0.08, tree_block_range: Object.freeze([1, 4]), tree_seed_range: Object.freeze([0, 4]), break_gem_range: Object.freeze([1, 5]) }),
+  gold_block: Object.freeze({ grow_time: 600, block_drop_chance: 0.20, seed_drop_chance: 0.04, break_block_range: Object.freeze([0, 3]), break_seed_range: Object.freeze([0, 1]), tree_block_range: Object.freeze([0, 3]), tree_seed_range: Object.freeze([0, 1]), break_gem_range: Object.freeze([20, 60]) }),
+  emerald_block: Object.freeze({ grow_time: 600, block_drop_chance: 0.20, seed_drop_chance: 0.04, break_block_range: Object.freeze([0, 3]), break_seed_range: Object.freeze([0, 1]), tree_block_range: Object.freeze([0, 3]), tree_seed_range: Object.freeze([0, 1]), break_gem_range: Object.freeze([20, 60]) }),
+  ruby_block: Object.freeze({ grow_time: 600, block_drop_chance: 0.20, seed_drop_chance: 0.04, break_block_range: Object.freeze([0, 3]), break_seed_range: Object.freeze([0, 1]), tree_block_range: Object.freeze([0, 3]), tree_seed_range: Object.freeze([0, 1]), break_gem_range: Object.freeze([20, 60]) }),
+  diamond_block: Object.freeze({ grow_time: 600, block_drop_chance: 0.20, seed_drop_chance: 0.04, break_block_range: Object.freeze([0, 3]), break_seed_range: Object.freeze([0, 1]), tree_block_range: Object.freeze([0, 3]), tree_seed_range: Object.freeze([0, 1]), break_gem_range: Object.freeze([20, 60]) }),
+  amethyst_block: Object.freeze({ grow_time: 600, block_drop_chance: 0.20, seed_drop_chance: 0.04, break_block_range: Object.freeze([0, 3]), break_seed_range: Object.freeze([0, 1]), tree_block_range: Object.freeze([0, 3]), tree_seed_range: Object.freeze([0, 1]), break_gem_range: Object.freeze([20, 60]) }),
 });
 
 function applyTier1SpliceBalance(items: ItemDefinitions): void {
@@ -308,8 +351,17 @@ function applyTier1SpliceBalance(items: ItemDefinitions): void {
 
     const seedId = cleanItemId(blockDefinition.seed || `${blockId}_seed`);
     blockDefinition.seed = seedId;
-    blockDefinition.drop_rules = makeConfiguredSeedDropRules(blockId, seedId, balance.block_drop_chance, balance.seed_drop_chance);
-    blockDefinition.tree_drop_rules = makeConfiguredTreeDropRules(blockId, seedId, balance.tree_block_range, balance.tree_seed_range);
+    const balanceRecord = balance as Record<string, any>;
+    blockDefinition.drop_rules = makeConfiguredSeedDropRules(
+      blockId,
+      seedId,
+      balance.block_drop_chance,
+      balance.seed_drop_chance,
+      balanceRecord.break_gem_range || Object.freeze([]),
+      balanceRecord.break_block_range || Object.freeze([]),
+      balanceRecord.break_seed_range || Object.freeze([]),
+    );
+    blockDefinition.tree_drop_rules = makeConfiguredTreeDropRules(blockId, seedId, balance.tree_block_range, balance.tree_seed_range, balanceRecord.tree_gem_range || Object.freeze([]));
 
     if (!items[seedId]) {
       items[seedId] = seed(blockId, {
@@ -2110,10 +2162,156 @@ const ITEM_DEFINITIONS = {
     craft_only: true,
   }),
   stone_brick: block({
+    atlas_item_id: 41,
+    atlas_coords: [18, 5],
+    texture: atlasImage([18, 5]),
+    inventory_icon: atlasImage([18, 5]),
     rarity: "uncommon",
     block_health: 5,
     seed: "stone_brick_seed",
+    no_collision: false,
+    collidable: true,
     craft_only: true,
+  }),
+  red_brick: block({
+    atlas_item_id: 40,
+    atlas_coords: [17, 5],
+    texture: atlasImage([17, 5]),
+    inventory_icon: atlasImage([17, 5]),
+    rarity: "uncommon",
+    block_health: 5,
+    seed: "red_brick_seed",
+    no_collision: false,
+    collidable: true,
+  }),
+  green_brick: block({
+    atlas_item_id: 42,
+    atlas_coords: [19, 5],
+    texture: atlasImage([19, 5]),
+    inventory_icon: atlasImage([19, 5]),
+    rarity: "uncommon",
+    block_health: 5,
+    seed: "green_brick_seed",
+    no_collision: false,
+    collidable: true,
+  }),
+  green_moss_brick: block({
+    atlas_item_id: 43,
+    atlas_coords: [20, 5],
+    texture: atlasImage([20, 5]),
+    inventory_icon: atlasImage([20, 5]),
+    rarity: "uncommon",
+    block_health: 5,
+    seed: "green_moss_brick_seed",
+    no_collision: false,
+    collidable: true,
+  }),
+  red_brick_wall: block({
+    atlas_item_id: 44,
+    atlas_coords: [17, 6],
+    texture: atlasImage([17, 6]),
+    inventory_icon: atlasImage([17, 6]),
+    rarity: "uncommon",
+    block_health: 3,
+    seed: "red_brick_wall_seed",
+    background_block: true,
+    place_layer: "background",
+    no_collision: true,
+    collidable: false,
+  }),
+  stone_brick_wall: block({
+    atlas_item_id: 45,
+    atlas_coords: [18, 6],
+    texture: atlasImage([18, 6]),
+    inventory_icon: atlasImage([18, 6]),
+    rarity: "uncommon",
+    block_health: 3,
+    seed: "stone_brick_wall_seed",
+    background_block: true,
+    place_layer: "background",
+    no_collision: true,
+    collidable: false,
+  }),
+  green_brick_wall: block({
+    atlas_item_id: 46,
+    atlas_coords: [19, 6],
+    texture: atlasImage([19, 6]),
+    inventory_icon: atlasImage([19, 6]),
+    rarity: "uncommon",
+    block_health: 3,
+    seed: "green_brick_wall_seed",
+    background_block: true,
+    place_layer: "background",
+    no_collision: true,
+    collidable: false,
+  }),
+  green_moss_brick_wall: block({
+    atlas_item_id: 47,
+    atlas_coords: [20, 6],
+    texture: atlasImage([20, 6]),
+    inventory_icon: atlasImage([20, 6]),
+    rarity: "uncommon",
+    block_health: 3,
+    seed: "green_moss_brick_wall_seed",
+    background_block: true,
+    place_layer: "background",
+    no_collision: true,
+    collidable: false,
+  }),
+  gold_block: block({
+    atlas_item_id: 48,
+    atlas_coords: [21, 5],
+    texture: atlasImage([21, 5]),
+    inventory_icon: atlasImage([21, 5]),
+    rarity: "epic",
+    block_health: 6,
+    seed: "gold_block_seed",
+    no_collision: false,
+    collidable: true,
+  }),
+  emerald_block: block({
+    atlas_item_id: 49,
+    atlas_coords: [22, 5],
+    texture: atlasImage([22, 5]),
+    inventory_icon: atlasImage([22, 5]),
+    rarity: "epic",
+    block_health: 6,
+    seed: "emerald_block_seed",
+    no_collision: false,
+    collidable: true,
+  }),
+  ruby_block: block({
+    atlas_item_id: 50,
+    atlas_coords: [23, 5],
+    texture: atlasImage([23, 5]),
+    inventory_icon: atlasImage([23, 5]),
+    rarity: "epic",
+    block_health: 6,
+    seed: "ruby_block_seed",
+    no_collision: false,
+    collidable: true,
+  }),
+  diamond_block: block({
+    atlas_item_id: 51,
+    atlas_coords: [24, 5],
+    texture: atlasImage([24, 5]),
+    inventory_icon: atlasImage([24, 5]),
+    rarity: "epic",
+    block_health: 6,
+    seed: "diamond_block_seed",
+    no_collision: false,
+    collidable: true,
+  }),
+  amethyst_block: block({
+    atlas_item_id: 52,
+    atlas_coords: [25, 5],
+    texture: atlasImage([25, 5]),
+    inventory_icon: atlasImage([25, 5]),
+    rarity: "epic",
+    block_health: 6,
+    seed: "amethyst_block_seed",
+    no_collision: false,
+    collidable: true,
   }),
   glass_panel: block({
     rarity: "rare",

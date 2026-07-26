@@ -113,6 +113,105 @@ assert.match(serverSource, /world_changes:\s*\[objectChange\]/);
 assert.match(serverSource, /ATM Machine produced \$\{committedAtmReward\.amount\} gems\./);
 assert.match(atlasDefinitionSource, /"atm_machine_block"/);
 assert.match(atlasDefinitionSource, /"atm_machine_reward_amount_range"/);
+assert.equal(atlasDefinition.ATLAS_PASSTHROUGH_KEYS.includes("seed"), true);
+
+/**
+ * @param {any} definition
+ * @param {string} itemId
+ */
+function fixedDrop(definition, itemId) {
+  return (definition?.drop_rules?.fixed_drops || []).find((/** @type {any} */ drop) => drop.item_id === itemId);
+}
+
+/**
+ * @param {any} definition
+ * @param {string} itemId
+ */
+function treeDrop(definition, itemId) {
+  return (definition?.tree_drop_rules?.fixed_drops || []).find((/** @type {any} */ drop) => drop.item_id === itemId);
+}
+
+/**
+ * @param {{ itemId: string, atlasItemId: number, cell: number[], layer: string, health: number, rarity: string }} blockCase
+ */
+function assertAtlasBlockDefinition(blockCase) {
+  const definition = itemDatabase.getItemDefinition(blockCase.itemId);
+  const seedId = `${blockCase.itemId}_seed`;
+  assert.equal(atlasDb.getItemIdForKey(blockCase.itemId), blockCase.atlasItemId);
+  assert.deepEqual(Array.from(atlasDb.getItem(blockCase.atlasItemId)?.atlas_coords || []), blockCase.cell);
+  assert.equal(definition?.category, "block");
+  assert.equal(definition?.rarity, blockCase.rarity);
+  assert.equal(definition?.block_health, blockCase.health);
+  assert.equal(definition?.seed, seedId);
+  assert.equal(definition?.atlas_item_id, blockCase.atlasItemId);
+  assert.deepEqual(Array.from(definition?.atlas_coords || []), blockCase.cell);
+  assert.deepEqual(Array.from(definition?.texture?.cell || []), blockCase.cell);
+  assert.deepEqual(Array.from(definition?.inventory_icon?.cell || []), blockCase.cell);
+  assert.equal(itemDatabase.getPlaceLayer(blockCase.itemId), blockCase.layer);
+  if (blockCase.layer === "background") {
+    assert.equal(definition?.background_block, true);
+    assert.equal(definition?.no_collision, true);
+    assert.equal(definition?.collidable, false);
+  } else {
+    assert.equal(definition?.no_collision, false);
+    assert.equal(definition?.collidable, true);
+  }
+
+  const seedDefinition = itemDatabase.getItemDefinition(seedId);
+  assert.equal(seedDefinition?.category, "seed");
+  assert.equal(seedDefinition?.grows_into, blockCase.itemId);
+}
+
+const brickBlockCases = [
+  { itemId: "red_brick", atlasItemId: 40, cell: [17, 5], layer: "foreground", health: 5, rarity: "uncommon" },
+  { itemId: "stone_brick", atlasItemId: 41, cell: [18, 5], layer: "foreground", health: 5, rarity: "uncommon" },
+  { itemId: "green_brick", atlasItemId: 42, cell: [19, 5], layer: "foreground", health: 5, rarity: "uncommon" },
+  { itemId: "green_moss_brick", atlasItemId: 43, cell: [20, 5], layer: "foreground", health: 5, rarity: "uncommon" },
+  { itemId: "red_brick_wall", atlasItemId: 44, cell: [17, 6], layer: "background", health: 3, rarity: "uncommon" },
+  { itemId: "stone_brick_wall", atlasItemId: 45, cell: [18, 6], layer: "background", health: 3, rarity: "uncommon" },
+  { itemId: "green_brick_wall", atlasItemId: 46, cell: [19, 6], layer: "background", health: 3, rarity: "uncommon" },
+  { itemId: "green_moss_brick_wall", atlasItemId: 47, cell: [20, 6], layer: "background", health: 3, rarity: "uncommon" },
+];
+for (const blockCase of brickBlockCases) {
+  assertAtlasBlockDefinition(blockCase);
+  const definition = itemDatabase.getItemDefinition(blockCase.itemId);
+  const seedId = `${blockCase.itemId}_seed`;
+  assert.deepEqual(fixedDrop(definition, blockCase.itemId), {
+    item_id: blockCase.itemId,
+    item_category: "block",
+    amount: 1,
+    chance: 0.45,
+  });
+  assert.deepEqual(fixedDrop(definition, seedId), {
+    item_id: seedId,
+    item_category: "seed",
+    amount: 1,
+    chance: 0.08,
+  });
+  assert.deepEqual(Array.from(fixedDrop(definition, "gem")?.amount_range || []), [1, 5]);
+  assert.deepEqual(Array.from(treeDrop(definition, blockCase.itemId)?.amount_range || []), [1, 4]);
+  assert.deepEqual(Array.from(treeDrop(definition, seedId)?.amount_range || []), [0, 4]);
+}
+
+const gemBlockCases = [
+  { itemId: "gold_block", atlasItemId: 48, cell: [21, 5], layer: "foreground", health: 6, rarity: "epic" },
+  { itemId: "emerald_block", atlasItemId: 49, cell: [22, 5], layer: "foreground", health: 6, rarity: "epic" },
+  { itemId: "ruby_block", atlasItemId: 50, cell: [23, 5], layer: "foreground", health: 6, rarity: "epic" },
+  { itemId: "diamond_block", atlasItemId: 51, cell: [24, 5], layer: "foreground", health: 6, rarity: "epic" },
+  { itemId: "amethyst_block", atlasItemId: 52, cell: [25, 5], layer: "foreground", health: 6, rarity: "epic" },
+];
+for (const blockCase of gemBlockCases) {
+  assertAtlasBlockDefinition(blockCase);
+  const definition = itemDatabase.getItemDefinition(blockCase.itemId);
+  const seedId = `${blockCase.itemId}_seed`;
+  assert.deepEqual(Array.from(fixedDrop(definition, blockCase.itemId)?.amount_range || []), [0, 3]);
+  assert.equal(fixedDrop(definition, blockCase.itemId)?.chance, undefined);
+  assert.deepEqual(Array.from(fixedDrop(definition, seedId)?.amount_range || []), [0, 1]);
+  assert.equal(fixedDrop(definition, seedId)?.chance, undefined);
+  assert.deepEqual(Array.from(fixedDrop(definition, "gem")?.amount_range || []), [20, 60]);
+  assert.deepEqual(Array.from(treeDrop(definition, blockCase.itemId)?.amount_range || []), [0, 3]);
+  assert.deepEqual(Array.from(treeDrop(definition, seedId)?.amount_range || []), [0, 1]);
+}
 
 const pickaxeItemIds = [
   "stone_pickaxe",

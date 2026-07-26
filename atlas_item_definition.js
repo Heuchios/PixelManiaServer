@@ -3,6 +3,7 @@
 const ItemAtlasDB = require("./item_atlas_db");
 const ATLAS_PASSTHROUGH_KEYS = Object.freeze([
     "rarity",
+    "seed",
     "instance_tracked",
     "shop_price",
     "break_return_to_inventory",
