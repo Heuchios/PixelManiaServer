@@ -174,7 +174,9 @@ interface WorldStateStreamOptions {
 
 interface WorldStateStreamResult {
   packets: JsonRecord[];
+  packetJson: string[];
   snapshotBytes: number;
+  wireBytes: number;
   chunkCount: number;
   sectionCount: number;
 }
@@ -199,10 +201,14 @@ function buildWorldStateStreamPackets(
   if (!serializedState) {
     throw new Error("World state stream requires a JSON object.");
   }
-  const state = JSON.parse(serializedState) as unknown;
-  if (!isRecord(state)) {
+  if (!isRecord(rawState)) {
     throw new Error("World state stream requires a JSON object.");
   }
+  // Packet construction is synchronous on Node's event loop. No world mutation
+  // can interleave between this serialization and packet assembly, so parsing
+  // the serialized snapshot back into a second full object only doubles peak
+  // memory and CPU without adding snapshot isolation.
+  const state = rawState;
 
   const maxPacketBytes = Math.max(4096, Math.trunc(Number(options.maxPacketBytes) || 64 * 1024));
   const targetPacketBytes = Math.min(
@@ -342,17 +348,24 @@ function buildWorldStateStreamPackets(
     snapshot_bytes: snapshotBytes,
   };
   const packets = [beginPacket, ...chunks, endPacket];
+  const packetJson: string[] = [];
+  let wireBytes = 0;
 
   for (const packet of packets) {
-    const packetBytes = getJsonByteLength(packet);
+    const rawPacket = JSON.stringify(packet);
+    const packetBytes = Buffer.byteLength(rawPacket);
     if (packetBytes > maxPacketBytes) {
       throw new Error(`World state stream packet ${String(packet.type || "unknown")} is ${packetBytes} bytes; maximum is ${maxPacketBytes}.`);
     }
+    packetJson.push(rawPacket);
+    wireBytes += packetBytes;
   }
 
   return {
     packets,
+    packetJson,
     snapshotBytes,
+    wireBytes,
     chunkCount,
     sectionCount: sections.length,
   };

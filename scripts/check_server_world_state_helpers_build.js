@@ -749,12 +749,20 @@ const streamResult = WorldStateHelpersModule.buildWorldStateStreamPackets(largeW
 const streamPackets = /** @type {Array<Record<string, any>>} */ (streamResult.packets);
 assert.ok(streamResult.snapshotBytes > 250 * 1024, "fixture must exercise a production-sized world snapshot");
 assert.ok(streamResult.chunkCount > 1, "large snapshots must be split into multiple chunks");
+assert.equal(streamResult.packetJson.length, streamPackets.length, "every validated packet must have one reusable JSON payload");
+assert.equal(
+  streamResult.wireBytes,
+  streamResult.packetJson.reduce((total, rawPacket) => total + Buffer.byteLength(rawPacket), 0),
+  "reported stream wire bytes must match the exact queued JSON payloads",
+);
 assert.equal(streamPackets[0]?.type, "world_state_stream_begin");
 assert.equal(streamPackets.at(-1)?.type, "world_state_stream_end");
-for (const packet of streamPackets) {
-  assert.ok(Buffer.byteLength(JSON.stringify(packet)) <= 64 * 1024, "every world-state stream packet must stay under the hard WebSocket limit");
+for (let packetIndex = 0; packetIndex < streamPackets.length; packetIndex += 1) {
+  const packet = streamPackets[packetIndex];
+  assert.equal(streamResult.packetJson[packetIndex], JSON.stringify(packet), "reusable packet JSON must exactly match its validated packet");
+  assert.ok(Buffer.byteLength(streamResult.packetJson[packetIndex]) <= 64 * 1024, "every world-state stream packet must stay under the hard WebSocket limit");
   if (packet.type === "world_state_stream_chunk") {
-    assert.ok(Buffer.byteLength(JSON.stringify(packet)) <= 48 * 1024, "world-state chunks must stay under the configured target");
+    assert.ok(Buffer.byteLength(streamResult.packetJson[packetIndex]) <= 48 * 1024, "world-state chunks must stay under the configured target");
   }
 }
 const streamBegin = /** @type {Record<string, any>} */ (streamPackets[0]);

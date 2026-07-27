@@ -13582,27 +13582,72 @@ function summarizeSerializedWorldStateForLog(state) {
  * @param {string} reason
  * @returns {Promise<PixelMania.RefreshWorldStateFromPostgresResult | Record<string, unknown>>}
  */
+const worldStateRefreshesInFlight = new Map();
+function elapsedWorldEntryMs(startedAt) {
+    return Math.round((Number(process.hrtime.bigint() - startedAt) / 1_000_000) * 1000) / 1000;
+}
 async function refreshWorldStateFromPostgres(worldName, reason = "world_state_send") {
     const clean = cleanWorld(worldName);
+    const waitStartedAt = process.hrtime.bigint();
+    const existingRefresh = worldStateRefreshesInFlight.get(clean);
+    if (existingRefresh) {
+        const result = await existingRefresh;
+        return {
+            ...(result && typeof result === "object" ? result : {}),
+            coalesced: true,
+            coalesced_wait_ms: elapsedWorldEntryMs(waitStartedAt),
+        };
+    }
+    const refreshPromise = refreshWorldStateFromPostgresUncoalesced(clean, reason);
+    worldStateRefreshesInFlight.set(clean, refreshPromise);
+    try {
+        const result = await refreshPromise;
+        return {
+            ...(result && typeof result === "object" ? result : {}),
+            coalesced: false,
+            refresh_total_ms: elapsedWorldEntryMs(waitStartedAt),
+        };
+    }
+    finally {
+        if (worldStateRefreshesInFlight.get(clean) === refreshPromise) {
+            worldStateRefreshesInFlight.delete(clean);
+        }
+    }
+}
+async function refreshWorldStateFromPostgresUncoalesced(clean, reason) {
+    const refreshStartedAt = process.hrtime.bigint();
+    const timings = {};
+    const finish = (result) => {
+        timings.refresh_core_ms = elapsedWorldEntryMs(refreshStartedAt);
+        return { ...result, timings };
+    };
     if (!isPostgresAuthoritativeReady())
-        return { ok: true, skipped: true, reason: "postgres_unavailable" };
+        return finish({ ok: true, skipped: true, reason: "postgres_unavailable" });
     if (typeof postgresStore.loadWorldState !== "function") {
         console.warn("[postgres] authoritative world refresh unavailable; postgresStore.loadWorldState is missing", {
             world: clean,
             reason,
         });
-        return { ok: false, reason: "unsupported" };
+        return finish({ ok: false, reason: "unsupported" });
     }
+    let phaseStartedAt = process.hrtime.bigint();
     const persistenceFlush = await flushPendingSessionPersistence("", clean, `before_${reason}_world_refresh`);
+    timings.persistence_flush_ms = elapsedWorldEntryMs(phaseStartedAt);
     if (!persistenceFlush.ok) {
-        return { ok: false, reason: persistenceFlush.reason || "world_persistence_flush_failed" };
+        return finish({ ok: false, reason: persistenceFlush.reason || "world_persistence_flush_failed" });
     }
+    phaseStartedAt = process.hrtime.bigint();
     await worldPersistenceCoordinator.wait(clean);
+    timings.persistence_wait_ms = elapsedWorldEntryMs(phaseStartedAt);
+    phaseStartedAt = process.hrtime.bigint();
     const ownershipVerification = await verifyWorldPersistenceOwnership(clean);
+    timings.ownership_verify_ms = elapsedWorldEntryMs(phaseStartedAt);
     if (!ownershipVerification.ok) {
-        return { ok: false, reason: ownershipVerification.reason || "world_ownership_unverified" };
+        return finish({ ok: false, reason: ownershipVerification.reason || "world_ownership_unverified" });
     }
+    phaseStartedAt = process.hrtime.bigint();
     const result = await postgresStore.loadWorldState(clean);
+    timings.postgres_query_ms = elapsedWorldEntryMs(phaseStartedAt);
     if (!result || !result.ok) {
         console.warn("[postgres] authoritative world refresh failed", {
             world: clean,
@@ -13610,12 +13655,15 @@ async function refreshWorldStateFromPostgres(worldName, reason = "world_state_se
             failure_reason: result?.reason || "unknown",
             message: result?.message || "",
         });
-        return { ok: false, reason: result?.reason || "database_error" };
+        return finish({ ok: false, reason: result?.reason || "database_error" });
     }
+    phaseStartedAt = process.hrtime.bigint();
     const postLoadOwnershipVerification = await verifyWorldPersistenceOwnership(clean);
+    timings.post_load_ownership_verify_ms = elapsedWorldEntryMs(phaseStartedAt);
     if (!postLoadOwnershipVerification.ok) {
-        return { ok: false, reason: postLoadOwnershipVerification.reason || "world_ownership_changed_during_load" };
+        return finish({ ok: false, reason: postLoadOwnershipVerification.reason || "world_ownership_changed_during_load" });
     }
+    phaseStartedAt = process.hrtime.bigint();
     // Read memory after the database await. A world mutation may have completed
     // while PostgreSQL was loading, and that accepted revision must not be
     // replaced by the older result that just arrived.
@@ -13631,6 +13679,7 @@ async function refreshWorldStateFromPostgres(worldName, reason = "world_state_se
         database_revision: databaseRevision,
         memory_authoritative: memoryAuthoritative,
     });
+    timings.revision_resolution_ms = elapsedWorldEntryMs(phaseStartedAt);
     console.log("[world-persistence]", JSON.stringify({
         event: "load",
         world_id: clean,
@@ -13645,26 +13694,31 @@ async function refreshWorldStateFromPostgres(worldName, reason = "world_state_se
         save_result: `${loadDecision.source}:${loadDecision.reason}`,
     }));
     if (loadDecision.source === "memory") {
+        phaseStartedAt = process.hrtime.bigint();
         const reconciled = await saveWorldState(clean, {
             mutation: false,
             reason: `reconcile_${loadDecision.reason}`,
         });
+        timings.memory_reconcile_ms = elapsedWorldEntryMs(phaseStartedAt);
         if (reconciled !== true) {
-            return { ok: false, reason: "newer_memory_reconcile_failed" };
+            return finish({ ok: false, reason: "newer_memory_reconcile_failed" });
         }
         scheduleWorldEventEnd(clean);
+        phaseStartedAt = process.hrtime.bigint();
         const memoryState = serializeWorldState(clean);
         const memorySummary = summarizeSerializedWorldStateForLog(memoryState);
-        return {
+        timings.memory_serialize_ms = elapsedWorldEntryMs(phaseStartedAt);
+        return finish({
             ok: true,
             found: true,
             world: clean,
             source: "memory",
             world_revision: getWorldRevision(clean),
             ...memorySummary,
-        };
+        });
     }
     if (loadDecision.source === "empty") {
+        phaseStartedAt = process.hrtime.bigint();
         worldUnpersistedRevisions.delete(clean);
         worldPersistedRevisions.set(clean, 0);
         worldStates.set(clean, createEmptyWorldState());
@@ -13675,8 +13729,10 @@ async function refreshWorldStateFromPostgres(worldName, reason = "world_state_se
             had_local_state: memoryExists,
             memory_revision: memoryRevision,
         });
-        return { ok: true, found: false, world: clean, had_local_state: memoryExists };
+        timings.initialize_empty_ms = elapsedWorldEntryMs(phaseStartedAt);
+        return finish({ ok: true, found: false, world: clean, had_local_state: memoryExists });
     }
+    phaseStartedAt = process.hrtime.bigint();
     const seedTimestampMigrationNeeded = WorldStateHelpers.needsSeedTimestampMigration(result.state || {});
     const state = deserializeWorldState(clean, result.state || {});
     worldUnpersistedRevisions.delete(clean);
@@ -13689,6 +13745,7 @@ async function refreshWorldStateFromPostgres(worldName, reason = "world_state_se
             seeds: state.seeds instanceof Map ? state.seeds.size : 0,
         });
     }
+    timings.deserialize_ms = elapsedWorldEntryMs(phaseStartedAt);
     const summary = summarizeSerializedWorldStateForLog(result.state || {});
     if (WORLD_STATE_REFRESH_TRACE || summary.total_blocks === 0) {
         const logMethod = summary.total_blocks === 0 ? "warn" : "log";
@@ -13700,33 +13757,43 @@ async function refreshWorldStateFromPostgres(worldName, reason = "world_state_se
             ...summary,
         });
     }
-    return {
+    return finish({
         ok: true,
         found: true,
         world: clean,
         source: "database",
         world_revision: getWorldRevision(clean),
         ...summary,
-    };
+    });
 }
 async function refreshPlayerStateFromPostgres(username, reason = "player_state_send") {
+    const refreshStartedAt = process.hrtime.bigint();
+    const timings = {};
+    const finish = (result) => {
+        timings.refresh_total_ms = elapsedWorldEntryMs(refreshStartedAt);
+        return { ...result, timings };
+    };
     const clean = cleanAccountName(username);
     if (clean === "")
-        return { ok: false, found: false, reason: "invalid_username" };
+        return finish({ ok: false, found: false, reason: "invalid_username" });
     if (!isPostgresAuthoritativeReady())
-        return { ok: true, skipped: true, reason: "postgres_unavailable" };
+        return finish({ ok: true, skipped: true, reason: "postgres_unavailable" });
     if (typeof postgresStore.loadPlayerState !== "function") {
         console.warn("[postgres] authoritative player refresh unavailable; postgresStore.loadPlayerState is missing", {
             username: clean,
             reason,
         });
-        return { ok: false, found: false, reason: "unsupported" };
+        return finish({ ok: false, found: false, reason: "unsupported" });
     }
+    let phaseStartedAt = process.hrtime.bigint();
     const persistenceFlush = await flushPendingSessionPersistence(clean, "", `before_${reason}_player_refresh`);
+    timings.persistence_flush_ms = elapsedWorldEntryMs(phaseStartedAt);
     if (!persistenceFlush.ok) {
-        return { ok: false, found: false, reason: persistenceFlush.reason || "player_persistence_flush_failed" };
+        return finish({ ok: false, found: false, reason: persistenceFlush.reason || "player_persistence_flush_failed" });
     }
+    phaseStartedAt = process.hrtime.bigint();
     const result = await postgresStore.loadPlayerState(clean);
+    timings.postgres_query_ms = elapsedWorldEntryMs(phaseStartedAt);
     if (!result || !result.ok) {
         console.warn("[postgres] authoritative player refresh failed", {
             username: clean,
@@ -13734,17 +13801,19 @@ async function refreshPlayerStateFromPostgres(username, reason = "player_state_s
             failure_reason: result?.reason || "unknown",
             message: result?.message || "",
         });
-        return { ok: false, found: false, reason: result?.reason || "database_error" };
+        return finish({ ok: false, found: false, reason: result?.reason || "database_error" });
     }
     if (!result.found) {
-        return { ok: true, found: false, username: clean };
+        return finish({ ok: true, found: false, username: clean });
     }
+    phaseStartedAt = process.hrtime.bigint();
     const state = sanitizePlayerState(result.state || {}, result.username || clean);
+    timings.deserialize_ms = elapsedWorldEntryMs(phaseStartedAt);
     if (!state) {
-        return { ok: false, found: true, reason: "invalid_player_state" };
+        return finish({ ok: false, found: true, reason: "invalid_player_state" });
     }
     setPlayerState(clean, state);
-    return { ok: true, found: true, username: clean, state };
+    return finish({ ok: true, found: true, username: clean, state });
 }
 /**
  * @param {PixelMania.WorldName | string} worldName
@@ -19250,6 +19319,13 @@ function buildPublicPlayerProfilePayload(username, requestId = "", purpose = "")
     const onlinePlayer = onlineEntry ? onlineEntry.player : null;
     const publicData = buildPublicPlayerData(state);
     const displayUsername = account?.username || publicData.account_username || clean;
+    const onlineEquipmentSlots = onlinePlayer?.equipment_slots && typeof onlinePlayer.equipment_slots === "object" && !Array.isArray(onlinePlayer.equipment_slots)
+        ? onlinePlayer.equipment_slots
+        : {};
+    const equipmentSlotSource = Object.keys(onlineEquipmentSlots).length > 0
+        ? onlineEquipmentSlots
+        : getEquipmentSlotsFromPlayerState(state);
+    const equipmentSlots = sanitizeEquipmentSlots(equipmentSlotSource, displayUsername, state);
     return {
         type: "player_state",
         ok: found,
@@ -19272,6 +19348,7 @@ function buildPublicPlayerProfilePayload(username, requestId = "", purpose = "")
             created_at: account ? String(account.created_at || "") : "",
             last_seen_at: account ? String(account.last_seen_at || "") : "",
         } : {},
+        equipment_slots: equipmentSlots,
         player_data: publicData,
         message: found ? (onlinePlayer ? "Player is online." : "Player is offline.") : "Player not found.",
     };
@@ -26357,6 +26434,7 @@ function buildWorldStateMessage(worldName, extraMessageData = {}) {
         type: "world_state",
         world_state_encoding: "grid_dictionary_v1",
         world: clean,
+        world_revision: getWorldRevision(clean),
         block_revision: getWorldBlockRevision(state),
         cleared: Boolean(state.cleared),
         foreground: WorldStateHelpers.compactWorldLayerEntriesForNetwork(getEffectiveForegroundBlocksForState(state, clean, generatedMaps.foreground)),
@@ -26396,31 +26474,149 @@ function supportsWorldStateStreaming(player) {
     return comparison !== null && comparison >= 0;
 }
 function sendWorldStateToSocket(socket, player, worldName, extraMessageData = {}) {
+    const totalStartedAt = process.hrtime.bigint();
+    let phaseStartedAt = totalStartedAt;
     const payload = buildWorldStateMessage(worldName, extraMessageData);
+    const payloadBuildMs = elapsedWorldEntryMs(phaseStartedAt);
     if (!supportsWorldStateStreaming(player)) {
-        sendJson(socket, payload);
-        return;
+        phaseStartedAt = process.hrtime.bigint();
+        let raw = "";
+        try {
+            raw = JSON.stringify(payload);
+        }
+        catch (error) {
+            return {
+                ok: false,
+                streamed: false,
+                payload_build_ms: payloadBuildMs,
+                serialization_ms: elapsedWorldEntryMs(phaseStartedAt),
+                compression: "none",
+                compression_ms: 0,
+                queue_ms: 0,
+                total_ms: elapsedWorldEntryMs(totalStartedAt),
+                snapshot_bytes: -1,
+                wire_bytes: 0,
+                chunk_count: 0,
+                section_count: 0,
+                world_revision: Number(payload.world_revision || 0),
+                block_revision: Number(payload.block_revision || 0),
+                reason: error instanceof Error ? error.message : String(error || "serialization_failed"),
+            };
+        }
+        const serializationMs = elapsedWorldEntryMs(phaseStartedAt);
+        phaseStartedAt = process.hrtime.bigint();
+        const sent = sendRawJsonToSocket(socket, raw, "world_state_legacy", {
+            message_type: String(payload.type || "world_state"),
+        });
+        return {
+            ok: sent,
+            streamed: false,
+            payload_build_ms: payloadBuildMs,
+            serialization_ms: serializationMs,
+            compression: "none",
+            compression_ms: 0,
+            queue_ms: elapsedWorldEntryMs(phaseStartedAt),
+            total_ms: elapsedWorldEntryMs(totalStartedAt),
+            snapshot_bytes: Buffer.byteLength(raw),
+            wire_bytes: Buffer.byteLength(raw),
+            chunk_count: 0,
+            section_count: 0,
+            world_revision: Number(payload.world_revision || 0),
+            block_revision: Number(payload.block_revision || 0),
+        };
     }
     try {
+        phaseStartedAt = process.hrtime.bigint();
         const stream = WorldStateHelpersModule.buildWorldStateStreamPackets(payload, {
             snapshotId: crypto.randomUUID(),
             targetPacketBytes: WORLD_STATE_STREAM_TARGET_PACKET_BYTES,
             maxPacketBytes: MAX_PACKET_BYTES,
             maxChunks: WORLD_STATE_STREAM_MAX_CHUNKS,
         });
-        for (const packet of stream.packets) {
-            sendJson(socket, packet);
+        const streamBuildMs = elapsedWorldEntryMs(phaseStartedAt);
+        phaseStartedAt = process.hrtime.bigint();
+        let sent = true;
+        for (let index = 0; index < stream.packetJson.length; index += 1) {
+            const packet = stream.packets[index] || {};
+            sent = sendRawJsonToSocket(socket, stream.packetJson[index], "world_state_stream", {
+                message_type: String(packet.type || ""),
+                snapshot_id: String(packet.snapshot_id || ""),
+                chunk_index: Number(packet.chunk_index ?? -1),
+            }) && sent;
         }
+        return {
+            ok: sent,
+            streamed: true,
+            payload_build_ms: payloadBuildMs,
+            stream_build_ms: streamBuildMs,
+            serialization_ms: streamBuildMs,
+            compression: "none",
+            compression_ms: 0,
+            queue_ms: elapsedWorldEntryMs(phaseStartedAt),
+            total_ms: elapsedWorldEntryMs(totalStartedAt),
+            snapshot_bytes: stream.snapshotBytes,
+            wire_bytes: stream.wireBytes,
+            chunk_count: stream.chunkCount,
+            section_count: stream.sectionCount,
+            world_revision: Number(payload.world_revision || 0),
+            block_revision: Number(payload.block_revision || 0),
+        };
     }
     catch (error) {
         console.warn("[world_state_stream] falling back to legacy snapshot:", {
             world: cleanWorld(worldName),
-            player: String(player && typeof player === "object" && !Array.isArray(player)
-                ? player.account_username || player.name || ""
-                : ""),
             error: error instanceof Error ? error.message : String(error || "unknown error"),
         });
-        sendJson(socket, payload);
+        phaseStartedAt = process.hrtime.bigint();
+        let raw = "";
+        try {
+            raw = JSON.stringify(payload);
+        }
+        catch (serializationError) {
+            return {
+                ok: false,
+                streamed: false,
+                fallback: true,
+                payload_build_ms: payloadBuildMs,
+                serialization_ms: elapsedWorldEntryMs(phaseStartedAt),
+                compression: "none",
+                compression_ms: 0,
+                queue_ms: 0,
+                total_ms: elapsedWorldEntryMs(totalStartedAt),
+                snapshot_bytes: -1,
+                wire_bytes: 0,
+                chunk_count: 0,
+                section_count: 0,
+                world_revision: Number(payload.world_revision || 0),
+                block_revision: Number(payload.block_revision || 0),
+                reason: serializationError instanceof Error
+                    ? serializationError.message
+                    : String(serializationError || "serialization_failed"),
+            };
+        }
+        const serializationMs = elapsedWorldEntryMs(phaseStartedAt);
+        phaseStartedAt = process.hrtime.bigint();
+        const sent = sendRawJsonToSocket(socket, raw, "world_state_legacy_fallback", {
+            message_type: String(payload.type || "world_state"),
+        });
+        return {
+            ok: sent,
+            streamed: false,
+            fallback: true,
+            payload_build_ms: payloadBuildMs,
+            serialization_ms: serializationMs,
+            compression: "none",
+            compression_ms: 0,
+            queue_ms: elapsedWorldEntryMs(phaseStartedAt),
+            total_ms: elapsedWorldEntryMs(totalStartedAt),
+            snapshot_bytes: Buffer.byteLength(raw),
+            wire_bytes: Buffer.byteLength(raw),
+            chunk_count: 0,
+            section_count: 0,
+            world_revision: Number(payload.world_revision || 0),
+            block_revision: Number(payload.block_revision || 0),
+            reason: error instanceof Error ? error.message : String(error || "unknown error"),
+        };
     }
 }
 function getActiveWorldEventRemainingMs(state) {

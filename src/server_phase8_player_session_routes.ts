@@ -130,6 +130,64 @@ function errorMessage(error: unknown): string {
   return error instanceof Error ? error.message : String(error || "unknown error");
 }
 
+interface WorldEntryServerProfile {
+  worldId: string;
+  requestId: string;
+  startedAt: bigint;
+  lastStageAt: bigint;
+  baselineHeapBytes: number;
+  peakHeapBytes: number;
+}
+
+const WORLD_ENTRY_PROFILE_ENABLED = process.env.NODE_ENV !== "production"
+  && ["1", "true", "yes", "on"].includes(String(process.env.WORLD_ENTRY_PROFILE || "").trim().toLowerCase());
+const WORLD_ENTRY_PROFILE_SERVER_INSTANCE = String(
+  process.env.SERVER_INSTANCE_ID || process.env.INSTANCE_ID || process.env.NODE_APP_INSTANCE || "development"
+).trim().slice(0, 128);
+
+function worldEntryElapsedMs(startedAt: bigint, endedAt = process.hrtime.bigint()): number {
+  return Math.round((Number(endedAt - startedAt) / 1_000_000) * 1000) / 1000;
+}
+
+function beginWorldEntryServerProfile(worldId: string, requestId: string): WorldEntryServerProfile | null {
+  if (!WORLD_ENTRY_PROFILE_ENABLED) return null;
+  const now = process.hrtime.bigint();
+  const heapBytes = Math.max(0, Math.trunc(process.memoryUsage().heapUsed));
+  return {
+    worldId,
+    requestId,
+    startedAt: now,
+    lastStageAt: now,
+    baselineHeapBytes: heapBytes,
+    peakHeapBytes: heapBytes,
+  };
+}
+
+function recordWorldEntryServerStage(
+  profile: WorldEntryServerProfile | null,
+  stage: string,
+  details: PacketRecord = {}
+): void {
+  if (!profile) return;
+  const now = process.hrtime.bigint();
+  const heapBytes = Math.max(0, Math.trunc(process.memoryUsage().heapUsed));
+  profile.peakHeapBytes = Math.max(profile.peakHeapBytes, heapBytes);
+  console.log("[world-entry-server]", JSON.stringify({
+    event: "world_entry_stage",
+    stage,
+    world_id: profile.worldId,
+    server_instance: WORLD_ENTRY_PROFILE_SERVER_INSTANCE,
+    request_id: profile.requestId,
+    stage_ms: worldEntryElapsedMs(profile.lastStageAt, now),
+    total_ms: worldEntryElapsedMs(profile.startedAt, now),
+    heap_bytes: heapBytes,
+    peak_heap_bytes: profile.peakHeapBytes,
+    heap_delta_bytes: heapBytes - profile.baselineHeapBytes,
+    ...details,
+  }));
+  profile.lastStageAt = now;
+}
+
 function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
   function syncJoinWorldDropsToReceiver(socket: unknown, player: PlayerRecord, worldName: unknown): void {
     const cleanWorldName = deps.cleanWorld(worldName || player.world || "START");
@@ -178,6 +236,15 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
     }
     if (!deps.isPlayerOwnAccount(player, username)) {
       if (purpose === "world_lock_access_check" || purpose === "remote_player_profile") {
+        if (purpose === "remote_player_profile" && deps.ensurePlayerState(username) === null) {
+          const targetRefresh = toRecord(await deps.refreshPlayerStateFromPostgres(username, "remote_player_profile"));
+          if (!targetRefresh.ok) {
+            deps.sendActionRejected(socket, "remote_player_profile", "Player profile is still loading. Try again.", {
+              reason: targetRefresh.reason || "player_profile_refresh_failed",
+            });
+            return;
+          }
+        }
         const publicProfile = toRecord(deps.buildPublicPlayerProfilePayload(username, requestId, purpose));
         publicProfile.friend_status = deps.getFriendStatus(player.account_username, username);
         deps.sendJson(socket, publicProfile);
@@ -316,11 +383,26 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
     const oldWorld = player.world;
     const newWorld = deps.cleanWorld(data.world);
     const joinRequestId = deps.clampString(data.join_request_id || data.request_id || "", 128);
-    if (await deps.rejectIfWorldBanned(socket, player, newWorld, "join_world")) return;
+    const worldEntryProfile = beginWorldEntryServerProfile(newWorld, joinRequestId);
+    recordWorldEntryServerStage(worldEntryProfile, "request_validated");
+    if (await deps.rejectIfWorldBanned(socket, player, newWorld, "join_world")) {
+      recordWorldEntryServerStage(worldEntryProfile, "rejected", { reason: "world_banned" });
+      return;
+    }
+    recordWorldEntryServerStage(worldEntryProfile, "ban_check_complete");
     const routeCheck = toRecord(await deps.ensureWorldRouteForAction(socket, player, newWorld, "join_world"));
+    recordWorldEntryServerStage(worldEntryProfile, "route_lookup_complete", {
+      route_ok: routeCheck.ok === true,
+      route_cache_hit: routeCheck.cache_hit === true,
+      route_reason: String(routeCheck.reason || ""),
+    });
     if (!routeCheck.ok) return;
     const admission = await deps.reserveWorldAdmission(player, newWorld, "join_world");
     const admissionRecord = toRecord(admission);
+    recordWorldEntryServerStage(worldEntryProfile, "admission_complete", {
+      admission_ok: admissionRecord.ok === true,
+      admission_reason: String(admissionRecord.reason || ""),
+    });
     if (!admissionRecord.ok) {
       if (admissionRecord.reason === "world_route_admission_mismatch") {
         deps.rejectWorldRouteAdmissionMismatch(socket, player, "join_world", newWorld, admission);
@@ -335,7 +417,22 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
 
     let admissionCommitted = false;
     try {
-      const worldRefresh = toRecord(await deps.refreshWorldStateFromPostgres(newWorld, "join_world"));
+      const refreshStartedAt = process.hrtime.bigint();
+      const [worldRefreshValue, playerRefreshValue] = await Promise.all([
+        deps.refreshWorldStateFromPostgres(newWorld, "join_world"),
+        deps.refreshPlayerStateFromPostgres(player.account_username, "join_world"),
+      ]);
+      const worldRefresh = toRecord(worldRefreshValue);
+      const playerRefresh = toRecord(playerRefreshValue);
+      recordWorldEntryServerStage(worldEntryProfile, "authoritative_reads_complete", {
+        parallel_read_ms: worldEntryElapsedMs(refreshStartedAt),
+        world_source: String(worldRefresh.source || worldRefresh.reason || "unknown"),
+        world_coalesced: worldRefresh.coalesced === true,
+        world_revision: Number(worldRefresh.world_revision || 0),
+        world_timings: toRecord(worldRefresh.timings),
+        player_found: playerRefresh.found === true,
+        player_timings: toRecord(playerRefresh.timings),
+      });
       if (!worldRefresh.ok) {
         deps.sendActionRejected(socket, "join_world", "World data is still loading. Try again.", {
           reason: worldRefresh.reason || "world_state_refresh_failed",
@@ -348,7 +445,6 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
         return;
       }
 
-      const playerRefresh = toRecord(await deps.refreshPlayerStateFromPostgres(player.account_username, "join_world"));
       if (!playerRefresh.ok) {
         deps.sendActionRejected(socket, "join_world", "Player data is still loading. Try again.", {
           reason: playerRefresh.reason || "player_state_refresh_failed",
@@ -359,6 +455,7 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       }
 
       if (oldWorld && oldWorld !== newWorld) {
+        const transitionStartedAt = process.hrtime.bigint();
         deps.cancelActiveTradeForPlayer(context.playerId, "Trade canceled because a player changed worlds.");
         deps.activeFishingSessions.delete(context.playerId);
         deps.clearPlayerFishingPresence(player);
@@ -384,6 +481,9 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
           });
           return;
         }
+        recordWorldEntryServerStage(worldEntryProfile, "previous_world_persisted", {
+          transition_ms: worldEntryElapsedMs(transitionStartedAt),
+        });
       }
 
       if (player.joined_world && oldWorld && oldWorld !== newWorld) {
@@ -415,6 +515,10 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       player.facing = Number(data.facing) < 0 ? -1 : 1;
       deps.postgresStore.mirrorPlayerWorld(player.account_username, player.world);
       await deps.appendCctvWorldEvent(player.world, player, "enter", { reason: "join_world" });
+      recordWorldEntryServerStage(worldEntryProfile, "world_initialized", {
+        spawn_grid_x: Number(joinSpawn.grid_x || 0),
+        spawn_grid_y: Number(joinSpawn.grid_y || 0),
+      });
 
       const existingPlayers = deps.getPlayersInWorld(player.world, context.playerId, player);
       console.log("[APPEARANCE][Server] sending world appearance snapshot", {
@@ -444,8 +548,9 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       }
       deps.sendJson(socket, joinWorldPayload);
       deps.sendWorldPopulationUpdate(socket, player.world);
+      recordWorldEntryServerStage(worldEntryProfile, "join_ack_queued");
 
-      deps.sendWorldStateToSocket(socket, player, player.world, {
+      const worldStateDelivery = toRecord(deps.sendWorldStateToSocket(socket, player, player.world, {
         receiver_player: player,
         respawn_player: true,
         force_player_position: true,
@@ -460,6 +565,22 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
         x: joinSpawn.x,
         y: joinSpawn.y,
         join_request_id: joinRequestId,
+      }));
+      recordWorldEntryServerStage(worldEntryProfile, "world_state_queued", {
+        streamed: worldStateDelivery.streamed === true,
+        delivery_ok: worldStateDelivery.ok === true,
+        payload_build_ms: Number(worldStateDelivery.payload_build_ms || 0),
+        stream_build_ms: Number(worldStateDelivery.stream_build_ms || 0),
+        serialization_ms: Number(worldStateDelivery.serialization_ms || 0),
+        compression: String(worldStateDelivery.compression || "none"),
+        compression_ms: Number(worldStateDelivery.compression_ms || 0),
+        queue_ms: Number(worldStateDelivery.queue_ms || 0),
+        snapshot_bytes: Number(worldStateDelivery.snapshot_bytes || 0),
+        wire_bytes: Number(worldStateDelivery.wire_bytes || 0),
+        chunk_count: Number(worldStateDelivery.chunk_count || 0),
+        section_count: Number(worldStateDelivery.section_count || 0),
+        world_revision: Number(worldStateDelivery.world_revision || 0),
+        block_revision: Number(worldStateDelivery.block_revision || 0),
       });
       refreshJoinWorldDropsAfterState(socket, player, player.world);
       deps.sendActiveWorldEventState(socket, player.world);
@@ -477,9 +598,11 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       }
       deps.touchLivePresence(socket, player, { force: true });
       deps.notifyOnlineFriendsOfFriendState(player.account_username);
+      recordWorldEntryServerStage(worldEntryProfile, "server_join_complete");
     } finally {
       if (!admissionCommitted) {
         await deps.releaseWorldAdmissionReservation(admission);
+        recordWorldEntryServerStage(worldEntryProfile, "admission_released");
       }
     }
   }

@@ -28,6 +28,7 @@ const savedStates = new Map();
 const tradeByPlayerId = new Map();
 const activeFishingSessions = new Map();
 let persistenceFlushSucceeds = true;
+let playerRefreshSucceeds = true;
 
 function record(/** @type {string} */ value) {
   events.push(value);
@@ -55,7 +56,7 @@ const deps = {
   buildNetfoxSpawnTicketPayload: async () => ({ ticket: "netfox" }),
   buildPlayerStateForClient: (/** @type {unknown} */ state, /** @type {unknown} */ options = {}) => ({ state, options }),
   buildPublicPlayerPresencePayload: (/** @type {string} */ type, /** @type {unknown} */ _player, /** @type {unknown} */ world) => ({ type, world }),
-  buildPublicPlayerProfilePayload: (/** @type {string} */ username, /** @type {string} */ requestId, /** @type {string} */ purpose) => ({ type: "player_profile", username, request_id: requestId, purpose, created_at: "2026-01-01T00:00:00.000Z", last_seen_at: "now", account: { username, created_at: "2026-01-01T00:00:00.000Z" } }),
+  buildPublicPlayerProfilePayload: (/** @type {string} */ username, /** @type {string} */ requestId, /** @type {string} */ purpose) => ({ type: "player_profile", username, request_id: requestId, purpose, created_at: "2026-01-01T00:00:00.000Z", last_seen_at: "now", account: { username, created_at: "2026-01-01T00:00:00.000Z" }, equipment_slots: /** @type {any} */ (savedStates.get(username))?.equipment_slots || {} }),
   cancelActiveTradeForPlayer: (/** @type {string} */ playerId) => record(`cancel_trade:${playerId}`),
   cleanAccountName: (/** @type {unknown} */ value) => String(value || "").trim().toLowerCase(),
   cleanWorld: (/** @type {unknown} */ value) => String(value || "START").trim().toUpperCase(),
@@ -67,7 +68,7 @@ const deps = {
   clearPlayerWorldEntrySpawnGuard: () => record("clear_world_entry_spawn"),
   clearTrustedMovementBaseline: () => record("clear_trusted"),
   commitWorldAdmissionReservation: async () => record("commit_admission"),
-  ensurePlayerState: (/** @type {string} */ username) => savedStates.get(username) || { username, inventory: [] },
+  ensurePlayerState: (/** @type {string} */ username) => savedStates.get(username) || (username.startsWith("offline") ? null : { username, inventory: [] }),
   ensureWritablePlayerState: (/** @type {string} */ username) => savedStates.get(username) || { username, inventory: [] },
   endWorldHonorVisit: async (/** @type {unknown} */ _player, /** @type {unknown} */ world, /** @type {string} */ reason) => record(`honor_end:${world}:${reason}`),
   ensureWorldRouteForAction: async () => ({ ok: true }),
@@ -95,6 +96,10 @@ const deps = {
   queuePlayerSave: (/** @type {string} */ username) => record(`save:${username}`),
   refreshPlayerStateFromPostgres: async (/** @type {unknown} */ username, /** @type {string} */ reason) => {
     record(`refresh_player:${username}:${reason}`);
+    if (!playerRefreshSucceeds) return { ok: false, found: false, reason: "database_error" };
+    if (reason === "remote_player_profile") {
+      savedStates.set(String(username), { username, inventory: [], equipment_slots: { hat: "top_hat" } });
+    }
     return { ok: true, found: true };
   },
   refreshWorldStateFromPostgres: async (/** @type {unknown} */ world, /** @type {string} */ reason) => {
@@ -167,6 +172,27 @@ const socket = {};
 
   await routes.handlePlayerStateRequest(socket, { account_username: "admin", name: "admin" }, { type: "player_state_request", username: "uso", purpose: "admin_item_instance_lookup" }, { playerId: "admin" });
   assert.ok(events.includes("admin_item"));
+
+  const remoteProfileEventStart = events.length;
+  await routes.handlePlayerStateRequest(socket, { account_username: "viewer", name: "Viewer" }, { type: "player_state_request", username: "offline_target", purpose: "remote_player_profile", request_id: "profile-1" }, { playerId: "viewer" });
+  const remoteProfileEvents = events.slice(remoteProfileEventStart);
+  assert.ok(remoteProfileEvents.includes("refresh_player:offline_target:remote_player_profile"));
+  const remoteProfile = /** @type {any} */ (sent.pop());
+  assert.equal(remoteProfile.type, "player_profile");
+  assert.equal(remoteProfile.request_id, "profile-1");
+  assert.deepEqual(remoteProfile.equipment_slots, { hat: "top_hat" });
+
+  const cachedProfileRefreshCount = events.filter((event) => event === "refresh_player:offline_target:remote_player_profile").length;
+  await routes.handlePlayerStateRequest(socket, { account_username: "viewer", name: "Viewer" }, { type: "player_state_request", username: "offline_target", purpose: "remote_player_profile", request_id: "profile-2" }, { playerId: "viewer" });
+  assert.equal(events.filter((event) => event === "refresh_player:offline_target:remote_player_profile").length, cachedProfileRefreshCount);
+  assert.equal(/** @type {any} */ (sent.pop()).request_id, "profile-2");
+
+  playerRefreshSucceeds = false;
+  const sentBeforeFailedProfile = sent.length;
+  await routes.handlePlayerStateRequest(socket, { account_username: "viewer", name: "Viewer" }, { type: "player_state_request", username: "offline_failure", purpose: "remote_player_profile", request_id: "profile-3" }, { playerId: "viewer" });
+  assert.equal(sent.length, sentBeforeFailedProfile);
+  assert.deepEqual(rejected.pop(), { action: "remote_player_profile", message: "Player profile is still loading. Try again." });
+  playerRefreshSucceeds = true;
 
   const joiningPlayer = /** @type {any} */ ({ id: "p2", account_username: "joiner", account_email: "j@example.com", name: "Joiner", world: "", joined_world: false });
   const joinEventStart = events.length;
