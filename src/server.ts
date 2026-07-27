@@ -2776,6 +2776,7 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
     last_world_admission_warning_at: 0,
     last_position_at: 0,
     movement_sequence: 0,
+    action_sequence: 0,
     movement_client_time_msec: 0,
     movement_server_time_msec: 0,
     last_player_position_broadcast_signature: "",
@@ -18347,6 +18348,7 @@ function handlePlayerPunch(socket: any, player: any, data: any) {
   player.last_player_punch_at = now;
   player.facing = facing;
   player.animation_state = "punch";
+  player.action_sequence = Math.max(0, Math.trunc(Number(player.action_sequence) || 0)) + 1;
   target.velocity_x = sanitizePlayerVelocity(knockbackX);
   target.velocity_y = sanitizePlayerVelocity(knockbackY);
   target.on_floor = true;
@@ -18366,6 +18368,7 @@ function handlePlayerPunch(socket: any, player: any, data: any) {
     source_y: Number(sourceY || 0),
     target_x: Number(targetX || 0),
     target_y: Number(targetY || 0),
+    action_sequence: player.action_sequence,
     server_time: now,
   }, [player, target]);
 
