@@ -213,6 +213,38 @@ for (const blockCase of gemBlockCases) {
   assert.deepEqual(Array.from(treeDrop(definition, seedId)?.amount_range || []), [0, 1]);
 }
 
+const streetLampDefinition = itemDatabase.getItemDefinition("street_lamp");
+assert.equal(atlasDb.getItemIdForKey("street_lamp"), 53);
+assert.deepEqual(Array.from(atlasDb.getItem(53)?.atlas_coords || []), [16, 31]);
+assert.equal(streetLampDefinition?.category, "block");
+assert.equal(streetLampDefinition?.rarity, "uncommon");
+assert.equal(streetLampDefinition?.block_health, 3);
+assert.equal(streetLampDefinition?.seed, "street_lamp_seed");
+assert.equal(streetLampDefinition?.atlas_item_id, 53);
+assert.deepEqual(Array.from(streetLampDefinition?.atlas_coords || []), [16, 31]);
+assert.deepEqual(Array.from(streetLampDefinition?.texture?.cell || []), [16, 31]);
+assert.deepEqual(Array.from(streetLampDefinition?.inventory_icon?.cell || []), [16, 31]);
+assert.equal(itemDatabase.getPlaceLayer("street_lamp"), "foreground");
+assert.equal(streetLampDefinition?.no_collision, true);
+assert.equal(streetLampDefinition?.collidable, false);
+assert.equal(streetLampDefinition?.solid, false);
+assert.equal(streetLampDefinition?.collision_type, "none");
+assert.equal(streetLampDefinition?.foreground_over_player, true);
+assert.deepEqual(streetLampDefinition?.vertical_variant_atlas_coords, {
+  single: [16, 31],
+  top: [15, 29],
+  middle: [15, 30],
+  bottom: [15, 31],
+});
+assert.deepEqual(Array.from(fixedDrop(streetLampDefinition, "street_lamp")?.amount_range || []), [1, 3]);
+assert.deepEqual(Array.from(fixedDrop(streetLampDefinition, "street_lamp_seed")?.amount_range || []), [0, 2]);
+assert.deepEqual(Array.from(fixedDrop(streetLampDefinition, "gem")?.amount_range || []), [0, 5]);
+assert.deepEqual(Array.from(treeDrop(streetLampDefinition, "street_lamp")?.amount_range || []), [1, 3]);
+assert.deepEqual(Array.from(treeDrop(streetLampDefinition, "street_lamp_seed")?.amount_range || []), [0, 2]);
+assert.deepEqual(Array.from(treeDrop(streetLampDefinition, "gem")?.amount_range || []), [0, 5]);
+assert.equal(itemDatabase.getItemDefinition("street_lamp_seed")?.category, "seed");
+assert.equal(itemDatabase.getItemDefinition("street_lamp_seed")?.grows_into, "street_lamp");
+
 const pickaxeItemIds = [
   "stone_pickaxe",
   "golden_pickaxe",

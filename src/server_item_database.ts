@@ -195,6 +195,18 @@ function makeSugarCaneDropRules(): DropRule {
   };
 }
 
+function makeStreetLampDropRules(): DropRule {
+  return {
+    seed_chance: 0,
+    gem_range: Object.freeze([0, 0]),
+    fixed_drops: Object.freeze([
+      Object.freeze({ item_id: "street_lamp", item_category: "block", amount_range: Object.freeze([1, 3]) }),
+      Object.freeze({ item_id: "street_lamp_seed", item_category: "seed", amount_range: Object.freeze([0, 2]) }),
+      Object.freeze({ item_id: "gem", item_category: "currency", amount_range: Object.freeze([0, 5]) }),
+    ]),
+  };
+}
+
 function makeBarnBlockDropRules(): DropRule {
   return {
     seed_chance: 0,
@@ -1483,6 +1495,31 @@ const ITEM_DEFINITIONS = {
     tree_drop_rules: makeSugarCaneDropRules(),
     drops_self: true,
     order: 315,
+  }),
+  street_lamp: block({
+    display_name: "Street Lamp",
+    rarity: "uncommon",
+    block_health: 3,
+    texture: atlasImage([16, 31]),
+    inventory_icon: atlasImage([16, 31]),
+    atlas_item_id: 53,
+    atlas_coords: [16, 31],
+    vertical_variant_atlas_coords: Object.freeze({
+      single: Object.freeze([16, 31]),
+      top: Object.freeze([15, 29]),
+      middle: Object.freeze([15, 30]),
+      bottom: Object.freeze([15, 31]),
+    }),
+    seed: "street_lamp_seed",
+    no_collision: true,
+    collidable: false,
+    solid: false,
+    collision_type: "none",
+    foreground_over_player: true,
+    drop_rules: makeStreetLampDropRules(),
+    tree_drop_rules: makeStreetLampDropRules(),
+    drops_self: true,
+    order: 427,
   }),
   barn_block: block({
     display_name: "Barn Block",
