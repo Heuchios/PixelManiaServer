@@ -1446,7 +1446,7 @@ const ITEM_DEFINITIONS = {
         collidable: false,
         solid: false,
         collision_type: "none",
-        foreground_over_player: true,
+        foreground_over_player: false,
         drop_rules: makeStreetLampDropRules(),
         tree_drop_rules: makeStreetLampDropRules(),
         drops_self: true,

@@ -229,7 +229,7 @@ assert.equal(streetLampDefinition?.no_collision, true);
 assert.equal(streetLampDefinition?.collidable, false);
 assert.equal(streetLampDefinition?.solid, false);
 assert.equal(streetLampDefinition?.collision_type, "none");
-assert.equal(streetLampDefinition?.foreground_over_player, true);
+assert.equal(streetLampDefinition?.foreground_over_player, false);
 assert.deepEqual(streetLampDefinition?.vertical_variant_atlas_coords, {
   single: [16, 31],
   top: [15, 29],
