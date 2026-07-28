@@ -308,6 +308,33 @@ assert.deepEqual(fixedDrop(cityFenceDefinition, "city_fence"), {
   amount: 1,
 });
 
+const fireHydrantDefinition = itemDatabase.getItemDefinition("fire_hydrant");
+assert.equal(atlasDb.getItemIdForKey("fire_hydrant"), 56);
+assert.deepEqual(Array.from(atlasDb.getItem(56)?.atlas_coords || []), [17, 31]);
+assert.equal(fireHydrantDefinition?.category, "block");
+assert.equal(fireHydrantDefinition?.rarity, "uncommon");
+assert.equal(fireHydrantDefinition?.block_health, 2);
+assert.equal(fireHydrantDefinition?.seed, "");
+assert.equal(fireHydrantDefinition?.atlas_item_id, 56);
+assert.deepEqual(Array.from(fireHydrantDefinition?.atlas_coords || []), [17, 31]);
+assert.deepEqual(Array.from(fireHydrantDefinition?.texture?.cell || []), [17, 31]);
+assert.deepEqual(Array.from(fireHydrantDefinition?.inventory_icon?.cell || []), [17, 31]);
+assert.equal(itemDatabase.getPlaceLayer("fire_hydrant"), "foreground");
+assert.equal(fireHydrantDefinition?.collidable, true);
+assert.equal(fireHydrantDefinition?.springboard, true);
+assert.equal(fireHydrantDefinition?.springboard_velocity, -420);
+assert.deepEqual(fireHydrantDefinition?.springboard_animation_atlas_frames, [
+  [17, 31],
+  [18, 31],
+]);
+assert.equal(fireHydrantDefinition?.springboard_animation_frame_seconds, 0.22);
+assert.equal(fireHydrantDefinition?.springboard_water_splash, true);
+assert.deepEqual(fixedDrop(fireHydrantDefinition, "fire_hydrant"), {
+  item_id: "fire_hydrant",
+  item_category: "block",
+  amount: 1,
+});
+
 const pickaxeItemIds = [
   "stone_pickaxe",
   "golden_pickaxe",
