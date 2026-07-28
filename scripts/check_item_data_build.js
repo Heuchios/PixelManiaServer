@@ -245,6 +245,30 @@ assert.deepEqual(Array.from(treeDrop(streetLampDefinition, "gem")?.amount_range 
 assert.equal(itemDatabase.getItemDefinition("street_lamp_seed")?.category, "seed");
 assert.equal(itemDatabase.getItemDefinition("street_lamp_seed")?.grows_into, "street_lamp");
 
+const fireEscapeDefinition = itemDatabase.getItemDefinition("fire_escape");
+assert.equal(atlasDb.getItemIdForKey("fire_escape"), 54);
+assert.deepEqual(Array.from(atlasDb.getItem(54)?.atlas_coords || []), [16, 30]);
+assert.equal(fireEscapeDefinition?.category, "block");
+assert.equal(fireEscapeDefinition?.rarity, "uncommon");
+assert.equal(fireEscapeDefinition?.block_health, 3);
+assert.equal(fireEscapeDefinition?.seed, "");
+assert.equal(fireEscapeDefinition?.atlas_item_id, 54);
+assert.deepEqual(Array.from(fireEscapeDefinition?.atlas_coords || []), [16, 30]);
+assert.deepEqual(Array.from(fireEscapeDefinition?.texture?.cell || []), [16, 30]);
+assert.deepEqual(Array.from(fireEscapeDefinition?.inventory_icon?.cell || []), [16, 30]);
+assert.equal(itemDatabase.getPlaceLayer("fire_escape"), "foreground");
+assert.equal(fireEscapeDefinition?.platform_collision, true);
+assert.deepEqual(fireEscapeDefinition?.platform_variant_atlas_coords, {
+  left: [17, 30],
+  middle: [18, 30],
+  right: [19, 30],
+});
+assert.deepEqual(fixedDrop(fireEscapeDefinition, "fire_escape"), {
+  item_id: "fire_escape",
+  item_category: "block",
+  amount: 1,
+});
+
 const pickaxeItemIds = [
   "stone_pickaxe",
   "golden_pickaxe",

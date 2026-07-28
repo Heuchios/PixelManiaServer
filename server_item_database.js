@@ -1452,6 +1452,31 @@ const ITEM_DEFINITIONS = {
         drops_self: true,
         order: 427,
     }),
+    fire_escape: block({
+        display_name: "Fire Escape",
+        rarity: "uncommon",
+        block_health: 3,
+        texture: atlasImage([16, 30]),
+        inventory_icon: atlasImage([16, 30]),
+        atlas_item_id: 54,
+        atlas_coords: [16, 30],
+        seed: "",
+        platform_collision: true,
+        platform_variant_atlas_coords: Object.freeze({
+            left: Object.freeze([17, 30]),
+            middle: Object.freeze([18, 30]),
+            right: Object.freeze([19, 30]),
+        }),
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: Object.freeze([0, 0]),
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "fire_escape", item_category: "block", amount: 1 }),
+            ]),
+        },
+        drops_self: true,
+        order: 428,
+    }),
     barn_block: block({
         display_name: "Barn Block",
         rarity: "common",
