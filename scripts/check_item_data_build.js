@@ -264,7 +264,7 @@ assert.deepEqual(fireEscapeDefinition?.connected_variant_atlas_coords, {
   horizontal_middle: [18, 29],
   right: [19, 29],
   top: [16, 30],
-  vertical_middle: [18, 30],
+  vertical_middle: [16, 30],
   bottom: [16, 29],
   top_left_corner: [17, 30],
   top_right_corner: [19, 30],
@@ -283,6 +283,27 @@ assert.deepEqual(fireEscapeDefinition?.connected_variant_atlas_coords, {
 });
 assert.deepEqual(fixedDrop(fireEscapeDefinition, "fire_escape"), {
   item_id: "fire_escape",
+  item_category: "block",
+  amount: 1,
+});
+
+const cityFenceDefinition = itemDatabase.getItemDefinition("city_fence");
+assert.equal(atlasDb.getItemIdForKey("city_fence"), 55);
+assert.deepEqual(Array.from(atlasDb.getItem(55)?.atlas_coords || []), [20, 29]);
+assert.equal(cityFenceDefinition?.category, "block");
+assert.equal(cityFenceDefinition?.rarity, "uncommon");
+assert.equal(cityFenceDefinition?.block_health, 3);
+assert.equal(cityFenceDefinition?.seed, "");
+assert.equal(cityFenceDefinition?.atlas_item_id, 55);
+assert.deepEqual(Array.from(cityFenceDefinition?.atlas_coords || []), [20, 29]);
+assert.deepEqual(Array.from(cityFenceDefinition?.texture?.cell || []), [20, 29]);
+assert.deepEqual(Array.from(cityFenceDefinition?.inventory_icon?.cell || []), [20, 29]);
+assert.equal(itemDatabase.getPlaceLayer("city_fence"), "foreground");
+assert.equal(cityFenceDefinition?.no_collision, true);
+assert.equal(cityFenceDefinition?.collidable, false);
+assert.equal(cityFenceDefinition?.foreground_over_player, true);
+assert.deepEqual(fixedDrop(cityFenceDefinition, "city_fence"), {
+  item_id: "city_fence",
   item_category: "block",
   amount: 1,
 });
