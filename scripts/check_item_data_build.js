@@ -247,21 +247,39 @@ assert.equal(itemDatabase.getItemDefinition("street_lamp_seed")?.grows_into, "st
 
 const fireEscapeDefinition = itemDatabase.getItemDefinition("fire_escape");
 assert.equal(atlasDb.getItemIdForKey("fire_escape"), 54);
-assert.deepEqual(Array.from(atlasDb.getItem(54)?.atlas_coords || []), [16, 30]);
+assert.deepEqual(Array.from(atlasDb.getItem(54)?.atlas_coords || []), [16, 29]);
 assert.equal(fireEscapeDefinition?.category, "block");
 assert.equal(fireEscapeDefinition?.rarity, "uncommon");
 assert.equal(fireEscapeDefinition?.block_health, 3);
 assert.equal(fireEscapeDefinition?.seed, "");
 assert.equal(fireEscapeDefinition?.atlas_item_id, 54);
-assert.deepEqual(Array.from(fireEscapeDefinition?.atlas_coords || []), [16, 30]);
-assert.deepEqual(Array.from(fireEscapeDefinition?.texture?.cell || []), [16, 30]);
-assert.deepEqual(Array.from(fireEscapeDefinition?.inventory_icon?.cell || []), [16, 30]);
+assert.deepEqual(Array.from(fireEscapeDefinition?.atlas_coords || []), [16, 29]);
+assert.deepEqual(Array.from(fireEscapeDefinition?.texture?.cell || []), [16, 29]);
+assert.deepEqual(Array.from(fireEscapeDefinition?.inventory_icon?.cell || []), [16, 29]);
 assert.equal(itemDatabase.getPlaceLayer("fire_escape"), "foreground");
 assert.equal(fireEscapeDefinition?.platform_collision, true);
-assert.deepEqual(fireEscapeDefinition?.platform_variant_atlas_coords, {
-  left: [17, 30],
+assert.deepEqual(fireEscapeDefinition?.connected_variant_atlas_coords, {
+  single: [16, 29],
+  left: [17, 29],
+  horizontal_middle: [18, 29],
+  right: [19, 29],
+  top: [16, 30],
+  vertical_middle: [18, 30],
+  bottom: [18, 30],
+  top_left_corner: [17, 30],
+  top_right_corner: [19, 30],
+  bottom_left_corner: [17, 30],
+  bottom_right_corner: [19, 30],
   middle: [18, 30],
-  right: [19, 30],
+  tile_top_left_corner: [17, 30],
+  tile_top_middle: [18, 30],
+  tile_top_right_corner: [19, 30],
+  tile_middle_left: [17, 30],
+  tile_middle_middle: [18, 30],
+  tile_middle_right: [19, 30],
+  tile_bottom_left_corner: [17, 30],
+  tile_bottom_middle: [18, 30],
+  tile_bottom_right_corner: [19, 30],
 });
 assert.deepEqual(fixedDrop(fireEscapeDefinition, "fire_escape"), {
   item_id: "fire_escape",
