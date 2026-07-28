@@ -100,6 +100,45 @@ const player = {
   equipment_slots: {},
 };
 
+async function verifyProtectedInteractionAccess(/** @type {string} */ action) {
+  for (const allowed of [false, true]) {
+    /** @type {{ world: string, x: number, y: number, action: string }[]} */
+    const accessChecks = [];
+    /** @type {string[]} */
+    const handlerCalls = [];
+    const protectedDeps = {
+      ...deps,
+      sanitizeInteractionUpdate: () => ({ action, x: 7, y: 8, operation: "harvest" }),
+      requireBuildPermissionAtGrid: (
+        /** @type {unknown} */ _socket,
+        /** @type {unknown} */ _player,
+        /** @type {string} */ world,
+        /** @type {number} */ x,
+        /** @type {number} */ y,
+        /** @type {string} */ interactionAction
+      ) => {
+        accessChecks.push({ world, x, y, action: interactionAction });
+        return allowed;
+      },
+      handleTackleBoxHarvestUpdate: async () => handlerCalls.push("tackle_box_state"),
+      handleChickenStateUpdate: async () => handlerCalls.push("chicken_state"),
+      handleCowStateUpdate: async () => handlerCalls.push("cow_state"),
+      handleDuckStateUpdate: async () => handlerCalls.push("duck_state"),
+    };
+    const protectedRoutes = /** @type {any} */ (Phase8FinalRoutesModule.createServerPhase8FinalRoutes(protectedDeps));
+
+    await protectedRoutes.handleWorldInteractionUpdate(
+      socket,
+      player,
+      { type: "world_interaction_update", world: "start" },
+      { playerId: "p1" }
+    );
+
+    assert.deepEqual(accessChecks, [{ world: "START", x: 7, y: 8, action: "world_interaction_update" }]);
+    assert.deepEqual(handlerCalls, allowed ? [action] : []);
+  }
+}
+
 function getLegacyBody() {
   const marker = "async function runLegacyPhase8Route()";
   const start = serverSource.indexOf(marker);
@@ -121,6 +160,10 @@ function getLegacyBody() {
   await routes.handleWorldInteractionUpdate(socket, player, { type: "world_interaction_update", world: "start" }, { playerId: "p1" });
   assert.ok(events.includes("interaction_broadcast:START"));
   assert.ok(events.includes("touch_presence"));
+
+  for (const action of ["tackle_box_state", "chicken_state", "cow_state", "duck_state"]) {
+    await verifyProtectedInteractionAccess(action);
+  }
 
   await routes.handleWorldItemDropCreate(socket, player, { type: "world_item_drop_create", world: "start" }, { playerId: "p1" });
   assert.equal(rejected.pop()?.action, "world_item_drop_create");

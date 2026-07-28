@@ -58,18 +58,26 @@ function createServerPhase8FinalRoutes(deps) {
             return;
         }
         if (update.action === "tackle_box_state") {
+            if (!requireBuildPermissionAtGrid(socket, player, worldName, update.x, update.y, "world_interaction_update"))
+                return;
             await handleTackleBoxHarvestUpdate(socket, player, worldName, update, makeRequestId(data));
             return;
         }
         if (update.action === "chicken_state") {
+            if (!requireBuildPermissionAtGrid(socket, player, worldName, update.x, update.y, "world_interaction_update"))
+                return;
             await handleChickenStateUpdate(socket, player, worldName, update, makeRequestId(data));
             return;
         }
         if (update.action === "cow_state") {
+            if (!requireBuildPermissionAtGrid(socket, player, worldName, update.x, update.y, "world_interaction_update"))
+                return;
             await handleCowStateUpdate(socket, player, worldName, update, makeRequestId(data));
             return;
         }
         if (update.action === "duck_state") {
+            if (!requireBuildPermissionAtGrid(socket, player, worldName, update.x, update.y, "world_interaction_update"))
+                return;
             await handleDuckStateUpdate(socket, player, worldName, update, makeRequestId(data));
             return;
         }
