@@ -116,6 +116,7 @@ const WORLD_STATE_STREAMING_ENABLED = !["0", "false", "no"].includes(String(proc
 const WORLD_STATE_STREAM_MIN_CLIENT_VERSION = String(process.env.WORLD_STATE_STREAM_MIN_CLIENT_VERSION || "1.0.4").trim() || "1.0.4";
 const WORLD_STATE_STREAM_TARGET_PACKET_BYTES = Math.min(MAX_PACKET_BYTES, Math.max(4096, Math.trunc(Number(process.env.WORLD_STATE_STREAM_TARGET_PACKET_BYTES) || 48 * 1024)));
 const WORLD_STATE_STREAM_MAX_CHUNKS = Math.max(1, Math.min(4096, Math.trunc(Number(process.env.WORLD_STATE_STREAM_MAX_CHUNKS) || 256)));
+const WORLD_ENTRY_SNAPSHOT_CACHE_MAX_WORLDS = Math.max(8, Math.min(512, Math.trunc(Number(process.env.WORLD_ENTRY_SNAPSHOT_CACHE_MAX_WORLDS) || 128)));
 const MAX_DAMAGE_FLASH_MS = 2000;
 const PLAYER_POSITION_BROADCAST_INTERVAL_MS = Math.max(0, Math.trunc(Number(process.env.PLAYER_POSITION_BROADCAST_INTERVAL_MS) || 16));
 const PLAYER_POSITION_IDLE_HEARTBEAT_MS = Math.max(250, Math.trunc(Number(process.env.PLAYER_POSITION_IDLE_HEARTBEAT_MS) || 1000));
@@ -1148,6 +1149,8 @@ function getServerPhase8PlayerSessionRoutes() {
             getFriendStatus: (...args) => getServerFriendRoutes().getFriendStatus(...args),
             getJoinWorldSpawnForWorld,
             getPlayersInWorld,
+            getWorldBlockRevisionForWorld,
+            getWorldRevision,
             handleAdminInventoryLookupRequest: (...args) => getServerAdminLookupRoutes().handleAdminInventoryLookupRequest(...args),
             handleAdminItemInstanceHistoryLookupRequest: (...args) => getServerAdminLookupRoutes().handleAdminItemInstanceHistoryLookupRequest(...args),
             handleAdminItemInstanceLookupRequest: (...args) => getServerAdminLookupRoutes().handleAdminItemInstanceLookupRequest(...args),
@@ -1189,6 +1192,7 @@ function getServerPhase8PlayerSessionRoutes() {
             touchLivePresence,
             updatePlayerWorldIndex,
             upsertAccount,
+            createWorldEntrySessionId: () => crypto.randomUUID(),
         });
     }
     return serverPhase8PlayerSessionRoutes;
@@ -1718,6 +1722,7 @@ const ServerPhase7Dispatcher = ServerPhase7DispatcherModule.createServerPhase7Di
         door_enter: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleDoorEnter(socket, player, data, context),
         player_state_save: (socket, player, data, context) => getServerPhase9RemainingRoutes().handlePlayerStateSave(socket, player, data, context),
         join_world: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleJoinWorld(socket, player, data, context),
+        world_entry_ready: (socket, player, data, context) => getServerPhase8PlayerSessionRoutes().handleWorldEntryReady(socket, player, data, context),
         leave_world: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleLeaveWorld(socket, player, data, context),
         chat: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleChat(socket, player, data, context),
         broadcast: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleBroadcast(socket, player, data, context),
@@ -1837,6 +1842,8 @@ const worldPersistenceOwnership = new Map();
 const worldPersistenceCoordinator = PersistenceHelpers.createWorldPersistenceCoordinator();
 const worldUnpersistedRevisions = new Map();
 const worldPersistedRevisions = new Map();
+const worldLoadedAuthorities = new Map();
+const worldEntrySnapshotCache = new Map();
 const persistenceWriteFailures = new Set();
 const worldRouteConflictLogAt = new Map();
 const worldRouteAdmissionMismatchLogAt = new Map();
@@ -2444,6 +2451,14 @@ wss.on("connection", (socket, request = null) => {
         client_version: "",
         indexed_world: "",
         redis_admission_world: "",
+        world_entry_session_id: "",
+        world_entry_state: "",
+        world_entry_world: "",
+        world_entry_join_request_id: "",
+        world_entry_previous_world: "",
+        world_entry_revision: 0,
+        world_entry_block_revision: 0,
+        world_entry_started_at_msec: 0,
         last_world_admission_warning_at: 0,
         last_position_at: 0,
         movement_sequence: 0,
@@ -2614,6 +2629,9 @@ wss.on("connection", (socket, request = null) => {
             const player = players.get(playerId);
             const closedUsername = player ? player.account_username : "";
             const closedWorld = player && player.joined_world ? cleanWorld(player.world || "START") : "";
+            const closedAdmissionWorld = player
+                ? cleanIndexedWorldName(player.redis_admission_world || (player.joined_world ? player.world : ""))
+                : "";
             if (player) {
                 player.disconnected = true;
                 cancelActiveTradeForPlayer(playerId, "Trade canceled because a player disconnected.");
@@ -2672,13 +2690,15 @@ wss.on("connection", (socket, request = null) => {
                 await endWorldHonorVisit(player, closedWorld, "disconnect");
                 markAccountSeen(player.account_username);
                 releaseActiveAccountSession(player);
-                if (player.joined_world) {
-                    await releasePlayerWorldAdmission(player, player.world).catch((error) => {
+                if (closedAdmissionWorld !== "") {
+                    await releasePlayerWorldAdmission(player, closedAdmissionWorld).catch((error) => {
                         console.warn("[redis] world admission disconnect cleanup failed:", error.message);
                     });
-                    await releaseOwnedWorldRouteIfEmpty(player.world).catch((error) => {
+                    await releaseOwnedWorldRouteIfEmpty(closedAdmissionWorld).catch((error) => {
                         console.warn("[redis] world route disconnect cleanup failed:", error.message);
                     });
+                }
+                if (player.joined_world) {
                     await appendCctvWorldEvent(player.world, player, "leave", { reason: "disconnect" }).catch((error) => {
                         console.warn("[cctv] failed to record disconnect:", error.message);
                     });
@@ -13646,6 +13666,45 @@ async function refreshWorldStateFromPostgresUncoalesced(clean, reason) {
         return finish({ ok: false, reason: ownershipVerification.reason || "world_ownership_unverified" });
     }
     phaseStartedAt = process.hrtime.bigint();
+    const warmState = worldStates.get(clean);
+    const warmRevision = warmState
+        ? PersistenceHelpers.normalizeWorldRevision(warmState.world_revision)
+        : 0;
+    const warmPersistedRevision = PersistenceHelpers.normalizeWorldRevision(worldPersistedRevisions.get(clean));
+    const warmLoadedAuthority = worldLoadedAuthorities.get(clean);
+    const canReuseWarmMemory = Boolean(warmState
+        && worldPersistedRevisions.has(clean)
+        && !worldUnpersistedRevisions.has(clean)
+        && doesLoadedWorldAuthorityMatch(clean, ownershipVerification.ownership)
+        && warmPersistedRevision >= warmRevision
+        && PersistenceHelpers.normalizeWorldRevision(warmLoadedAuthority?.persisted_revision) >= warmRevision);
+    timings.warm_memory_check_ms = elapsedWorldEntryMs(phaseStartedAt);
+    if (canReuseWarmMemory) {
+        scheduleWorldEventEnd(clean);
+        console.log("[world-entry]", JSON.stringify({
+            event: "warm_memory_reuse",
+            world_id: clean,
+            server_instance: SERVER_INSTANCE_ID,
+            ownership_token: ownershipVerification.ownership.ownership_token || "",
+            ownership_epoch: ownershipVerification.ownership.ownership_epoch || 0,
+            loaded_revision: warmRevision,
+            persisted_revision: warmPersistedRevision,
+            cache_result: "authoritative_memory_hit",
+        }));
+        return finish({
+            ok: true,
+            found: true,
+            world: clean,
+            source: "memory_warm",
+            world_revision: warmRevision,
+            foreground: warmState.foreground instanceof Map ? warmState.foreground.size : 0,
+            background: warmState.background instanceof Map ? warmState.background.size : 0,
+            seeds: warmState.seeds instanceof Map ? warmState.seeds.size : 0,
+            drops: warmState.drops instanceof Map ? warmState.drops.size : 0,
+            doors: warmState.interactions instanceof Map ? warmState.interactions.size : 0,
+        });
+    }
+    phaseStartedAt = process.hrtime.bigint();
     const result = await postgresStore.loadWorldState(clean);
     timings.postgres_query_ms = elapsedWorldEntryMs(phaseStartedAt);
     if (!result || !result.ok) {
@@ -13719,9 +13778,11 @@ async function refreshWorldStateFromPostgresUncoalesced(clean, reason) {
     }
     if (loadDecision.source === "empty") {
         phaseStartedAt = process.hrtime.bigint();
+        invalidateWorldEntrySnapshotCache(clean, "database_empty_load");
         worldUnpersistedRevisions.delete(clean);
         worldPersistedRevisions.set(clean, 0);
         worldStates.set(clean, createEmptyWorldState());
+        rememberLoadedWorldAuthority(clean, postLoadOwnershipVerification.ownership, 0);
         scheduleWorldEventEnd(clean);
         console.warn("[postgres] authoritative world row missing; using empty world state", {
             world: clean,
@@ -13733,10 +13794,12 @@ async function refreshWorldStateFromPostgresUncoalesced(clean, reason) {
         return finish({ ok: true, found: false, world: clean, had_local_state: memoryExists });
     }
     phaseStartedAt = process.hrtime.bigint();
+    invalidateWorldEntrySnapshotCache(clean, "database_world_load");
     const seedTimestampMigrationNeeded = WorldStateHelpers.needsSeedTimestampMigration(result.state || {});
     const state = deserializeWorldState(clean, result.state || {});
     worldUnpersistedRevisions.delete(clean);
     worldStates.set(clean, state);
+    rememberLoadedWorldAuthority(clean, postLoadOwnershipVerification.ownership, databaseRevision);
     scheduleWorldEventEnd(clean);
     if (seedTimestampMigrationNeeded) {
         queueWorldSave(clean, { critical: true });
@@ -26420,20 +26483,60 @@ function getActiveWorldBackgroundTheme(state) {
     }
     return "";
 }
-function buildWorldStateMessage(worldName, extraMessageData = {}) {
+function invalidateWorldEntrySnapshotCache(worldName, reason = "invalidated") {
     const clean = cleanWorld(worldName);
-    const state = ensureWorldState(clean);
+    if (!worldEntrySnapshotCache.delete(clean))
+        return;
+    if (WORLD_STATE_REFRESH_TRACE) {
+        console.log("[world-entry]", JSON.stringify({
+            event: "snapshot_cache_invalidated",
+            world_id: clean,
+            server_instance: SERVER_INSTANCE_ID,
+            reason: clampString(reason || "invalidated"),
+        }));
+    }
+}
+function getWorldEntrySnapshotCacheKey(worldName, state) {
+    const clean = cleanWorld(worldName);
+    const ownership = worldPersistenceOwnership.get(clean);
+    return [
+        clean,
+        PersistenceHelpers.normalizeWorldRevision(state?.world_revision),
+        getWorldBlockRevision(state),
+        state?.cleared ? 1 : 0,
+        ownership?.ownership_token || "unfenced",
+        Math.max(0, Math.trunc(Number(ownership?.ownership_epoch) || 0)),
+    ].join("|");
+}
+function trimWorldEntrySnapshotCache() {
+    while (worldEntrySnapshotCache.size > WORLD_ENTRY_SNAPSHOT_CACHE_MAX_WORLDS) {
+        const oldestWorld = worldEntrySnapshotCache.keys().next().value;
+        if (typeof oldestWorld !== "string")
+            break;
+        worldEntrySnapshotCache.delete(oldestWorld);
+    }
+}
+function getOrBuildWorldEntrySnapshotCache(worldName, state) {
+    const clean = cleanWorld(worldName);
+    const cacheKey = getWorldEntrySnapshotCacheKey(clean, state);
+    const existing = worldEntrySnapshotCache.get(clean);
+    if (existing?.cache_key === cacheKey) {
+        worldEntrySnapshotCache.delete(clean);
+        worldEntrySnapshotCache.set(clean, existing);
+        return existing;
+    }
+    const startedAt = process.hrtime.bigint();
+    const ownership = worldPersistenceOwnership.get(clean);
     const generatedMaps = buildServerGeneratedWorldMaps(clean, state);
-    const extras = extraMessageData && typeof extraMessageData === "object" && !Array.isArray(extraMessageData)
-        ? { ...extraMessageData }
-        : {};
-    const receiverPlayer = extras.receiver_player || extras.receiverPlayer || null;
-    delete extras.receiver_player;
-    delete extras.receiverPlayer;
-    return {
-        type: "world_state",
+    const staticPayload = {
         world_state_encoding: "grid_dictionary_v1",
+        world_entry_format_version: 2,
         world: clean,
+        world_width: WORLD_WIDTH,
+        world_height: WORLD_HEIGHT,
+        tile_size: TILE_SIZE,
+        ownership_token: ownership?.ownership_token || "",
+        ownership_epoch: Math.max(0, Math.trunc(Number(ownership?.ownership_epoch) || 0)),
         world_revision: getWorldRevision(clean),
         block_revision: getWorldBlockRevision(state),
         cleared: Boolean(state.cleared),
@@ -26442,17 +26545,61 @@ function buildWorldStateMessage(worldName, extraMessageData = {}) {
         removed_foreground: state.cleared ? [] : Array.from(state.removed_foreground.values()),
         removed_background: state.cleared ? [] : Array.from(state.removed_background.values()),
         seeds: Array.from(state.seeds.values()).map(serializeSeedForMessage),
+        generator_states: getGeneratorStatesForClient(state, clean),
+        world_lock: getEffectiveWorldLockStateInState(state),
+        area_locks: sanitizeAreaLocksList(state.area_locks || []),
+    };
+    let preparedSections = null;
+    try {
+        preparedSections = WorldStateHelpersModule.prepareWorldStateStreamSections(staticPayload, {
+            targetPacketBytes: WORLD_STATE_STREAM_TARGET_PACKET_BYTES,
+            maxPacketBytes: MAX_PACKET_BYTES,
+        });
+    }
+    catch (error) {
+        console.warn("[world-entry] static snapshot preparation failed; per-request encoding will be used", {
+            world_id: clean,
+            world_revision: staticPayload.world_revision,
+            error: error instanceof Error ? error.message : String(error || "snapshot_prepare_failed"),
+        });
+    }
+    const entry = {
+        cache_key: cacheKey,
+        world: clean,
+        world_revision: Number(staticPayload.world_revision || 0),
+        block_revision: Number(staticPayload.block_revision || 0),
+        ownership_token: String(staticPayload.ownership_token || ""),
+        ownership_epoch: Number(staticPayload.ownership_epoch || 0),
+        static_payload: staticPayload,
+        prepared_sections: preparedSections,
+        build_ms: elapsedWorldEntryMs(startedAt),
+        created_at_ms: Date.now(),
+    };
+    worldEntrySnapshotCache.set(clean, entry);
+    trimWorldEntrySnapshotCache();
+    return entry;
+}
+function buildWorldStateMessage(worldName, extraMessageData = {}) {
+    const clean = cleanWorld(worldName);
+    const state = ensureWorldState(clean);
+    const cachedSnapshot = getOrBuildWorldEntrySnapshotCache(clean, state);
+    const extras = extraMessageData && typeof extraMessageData === "object" && !Array.isArray(extraMessageData)
+        ? { ...extraMessageData }
+        : {};
+    const receiverPlayer = extras.receiver_player || extras.receiverPlayer || null;
+    delete extras.receiver_player;
+    delete extras.receiverPlayer;
+    return {
+        type: "world_state",
+        ...cachedSnapshot.static_payload,
         electrical_layer_visible: canPlayerSeeElectricalLayer(receiverPlayer, clean),
         electrical_layer: getElectricalLayerForClient(state, clean, receiverPlayer),
         generator_links: getGeneratorLinksForClient(state, clean, receiverPlayer),
         oil_refinery_links: getOilRefineryLinksForClient(state, clean, receiverPlayer),
         battery_charger_links: getBatteryChargerLinksForClient(state, clean, receiverPlayer),
         pole_links: getPoleLinksForClient(state, clean, receiverPlayer),
-        generator_states: getGeneratorStatesForClient(state, clean),
         interactions: getInteractionsForWorldStateMessage(state, clean, receiverPlayer),
         background_theme: getActiveWorldBackgroundTheme(state),
-        world_lock: getEffectiveWorldLockStateInState(state),
-        area_locks: sanitizeAreaLocksList(state.area_locks || []),
         cctv_state: getCctvStateForClient(clean, receiverPlayer),
         drops: getDropsForWorldStateMessage(state, clean, receiverPlayer),
         active_event_type: state.active_event_type || "",
@@ -26476,8 +26623,17 @@ function supportsWorldStateStreaming(player) {
 function sendWorldStateToSocket(socket, player, worldName, extraMessageData = {}) {
     const totalStartedAt = process.hrtime.bigint();
     let phaseStartedAt = totalStartedAt;
+    const clean = cleanWorld(worldName);
+    const cacheBeforeBuild = worldEntrySnapshotCache.get(clean);
     const payload = buildWorldStateMessage(worldName, extraMessageData);
     const payloadBuildMs = elapsedWorldEntryMs(phaseStartedAt);
+    const snapshotCache = worldEntrySnapshotCache.get(clean);
+    const snapshotCacheHit = Boolean(snapshotCache && snapshotCache === cacheBeforeBuild);
+    const cacheMetrics = {
+        snapshot_cache_hit: snapshotCacheHit,
+        snapshot_cache_build_ms: snapshotCacheHit ? 0 : Number(snapshotCache?.build_ms || 0),
+        snapshot_cache_key: snapshotCache?.cache_key || "",
+    };
     if (!supportsWorldStateStreaming(player)) {
         phaseStartedAt = process.hrtime.bigint();
         let raw = "";
@@ -26500,6 +26656,7 @@ function sendWorldStateToSocket(socket, player, worldName, extraMessageData = {}
                 section_count: 0,
                 world_revision: Number(payload.world_revision || 0),
                 block_revision: Number(payload.block_revision || 0),
+                ...cacheMetrics,
                 reason: error instanceof Error ? error.message : String(error || "serialization_failed"),
             };
         }
@@ -26523,6 +26680,7 @@ function sendWorldStateToSocket(socket, player, worldName, extraMessageData = {}
             section_count: 0,
             world_revision: Number(payload.world_revision || 0),
             block_revision: Number(payload.block_revision || 0),
+            ...cacheMetrics,
         };
     }
     try {
@@ -26532,6 +26690,7 @@ function sendWorldStateToSocket(socket, player, worldName, extraMessageData = {}
             targetPacketBytes: WORLD_STATE_STREAM_TARGET_PACKET_BYTES,
             maxPacketBytes: MAX_PACKET_BYTES,
             maxChunks: WORLD_STATE_STREAM_MAX_CHUNKS,
+            preparedSections: snapshotCache?.prepared_sections || null,
         });
         const streamBuildMs = elapsedWorldEntryMs(phaseStartedAt);
         phaseStartedAt = process.hrtime.bigint();
@@ -26560,6 +26719,7 @@ function sendWorldStateToSocket(socket, player, worldName, extraMessageData = {}
             section_count: stream.sectionCount,
             world_revision: Number(payload.world_revision || 0),
             block_revision: Number(payload.block_revision || 0),
+            ...cacheMetrics,
         };
     }
     catch (error) {
@@ -26589,6 +26749,7 @@ function sendWorldStateToSocket(socket, player, worldName, extraMessageData = {}
                 section_count: 0,
                 world_revision: Number(payload.world_revision || 0),
                 block_revision: Number(payload.block_revision || 0),
+                ...cacheMetrics,
                 reason: serializationError instanceof Error
                     ? serializationError.message
                     : String(serializationError || "serialization_failed"),
@@ -26615,6 +26776,7 @@ function sendWorldStateToSocket(socket, player, worldName, extraMessageData = {}
             section_count: 0,
             world_revision: Number(payload.world_revision || 0),
             block_revision: Number(payload.block_revision || 0),
+            ...cacheMetrics,
             reason: error instanceof Error ? error.message : String(error || "unknown error"),
         };
     }
@@ -26672,6 +26834,33 @@ function getWorldRevision(worldName) {
     const state = ensureWorldState(cleanWorld(worldName));
     return PersistenceHelpers.normalizeWorldRevision(state?.world_revision);
 }
+function getWorldBlockRevisionForWorld(worldName) {
+    return getWorldBlockRevision(ensureWorldState(cleanWorld(worldName)));
+}
+function rememberLoadedWorldAuthority(worldName, ownership, persistedRevision) {
+    const clean = cleanWorld(worldName);
+    if (!ownership?.verified) {
+        worldLoadedAuthorities.delete(clean);
+        return;
+    }
+    worldLoadedAuthorities.set(clean, {
+        server_instance: SERVER_INSTANCE_ID,
+        ownership_token: ownership.ownership_token || "",
+        ownership_epoch: Math.max(0, Math.trunc(Number(ownership.ownership_epoch) || 0)),
+        persisted_revision: PersistenceHelpers.normalizeWorldRevision(persistedRevision),
+    });
+}
+function doesLoadedWorldAuthorityMatch(worldName, ownership) {
+    const clean = cleanWorld(worldName);
+    const loaded = worldLoadedAuthorities.get(clean);
+    if (!loaded || !ownership?.verified || loaded.server_instance !== SERVER_INSTANCE_ID)
+        return false;
+    if (!ownership.require_owner)
+        return true;
+    return loaded.ownership_token !== ""
+        && loaded.ownership_token === ownership.ownership_token
+        && loaded.ownership_epoch === ownership.ownership_epoch;
+}
 function rememberUnpersistedWorldRevision(worldName, revision) {
     const clean = cleanWorld(worldName);
     const normalizedRevision = PersistenceHelpers.normalizeWorldRevision(revision);
@@ -26690,6 +26879,7 @@ function markWorldRevisionPersisted(worldName, revision) {
     if (pending && pending.revision <= persistedRevision) {
         worldUnpersistedRevisions.delete(clean);
     }
+    rememberLoadedWorldAuthority(clean, worldPersistenceOwnership.get(clean), persistedRevision);
 }
 function captureWorldMutationRollback(worldName) {
     const clean = cleanWorld(worldName);
@@ -26702,6 +26892,7 @@ function captureWorldMutationRollback(worldName) {
 }
 function restoreWorldMutationRollback(worldName, rollback) {
     const clean = cleanWorld(worldName);
+    invalidateWorldEntrySnapshotCache(clean, "mutation_rollback");
     if (rollback.existed) {
         worldStates.set(clean, deserializeWorldState(clean, rollback.state));
     }
@@ -26731,6 +26922,7 @@ function isMemoryWorldRevisionAuthoritative(worldName, revision, ownership) {
 }
 function advanceAuthoritativeWorldRevision(worldName, reason) {
     const clean = cleanWorld(worldName);
+    invalidateWorldEntrySnapshotCache(clean, "authoritative_mutation");
     const state = ensureWorldState(clean);
     const previousRevision = PersistenceHelpers.normalizeWorldRevision(state?.world_revision);
     if (previousRevision >= Number.MAX_SAFE_INTEGER) {
@@ -26796,6 +26988,8 @@ async function verifyWorldPersistenceOwnership(worldName) {
         route.ownership_token === localOwnership.ownership_token &&
         Number(route.ownership_epoch || 0) === localOwnership.ownership_epoch);
     if (!verified) {
+        invalidateWorldEntrySnapshotCache(clean, "ownership_lease_lost");
+        worldLoadedAuthorities.delete(clean);
         ownedWorldRoutes.delete(clean);
         worldPersistenceOwnership.delete(clean);
         worldUnpersistedRevisions.delete(clean);
@@ -28891,6 +29085,8 @@ async function claimWorldRouteForCurrentInstance(worldName) {
     }
     if (!redisStore.isReady()) {
         if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE && WORLD_ROUTE_ENFORCEMENT_ENABLED) {
+            invalidateWorldEntrySnapshotCache(clean, "route_redis_unavailable");
+            worldLoadedAuthorities.delete(clean);
             ownedWorldRoutes.delete(clean);
             worldPersistenceOwnership.delete(clean);
             worldUnpersistedRevisions.delete(clean);
@@ -28945,6 +29141,8 @@ async function claimWorldRouteForCurrentInstance(worldName) {
                 && existing.ownership_token === ownership.ownership_token
                 && existing.ownership_epoch === ownership.ownership_epoch;
             if (!alreadyFenced) {
+                invalidateWorldEntrySnapshotCache(clean, "ownership_fence_changed");
+                worldLoadedAuthorities.delete(clean);
                 worldUnpersistedRevisions.delete(clean);
                 const claimed = await postgresStore.claimWorldPersistenceOwnership(clean, ownership);
                 if (!claimed?.ok) {
@@ -28966,6 +29164,8 @@ async function claimWorldRouteForCurrentInstance(worldName) {
         return route;
     }
     ownedWorldRoutes.delete(clean);
+    invalidateWorldEntrySnapshotCache(clean, "route_claim_failed");
+    worldLoadedAuthorities.delete(clean);
     worldPersistenceOwnership.delete(clean);
     worldUnpersistedRevisions.delete(clean);
     return route;
@@ -29107,6 +29307,8 @@ async function releaseOwnedWorldRouteIfEmpty(worldName) {
         return;
     }
     ownedWorldRoutes.delete(clean);
+    invalidateWorldEntrySnapshotCache(clean, "idle_world_unload");
+    worldLoadedAuthorities.delete(clean);
     worldPersistenceOwnership.delete(clean);
     worldUnpersistedRevisions.delete(clean);
     worldPersistedRevisions.delete(clean);
@@ -29349,7 +29551,11 @@ async function releasePlayerWorldAdmission(playerOrId, worldName = "") {
     await releaseRedisWorldAdmission(clean, playerId);
 }
 async function refreshPlayerWorldAdmission(player) {
-    if (!redisStore.isReady() || !player || !player.joined_world)
+    const entryPending = player
+        && !player.joined_world
+        && String(player.world_entry_state || "") === "snapshot_sent"
+        && cleanIndexedWorldName(player.redis_admission_world || "") !== "";
+    if (!redisStore.isReady() || !player || (!player.joined_world && !entryPending))
         return;
     const playerId = String(player.id || "").trim();
     const clean = cleanWorld(player.world || player.current_world || "START");

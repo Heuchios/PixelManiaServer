@@ -54,6 +54,8 @@ function createWorldState(entryCount, suffix = "fixture") {
     world_state_encoding: "grid_dictionary_v1",
     world: `PERF_${suffix}`.toUpperCase(),
     join_request_id: `join-${suffix}`,
+    world_entry_session_id: `entry-${suffix}`,
+    world_entry_requires_ready: true,
     world_revision: 220,
     block_revision: 219,
     cleared: false,
@@ -78,6 +80,21 @@ function buildStream(state, snapshotId) {
   return WorldStateHelpers.buildWorldStateStreamPackets(state, {
     ...STREAM_OPTIONS,
     snapshotId,
+  });
+}
+
+const preparedStreamSections = new WeakMap();
+
+function buildPreparedStream(state, snapshotId) {
+  let preparedSections = preparedStreamSections.get(state);
+  if (!preparedSections) {
+    preparedSections = WorldStateHelpers.prepareWorldStateStreamSections(state, STREAM_OPTIONS);
+    preparedStreamSections.set(state, preparedSections);
+  }
+  return WorldStateHelpers.buildWorldStateStreamPackets(state, {
+    ...STREAM_OPTIONS,
+    snapshotId,
+    preparedSections,
   });
 }
 
@@ -134,6 +151,13 @@ function median(values) {
   return sorted[Math.floor(sorted.length / 2)] || 0;
 }
 
+function percentile(values, ratio) {
+  const sorted = [...values].sort((left, right) => left - right);
+  if (sorted.length === 0) return 0;
+  const index = Math.min(sorted.length - 1, Math.ceil((sorted.length - 1) * ratio));
+  return sorted[index];
+}
+
 function benchmarkBuilder(builder, state, label, iterations) {
   builder(state, `${label}-warmup`);
   if (typeof global.gc === "function") global.gc();
@@ -150,6 +174,7 @@ function benchmarkBuilder(builder, state, label, iterations) {
   }
   return {
     median_ms: Number(median(samples).toFixed(3)),
+    p95_ms: Number(percentile(samples, 0.95).toFixed(3)),
     min_ms: Number(Math.min(...samples).toFixed(3)),
     max_ms: Number(Math.max(...samples).toFixed(3)),
     peak_heap_delta_bytes: Math.max(0, peakHeap - baselineHeap),
@@ -190,6 +215,7 @@ async function main() {
   const syncSource = readClientSource("Scripts/world_state_sync_manager.gd");
   const blockSource = readClientSource("Scripts/block_manager.gd");
   const loadingSource = readClientSource("Scripts/world_loading_ui_manager.gd");
+  const lobbySource = readClientSource("Scripts/ui/lobby_scene.gd");
   const serverSource = readServerSource("src/server.ts");
   const routeSource = readServerSource("src/server_phase8_player_session_routes.ts");
   const helperSource = readServerSource("src/server_world_state_helpers.ts");
@@ -296,8 +322,9 @@ async function main() {
 
   await run("14 collision and lock readiness", async () => {
     const collisionIndex = syncSource.indexOf('notify_world_collision_snapshot_rebuilt("world-state-rebuild-complete")');
-    const finishIndex = syncSource.indexOf("finish_world_entry_after_load", collisionIndex);
-    assert.ok(collisionIndex >= 0 && finishIndex > collisionIndex, "collision readiness must precede player unlock");
+    const readyIndex = syncSource.indexOf("notify_world_entry_spawn_ready", collisionIndex);
+    assert.ok(collisionIndex >= 0 && readyIndex > collisionIndex, "collision readiness must precede the client-ready handshake");
+    assert.match(networkSource, /func _handle_world_entry_active[\s\S]*?finish_world_entry_after_load\(false, true, true\)/);
     assert.match(loadingSource, /is_world_ready_for_player\(\)/);
     assert.match(blockSource, /finalize_world_load_block_variants/);
     assert.match(blockSource, /refresh_streaming_now/);
@@ -326,9 +353,13 @@ async function main() {
   });
 
   await run("17 desktop frame-budget and profiling contract", async () => {
-    assert.match(syncSource, /WORLD_STATE_APPLY_BATCH_SIZE := 512/);
+    assert.match(syncSource, /WORLD_STATE_APPLY_MIN_BATCH_SIZE := 128/);
+    assert.match(syncSource, /WORLD_STATE_APPLY_MAX_BATCH_SIZE := 2048/);
+    assert.match(syncSource, /WORLD_STATE_APPLY_DESKTOP_BUDGET_USEC := 6000/);
+    assert.match(syncSource, /_should_yield_world_state_apply/);
     assert.match(syncSource, /await world\.get_tree\(\)\.process_frame/);
     assert.match(syncSource, /client_first_built_frame/);
+    assert.match(syncSource, /client_full_built_frame/);
     assert.match(networkSource, /client_controls_enabled/);
     assert.match(networkSource, /max_frame_delta_ms/);
     assert.match(networkSource, /frame_stall_count/);
@@ -339,16 +370,104 @@ async function main() {
   });
 
   await run("18 mobile frame-budget and progress contract", async () => {
+    assert.match(syncSource, /WORLD_STATE_APPLY_MOBILE_BUDGET_USEC := 3500/);
+    assert.match(syncSource, /OS\.has_feature\("mobile"\)/);
     assert.match(syncSource, /_update_world_build_progress\(build_entry_applied, build_entry_total\)/);
     assert.match(networkSource, /Loading world data " \+ str\(percent\) \+ "%"/);
     assert.match(networkSource, /MAX_SERVER_PACKET_PROCESS_USEC/);
     assert.match(networkSource, /MAX_WORLD_STATE_STREAM_WIRE_BYTES := 4 \* 1024 \* 1024/);
   });
 
+  await run("19 exact entry session is propagated through every stream packet", async () => {
+    const state = createWorldState(240, "session-contract");
+    const stream = buildStream(state, "session-contract-snapshot");
+    for (const packet of stream.packets) {
+      assert.equal(packet.world_entry_session_id, state.world_entry_session_id);
+    }
+    assert.match(helperSource, /world_entry_session_id: worldEntrySessionId/g);
+    assert.match(routeSource, /world_entry_session_id: worldEntrySessionId/);
+  });
+
+  await run("20 provisional entry activates only after exact client readiness", async () => {
+    assert.match(routeSource, /player\.joined_world = false;[\s\S]*?player\.world_entry_state = "snapshot_sent"/);
+    assert.match(routeSource, /async function handleWorldEntryReady/);
+    assert.match(routeSource, /sessionId !== expectedSessionId/);
+    assert.match(routeSource, /await activateWorldEntry\(socket, player, context\)/);
+    assert.match(routeSource, /type: "world_entry_active"/);
+    assert.match(networkSource, /func notify_world_entry_spawn_ready/);
+    assert.match(networkSource, /func _handle_world_entry_active/);
+  });
+
+  await run("21 stale and cross-session packets cannot replace the active load", async () => {
+    assert.match(networkSource, /func _is_message_for_active_world_entry_session/);
+    assert.match(networkSource, /incoming_session_id == active_world_entry_session_id/);
+    assert.match(networkSource, /if _get_message_world_entry_session_id\(data\) != expected_world_entry_session_id:\s*\n\s*return/);
+    assert.match(networkSource, /if not _is_message_for_active_world_entry_session\(payload\)/);
+  });
+
+  await run("22 revision changes during construction restart the same entry session", async () => {
+    assert.match(routeSource, /currentRevision !== expectedRevision/);
+    assert.match(routeSource, /currentBlockRevision !== expectedBlockRevision/);
+    assert.match(routeSource, /type: "world_entry_snapshot_restart"/);
+    assert.match(routeSource, /world_entry_session_id: sessionId/);
+    assert.match(networkSource, /func _handle_world_entry_snapshot_restart/);
+    assert.match(networkSource, /request_world_entry_snapshot_restart/);
+  });
+
+  await run("23 snapshot cache is revision and ownership fenced", async () => {
+    assert.match(serverSource, /function getWorldEntrySnapshotCacheKey/);
+    assert.match(serverSource, /PersistenceHelpers\.normalizeWorldRevision\(state\?\.world_revision\)/);
+    assert.match(serverSource, /ownership\?\.ownership_token/);
+    assert.match(serverSource, /ownership\?\.ownership_epoch/);
+    assert.match(serverSource, /invalidateWorldEntrySnapshotCache\(clean, "authoritative_mutation"\)/);
+    assert.match(serverSource, /invalidateWorldEntrySnapshotCache\(clean, "ownership_lease_lost"\)/);
+    assert.match(serverSource, /invalidateWorldEntrySnapshotCache\(clean, "ownership_fence_changed"\)/);
+    assert.match(serverSource, /invalidateWorldEntrySnapshotCache\(clean, "idle_world_unload"\)/);
+  });
+
+  await run("24 cold database loads are coalesced and warm memory is authority checked", async () => {
+    assert.match(serverSource, /const worldStateRefreshesInFlight = new Map/);
+    assert.match(serverSource, /const existingRefresh = worldStateRefreshesInFlight\.get\(clean\)/);
+    assert.match(serverSource, /worldStateRefreshesInFlight\.set\(clean, refreshPromise\)/);
+    assert.match(serverSource, /doesLoadedWorldAuthorityMatch/);
+    assert.match(serverSource, /warmPersistedRevision >= warmRevision/);
+    assert.match(serverSource, /source: "memory_warm"/);
+  });
+
+  await run("25 prepared warm stream is byte-equivalent to cold encoding", async () => {
+    const state = createWorldState(6000, "prepared-warm");
+    const cold = buildStream(state, "prepared-equivalent");
+    const warm = buildPreparedStream(state, "prepared-equivalent");
+    assert.deepEqual(warm.packetJson, cold.packetJson);
+    assert.deepEqual(assemblePackets(warm.packetJson), state);
+  });
+
+  await run("26 entry telemetry covers server queue and client readiness milestones", async () => {
+    assert.match(routeSource, /payload_build_ms/);
+    assert.match(routeSource, /stream_build_ms/);
+    assert.match(routeSource, /queue_ms/);
+    assert.match(routeSource, /snapshot_waiting_for_client_ready/);
+    assert.match(syncSource, /client_first_built_frame/);
+    assert.match(syncSource, /client_full_built_frame/);
+    assert.match(networkSource, /client_controls_enabled/);
+  });
+
+  await run("27 join click reveals a prewarmed overlay before scene loading", async () => {
+    assert.match(lobbySource, /const WORLD_LOADING_OVERLAY_SCENE: PackedScene = preload\(WORLD_LOADING_OVERLAY_SCENE_PATH\)/);
+    assert.match(lobbySource, /call_deferred\("_prime_join_world_loading_overlay"\)/);
+    assert.match(lobbySource, /func _prime_join_world_loading_overlay[\s\S]*?_get_or_create_root_loading_overlay/);
+    assert.match(lobbySource, /func _join_world_name[\s\S]*?_show_join_world_loading_overlay[\s\S]*?_wait_for_join_world_loading_overlay_to_draw[\s\S]*?change_scene_to_file/);
+    const joinFunction = lobbySource.match(/func _join_world_name[\s\S]*?\n\nfunc _set_input_status/)?.[0] || "";
+    assert.doesNotMatch(joinFunction, /ConfigFile\.new\(\)|cfg\.save\(/, "join click must not perform synchronous profile I/O");
+    assert.match(networkSource, /func schedule_pending_join_profile_persist[\s\S]*?call_deferred/);
+    assert.match(networkSource, /if not pending_join_enabled or pending_join_world_name != clean_world:/);
+  });
+
   assert.doesNotMatch(helperSource, /JSON\.parse\(serializedState\)/, "stream builder must not clone the entire snapshot");
   assert.doesNotMatch(networkSource, /JSON\.stringify\(chunk_data\)/, "client must not stringify every parsed chunk");
   assert.doesNotMatch(networkSource, /chunk_data\.duplicate\(true\)/, "client must not deep-copy every parsed chunk");
   assert.match(serverSource, /worldStateRefreshesInFlight/);
+  assert.match(serverSource, /prepared_sections/);
   assert.match(serverSource, /stream\.packetJson/);
   assert.match(routeSource, /Promise\.all\(\[/);
 
@@ -361,6 +480,7 @@ async function main() {
     entries: count,
     legacy: benchmarkBuilder(buildLegacyStream, state, `legacy-${count}`, iterations),
     optimized: benchmarkBuilder(buildStream, state, `optimized-${count}`, iterations),
+    prepared_warm: benchmarkBuilder(buildPreparedStream, state, `prepared-${count}`, iterations),
   }));
 
   console.log("[world-entry-performance]", JSON.stringify({

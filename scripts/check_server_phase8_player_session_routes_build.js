@@ -29,6 +29,9 @@ const tradeByPlayerId = new Map();
 const activeFishingSessions = new Map();
 let persistenceFlushSucceeds = true;
 let playerRefreshSucceeds = true;
+let worldRevision = 220;
+let worldBlockRevision = 219;
+let worldEntrySessionSequence = 0;
 
 function record(/** @type {string} */ value) {
   events.push(value);
@@ -76,6 +79,8 @@ const deps = {
   getFriendStatus: () => "none",
   getJoinWorldSpawnForWorld: () => ({ x: 32, y: 64, grid_x: 1, grid_y: 2 }),
   getPlayersInWorld: () => [{ id: "other" }],
+  getWorldBlockRevisionForWorld: () => worldBlockRevision,
+  getWorldRevision: () => worldRevision,
   flushPendingSessionPersistence: async (/** @type {unknown} */ username, /** @type {unknown} */ world, /** @type {string} */ reason) => {
     record(`flush:${username}:${world}:${reason}`);
     return persistenceFlushSucceeds
@@ -125,13 +130,22 @@ const deps = {
   sendActionRejected: (/** @type {unknown} */ _socket, /** @type {string} */ action, /** @type {string} */ message) => rejected.push({ action, message }),
   sendActiveWorldEventState: (/** @type {unknown} */ _socket, /** @type {unknown} */ world) => record(`events:${world}`),
   sendJson: (/** @type {unknown} */ _socket, /** @type {unknown} */ payload) => sent.push(payload),
-  sendWorldStateToSocket: (/** @type {unknown} */ _socket, /** @type {unknown} */ _player, /** @type {unknown} */ world, /** @type {unknown} */ extra) => sent.push({ type: "world_state", world, extra }),
+  sendWorldStateToSocket: (/** @type {unknown} */ _socket, /** @type {unknown} */ _player, /** @type {unknown} */ world, /** @type {unknown} */ extra) => {
+    sent.push({ type: "world_state", world, extra });
+    return {
+      ok: true,
+      streamed: true,
+      world_revision: worldRevision,
+      block_revision: worldBlockRevision,
+    };
+  },
   sendWorldPopulationUpdate: (/** @type {unknown} */ _socket, /** @type {unknown} */ world) => record(`send_population:${world}`),
   setPlayerState: (/** @type {string} */ username, /** @type {unknown} */ state) => savedStates.set(username, state),
   syncDropInterestForReceiver: (/** @type {unknown} */ _socket, /** @type {unknown} */ _player, /** @type {unknown} */ world) => record(`sync_drop:${world}`),
   touchLivePresence: (/** @type {unknown} */ _socket, /** @type {unknown} */ _player, /** @type {unknown} */ options = {}) => record(`touch:${Boolean(/** @type {any} */ (options).force)}`),
   updatePlayerWorldIndex: (/** @type {any} */ player) => record(`index:${player.world || ""}`),
   upsertAccount: (/** @type {unknown} */ account) => record(`account:${/** @type {any} */ (account).username}`),
+  createWorldEntrySessionId: () => `entry-session-${++worldEntrySessionSequence}`,
 };
 
 const routes = /** @type {any} */ (Phase8RoutesModule.createServerPhase8PlayerSessionRoutes(deps));
@@ -201,19 +215,59 @@ const socket = {};
     world: "test",
     facing: -1,
     join_request_id: "join-test-1",
+    world_entry_ready_v1: true,
   }, { playerId: "p2" });
   const joinEvents = events.slice(joinEventStart);
   assert.equal(joiningPlayer.world, "TEST");
-  assert.equal(joiningPlayer.joined_world, true);
+  assert.equal(joiningPlayer.joined_world, false);
+  assert.equal(joiningPlayer.world_entry_state, "snapshot_sent");
   assert.equal(joiningPlayer.facing, -1);
   assert.ok(joinEvents.includes("guard_spawn:TEST:32:64"));
-  assert.ok(joinEvents.includes("honor_begin:TEST"));
+  assert.ok(!joinEvents.includes("honor_begin:TEST"), "provisional entries must not publish active-world side effects");
   assert.ok(joinEvents.indexOf("refresh_world:TEST:join_world") >= 0);
   assert.ok(joinEvents.indexOf("refresh_player:joiner:join_world") > joinEvents.indexOf("refresh_world:TEST:join_world"));
   const joinOkPayload = /** @type {any} */ (sent.find((payload) => /** @type {any} */ (payload).type === "join_world_ok"));
   const joinWorldStatePayload = /** @type {any} */ (sent.find((payload) => /** @type {any} */ (payload).type === "world_state"));
   assert.equal(joinOkPayload.join_request_id, "join-test-1");
+  assert.equal(joinOkPayload.world_entry_session_id, joiningPlayer.world_entry_session_id);
+  assert.equal(joinOkPayload.world_entry_requires_ready, true);
   assert.equal(joinWorldStatePayload.extra.join_request_id, "join-test-1");
+  assert.equal(joinWorldStatePayload.extra.world_entry_session_id, joiningPlayer.world_entry_session_id);
+
+  await routes.handleWorldEntryReady(socket, joiningPlayer, {
+    type: "world_entry_ready",
+    world: "TEST",
+    world_entry_session_id: "stale-session",
+    world_revision: 220,
+    block_revision: 219,
+  }, { playerId: "p2" });
+  assert.equal(joiningPlayer.joined_world, false);
+  assert.equal(/** @type {any} */ (sent.at(-1)).reason, "stale_world_entry_session");
+
+  const readyEventStart = events.length;
+  await routes.handleWorldEntryReady(socket, joiningPlayer, {
+    type: "world_entry_ready",
+    world: "TEST",
+    world_entry_session_id: joiningPlayer.world_entry_session_id,
+    world_revision: 220,
+    block_revision: 219,
+  }, { playerId: "p2" });
+  const readyEvents = events.slice(readyEventStart);
+  assert.equal(joiningPlayer.joined_world, true);
+  assert.equal(joiningPlayer.world_entry_state, "active");
+  assert.ok(readyEvents.includes("honor_begin:TEST"));
+  assert.equal(/** @type {any} */ (sent.at(-1)).type, "world_entry_active");
+
+  const honorBeginsBeforeDuplicateReady = events.filter((event) => event === "honor_begin:TEST").length;
+  await routes.handleWorldEntryReady(socket, joiningPlayer, {
+    type: "world_entry_ready",
+    world: "TEST",
+    world_entry_session_id: joiningPlayer.world_entry_session_id,
+    world_revision: 220,
+    block_revision: 219,
+  }, { playerId: "p2" });
+  assert.equal(events.filter((event) => event === "honor_begin:TEST").length, honorBeginsBeforeDuplicateReady);
+  assert.equal(/** @type {any} */ (sent.at(-1)).type, "world_entry_active");
 
   const leaveEventStart = events.length;
   await routes.handleLeaveWorld(socket, joiningPlayer, { type: "leave_world", world: "test" }, { playerId: "p2" });
@@ -227,6 +281,28 @@ const socket = {};
   assert.ok(leaveEvents.indexOf("flush:joiner:TEST:leave_world") < leaveEvents.indexOf("honor_end:TEST:leave_world"));
   assert.ok(leaveEvents.indexOf("honor_end:TEST:leave_world") < leaveEvents.indexOf("release_admission:TEST"));
   assert.ok(leaveEvents.indexOf("flush:joiner:TEST:leave_world") < leaveEvents.indexOf("release_admission:TEST"));
+
+  const legacyPlayer = /** @type {any} */ ({
+    id: "p-legacy",
+    account_username: "legacy",
+    name: "Legacy",
+    world: "",
+    joined_world: false,
+  });
+  const legacySentStart = sent.length;
+  await routes.handleJoinWorld(socket, legacyPlayer, {
+    type: "join_world",
+    world: "legacy",
+    join_request_id: "join-legacy-1",
+  }, { playerId: "p-legacy" });
+  const legacyPayloads = sent.slice(legacySentStart);
+  const legacyJoinOk = /** @type {any} */ (legacyPayloads.find(
+    (/** @type {any} */ payload) => payload.type === "join_world_ok",
+  ));
+  assert.equal(legacyJoinOk.world_entry_requires_ready, false);
+  assert.equal(legacyPlayer.joined_world, true);
+  assert.equal(legacyPlayer.world_entry_state, "active");
+  assert.ok(legacyPayloads.some((/** @type {any} */ payload) => payload.type === "world_entry_active"));
 
   persistenceFlushSucceeds = false;
   const blockedLeavePlayer = /** @type {any} */ ({
@@ -246,6 +322,42 @@ const socket = {};
   assert.equal(rejected.pop()?.action, "leave_world");
   persistenceFlushSucceeds = true;
 
+  const driftPlayer = /** @type {any} */ ({ id: "p-drift", account_username: "drift", name: "Drift", world: "", joined_world: false });
+  await routes.handleJoinWorld(socket, driftPlayer, {
+    type: "join_world",
+    world: "drift",
+    join_request_id: "join-drift-1",
+    world_entry_ready_v1: true,
+  }, { playerId: "p-drift" });
+  const driftSessionId = driftPlayer.world_entry_session_id;
+  worldRevision = 221;
+  worldBlockRevision = 220;
+  await routes.handleWorldEntryReady(socket, driftPlayer, {
+    type: "world_entry_ready",
+    world: "DRIFT",
+    world_entry_session_id: driftSessionId,
+    world_revision: 220,
+    block_revision: 219,
+  }, { playerId: "p-drift" });
+  const restartPayload = /** @type {any} */ ([...sent].reverse().find(
+    (/** @type {any} */ payload) => payload.type === "world_entry_snapshot_restart",
+  ));
+  assert.equal(restartPayload.world_entry_session_id, driftSessionId);
+  assert.equal(driftPlayer.world_entry_session_id, driftSessionId, "revision restarts must keep the same entry session");
+  assert.equal(driftPlayer.joined_world, false);
+  assert.equal(driftPlayer.world_entry_revision, 221);
+  assert.equal(driftPlayer.world_entry_block_revision, 220);
+  await routes.handleWorldEntryReady(socket, driftPlayer, {
+    type: "world_entry_ready",
+    world: "DRIFT",
+    world_entry_session_id: driftSessionId,
+    world_revision: 221,
+    block_revision: 220,
+  }, { playerId: "p-drift" });
+  assert.equal(driftPlayer.joined_world, true);
+  worldRevision = 220;
+  worldBlockRevision = 219;
+
   const mismatchedLeavePlayer = /** @type {any} */ ({
     id: "p-mismatch",
     account_username: "mismatch",
@@ -261,13 +373,27 @@ const socket = {};
 
   const changingPlayer = /** @type {any} */ ({ id: "p3", account_username: "mover", account_email: "m@example.com", name: "Mover", world: "OLD", joined_world: true });
   const changeEventStart = events.length;
-  await routes.handleJoinWorld(socket, changingPlayer, { type: "join_world", world: "new" }, { playerId: "p3" });
+  await routes.handleJoinWorld(socket, changingPlayer, {
+    type: "join_world",
+    world: "new",
+    world_entry_ready_v1: true,
+  }, { playerId: "p3" });
   const changeEvents = events.slice(changeEventStart);
   assert.equal(changingPlayer.world, "NEW");
   assert.ok(changeEvents.indexOf("flush:mover:OLD:world_change") >= 0);
   assert.ok(changeEvents.includes("honor_end:OLD:world_change"));
-  assert.ok(changeEvents.includes("honor_begin:NEW"));
+  assert.ok(!changeEvents.includes("honor_begin:NEW"));
   assert.ok(changeEvents.indexOf("flush:mover:OLD:world_change") < changeEvents.indexOf("release_route:OLD"));
+
+  await routes.handleWorldEntryReady(socket, changingPlayer, {
+    type: "world_entry_ready",
+    world: "NEW",
+    world_entry_session_id: changingPlayer.world_entry_session_id,
+    world_revision: 220,
+    block_revision: 219,
+  }, { playerId: "p3" });
+  assert.equal(changingPlayer.joined_world, true);
+  assert.ok(events.includes("honor_begin:NEW"));
 
   assert.equal(
     packageJson.scripts["build:server-phase8-player-session-routes"],

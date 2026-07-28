@@ -91,6 +91,7 @@ const POST_ACTION_HANDLER_ROUTE_TYPES = Object.freeze([
 ]);
 
 const DIRECT_HANDLER_ROUTE_TYPES = Object.freeze([
+  "world_entry_ready",
   "world_block_update",
   "world_block_reconcile_request",
   "electrical_layer_update",

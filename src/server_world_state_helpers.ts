@@ -170,6 +170,26 @@ interface WorldStateStreamOptions {
   targetPacketBytes?: unknown;
   maxPacketBytes?: unknown;
   maxChunks?: unknown;
+  preparedSections?: PreparedWorldStateStreamSections | null;
+}
+
+interface PreparedWorldStateStreamChunk {
+  data: unknown[] | JsonRecord;
+  dataJson: string;
+}
+
+interface PreparedWorldStateStreamSection {
+  name: string;
+  kind: "array" | "dictionary";
+  sourceValue: unknown[] | JsonRecord;
+  valueJsonBytes: number;
+  chunks: PreparedWorldStateStreamChunk[];
+}
+
+interface PreparedWorldStateStreamSections {
+  targetPacketBytes: number;
+  maxPacketBytes: number;
+  sections: Record<string, PreparedWorldStateStreamSection>;
 }
 
 interface WorldStateStreamResult {
@@ -193,14 +213,121 @@ function getJsonByteLength(value: unknown): number {
   return Buffer.byteLength(serialized);
 }
 
+function getWorldStateStreamLimits(options: WorldStateStreamOptions): {
+  maxPacketBytes: number;
+  targetPacketBytes: number;
+  maxChunks: number;
+} {
+  const maxPacketBytes = Math.max(4096, Math.trunc(Number(options.maxPacketBytes) || 64 * 1024));
+  const targetPacketBytes = Math.min(
+    maxPacketBytes,
+    Math.max(4096, Math.trunc(Number(options.targetPacketBytes) || 48 * 1024))
+  );
+  const maxChunks = Math.max(1, Math.min(4096, Math.trunc(Number(options.maxChunks) || 256)));
+  return { maxPacketBytes, targetPacketBytes, maxChunks };
+}
+
+function prepareWorldStateStreamSection(
+  name: string,
+  kind: "array" | "dictionary",
+  value: unknown[] | JsonRecord,
+  targetPacketBytes: number,
+  maxPacketBytes: number
+): PreparedWorldStateStreamSection {
+  // Reserve enough room for the stream envelope at its maximum supported IDs.
+  // The completed packet is still checked against maxPacketBytes before send.
+  const contentBudget = Math.max(512, targetPacketBytes - 1024);
+  const chunks: PreparedWorldStateStreamChunk[] = [];
+  let valueJsonBytes = 2;
+
+  if (kind === "array") {
+    let data: unknown[] = [];
+    let serializedValues: string[] = [];
+    let contentBytes = 0;
+    let totalContentBytes = 0;
+    for (const entry of value as unknown[]) {
+      const serializedValue = JSON.stringify(entry) ?? "null";
+      const entryBytes = Buffer.byteLength(serializedValue);
+      const candidateBytes = contentBytes + (data.length > 0 ? 1 : 0) + entryBytes;
+      if (data.length > 0 && candidateBytes > contentBudget) {
+        chunks.push({ data, dataJson: `[${serializedValues.join(",")}]` });
+        data = [];
+        serializedValues = [];
+        contentBytes = 0;
+      }
+      contentBytes += (data.length > 0 ? 1 : 0) + entryBytes;
+      totalContentBytes += (totalContentBytes > 0 ? 1 : 0) + entryBytes;
+      data.push(entry);
+      serializedValues.push(serializedValue);
+      if (entryBytes + 1024 > maxPacketBytes) {
+        throw new Error(`World state stream array entry exceeds ${maxPacketBytes} bytes in section ${name}.`);
+      }
+    }
+    if (data.length > 0) {
+      chunks.push({ data, dataJson: `[${serializedValues.join(",")}]` });
+    }
+    valueJsonBytes += totalContentBytes;
+  } else {
+    let data: JsonRecord = {};
+    let serializedEntries: string[] = [];
+    let entryCount = 0;
+    let contentBytes = 0;
+    let totalContentBytes = 0;
+    for (const [key, entry] of Object.entries(value as JsonRecord)) {
+      const serializedValue = JSON.stringify(entry);
+      if (serializedValue === undefined) continue;
+      const serializedKey = JSON.stringify(key);
+      const serializedEntry = `${serializedKey}:${serializedValue}`;
+      const entryBytes = Buffer.byteLength(serializedEntry);
+      const candidateBytes = contentBytes + (entryCount > 0 ? 1 : 0) + entryBytes;
+      if (entryCount > 0 && candidateBytes > contentBudget) {
+        chunks.push({ data, dataJson: `{${serializedEntries.join(",")}}` });
+        data = {};
+        serializedEntries = [];
+        entryCount = 0;
+        contentBytes = 0;
+      }
+      contentBytes += (entryCount > 0 ? 1 : 0) + entryBytes;
+      totalContentBytes += (totalContentBytes > 0 ? 1 : 0) + entryBytes;
+      data[key] = entry;
+      serializedEntries.push(serializedEntry);
+      entryCount += 1;
+      if (entryBytes + 1024 > maxPacketBytes) {
+        throw new Error(`World state stream dictionary entry exceeds ${maxPacketBytes} bytes in section ${name}.`);
+      }
+    }
+    if (entryCount > 0) {
+      chunks.push({ data, dataJson: `{${serializedEntries.join(",")}}` });
+    }
+    valueJsonBytes += totalContentBytes;
+  }
+
+  return { name, kind, sourceValue: value, valueJsonBytes, chunks };
+}
+
+function prepareWorldStateStreamSections(
+  rawState: unknown,
+  options: WorldStateStreamOptions = {}
+): PreparedWorldStateStreamSections {
+  if (!isRecord(rawState)) {
+    throw new Error("World state stream section preparation requires a JSON object.");
+  }
+  const { maxPacketBytes, targetPacketBytes } = getWorldStateStreamLimits(options);
+  const sections: Record<string, PreparedWorldStateStreamSection> = {};
+  for (const [name, value] of Object.entries(rawState)) {
+    if (Array.isArray(value)) {
+      sections[name] = prepareWorldStateStreamSection(name, "array", value, targetPacketBytes, maxPacketBytes);
+    } else if (isRecord(value)) {
+      sections[name] = prepareWorldStateStreamSection(name, "dictionary", value, targetPacketBytes, maxPacketBytes);
+    }
+  }
+  return { targetPacketBytes, maxPacketBytes, sections };
+}
+
 function buildWorldStateStreamPackets(
   rawState: unknown,
   options: WorldStateStreamOptions = {}
 ): WorldStateStreamResult {
-  const serializedState = JSON.stringify(rawState);
-  if (!serializedState) {
-    throw new Error("World state stream requires a JSON object.");
-  }
   if (!isRecord(rawState)) {
     throw new Error("World state stream requires a JSON object.");
   }
@@ -210,12 +337,7 @@ function buildWorldStateStreamPackets(
   // memory and CPU without adding snapshot isolation.
   const state = rawState;
 
-  const maxPacketBytes = Math.max(4096, Math.trunc(Number(options.maxPacketBytes) || 64 * 1024));
-  const targetPacketBytes = Math.min(
-    maxPacketBytes,
-    Math.max(4096, Math.trunc(Number(options.targetPacketBytes) || 48 * 1024))
-  );
-  const maxChunks = Math.max(1, Math.min(4096, Math.trunc(Number(options.maxChunks) || 256)));
+  const { maxPacketBytes, targetPacketBytes, maxChunks } = getWorldStateStreamLimits(options);
   const snapshotId = String(options.snapshotId || "").trim().slice(0, 128);
   if (!snapshotId) {
     throw new Error("World state stream requires a snapshot ID.");
@@ -223,6 +345,7 @@ function buildWorldStateStreamPackets(
 
   const world = String(state.world || "").trim().slice(0, 64);
   const joinRequestId = String(state.join_request_id || "").trim().slice(0, 128);
+  const worldEntrySessionId = String(state.world_entry_session_id || "").trim().slice(0, 128);
   const metadata: JsonRecord = {};
   const sections: JsonRecord[] = [];
   const sectionValues: Array<{ name: string; kind: "array" | "dictionary"; value: unknown[] | JsonRecord }> = [];
@@ -239,7 +362,7 @@ function buildWorldStateStreamPackets(
     }
   }
 
-  const chunkPayloads: JsonRecord[] = [];
+  const chunkPayloads: Array<{ packet: JsonRecord; dataJson: string }> = [];
   const makeChunkEnvelope = (
     sectionName: string,
     sectionKind: "array" | "dictionary",
@@ -250,6 +373,7 @@ function buildWorldStateStreamPackets(
     snapshot_id: snapshotId,
     world,
     join_request_id: joinRequestId,
+    world_entry_session_id: worldEntrySessionId,
     chunk_index: maxChunks,
     chunk_count: maxChunks,
     section: sectionName,
@@ -257,62 +381,35 @@ function buildWorldStateStreamPackets(
     data,
   });
 
-  for (const section of sectionValues) {
-    const emptyData: unknown[] | JsonRecord = section.kind === "array" ? [] : {};
-    const emptyPacketBytes = getJsonByteLength(makeChunkEnvelope(section.name, section.kind, emptyData));
-    if (emptyPacketBytes > maxPacketBytes) {
-      throw new Error(`World state stream envelope exceeds ${maxPacketBytes} bytes for section ${section.name}.`);
-    }
+  const preparedSections = options.preparedSections;
+  const preparedCompatible = preparedSections
+    && preparedSections.targetPacketBytes === targetPacketBytes
+    && preparedSections.maxPacketBytes === maxPacketBytes;
+  let snapshotBytes = 2;
+  let snapshotEntryCount = 0;
 
-    if (section.kind === "array") {
-      let data: unknown[] = [];
-      let contentBytes = 0;
-      for (const value of section.value as unknown[]) {
-        const serializedValue = JSON.stringify(value);
-        const valueBytes = Buffer.byteLength(serializedValue === undefined ? "null" : serializedValue);
-        const candidateContentBytes = contentBytes + (data.length > 0 ? 1 : 0) + valueBytes;
-        if (data.length > 0 && emptyPacketBytes + candidateContentBytes > targetPacketBytes) {
-          chunkPayloads.push(makeChunkEnvelope(section.name, section.kind, data));
-          data = [];
-          contentBytes = 0;
-        }
-        contentBytes += (data.length > 0 ? 1 : 0) + valueBytes;
-        data.push(value);
-        if (emptyPacketBytes + contentBytes > maxPacketBytes) {
-          throw new Error(`World state stream array entry exceeds ${maxPacketBytes} bytes in section ${section.name}.`);
-        }
+  for (const [name, value] of Object.entries(state)) {
+    const keyBytes = Buffer.byteLength(JSON.stringify(name));
+    let valueBytes = 0;
+    if (Array.isArray(value) || isRecord(value)) {
+      const kind: "array" | "dictionary" = Array.isArray(value) ? "array" : "dictionary";
+      const cached = preparedCompatible ? preparedSections?.sections[name] : null;
+      const prepared = cached && cached.kind === kind && cached.sourceValue === value
+        ? cached
+        : prepareWorldStateStreamSection(name, kind, value, targetPacketBytes, maxPacketBytes);
+      valueBytes = prepared.valueJsonBytes;
+      for (const chunk of prepared.chunks) {
+        chunkPayloads.push({
+          packet: makeChunkEnvelope(name, kind, chunk.data),
+          dataJson: chunk.dataJson,
+        });
       }
-      if (data.length > 0) {
-        chunkPayloads.push(makeChunkEnvelope(section.name, section.kind, data));
-      }
-      continue;
-    }
-
-    let data: JsonRecord = {};
-    let entryCount = 0;
-    let contentBytes = 0;
-    for (const [key, value] of Object.entries(section.value as JsonRecord)) {
-      const serializedKey = JSON.stringify(key);
+    } else {
       const serializedValue = JSON.stringify(value);
-      if (serializedValue === undefined) continue;
-      const entryBytes = Buffer.byteLength(serializedKey) + 1 + Buffer.byteLength(serializedValue);
-      const candidateContentBytes = contentBytes + (entryCount > 0 ? 1 : 0) + entryBytes;
-      if (entryCount > 0 && emptyPacketBytes + candidateContentBytes > targetPacketBytes) {
-        chunkPayloads.push(makeChunkEnvelope(section.name, section.kind, data));
-        data = {};
-        entryCount = 0;
-        contentBytes = 0;
-      }
-      contentBytes += (entryCount > 0 ? 1 : 0) + entryBytes;
-      data[key] = value;
-      entryCount += 1;
-      if (emptyPacketBytes + contentBytes > maxPacketBytes) {
-        throw new Error(`World state stream dictionary entry exceeds ${maxPacketBytes} bytes in section ${section.name}.`);
-      }
+      valueBytes = Buffer.byteLength(serializedValue === undefined ? "null" : serializedValue);
     }
-    if (entryCount > 0) {
-      chunkPayloads.push(makeChunkEnvelope(section.name, section.kind, data));
-    }
+    snapshotBytes += (snapshotEntryCount > 0 ? 1 : 0) + keyBytes + 1 + valueBytes;
+    snapshotEntryCount += 1;
   }
 
   if (chunkPayloads.length > maxChunks) {
@@ -320,18 +417,18 @@ function buildWorldStateStreamPackets(
   }
 
   const chunkCount = chunkPayloads.length;
-  const chunks: JsonRecord[] = chunkPayloads.map((packet, index): JsonRecord => ({
-    ...packet,
+  const chunks: JsonRecord[] = chunkPayloads.map((chunk, index): JsonRecord => ({
+    ...chunk.packet,
     chunk_index: index,
     chunk_count: chunkCount,
   }));
-  const snapshotBytes = Buffer.byteLength(serializedState);
   const beginPacket: JsonRecord = {
     type: "world_state_stream_begin",
     stream_version: 1,
     snapshot_id: snapshotId,
     world,
     join_request_id: joinRequestId,
+    world_entry_session_id: worldEntrySessionId,
     chunk_count: chunkCount,
     section_count: sections.length,
     snapshot_bytes: snapshotBytes,
@@ -344,6 +441,7 @@ function buildWorldStateStreamPackets(
     snapshot_id: snapshotId,
     world,
     join_request_id: joinRequestId,
+    world_entry_session_id: worldEntrySessionId,
     chunk_count: chunkCount,
     snapshot_bytes: snapshotBytes,
   };
@@ -351,8 +449,18 @@ function buildWorldStateStreamPackets(
   const packetJson: string[] = [];
   let wireBytes = 0;
 
-  for (const packet of packets) {
-    const rawPacket = JSON.stringify(packet);
+  for (let index = 0; index < packets.length; index += 1) {
+    const packet = packets[index];
+    let rawPacket = "";
+    if (index > 0 && index < packets.length - 1) {
+      const chunk = chunkPayloads[index - 1];
+      const envelope = { ...packet };
+      delete envelope.data;
+      const serializedEnvelope = JSON.stringify(envelope);
+      rawPacket = `${serializedEnvelope.slice(0, -1)},"data":${chunk.dataJson}}`;
+    } else {
+      rawPacket = JSON.stringify(packet);
+    }
     const packetBytes = Buffer.byteLength(rawPacket);
     if (packetBytes > maxPacketBytes) {
       throw new Error(`World state stream packet ${String(packet.type || "unknown")} is ${packetBytes} bytes; maximum is ${maxPacketBytes}.`);
@@ -2519,5 +2627,6 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
 
 export = {
   buildWorldStateStreamPackets,
+  prepareWorldStateStreamSections,
   createWorldStateHelpers,
 };
