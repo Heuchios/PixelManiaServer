@@ -349,7 +349,7 @@ assert.deepEqual(Array.from(shiftBlockDefinition?.inventory_icon?.cell || []), [
 assert.equal(itemDatabase.getPlaceLayer("shift_block"), "foreground");
 assert.equal(shiftBlockDefinition?.collidable, true);
 assert.equal(shiftBlockDefinition?.colour_cycle_block, true);
-assert.equal(shiftBlockDefinition?.colour_cycle_speed, 0.25);
+assert.equal(shiftBlockDefinition?.colour_cycle_speed, 0.08);
 assert.equal(shiftBlockDefinition?.colour_cycle_saturation, 0.85);
 assert.equal(shiftBlockDefinition?.colour_cycle_value, 1.0);
 assert.deepEqual(fixedDrop(shiftBlockDefinition, "shift_block"), {

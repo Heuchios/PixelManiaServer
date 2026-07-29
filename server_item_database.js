@@ -1556,7 +1556,7 @@ const ITEM_DEFINITIONS = {
         seed: "",
         collidable: true,
         colour_cycle_block: true,
-        colour_cycle_speed: 0.25,
+        colour_cycle_speed: 0.08,
         colour_cycle_saturation: 0.85,
         colour_cycle_value: 1.0,
         drop_rules: {
