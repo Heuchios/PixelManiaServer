@@ -358,6 +358,26 @@ assert.deepEqual(fixedDrop(shiftBlockDefinition, "shift_block"), {
   amount: 1,
 });
 
+const pillarDefinition = itemDatabase.getItemDefinition("pillar");
+assert.equal(atlasDb.getItemIdForKey("pillar"), 58);
+assert.deepEqual(Array.from(atlasDb.getItem(58)?.atlas_coords || []), [15, 19]);
+assert.equal(pillarDefinition?.category, "block");
+assert.equal(pillarDefinition?.block_health, 2);
+assert.equal(pillarDefinition?.atlas_item_id, 58);
+assert.deepEqual(Array.from(pillarDefinition?.atlas_coords || []), [15, 19]);
+assert.equal(itemDatabase.getPlaceLayer("pillar"), "foreground");
+assert.equal(pillarDefinition?.collidable, true);
+assert.deepEqual(pillarDefinition?.vertical_variant_atlas_coords, {
+  single: [15, 19],
+  top: [15, 20],
+  middle: [15, 21],
+  bottom: [15, 22],
+});
+for (const legacyPillarId of ["pillar_top", "pillar_middle", "pillar_bottom"]) {
+  const legacyDefinition = itemDatabase.getItemDefinition(legacyPillarId);
+  assert.equal(legacyDefinition?.admin_grantable, false);
+}
+
 const pickaxeItemIds = [
   "stone_pickaxe",
   "golden_pickaxe",
