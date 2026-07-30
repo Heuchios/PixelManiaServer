@@ -378,6 +378,119 @@ for (const legacyPillarId of ["pillar_top", "pillar_middle", "pillar_bottom"]) {
   assert.equal(legacyDefinition?.admin_grantable, false);
 }
 
+const royalDoorDefinition = itemDatabase.getItemDefinition("royal_door");
+assert.equal(atlasDb.getItemIdForKey("royal_door"), 59);
+assert.deepEqual(Array.from(atlasDb.getItem(59)?.atlas_coords || []), [16, 22]);
+assert.equal(royalDoorDefinition?.category, "block");
+assert.equal(royalDoorDefinition?.door_block, true);
+assert.equal(royalDoorDefinition?.no_collision, true);
+assert.equal(royalDoorDefinition?.collidable, false);
+assert.deepEqual(fixedDrop(royalDoorDefinition, "royal_door"), {
+  item_id: "royal_door",
+  item_category: "block",
+  amount: 1,
+});
+assert.deepEqual(Array.from(fixedDrop(royalDoorDefinition, "royal_door_seed")?.amount_range || []), [0, 2]);
+assert.deepEqual(Array.from(fixedDrop(royalDoorDefinition, "gem")?.amount_range || []), [0, 5]);
+
+const royalEntranceDefinition = itemDatabase.getItemDefinition("royal_entrance");
+assert.equal(atlasDb.getItemIdForKey("royal_entrance"), 60);
+assert.deepEqual(Array.from(atlasDb.getItem(60)?.atlas_coords || []), [18, 22]);
+assert.equal(royalEntranceDefinition?.category, "block");
+assert.equal(royalEntranceDefinition?.entrance_block, true);
+assert.equal(royalEntranceDefinition?.entrance_animation_frame_seconds, 0.08);
+assert.equal(royalEntranceDefinition?.no_collision, true);
+assert.equal(royalEntranceDefinition?.collidable, false);
+assert.deepEqual(
+  royalEntranceDefinition?.animation_frames?.map((/** @type {any} */ frame) => Array.from(frame || [])),
+  [[18, 22], [19, 22], [20, 22]],
+);
+assert.deepEqual(Array.from(fixedDrop(royalEntranceDefinition, "royal_entrance_seed")?.amount_range || []), [0, 2]);
+assert.deepEqual(Array.from(fixedDrop(royalEntranceDefinition, "gem")?.amount_range || []), [0, 5]);
+
+const lampDefinition = itemDatabase.getItemDefinition("lamp");
+const lampActiveDefinition = itemDatabase.getItemDefinition("lamp_active");
+assert.equal(atlasDb.getItemIdForKey("lamp"), 61);
+assert.equal(atlasDb.getItemIdForKey("lamp_active"), 62);
+assert.deepEqual(Array.from(atlasDb.getItem(61)?.atlas_coords || []), [16, 20]);
+assert.deepEqual(Array.from(atlasDb.getItem(62)?.atlas_coords || []), [17, 20]);
+for (const definition of [lampDefinition, lampActiveDefinition]) {
+  assert.equal(definition?.category, "block");
+  assert.equal(definition?.punch_toggle_block, true);
+  assert.equal(definition?.toggle_active_block, "lamp_active");
+  assert.equal(definition?.toggle_inactive_block, "lamp");
+  assert.equal(definition?.toggle_drop_block, "lamp");
+  assert.equal(definition?.no_collision, true);
+  assert.equal(definition?.collidable, false);
+}
+assert.equal(lampActiveDefinition?.hidden, true);
+assert.equal(lampActiveDefinition?.admin_grantable, false);
+assert.deepEqual(Array.from(fixedDrop(lampDefinition, "lamp_seed")?.amount_range || []), [0, 2]);
+assert.deepEqual(Array.from(fixedDrop(lampDefinition, "gem")?.amount_range || []), [0, 5]);
+
+const royalWindowDefinition = itemDatabase.getItemDefinition("royal_window");
+assert.equal(atlasDb.getItemIdForKey("royal_window"), 63);
+assert.deepEqual(Array.from(atlasDb.getItem(63)?.atlas_coords || []), [21, 22]);
+assert.equal(royalWindowDefinition?.category, "block");
+assert.equal(royalWindowDefinition?.no_collision, true);
+assert.equal(royalWindowDefinition?.collidable, false);
+assert.deepEqual(Array.from(fixedDrop(royalWindowDefinition, "royal_window_seed")?.amount_range || []), [0, 2]);
+assert.deepEqual(Array.from(fixedDrop(royalWindowDefinition, "gem")?.amount_range || []), [0, 5]);
+
+const fishBowlDefinition = itemDatabase.getItemDefinition("fish_bowl");
+assert.equal(atlasDb.getItemIdForKey("fish_bowl"), 64);
+assert.deepEqual(Array.from(atlasDb.getItem(64)?.atlas_coords || []), [18, 20]);
+assert.equal(fishBowlDefinition?.category, "block");
+assert.equal(fishBowlDefinition?.animated, true);
+assert.equal(fishBowlDefinition?.animation_frame_seconds, 0.35);
+assert.deepEqual(
+  fishBowlDefinition?.animation_frames?.map((/** @type {any} */ frame) => Array.from(frame || [])),
+  [[18, 20], [19, 20]],
+);
+assert.deepEqual(Array.from(fixedDrop(fishBowlDefinition, "fish_bowl_seed")?.amount_range || []), [0, 2]);
+assert.deepEqual(Array.from(fixedDrop(fishBowlDefinition, "gem")?.amount_range || []), [0, 5]);
+
+const tvDefinition = itemDatabase.getItemDefinition("tv");
+const tvActiveDefinition = itemDatabase.getItemDefinition("tv_active");
+assert.equal(atlasDb.getItemIdForKey("tv"), 65);
+assert.equal(atlasDb.getItemIdForKey("tv_active"), 66);
+assert.deepEqual(Array.from(atlasDb.getItem(65)?.atlas_coords || []), [20, 20]);
+assert.deepEqual(Array.from(atlasDb.getItem(66)?.atlas_coords || []), [21, 20]);
+for (const definition of [tvDefinition, tvActiveDefinition]) {
+  assert.equal(definition?.category, "block");
+  assert.equal(definition?.punch_toggle_block, true);
+  assert.equal(definition?.toggle_active_block, "tv_active");
+  assert.equal(definition?.toggle_inactive_block, "tv");
+  assert.equal(definition?.toggle_drop_block, "tv");
+  assert.equal(definition?.no_collision, true);
+  assert.equal(definition?.collidable, false);
+}
+assert.equal(tvActiveDefinition?.hidden, true);
+assert.equal(tvActiveDefinition?.admin_grantable, false);
+assert.equal(tvActiveDefinition?.animated, true);
+assert.equal(tvActiveDefinition?.animation_frame_seconds, 0.18);
+assert.deepEqual(
+  tvActiveDefinition?.animation_frames?.map((/** @type {any} */ frame) => Array.from(frame || [])),
+  [[21, 20], [22, 20], [23, 20], [24, 20]],
+);
+assert.deepEqual(Array.from(fixedDrop(tvDefinition, "tv_seed")?.amount_range || []), [0, 2]);
+assert.deepEqual(Array.from(fixedDrop(tvDefinition, "gem")?.amount_range || []), [0, 5]);
+
+for (const [seedId, growsInto] of [
+  ["royal_door_seed", "royal_door"],
+  ["royal_entrance_seed", "royal_entrance"],
+  ["lamp_seed", "lamp"],
+  ["royal_window_seed", "royal_window"],
+  ["fish_bowl_seed", "fish_bowl"],
+  ["tv_seed", "tv"],
+]) {
+  const seedDefinition = itemDatabase.getItemDefinition(seedId);
+  assert.equal(seedDefinition?.category, "seed");
+  assert.equal(seedDefinition?.grows_into, growsInto);
+}
+assert.equal(atlasDefinition.ATLAS_PASSTHROUGH_KEYS.includes("entrance_block"), true);
+assert.equal(atlasDefinition.ATLAS_PASSTHROUGH_KEYS.includes("entrance_animation_frame_seconds"), true);
+
 const pickaxeItemIds = [
   "stone_pickaxe",
   "golden_pickaxe",
