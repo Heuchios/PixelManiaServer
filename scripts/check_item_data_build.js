@@ -437,6 +437,35 @@ assert.equal(royalWindowDefinition?.collidable, false);
 assert.deepEqual(Array.from(fixedDrop(royalWindowDefinition, "royal_window_seed")?.amount_range || []), [0, 2]);
 assert.deepEqual(Array.from(fixedDrop(royalWindowDefinition, "gem")?.amount_range || []), [0, 5]);
 
+const curtainBlockCases = [
+  { itemId: "purple_curtains", atlasItemId: 67, cell: [22, 22], seedId: "purple_curtains_seed" },
+  { itemId: "pink_curtains", atlasItemId: 68, cell: [23, 22], seedId: "pink_curtains_seed" },
+];
+for (const curtainCase of curtainBlockCases) {
+  const definition = itemDatabase.getItemDefinition(curtainCase.itemId);
+  assert.equal(atlasDb.getItemIdForKey(curtainCase.itemId), curtainCase.atlasItemId);
+  assert.deepEqual(Array.from(atlasDb.getItem(curtainCase.atlasItemId)?.atlas_coords || []), curtainCase.cell);
+  assert.equal(definition?.category, "block");
+  assert.equal(definition?.rarity, "uncommon");
+  assert.equal(definition?.block_health, 3);
+  assert.equal(definition?.seed, curtainCase.seedId);
+  assert.equal(definition?.atlas_item_id, curtainCase.atlasItemId);
+  assert.deepEqual(Array.from(definition?.atlas_coords || []), curtainCase.cell);
+  assert.equal(itemDatabase.getPlaceLayer(curtainCase.itemId), "foreground");
+  assert.equal(definition?.no_collision, true);
+  assert.equal(definition?.collidable, false);
+  assert.deepEqual(fixedDrop(definition, curtainCase.itemId), {
+    item_id: curtainCase.itemId,
+    item_category: "block",
+    amount: 1,
+  });
+  assert.deepEqual(Array.from(fixedDrop(definition, curtainCase.seedId)?.amount_range || []), [0, 2]);
+  assert.deepEqual(Array.from(fixedDrop(definition, "gem")?.amount_range || []), [0, 5]);
+  assert.deepEqual(Array.from(treeDrop(definition, curtainCase.itemId)?.amount_range || []), [1, 3]);
+  assert.deepEqual(Array.from(treeDrop(definition, curtainCase.seedId)?.amount_range || []), [0, 3]);
+  assert.deepEqual(Array.from(treeDrop(definition, "gem")?.amount_range || []), [0, 5]);
+}
+
 const fishBowlDefinition = itemDatabase.getItemDefinition("fish_bowl");
 assert.equal(atlasDb.getItemIdForKey("fish_bowl"), 64);
 assert.deepEqual(Array.from(atlasDb.getItem(64)?.atlas_coords || []), [18, 20]);
@@ -483,6 +512,8 @@ for (const [seedId, growsInto] of [
   ["royal_window_seed", "royal_window"],
   ["fish_bowl_seed", "fish_bowl"],
   ["tv_seed", "tv"],
+  ["purple_curtains_seed", "purple_curtains"],
+  ["pink_curtains_seed", "pink_curtains"],
 ]) {
   const seedDefinition = itemDatabase.getItemDefinition(seedId);
   assert.equal(seedDefinition?.category, "seed");

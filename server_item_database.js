@@ -2611,6 +2611,8 @@ const ITEM_DEFINITIONS = {
     royal_window_seed: seed("royal_window", { display_name: "Royal Window Seed", rarity: "uncommon", grow_time: 150, max_grow_time: 150 }),
     fish_bowl_seed: seed("fish_bowl", { display_name: "Fish Bowl Seed", rarity: "uncommon", grow_time: 150, max_grow_time: 150 }),
     tv_seed: seed("tv", { display_name: "TV Seed", rarity: "uncommon", grow_time: 150, max_grow_time: 150 }),
+    purple_curtains_seed: seed("purple_curtains", { display_name: "Purple Curtains Seed", rarity: "uncommon", grow_time: 150, max_grow_time: 150 }),
+    pink_curtains_seed: seed("pink_curtains", { display_name: "Pink Curtains Seed", rarity: "uncommon", grow_time: 150, max_grow_time: 150 }),
     wood_plank_seed: seed("wood_plank", { rarity: "uncommon" }),
     wood_platform_seed: seed("wood_platform", { rarity: "uncommon" }),
     wooden_entrance_seed: seed("wooden_entrance", { rarity: "rare" }),
