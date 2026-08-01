@@ -13,6 +13,8 @@ function errorMessage(error) {
 const WORLD_ENTRY_PROFILE_ENABLED = process.env.NODE_ENV !== "production"
     && ["1", "true", "yes", "on"].includes(String(process.env.WORLD_ENTRY_PROFILE || "").trim().toLowerCase());
 const WORLD_ENTRY_PROFILE_SERVER_INSTANCE = String(process.env.SERVER_INSTANCE_ID || process.env.INSTANCE_ID || process.env.NODE_APP_INSTANCE || "development").trim().slice(0, 128);
+const WORLD_ENTRY_CATCHUP_MAX_NO_PROGRESS_ATTEMPTS = Math.max(2, Math.trunc(Number(process.env.WORLD_ENTRY_CATCHUP_MAX_NO_PROGRESS_ATTEMPTS) || 10));
+const WORLD_ENTRY_CATCHUP_RETRY_MS = Math.max(25, Math.min(250, Math.trunc(Number(process.env.WORLD_ENTRY_CATCHUP_RETRY_MS) || 100)));
 function worldEntryElapsedMs(startedAt, endedAt = process.hrtime.bigint()) {
     return Math.round((Number(endedAt - startedAt) / 1_000_000) * 1000) / 1000;
 }
@@ -77,6 +79,9 @@ function createServerPhase8PlayerSessionRoutes(deps) {
         player.world_entry_revision = 0;
         player.world_entry_block_revision = 0;
         player.world_entry_started_at_msec = 0;
+        player.world_entry_snapshot_queued = false;
+        player.world_entry_catchup_attempts = 0;
+        player.world_entry_catchup_last_client_block_revision = 0;
     }
     async function cancelProvisionalWorldEntry(player, worldName, context, reason) {
         player.joined_world = false;
@@ -99,6 +104,9 @@ function createServerPhase8PlayerSessionRoutes(deps) {
         if (!worldName || !sessionId)
             return;
         player.world_entry_state = "active";
+        player.world_entry_snapshot_queued = false;
+        player.world_entry_catchup_attempts = 0;
+        player.world_entry_catchup_last_client_block_revision = 0;
         player.joined_world = true;
         deps.updatePlayerWorldIndex(player);
         deps.postgresStore.mirrorPlayerWorld(player.account_username, worldName);
@@ -434,6 +442,9 @@ function createServerPhase8PlayerSessionRoutes(deps) {
             player.world_entry_revision = 0;
             player.world_entry_block_revision = 0;
             player.world_entry_started_at_msec = Date.now();
+            player.world_entry_snapshot_queued = false;
+            player.world_entry_catchup_attempts = 0;
+            player.world_entry_catchup_last_client_block_revision = 0;
             deps.updatePlayerWorldIndex(player);
             await deps.commitWorldAdmissionReservation(admission, player, oldWorld);
             admissionCommitted = true;
@@ -520,6 +531,9 @@ function createServerPhase8PlayerSessionRoutes(deps) {
             }
             player.world_entry_revision = Number(worldStateDelivery.world_revision || deps.getWorldRevision(newWorld) || 0);
             player.world_entry_block_revision = Number(worldStateDelivery.block_revision || deps.getWorldBlockRevisionForWorld(newWorld) || 0);
+            player.world_entry_snapshot_queued = true;
+            player.world_entry_catchup_attempts = 0;
+            player.world_entry_catchup_last_client_block_revision = Number(player.world_entry_block_revision || 0);
             recordWorldEntryServerStage(worldEntryProfile, "world_state_queued", {
                 streamed: worldStateDelivery.streamed === true,
                 delivery_ok: worldStateDelivery.ok === true,
@@ -607,14 +621,29 @@ function createServerPhase8PlayerSessionRoutes(deps) {
         const expectedBlockRevision = Math.max(0, Math.trunc(Number(player.world_entry_block_revision || 0)));
         const clientRevision = Math.max(0, Math.trunc(Number(data.world_revision || 0)));
         const clientBlockRevision = Math.max(0, Math.trunc(Number(data.block_revision || 0)));
-        if (currentRevision !== expectedRevision
-            || currentBlockRevision !== expectedBlockRevision
-            || clientRevision !== expectedRevision
-            || clientBlockRevision !== expectedBlockRevision) {
+        const clientSnapshotRegressed = clientRevision < expectedRevision || clientBlockRevision < expectedBlockRevision;
+        const clientSnapshotAhead = clientRevision > currentRevision || clientBlockRevision > currentBlockRevision;
+        const authoritativeRevisionRegressed = currentRevision < expectedRevision || currentBlockRevision < expectedBlockRevision;
+        const awaitingBlockCatchup = clientBlockRevision < currentBlockRevision;
+        const lastCatchupBlockRevision = Math.max(expectedBlockRevision, Math.trunc(Number(player.world_entry_catchup_last_client_block_revision || 0)));
+        const previousCatchupAttempts = Math.max(0, Math.trunc(Number(player.world_entry_catchup_attempts || 0)));
+        const catchupAttempts = awaitingBlockCatchup
+            ? (clientBlockRevision > lastCatchupBlockRevision ? 0 : previousCatchupAttempts + 1)
+            : 0;
+        if (awaitingBlockCatchup) {
+            player.world_entry_catchup_attempts = catchupAttempts;
+            player.world_entry_catchup_last_client_block_revision = Math.max(lastCatchupBlockRevision, clientBlockRevision);
+        }
+        const catchupStalled = awaitingBlockCatchup
+            && catchupAttempts >= WORLD_ENTRY_CATCHUP_MAX_NO_PROGRESS_ATTEMPTS;
+        if (clientSnapshotRegressed
+            || clientSnapshotAhead
+            || authoritativeRevisionRegressed
+            || catchupStalled) {
             const joinSpawn = toRecord(deps.getJoinWorldSpawnForWorld(worldName));
             deps.sendJson(socket, {
                 type: "world_entry_snapshot_restart",
-                reason: "world_revision_advanced_during_load",
+                reason: catchupStalled ? "world_entry_catchup_stalled" : "world_revision_invalid_during_load",
                 world: worldName,
                 join_request_id: player.world_entry_join_request_id,
                 world_entry_session_id: sessionId,
@@ -623,6 +652,10 @@ function createServerPhase8PlayerSessionRoutes(deps) {
                 world_revision: currentRevision,
                 block_revision: currentBlockRevision,
             });
+            // Do not mix live catch-up packets into a replacement snapshot while it is
+            // being built/queued. Updates committed after the snapshot is queued will
+            // resume through the ordered provisional-player catch-up path.
+            player.world_entry_snapshot_queued = false;
             const delivery = toRecord(deps.sendWorldStateToSocket(socket, player, worldName, {
                 receiver_player: player,
                 respawn_player: true,
@@ -648,6 +681,9 @@ function createServerPhase8PlayerSessionRoutes(deps) {
             }
             player.world_entry_revision = Number(delivery.world_revision || currentRevision || 0);
             player.world_entry_block_revision = Number(delivery.block_revision || currentBlockRevision || 0);
+            player.world_entry_snapshot_queued = true;
+            player.world_entry_catchup_attempts = 0;
+            player.world_entry_catchup_last_client_block_revision = Number(player.world_entry_block_revision || 0);
             console.log("[world-entry-server]", JSON.stringify({
                 event: "world_entry_snapshot_restart",
                 world_id: worldName,
@@ -662,6 +698,49 @@ function createServerPhase8PlayerSessionRoutes(deps) {
             }));
             return;
         }
+        if (awaitingBlockCatchup) {
+            deps.sendJson(socket, {
+                type: "world_entry_catchup_wait",
+                reason: "world_block_updates_in_flight",
+                world: worldName,
+                join_request_id: player.world_entry_join_request_id,
+                world_entry_session_id: sessionId,
+                world_revision: currentRevision,
+                block_revision: currentBlockRevision,
+                retry_after_msec: WORLD_ENTRY_CATCHUP_RETRY_MS,
+            });
+            console.log("[world-entry-server]", JSON.stringify({
+                event: "world_entry_catchup_wait",
+                world_id: worldName,
+                server_instance: WORLD_ENTRY_PROFILE_SERVER_INSTANCE,
+                entry_session_id: sessionId,
+                loaded_revision: clientRevision,
+                loaded_block_revision: clientBlockRevision,
+                mutation_revision: currentRevision,
+                mutation_block_revision: currentBlockRevision,
+                catchup_attempt: catchupAttempts,
+                save_result: "waiting_for_ordered_block_updates",
+            }));
+            return;
+        }
+        if (currentRevision > expectedRevision) {
+            console.log("[world-entry-server]", JSON.stringify({
+                event: "world_entry_non_block_revision_drift_tolerated",
+                world_id: worldName,
+                server_instance: WORLD_ENTRY_PROFILE_SERVER_INSTANCE,
+                entry_session_id: sessionId,
+                loaded_revision: clientRevision,
+                mutation_revision: currentRevision,
+                requested_save_revision: expectedRevision,
+                persisted_revision: expectedRevision,
+                affected_row_count: 0,
+                save_result: "activated_without_block_restart",
+            }));
+        }
+        player.world_entry_revision = currentRevision;
+        player.world_entry_block_revision = currentBlockRevision;
+        player.world_entry_catchup_attempts = 0;
+        player.world_entry_catchup_last_client_block_revision = clientBlockRevision;
         await activateWorldEntry(socket, player, context);
     }
     async function handleLeaveWorld(socket, player, data, context) {

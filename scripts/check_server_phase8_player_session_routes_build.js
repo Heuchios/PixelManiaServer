@@ -233,6 +233,7 @@ const socket = {};
   assert.equal(joinOkPayload.world_entry_requires_ready, true);
   assert.equal(joinWorldStatePayload.extra.join_request_id, "join-test-1");
   assert.equal(joinWorldStatePayload.extra.world_entry_session_id, joiningPlayer.world_entry_session_id);
+  assert.equal(joiningPlayer.world_entry_snapshot_queued, true);
 
   await routes.handleWorldEntryReady(socket, joiningPlayer, {
     type: "world_entry_ready",
@@ -244,13 +245,33 @@ const socket = {};
   assert.equal(joiningPlayer.joined_world, false);
   assert.equal(/** @type {any} */ (sent.at(-1)).reason, "stale_world_entry_session");
 
-  const readyEventStart = events.length;
+  const worldStateCountBeforeCatchup = sent.filter(
+    (/** @type {any} */ payload) => payload.type === "world_state",
+  ).length;
+  worldRevision = 221;
+  worldBlockRevision = 220;
   await routes.handleWorldEntryReady(socket, joiningPlayer, {
     type: "world_entry_ready",
     world: "TEST",
     world_entry_session_id: joiningPlayer.world_entry_session_id,
     world_revision: 220,
     block_revision: 219,
+  }, { playerId: "p2" });
+  assert.equal(joiningPlayer.joined_world, false);
+  assert.equal(joiningPlayer.world_entry_state, "snapshot_sent");
+  assert.equal(/** @type {any} */ (sent.at(-1)).type, "world_entry_catchup_wait");
+  assert.equal(/** @type {any} */ (sent.at(-1)).block_revision, 220);
+  assert.equal(sent.filter(
+    (/** @type {any} */ payload) => payload.type === "world_state",
+  ).length, worldStateCountBeforeCatchup, "ordinary block drift must not resend the full snapshot");
+
+  const readyEventStart = events.length;
+  await routes.handleWorldEntryReady(socket, joiningPlayer, {
+    type: "world_entry_ready",
+    world: "TEST",
+    world_entry_session_id: joiningPlayer.world_entry_session_id,
+    world_revision: 221,
+    block_revision: 220,
   }, { playerId: "p2" });
   const readyEvents = events.slice(readyEventStart);
   assert.equal(joiningPlayer.joined_world, true);
@@ -263,8 +284,8 @@ const socket = {};
     type: "world_entry_ready",
     world: "TEST",
     world_entry_session_id: joiningPlayer.world_entry_session_id,
-    world_revision: 220,
-    block_revision: 219,
+    world_revision: 221,
+    block_revision: 220,
   }, { playerId: "p2" });
   assert.equal(events.filter((event) => event === "honor_begin:TEST").length, honorBeginsBeforeDuplicateReady);
   assert.equal(/** @type {any} */ (sent.at(-1)).type, "world_entry_active");
@@ -281,6 +302,8 @@ const socket = {};
   assert.ok(leaveEvents.indexOf("flush:joiner:TEST:leave_world") < leaveEvents.indexOf("honor_end:TEST:leave_world"));
   assert.ok(leaveEvents.indexOf("honor_end:TEST:leave_world") < leaveEvents.indexOf("release_admission:TEST"));
   assert.ok(leaveEvents.indexOf("flush:joiner:TEST:leave_world") < leaveEvents.indexOf("release_admission:TEST"));
+  worldRevision = 220;
+  worldBlockRevision = 219;
 
   const legacyPlayer = /** @type {any} */ ({
     id: "p-legacy",
@@ -332,16 +355,27 @@ const socket = {};
   const driftSessionId = driftPlayer.world_entry_session_id;
   worldRevision = 221;
   worldBlockRevision = 220;
-  await routes.handleWorldEntryReady(socket, driftPlayer, {
-    type: "world_entry_ready",
-    world: "DRIFT",
-    world_entry_session_id: driftSessionId,
-    world_revision: 220,
-    block_revision: 219,
-  }, { playerId: "p-drift" });
-  const restartPayload = /** @type {any} */ ([...sent].reverse().find(
+  const driftReadySentStart = sent.length;
+  for (let attempt = 0; attempt < 10; attempt += 1) {
+    await routes.handleWorldEntryReady(socket, driftPlayer, {
+      type: "world_entry_ready",
+      world: "DRIFT",
+      world_entry_session_id: driftSessionId,
+      world_revision: 220,
+      block_revision: 219,
+    }, { playerId: "p-drift" });
+  }
+  const driftReadyPayloads = sent.slice(driftReadySentStart);
+  assert.equal(
+    driftReadyPayloads.filter((/** @type {any} */ payload) => payload.type === "world_entry_catchup_wait").length,
+    9,
+    "catch-up should retry before falling back to a replacement snapshot",
+  );
+  const restartPayload = /** @type {any} */ ([...driftReadyPayloads].reverse().find(
     (/** @type {any} */ payload) => payload.type === "world_entry_snapshot_restart",
   ));
+  assert.ok(restartPayload, "stalled catch-up must eventually request a bounded snapshot restart");
+  assert.equal(restartPayload.reason, "world_entry_catchup_stalled");
   assert.equal(restartPayload.world_entry_session_id, driftSessionId);
   assert.equal(driftPlayer.world_entry_session_id, driftSessionId, "revision restarts must keep the same entry session");
   assert.equal(driftPlayer.joined_world, false);
@@ -357,6 +391,30 @@ const socket = {};
   assert.equal(driftPlayer.joined_world, true);
   worldRevision = 220;
   worldBlockRevision = 219;
+
+  const nonBlockDriftPlayer = /** @type {any} */ ({ id: "p-non-block-drift", account_username: "non_block_drift", name: "NonBlockDrift", world: "", joined_world: false });
+  await routes.handleJoinWorld(socket, nonBlockDriftPlayer, {
+    type: "join_world",
+    world: "nonblock",
+    join_request_id: "join-non-block-drift-1",
+    world_entry_ready_v1: true,
+  }, { playerId: "p-non-block-drift" });
+  const nonBlockDriftSessionId = nonBlockDriftPlayer.world_entry_session_id;
+  const nonBlockDriftReadySentStart = sent.length;
+  worldRevision = 221;
+  await routes.handleWorldEntryReady(socket, nonBlockDriftPlayer, {
+    type: "world_entry_ready",
+    world: "NONBLOCK",
+    world_entry_session_id: nonBlockDriftSessionId,
+    world_revision: 220,
+    block_revision: 219,
+  }, { playerId: "p-non-block-drift" });
+  const nonBlockDriftReadyPayloads = sent.slice(nonBlockDriftReadySentStart);
+  assert.equal(nonBlockDriftPlayer.joined_world, true, "non-block revision drift must not starve world activation");
+  assert.equal(nonBlockDriftPlayer.world_entry_state, "active");
+  assert.ok(nonBlockDriftReadyPayloads.some((/** @type {any} */ payload) => payload.type === "world_entry_active"));
+  assert.ok(!nonBlockDriftReadyPayloads.some((/** @type {any} */ payload) => payload.type === "world_entry_snapshot_restart"));
+  worldRevision = 220;
 
   const mismatchedLeavePlayer = /** @type {any} */ ({
     id: "p-mismatch",

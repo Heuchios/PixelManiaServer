@@ -2811,6 +2811,9 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
     world_entry_revision: 0,
     world_entry_block_revision: 0,
     world_entry_started_at_msec: 0,
+    world_entry_snapshot_queued: false,
+    world_entry_catchup_attempts: 0,
+    world_entry_catchup_last_client_block_revision: 0,
     last_world_admission_warning_at: 0,
     last_position_at: 0,
     movement_sequence: 0,
@@ -31567,6 +31570,27 @@ function getWorldPlayerRecords(worldName: any, options: any = {}) {
   return records;
 }
 
+function getPendingWorldEntryPlayerRecords(worldName: any, options: any = {}) {
+  const clean = cleanWorld(worldName || "START");
+  const excluded = String(options.excludePlayerId || "").trim();
+  const requireOpenSocket = options.requireOpenSocket !== false;
+  const records: any = [];
+
+  for (const [playerId, player] of players.entries()) {
+    if (excluded !== "" && String(playerId) === excluded) continue;
+    if (!player || player.joined_world === true) continue;
+    if (String(player.world_entry_state || "") !== "snapshot_sent") continue;
+    if (player.world_entry_snapshot_queued !== true) continue;
+    if (cleanWorld(player.world_entry_world || player.world || "START") !== clean) continue;
+
+    const socket = socketByPlayerId.get(playerId) || null;
+    if (requireOpenSocket && (!socket || socket.readyState !== WebSocket.OPEN)) continue;
+    records.push({ playerId, player, socket });
+  }
+
+  return records;
+}
+
 function getWorldIndexStatsSnapshot() {
   const worlds: any = [];
   let indexedPlayerCount: any = 0;
@@ -33207,6 +33231,14 @@ function flushQueuedWorldUpdateBroadcasts(worldName: any) {
       worldNetworkStats.batch_world_items_sent += batchUpdates.length;
     }
   }
+
+  for (const { playerId, socket: client } of getPendingWorldEntryPlayerRecords(clean)) {
+    for (const entry of worldQueue) {
+      if (!entry?.message || String(entry.message.type || "") !== "world_block_update") continue;
+      if (String(playerId) === String(entry.excludePlayerId || "")) continue;
+      sendJson(client, entry.message);
+    }
+  }
 }
 
 function broadcastToWorld(worldName: any, message: any, excludePlayerId: any = "") {
@@ -33228,6 +33260,16 @@ function broadcastToWorld(worldName: any, message: any, excludePlayerId: any = "
       world: clean,
       message_type: String(message?.type || ""),
     });
+  }
+
+  if (String(message?.type || "") === "world_block_update") {
+    for (const { socket: client } of getPendingWorldEntryPlayerRecords(clean, { excludePlayerId })) {
+      sendRawJsonToSocket(client, raw, "world_entry_catchup_broadcast", {
+        player_id: String(client.playerId || ""),
+        world: clean,
+        message_type: "world_block_update",
+      });
+    }
   }
 }
 
