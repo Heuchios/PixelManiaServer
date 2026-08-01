@@ -31570,22 +31570,26 @@ function getWorldPlayerRecords(worldName: any, options: any = {}) {
   return records;
 }
 
-function getPendingWorldEntryPlayerRecords(worldName: any, options: any = {}) {
+function getPendingWorldEntryPlayerRecords(
+  worldName: unknown,
+  options: { excludePlayerId?: unknown } = {},
+): Array<{ playerId: string; socket: ServerWebSocket }> {
   const clean = cleanWorld(worldName || "START");
   const excluded = String(options.excludePlayerId || "").trim();
-  const requireOpenSocket = options.requireOpenSocket !== false;
-  const records: any = [];
+  const records: Array<{ playerId: string; socket: ServerWebSocket }> = [];
+  const pendingPlayers = players as Map<string, Record<string, unknown>>;
+  const playerSockets = socketByPlayerId as Map<string, ServerWebSocket>;
 
-  for (const [playerId, player] of players.entries()) {
-    if (excluded !== "" && String(playerId) === excluded) continue;
+  for (const [playerId, player] of pendingPlayers.entries()) {
+    if (excluded !== "" && playerId === excluded) continue;
     if (!player || player.joined_world === true) continue;
     if (String(player.world_entry_state || "") !== "snapshot_sent") continue;
     if (player.world_entry_snapshot_queued !== true) continue;
     if (cleanWorld(player.world_entry_world || player.world || "START") !== clean) continue;
 
-    const socket = socketByPlayerId.get(playerId) || null;
-    if (requireOpenSocket && (!socket || socket.readyState !== WebSocket.OPEN)) continue;
-    records.push({ playerId, player, socket });
+    const socket = playerSockets.get(playerId);
+    if (!socket || socket.readyState !== WebSocket.OPEN) continue;
+    records.push({ playerId, socket });
   }
 
   return records;

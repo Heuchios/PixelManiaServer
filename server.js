@@ -28935,10 +28935,11 @@ function getWorldPlayerRecords(worldName, options = {}) {
 function getPendingWorldEntryPlayerRecords(worldName, options = {}) {
     const clean = cleanWorld(worldName || "START");
     const excluded = String(options.excludePlayerId || "").trim();
-    const requireOpenSocket = options.requireOpenSocket !== false;
     const records = [];
-    for (const [playerId, player] of players.entries()) {
-        if (excluded !== "" && String(playerId) === excluded)
+    const pendingPlayers = players;
+    const playerSockets = socketByPlayerId;
+    for (const [playerId, player] of pendingPlayers.entries()) {
+        if (excluded !== "" && playerId === excluded)
             continue;
         if (!player || player.joined_world === true)
             continue;
@@ -28948,10 +28949,10 @@ function getPendingWorldEntryPlayerRecords(worldName, options = {}) {
             continue;
         if (cleanWorld(player.world_entry_world || player.world || "START") !== clean)
             continue;
-        const socket = socketByPlayerId.get(playerId) || null;
-        if (requireOpenSocket && (!socket || socket.readyState !== WebSocket.OPEN))
+        const socket = playerSockets.get(playerId);
+        if (!socket || socket.readyState !== WebSocket.OPEN)
             continue;
-        records.push({ playerId, player, socket });
+        records.push({ playerId, socket });
     }
     return records;
 }
