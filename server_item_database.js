@@ -2613,6 +2613,8 @@ const ITEM_DEFINITIONS = {
     tv_seed: seed("tv", { display_name: "TV Seed", rarity: "uncommon", grow_time: 150, max_grow_time: 150 }),
     purple_curtains_seed: seed("purple_curtains", { display_name: "Purple Curtains Seed", rarity: "uncommon", grow_time: 150, max_grow_time: 150 }),
     pink_curtains_seed: seed("pink_curtains", { display_name: "Pink Curtains Seed", rarity: "uncommon", grow_time: 150, max_grow_time: 150 }),
+    blue_couch_seed: seed("blue_couch", { display_name: "Blue Couch Seed", rarity: "uncommon", grow_time: 150, max_grow_time: 150 }),
+    green_couch_seed: seed("green_couch", { display_name: "Green Couch Seed", rarity: "uncommon", grow_time: 150, max_grow_time: 150 }),
     wood_plank_seed: seed("wood_plank", { rarity: "uncommon" }),
     wood_platform_seed: seed("wood_platform", { rarity: "uncommon" }),
     wooden_entrance_seed: seed("wooden_entrance", { rarity: "rare" }),

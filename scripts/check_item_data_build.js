@@ -466,6 +466,60 @@ for (const curtainCase of curtainBlockCases) {
   assert.deepEqual(Array.from(treeDrop(definition, "gem")?.amount_range || []), [0, 5]);
 }
 
+const couchBlockCases = [
+  {
+    itemId: "blue_couch",
+    atlasItemId: 69,
+    cell: [19, 21],
+    seedId: "blue_couch_seed",
+    variants: {
+      single: [19, 21],
+      left: [16, 21],
+      horizontal_middle: [17, 21],
+      middle: [17, 21],
+      right: [18, 21],
+    },
+  },
+  {
+    itemId: "green_couch",
+    atlasItemId: 70,
+    cell: [23, 21],
+    seedId: "green_couch_seed",
+    variants: {
+      single: [23, 21],
+      left: [20, 21],
+      horizontal_middle: [21, 21],
+      middle: [21, 21],
+      right: [22, 21],
+    },
+  },
+];
+for (const couchCase of couchBlockCases) {
+  const definition = itemDatabase.getItemDefinition(couchCase.itemId);
+  assert.equal(atlasDb.getItemIdForKey(couchCase.itemId), couchCase.atlasItemId);
+  assert.deepEqual(Array.from(atlasDb.getItem(couchCase.atlasItemId)?.atlas_coords || []), couchCase.cell);
+  assert.equal(definition?.category, "block");
+  assert.equal(definition?.rarity, "uncommon");
+  assert.equal(definition?.block_health, 3);
+  assert.equal(definition?.seed, couchCase.seedId);
+  assert.equal(definition?.atlas_item_id, couchCase.atlasItemId);
+  assert.deepEqual(Array.from(definition?.atlas_coords || []), couchCase.cell);
+  assert.equal(itemDatabase.getPlaceLayer(couchCase.itemId), "foreground");
+  assert.equal(definition?.no_collision, true);
+  assert.equal(definition?.collidable, false);
+  assert.deepEqual(definition?.connected_variant_atlas_coords, couchCase.variants);
+  assert.deepEqual(fixedDrop(definition, couchCase.itemId), {
+    item_id: couchCase.itemId,
+    item_category: "block",
+    amount: 1,
+  });
+  assert.deepEqual(Array.from(fixedDrop(definition, couchCase.seedId)?.amount_range || []), [0, 2]);
+  assert.deepEqual(Array.from(fixedDrop(definition, "gem")?.amount_range || []), [0, 5]);
+  assert.deepEqual(Array.from(treeDrop(definition, couchCase.itemId)?.amount_range || []), [1, 3]);
+  assert.deepEqual(Array.from(treeDrop(definition, couchCase.seedId)?.amount_range || []), [0, 3]);
+  assert.deepEqual(Array.from(treeDrop(definition, "gem")?.amount_range || []), [0, 5]);
+}
+
 const fishBowlDefinition = itemDatabase.getItemDefinition("fish_bowl");
 assert.equal(atlasDb.getItemIdForKey("fish_bowl"), 64);
 assert.deepEqual(Array.from(atlasDb.getItem(64)?.atlas_coords || []), [18, 20]);
@@ -514,6 +568,8 @@ for (const [seedId, growsInto] of [
   ["tv_seed", "tv"],
   ["purple_curtains_seed", "purple_curtains"],
   ["pink_curtains_seed", "pink_curtains"],
+  ["blue_couch_seed", "blue_couch"],
+  ["green_couch_seed", "green_couch"],
 ]) {
   const seedDefinition = itemDatabase.getItemDefinition(seedId);
   assert.equal(seedDefinition?.category, "seed");
