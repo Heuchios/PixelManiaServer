@@ -29867,13 +29867,26 @@ function getDropInterestReceiverPosition(receiver, worldName = "") {
     });
     return trusted.ok ? trusted : receiver;
 }
+function isReceiverEligibleForDropVisibility(receiver, worldName = "") {
+    if (!receiver || typeof receiver !== "object")
+        return false;
+    const record = receiver;
+    const clean = cleanWorld(worldName || record.world || record.current_world || record.world_entry_world || "START");
+    const receiverWorld = cleanWorld(record.world || record.current_world || "START");
+    if (record.joined_world === true && receiverWorld === clean)
+        return true;
+    const entryWorld = cleanWorld(record.world_entry_world || record.world || record.current_world || "");
+    return record.joined_world !== true
+        && String(record.world_entry_state || "") === "snapshot_sent"
+        && entryWorld === clean;
+}
 function shouldReceiverSeeDrop(receiver, drop, worldName = "") {
     if (!receiver || !drop)
         return false;
-    if (!receiver.joined_world)
-        return false;
     const clean = cleanWorld(worldName || receiver.world || drop.world || "START");
-    if (cleanWorld(receiver.world || "START") !== clean)
+    if (!isReceiverEligibleForDropVisibility(receiver, clean))
+        return false;
+    if (cleanWorld(receiver.world || receiver.current_world || receiver.world_entry_world || "START") !== clean)
         return false;
     if (!isDropInterestManagementEnabled())
         return true;

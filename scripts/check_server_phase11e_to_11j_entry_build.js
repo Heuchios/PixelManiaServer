@@ -33,6 +33,7 @@ const phaseOwnership = {
   "11E presence, interest, and delivery": [
     "broadcastPlayerPresenceToInterestedPlayers",
     "queuePlayerPositionBroadcast",
+    "isReceiverEligibleForDropVisibility",
     "syncDropInterestForReceiver",
     "queueWorldUpdateBroadcast",
     "broadcastToWorld",
@@ -117,6 +118,22 @@ console.log(`[server-entry] explicit any budget: ${explicitAnyCount}/${maxExplic
 assert.deepEqual(config.include, ["src/server.ts"]);
 assert.ok(syncSource.includes(".tsbuild\", \"server-entry\", \"server.js"));
 assert.ok(syncSource.includes("Generated from src/server.ts"));
+assert.ok(
+  source.includes('String(record.world_entry_state || "") === "snapshot_sent"'),
+  "src/server.ts must allow pending world-entry snapshots to include visible drops",
+);
+assert.ok(
+  source.includes("isReceiverEligibleForDropVisibility(receiver, clean)"),
+  "src/server.ts drop visibility must use world-entry eligibility",
+);
+assert.ok(
+  generated.includes('String(record.world_entry_state || "") === "snapshot_sent"'),
+  "generated server.js must allow pending world-entry snapshots to include visible drops",
+);
+assert.ok(
+  generated.includes("isReceiverEligibleForDropVisibility(receiver, clean)"),
+  "generated server.js drop visibility must use world-entry eligibility",
+);
 
 assert.equal(packageJson.main, "server.js");
 assert.equal(packageJson.scripts?.start, "node server.js");
