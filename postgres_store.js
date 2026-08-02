@@ -7366,11 +7366,9 @@ class PostgresStore {
                         continue;
                     const reasonLabel = cleanName(returnedEntry.reason || "").toLowerCase();
                     const isMachineRecovery = reasonLabel.includes("machine") && reasonLabel.includes("break");
-                    const metadataAction = isMachineRecovery
-                        ? "world_block_place"
-                        : reasonLabel.includes("pending") || reasonLabel.includes("payment")
-                            ? "payment"
-                            : "vending_list";
+                    const metadataAction = isMachineRecovery ? "" : reasonLabel.includes("pending") || reasonLabel.includes("payment")
+                        ? "payment"
+                        : "vending_list";
                     addReleasePlan(isMachineRecovery ? "unknown" : "vending", metadataAction, returnedEntry.listing_transaction_id || returnedEntry.source_transaction_id || entryDetails.listing_transaction_id || entryDetails.source_transaction_id || "", returnedAmount);
                 }
                 const plannedAmount = releasePlans.reduce((total, plan) => total + plan.amount, 0);

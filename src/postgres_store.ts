@@ -8129,9 +8129,7 @@ class PostgresStore {
 
         const reasonLabel = cleanName(returnedEntry.reason || "").toLowerCase();
         const isMachineRecovery = reasonLabel.includes("machine") && reasonLabel.includes("break");
-        const metadataAction = isMachineRecovery
-          ? "world_block_place"
-          : reasonLabel.includes("pending") || reasonLabel.includes("payment")
+        const metadataAction = isMachineRecovery ? "" : reasonLabel.includes("pending") || reasonLabel.includes("payment")
           ? "payment"
           : "vending_list";
         addReleasePlan(
@@ -12279,3 +12277,4 @@ class PostgresStore {
 (PostgresStore as any).integrityHash = integrityHash;
 
 export = PostgresStore;
+
