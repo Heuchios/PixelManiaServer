@@ -8120,24 +8120,27 @@ class PostgresStore {
 
       if (strict && label.includes("vend") && label.includes("break_return")) {
         const returnedEntries = Array.isArray(entryDetails.returned_entries) ? entryDetails.returned_entries : [];
-        for (const rawReturnedEntry of returnedEntries) {
-          const returnedEntry = toObject(rawReturnedEntry);
-          const returnedItemType = cleanName(returnedEntry.item_id || returnedEntry.item_type || "");
-          const returnedItemCategory = resolveItemCategory(returnedItemType, returnedEntry.item_category || returnedEntry.category || "");
-          const returnedAmount = Math.max(0, toInt(returnedEntry.amount, 0));
-          if (returnedItemType !== itemType || returnedItemCategory !== itemCategory || returnedAmount <= 0) continue;
+      for (const rawReturnedEntry of returnedEntries) {
+        const returnedEntry = toObject(rawReturnedEntry);
+        const returnedItemType = cleanName(returnedEntry.item_id || returnedEntry.item_type || "");
+        const returnedItemCategory = resolveItemCategory(returnedItemType, returnedEntry.item_category || returnedEntry.category || "");
+        const returnedAmount = Math.max(0, toInt(returnedEntry.amount, 0));
+        if (returnedItemType !== itemType || returnedItemCategory !== itemCategory || returnedAmount <= 0) continue;
 
-          const reasonLabel = cleanName(returnedEntry.reason || "").toLowerCase();
-          const metadataAction = reasonLabel.includes("pending") || reasonLabel.includes("payment")
-            ? "payment"
-            : "vending_list";
-          addReleasePlan(
-            "vending",
-            metadataAction,
-            returnedEntry.listing_transaction_id || returnedEntry.source_transaction_id || entryDetails.listing_transaction_id || entryDetails.source_transaction_id || "",
-            returnedAmount
-          );
-        }
+        const reasonLabel = cleanName(returnedEntry.reason || "").toLowerCase();
+        const isMachineRecovery = reasonLabel.includes("machine") && reasonLabel.includes("break");
+        const metadataAction = isMachineRecovery
+          ? "world_block_place"
+          : reasonLabel.includes("pending") || reasonLabel.includes("payment")
+          ? "payment"
+          : "vending_list";
+        addReleasePlan(
+          isMachineRecovery ? "unknown" : "vending",
+          metadataAction,
+          returnedEntry.listing_transaction_id || returnedEntry.source_transaction_id || entryDetails.listing_transaction_id || entryDetails.source_transaction_id || "",
+          returnedAmount
+        );
+      }
 
         const plannedAmount = releasePlans.reduce((total, plan) => total + plan.amount, 0);
         if (plannedAmount < amount) {
@@ -8188,6 +8191,7 @@ class PostgresStore {
         const releasedInstances: ItemInstanceMovement[] = [];
         for (const plan of releasePlans) {
           let lockedOwnerPlayerId = playerId;
+          const releaseStates = plan.metadata_action === "world_block_place" ? ["locked", "retired"] : ["locked"];
           if (plan.source_owner_username !== "") {
             const sourceOwnerPlayerId = await this.lookupPlayerIdByUsername(client, plan.source_owner_username);
             if (!sourceOwnerPlayerId) {
@@ -8209,7 +8213,7 @@ class PostgresStore {
              WHERE owner_player_id = $1
                AND item_type = $2
                AND item_category = $3
-               AND state = 'locked'
+               AND state = ANY($7::text[])
                AND current_location = $4
                AND ($5 = '' OR metadata->>'action' = $5)
                AND (
@@ -8217,12 +8221,21 @@ class PostgresStore {
                  OR metadata->>'transaction_id' = $6
                  OR metadata #>> '{details,transaction_id}' = $6
                  OR metadata #>> '{details,listing_transaction_id}' = $6
-               )
-             ORDER BY updated_at ASC, created_at ASC
-             LIMIT $7
-             FOR UPDATE
+                )
+              ORDER BY updated_at ASC, created_at ASC
+              LIMIT $8
+              FOR UPDATE
             `,
-            [lockedOwnerPlayerId, itemType, itemCategory, plan.location, plan.metadata_action, plan.metadata_transaction_id, plan.amount]
+            [
+              lockedOwnerPlayerId,
+              itemType,
+              itemCategory,
+              plan.location,
+              plan.metadata_action,
+              plan.metadata_transaction_id,
+              releaseStates,
+              plan.amount,
+            ]
           );
 
           if ((lockedRows.rowCount ?? 0) < plan.amount) {
