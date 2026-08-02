@@ -3,6 +3,8 @@
 function createServerPhase11dStandardMovement(deps) {
     const { LAVA_REBOUND_MOVE_EXTRA_PIXELS, MAX_DAMAGE_FLASH_MS, MAX_MOVE_ACCEL_PIXELS_PER_SECOND2, MAX_MOVE_PIXELS_PER_SECOND, MAX_MOVE_VELOCITY_DELTA_EXTRA, MOVEMENT_CORRECTION_SMOOTH_MS, MOVEMENT_CORRECTION_SNAP_DISTANCE, MOVEMENT_DISTANCE_GRACE_PIXELS, MOVEMENT_MAX_ELAPSED_SECONDS, TILE_SIZE, activeFishingSessions, checkPlayerWorldEntrySpawnGuard, cleanAccountName, cleanWorld, clampInteger, clampString, clearPlayerWorldEntrySpawnGuard, debugNetfoxAction, ensureWorldState, getDefaultEntranceGateSpawnForWorld, getEntranceGateSpawnForWorld, getGridCenterPixels, getMovementCollisionAtPosition, getPublicPlayerIdentity, gridKey, isAdmin, isCheckpointBlockType, isGridInWorld, isMovementNearLavaRebound, isPositionInWorldBounds, playerNetworkStats, sendActionRejected, } = deps;
     const nowMs = typeof deps.nowMs === "function" ? deps.nowMs : () => Date.now();
+    const MOVEMENT_SEQUENCE_MAX = 2147483647;
+    const MOVEMENT_SEQUENCE_WRAP_WINDOW = 1073741824;
     const hardSnapCorrectionReasons = new Set([
         "movement_blocked",
         "outside_world_bounds",
@@ -14,7 +16,19 @@ function createServerPhase11dStandardMovement(deps) {
         const sequence = Math.trunc(Number(raw) || 0);
         if (!Number.isFinite(sequence) || sequence <= 0)
             return 0;
-        return Math.min(sequence, Number.MAX_SAFE_INTEGER);
+        return Math.min(sequence, MOVEMENT_SEQUENCE_MAX);
+    }
+    function isMovementSequenceNewer(sequence, previousSequence) {
+        const safePrevious = Math.max(0, Math.trunc(Number(previousSequence) || 0));
+        const safeSequence = Math.max(0, Math.trunc(Number(sequence) || 0));
+        if (safeSequence <= 0 || safePrevious <= 0)
+            return false;
+        if (safeSequence > safePrevious)
+            return true;
+        if (safePrevious > MOVEMENT_SEQUENCE_MAX - MOVEMENT_SEQUENCE_WRAP_WINDOW && safeSequence <= MOVEMENT_SEQUENCE_WRAP_WINDOW) {
+            return true;
+        }
+        return false;
     }
     function sanitizeMovementClientTimeMsec(data) {
         const raw = data?.client_time_msec
@@ -208,7 +222,7 @@ function createServerPhase11dStandardMovement(deps) {
         const clientTimeMsec = sanitizeMovementClientTimeMsec(data);
         if (sequence > 0) {
             const lastSequence = Math.max(0, Math.trunc(Number(player.movement_sequence) || 0));
-            if (lastSequence > 0 && sequence <= lastSequence) {
+            if (lastSequence > 0 && !isMovementSequenceNewer(sequence, lastSequence)) {
                 playerNetworkStats.stale_player_position_messages += 1;
                 playerNetworkStats.rejected_player_position_messages += 1;
                 if (!silent) {

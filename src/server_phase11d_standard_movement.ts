@@ -43,6 +43,8 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
   } = deps;
 
   const nowMs = typeof deps.nowMs === "function" ? deps.nowMs : () => Date.now();
+  const MOVEMENT_SEQUENCE_MAX = 2147483647;
+  const MOVEMENT_SEQUENCE_WRAP_WINDOW = 1073741824;
   const hardSnapCorrectionReasons = new Set([
     "movement_blocked",
     "outside_world_bounds",
@@ -54,7 +56,18 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
     const raw = data?.movement_sequence ?? data?.sequence ?? data?.seq ?? data?.input_sequence;
     const sequence = Math.trunc(Number(raw) || 0);
     if (!Number.isFinite(sequence) || sequence <= 0) return 0;
-    return Math.min(sequence, Number.MAX_SAFE_INTEGER);
+    return Math.min(sequence, MOVEMENT_SEQUENCE_MAX);
+  }
+
+  function isMovementSequenceNewer(sequence: number, previousSequence: number): boolean {
+    const safePrevious = Math.max(0, Math.trunc(Number(previousSequence) || 0));
+    const safeSequence = Math.max(0, Math.trunc(Number(sequence) || 0));
+    if (safeSequence <= 0 || safePrevious <= 0) return false;
+    if (safeSequence > safePrevious) return true;
+    if (safePrevious > MOVEMENT_SEQUENCE_MAX - MOVEMENT_SEQUENCE_WRAP_WINDOW && safeSequence <= MOVEMENT_SEQUENCE_WRAP_WINDOW) {
+      return true;
+    }
+    return false;
   }
 
   function sanitizeMovementClientTimeMsec(data: JsonRecord | null | undefined): number {
@@ -299,7 +312,7 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
 
     if (sequence > 0) {
       const lastSequence = Math.max(0, Math.trunc(Number(player.movement_sequence) || 0));
-      if (lastSequence > 0 && sequence <= lastSequence) {
+      if (lastSequence > 0 && !isMovementSequenceNewer(sequence, lastSequence)) {
         playerNetworkStats.stale_player_position_messages += 1;
         playerNetworkStats.rejected_player_position_messages += 1;
         if (!silent) {
