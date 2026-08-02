@@ -269,6 +269,7 @@ $clientReleasePaths = @(
   "Scripts/developer_panel_ui.gd",
   "Scripts/network_manager.gd",
   "Scripts/world.gd",
+  "Scripts/player_manager.gd",
   "Scripts/block_manager.gd",
   "Scripts/gameplay_ui_manager.gd",
   "Scripts/interaction_manager.gd",
