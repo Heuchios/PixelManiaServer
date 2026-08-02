@@ -8191,7 +8191,10 @@ class PostgresStore {
         const releasedInstances: ItemInstanceMovement[] = [];
         for (const plan of releasePlans) {
           let lockedOwnerPlayerId = playerId;
-          const releaseStates = plan.metadata_action === "world_block_place" ? ["locked", "retired"] : ["locked"];
+          const releaseStates =
+            plan.metadata_action === "world_block_place"
+              ? ["locked", ITEM_INSTANCE_RETIRED_STATE]
+              : ["locked"];
           if (plan.source_owner_username !== "") {
             const sourceOwnerPlayerId = await this.lookupPlayerIdByUsername(client, plan.source_owner_username);
             if (!sourceOwnerPlayerId) {
