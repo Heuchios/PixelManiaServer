@@ -106,6 +106,21 @@ assert.match(postgresStoreSource, /concurrent \? this\.withTransactionNow\(work\
 assert.match(postgresStoreSource, /world_honor_visits/);
 assert.match(postgresStoreSource, /async recordWorldHonorVisit/);
 assert.match(postgresStoreSource, /async getWorldHonorLeaderboard/);
+const trackedDropBodyStart = postgresStoreSource.indexOf("async recordWorldChangeAndTrackedDrops");
+assert.ok(trackedDropBodyStart >= 0, "tracked drop writer exists");
+const trackedDropBody = postgresStoreSource.slice(
+  trackedDropBodyStart,
+  postgresStoreSource.indexOf("async loadWorldStateForUpdate", trackedDropBodyStart)
+);
+assert.match(trackedDropBody, /const detailDropX = Number\(changeDetails\.x\)/);
+assert.match(trackedDropBody, /const auditDropX = Number\(change\?\.x\)/);
+assert.ok(
+  trackedDropBody.indexOf("Number.isFinite(detailDropX)") < trackedDropBody.indexOf("Number.isFinite(auditDropX)"),
+  "tracked drop rows must prefer actual detail x before audit grid x"
+);
+assert.match(trackedDropBody, /item_type: cleanName\(changeDetails\.item_type \|\| change\?\.item_type \|\| change\?\.block_type \|\| ""\)/);
+assert.match(trackedDropBody, /x: dropX/);
+assert.match(trackedDropBody, /y: dropY/);
 assert.match(postgresStoreSource, /pg_advisory_xact_lock/);
 assert.match(postgresStoreSource, /revokeRotatedToken/);
 assert.match(postgresStoreSource, /revokeOtherSessions/);
@@ -128,4 +143,53 @@ assert.match(deploySource, /sync_postgres_store_build\.js/);
 assert.match(deploySource, /npm run build:postgres-store/);
 assert.match(deploySource, /node --check postgres_store\.js/);
 
-console.log("[postgres-store] success");
+async function verifyTrackedDropCoordinatePersistence() {
+  const captured = {
+    drop: null,
+    options: null,
+  };
+  store.recordWorldChangeEntry = async () => ({ ok: true });
+  store.createTrackedWorldDropItemInstances = async () => ({ ok: true });
+  store.upsertWorldDropRow = async (_client, _worldId, drop, options) => {
+    captured.drop = drop;
+    captured.options = options;
+    return { ok: true, drop };
+  };
+
+  await store.recordWorldChangeAndTrackedDrops({}, "world-1", {
+    source_type: "world_block_break",
+    source_id: "block-tx-1",
+    action: "break_drop",
+    x: 12,
+    y: 9,
+    block_type: "stone",
+    details: {
+      drop_id: "drop-1",
+      item_type: "dirt",
+      item_category: "block",
+      amount: 2,
+      x: 400,
+      y: 288,
+      stack_grid_x: 12,
+      stack_grid_y: 9,
+      pickup_delay: 0.75,
+    },
+  });
+
+  assert.equal(captured.drop.x, 400);
+  assert.equal(captured.drop.y, 288);
+  assert.equal(captured.drop.item_type, "dirt");
+  assert.equal(captured.drop.stack_grid_x, 12);
+  assert.equal(captured.drop.stack_grid_y, 9);
+  assert.equal(captured.drop.pickup_delay, 0.75);
+  assert.equal(captured.options.action, "break_drop");
+}
+
+verifyTrackedDropCoordinatePersistence()
+  .then(() => {
+    console.log("[postgres-store] success");
+  })
+  .catch((error) => {
+    console.error(error);
+    process.exitCode = 1;
+  });

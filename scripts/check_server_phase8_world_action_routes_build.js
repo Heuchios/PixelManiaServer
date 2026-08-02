@@ -127,6 +127,16 @@ const player = { id: "p1", account_username: "uso", name: "USO", world: "START",
   assert.match(helperSource, /function handleWorldBlockUpdate/);
   assert.match(helperSource, /function handleElectricalLayerUpdate/);
   assert.match(helperSource, /function handleWorldSeedUpdate/);
+  const breakDropJournalStart = helperSource.indexOf("const dropWorldChangeEntries = emittedDrops.map");
+  assert.ok(breakDropJournalStart >= 0, "break drop journal block exists");
+  const breakDropJournal = helperSource.slice(breakDropJournalStart, helperSource.indexOf("const electricalGenerationChanges", breakDropJournalStart));
+  assert.match(breakDropJournal, /action: "break_drop"/);
+  assert.match(breakDropJournal, /item_type: drop\.item_type/);
+  assert.match(breakDropJournal, /x: drop\.x/);
+  assert.match(breakDropJournal, /y: drop\.y/);
+  assert.match(breakDropJournal, /stack_grid_x: drop\.stack_grid_x/);
+  assert.match(breakDropJournal, /stack_grid_y: drop\.stack_grid_y/);
+  assert.match(breakDropJournal, /pickup_delay: drop\.pickup_delay/);
   assert.match(generatedSource, /Generated from src\/server_phase8_world_action_routes\.ts/);
   assert.match(generatedSource, /module\.exports = \{/);
   assert.deepEqual(buildConfig.include, ["src/server_phase8_world_action_routes.ts"]);

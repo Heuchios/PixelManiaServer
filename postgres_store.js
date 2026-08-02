@@ -5513,6 +5513,12 @@ class PostgresStore {
         const changeDetails = toObject(change?.details);
         const dropId = cleanName(changeDetails.drop_id || change?.drop_id || "");
         const changeAction = cleanName(change?.action || "").toLowerCase();
+        const detailDropX = Number(changeDetails.x);
+        const detailDropY = Number(changeDetails.y);
+        const auditDropX = Number(change?.x);
+        const auditDropY = Number(change?.y);
+        const dropX = Number.isFinite(detailDropX) ? detailDropX : (Number.isFinite(auditDropX) ? auditDropX : 0);
+        const dropY = Number.isFinite(detailDropY) ? detailDropY : (Number.isFinite(auditDropY) ? auditDropY : 0);
         if (dropId !== "" &&
             (changeAction === "drop_create" ||
                 changeAction === "break_drop" ||
@@ -5520,11 +5526,11 @@ class PostgresStore {
                 changeAction.includes("drop_create"))) {
             await this.upsertWorldDropRow(client, worldId, {
                 drop_id: dropId,
-                item_type: cleanName(change?.item_type || change?.block_type || changeDetails.item_type || ""),
+                item_type: cleanName(changeDetails.item_type || change?.item_type || change?.block_type || ""),
                 item_category: cleanName(changeDetails.item_category || change?.item_category || "block") || "block",
                 amount: Math.max(1, toInt(changeDetails.amount || change?.amount || 1, 1)),
-                x: Number.isFinite(Number(change?.x)) ? Number(change.x) : Number(changeDetails.x || 0),
-                y: Number.isFinite(Number(change?.y)) ? Number(change.y) : Number(changeDetails.y || 0),
+                x: dropX,
+                y: dropY,
                 stack_grid_x: changeDetails.stack_grid_x,
                 stack_grid_y: changeDetails.stack_grid_y,
                 pickup_delay: changeDetails.pickup_delay,
