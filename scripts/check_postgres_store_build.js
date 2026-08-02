@@ -144,19 +144,32 @@ assert.match(deploySource, /npm run build:postgres-store/);
 assert.match(deploySource, /node --check postgres_store\.js/);
 
 async function verifyTrackedDropCoordinatePersistence() {
+  /** @type {{ drop: any, options: any }} */
   const captured = {
     drop: null,
     options: null,
   };
-  store.recordWorldChangeEntry = async () => ({ ok: true });
-  store.createTrackedWorldDropItemInstances = async () => ({ ok: true });
-  store.upsertWorldDropRow = async (_client, _worldId, drop, options) => {
+  const testStore = /** @type {any} */ (store);
+  testStore.recordWorldChangeEntry = async () => ({ ok: true });
+  testStore.createTrackedWorldDropItemInstances = async () => ({
+    ok: true,
+    tracked: true,
+    created: 0,
+    item_instances: [],
+  });
+  /**
+   * @param {unknown} _client
+   * @param {unknown} _worldId
+   * @param {any} drop
+   * @param {any} options
+   */
+  testStore.upsertWorldDropRow = async (_client, _worldId, drop, options) => {
     captured.drop = drop;
     captured.options = options;
     return { ok: true, drop };
   };
 
-  await store.recordWorldChangeAndTrackedDrops({}, "world-1", {
+  await testStore.recordWorldChangeAndTrackedDrops({}, "world-1", {
     source_type: "world_block_break",
     source_id: "block-tx-1",
     action: "break_drop",
