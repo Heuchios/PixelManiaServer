@@ -3414,6 +3414,18 @@ const ITEM_DEFINITIONS = {
     equipment_slot: "shirt",
     equipable: true,
   }),
+  black_suit: item("shirt", {
+    display_name: "Black Suit",
+    rarity: "common",
+    equipment_slot: "shirt",
+    equipable: true,
+  }),
+  blue_suit: item("shirt", {
+    display_name: "Blue Suit",
+    rarity: "common",
+    equipment_slot: "shirt",
+    equipable: true,
+  }),
 
   basic_black_pants: item("pants", {
     rarity: "common",
@@ -3853,6 +3865,8 @@ const ITEM_DEFINITIONS = {
       "basic_heart_shirt",
       "basic_gray_shirt",
       "basic_maroon_shirt",
+      "black_suit",
+      "blue_suit",
       "basic_black_pants",
       "basic_light_gray_pants",
       "basic_navy_pants",
