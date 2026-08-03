@@ -3105,6 +3105,18 @@ const ITEM_DEFINITIONS = {
         vendable: true,
         dropable: true,
     }),
+    royal_crown: item("hat", {
+        display_name: "Royal Crown",
+        rarity: "legendary",
+        texture: "royal_crown",
+        inventory_icon: "royal_crown_preview",
+        instance_tracked: true,
+        equipment_slot: "hat",
+        equipable: true,
+        tradeable: true,
+        vendable: true,
+        dropable: true,
+    }),
     blue_baseball_cap: item("hat", {
         display_name: "Blue Baseball Cap",
         rarity: "common",
