@@ -344,7 +344,9 @@ $sshBaseArgs += @(
 
 function Invoke-RemoteCommand {
   param([string]$Command)
-  Invoke-NativeProcess -FileName "ssh" -Arguments ($sshBaseArgs + @($sshTarget, "bash -se")) -StandardInput $Command -FailureMessage "Remote command failed"
+  $encodedCommand = [Convert]::ToBase64String([System.Text.Encoding]::UTF8.GetBytes($Command))
+  $wrappedCommand = "bash -se -c \"printf '%s' '$encodedCommand' | base64 -d | bash -se\""
+  Invoke-NativeProcess -FileName "ssh" -Arguments ($sshBaseArgs + @($sshTarget, $wrappedCommand)) -FailureMessage "Remote command failed"
 }
 
 function Send-ReleaseArtifact {
