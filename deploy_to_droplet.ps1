@@ -115,7 +115,9 @@ function Invoke-NativeProcess {
   try {
     if ($PSBoundParameters.ContainsKey("StandardInput")) {
       $process.StandardInput.NewLine = "`n"
-      $process.StandardInput.Write(($StandardInput -replace "`r`n", "`n" -replace "`r", "`n"))
+      $commandText = ($StandardInput -replace "`r`n", "`n" -replace "`r", "`n")
+      $commandText = $commandText.TrimStart([char]0xFEFF)
+      $process.StandardInput.Write($commandText)
       $process.StandardInput.Close()
     }
     $process.WaitForExit()
