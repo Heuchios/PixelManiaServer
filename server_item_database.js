@@ -2699,14 +2699,14 @@ const ITEM_DEFINITIONS = {
             "devil_wings_3.png",
         ],
         jump_frames: [
-            "devil_wings_1.png",
-            "devil_wings_4.png",
             "devil_wings_2.png",
+            "devil_wings_4.png",
+            "devil_wings_1.png",
         ],
         fall_frames: [
-            "devil_wings_1.png",
-            "devil_wings_5.png",
             "devil_wings_3.png",
+            "devil_wings_5.png",
+            "devil_wings_1.png",
         ],
         flap_frames: [
             "devil_wings_1.png",
@@ -2715,7 +2715,7 @@ const ITEM_DEFINITIONS = {
         ],
         flap_animation: true,
         scan_flap_frames: false,
-        flap_speed: 0.30,
+        flap_speed: 0.15,
         input_flap_time: 0.28,
         auto_scale_back_sprite: false,
         back_scale: 1.0,
