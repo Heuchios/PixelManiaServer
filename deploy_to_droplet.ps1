@@ -81,10 +81,30 @@ function Invoke-NativeProcess {
     [string]$FailureMessage = "Command failed"
   )
 
+  function Convert-ArgumentArrayToCommandLine {
+    param([string[]]$InputArguments)
+    if ($InputArguments.Count -eq 0) {
+      return ""
+    }
+
+    $escaped = $InputArguments | ForEach-Object {
+      if ($_ -match '\s' -or $_ -match '"') {
+        return '"' + ($_ -replace '"', '\"') + '"'
+      }
+      return $_
+    }
+
+    return [string]::Join(" ", $escaped)
+  }
+
   $processStart = [System.Diagnostics.ProcessStartInfo]::new()
   $processStart.FileName = $FileName
-  foreach ($argument in $Arguments) {
-    [void]$processStart.ArgumentList.Add($argument)
+  if ($processStart.PSObject.Properties.Name -contains "ArgumentList") {
+    foreach ($argument in $Arguments) {
+      [void]$processStart.ArgumentList.Add($argument)
+    }
+  } else {
+    $processStart.Arguments = Convert-ArgumentArrayToCommandLine -InputArguments $Arguments
   }
   $processStart.UseShellExecute = $false
   if ($PSBoundParameters.ContainsKey("StandardInput")) {
