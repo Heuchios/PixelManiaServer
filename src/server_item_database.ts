@@ -2798,7 +2798,7 @@ const ITEM_DEFINITIONS = {
     flap_sprite_offset_left: [0, 0],
     back_scale_multiplier: 1.0,
     back_flip_with_facing: false,
-    animation_fps: 3.0,
+    animation_fps: 6.0,
     order: 204,
   }),
   void_aura: item("back", {
