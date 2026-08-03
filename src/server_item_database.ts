@@ -3438,6 +3438,17 @@ const ITEM_DEFINITIONS = {
     equipable: true,
     hand_item: true,
     punch_animation: "punch_sword",
+    animation_fps: 6.0,
+    hand_item_animations: {
+      idle: Object.freeze({
+        frames: Object.freeze([
+          "res://Assets/items/swords/neptune_pickaxe.png",
+          "res://Assets/items/swords/neptune_pickaxe_2.png",
+        ]),
+        fps: 6.0,
+        loop: true,
+      }),
+    },
     instance_tracked: true,
     shop_price: 0,
   }),

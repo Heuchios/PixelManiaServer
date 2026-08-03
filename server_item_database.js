@@ -3217,9 +3217,13 @@ const ITEM_DEFINITIONS = {
     neptune_trident: item("tool", {
         display_name: "Neptune Trident",
         rarity: "legendary",
+        texture: "res://Assets/items/swords/neptune_trident.png",
+        inventory_icon: "res://Assets/items/swords/neptune_trident_icon.png",
         equipment_slot: "hand",
         equipable: true,
         instance_tracked: true,
+        hand_item: true,
+        punch_animation: "punch_sword",
         shop_price: 0,
     }),
     void_trident: item("tool", {
@@ -3350,6 +3354,17 @@ const ITEM_DEFINITIONS = {
         equipable: true,
         hand_item: true,
         punch_animation: "punch_sword",
+        animation_fps: 6.0,
+        hand_item_animations: {
+            idle: Object.freeze({
+                frames: Object.freeze([
+                    "res://Assets/items/swords/neptune_pickaxe.png",
+                    "res://Assets/items/swords/neptune_pickaxe_2.png",
+                ]),
+                fps: 6.0,
+                loop: true,
+            }),
+        },
         instance_tracked: true,
         shop_price: 0,
     }),
