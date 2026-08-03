@@ -9864,6 +9864,7 @@ class PostgresStore {
       : 0;
     const requestedStackLimit = getInventoryStackLimitForItem(itemType, e.stack_limit || DEFAULT_INVENTORY_STACK_LIMIT);
     const allowStateRepair = Boolean(e.allow_state_repair);
+    const allowWorldDropRepair = Boolean(e.allow_world_drop_repair);
     const requestId = cleanName(e.request_id);
     const worldName = cleanName(e.world || "START") || "START";
     const dropId = cleanName(e.drop_id || "");
@@ -10198,7 +10199,7 @@ class PostgresStore {
           gemLedgerId = gemLedgerResult.rows[0]?.gem_ledger_id || null;
         }
 
-        const dropClaimResult = await this.claimTrackedWorldDropItemInstances(client, {
+        let dropClaimResult = await this.claimTrackedWorldDropItemInstances(client, {
           to_player_id: playerId,
           world_id: worldId,
           item_transaction_id: pickupTransactionId,
@@ -10219,6 +10220,54 @@ class PostgresStore {
             expected_before_amount: hasExpectedBefore ? expectedBeforeAmount : null,
           },
         });
+        if (!dropClaimResult.ok) {
+          if (allowWorldDropRepair && dropClaimResult.reason === "missing_world_drop_item_instances") {
+            const dropRepairResult = await this.createTrackedWorldDropItemInstances(client, {
+              world_id: worldId,
+              source: "world_drop",
+              action: "pickup_repair",
+              item_type: itemType,
+              item_category: itemCategory || "block",
+              amount,
+              drop_id: dropId,
+              details: {
+                source_id: sourceId,
+                request_id: requestId,
+                drop_id: dropId,
+                drop_before_amount: dropBeforeAmount,
+                drop_after_amount: dropAfterAmount,
+                repaired_inventory_before_amount: repairedFromAmount,
+                expected_before_amount: hasExpectedBefore ? expectedBeforeAmount : null,
+                pickup_repair: true,
+              },
+            });
+            if (!dropRepairResult.ok) {
+              throw makeTrackedItemMovementError(dropRepairResult);
+            }
+            dropClaimResult = await this.claimTrackedWorldDropItemInstances(client, {
+              to_player_id: playerId,
+              world_id: worldId,
+              item_transaction_id: pickupTransactionId,
+              correlation_id: correlationId,
+              source: "world_drop",
+              action: "pickup",
+              item_type: itemType,
+              item_category: itemCategory || "block",
+              amount,
+              drop_id: dropId,
+              details: {
+                drop_id: dropId,
+                source_id: sourceId,
+                request_id: requestId,
+                drop_before_amount: dropBeforeAmount,
+                drop_after_amount: dropAfterAmount,
+                repaired_inventory_before_amount: repairedFromAmount,
+                expected_before_amount: hasExpectedBefore ? expectedBeforeAmount : null,
+              },
+            });
+          }
+        }
+
         if (!dropClaimResult.ok) {
           throw makeTrackedItemMovementError(dropClaimResult);
         }
