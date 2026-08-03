@@ -114,10 +114,11 @@ function Invoke-NativeProcess {
   $process = [System.Diagnostics.Process]::Start($processStart)
   try {
     if ($PSBoundParameters.ContainsKey("StandardInput")) {
-      $process.StandardInput.NewLine = "`n"
       $commandText = ($StandardInput -replace "`r`n", "`n" -replace "`r", "`n")
       $commandText = $commandText.TrimStart([char]0xFEFF)
-      $process.StandardInput.Write($commandText)
+      $utf8 = [System.Text.UTF8Encoding]::new($false)
+      $commandBytes = $utf8.GetBytes($commandText)
+      $process.StandardInput.BaseStream.Write($commandBytes, 0, $commandBytes.Length)
       $process.StandardInput.Close()
     }
     $process.WaitForExit()
