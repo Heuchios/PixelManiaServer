@@ -3301,9 +3301,13 @@ const ITEM_DEFINITIONS = {
   neptune_trident: item("tool", {
     display_name: "Neptune Trident",
     rarity: "legendary",
+    texture: "res://Assets/items/swords/neptune_trident.png",
+    inventory_icon: "res://Assets/items/swords/neptune_trident_icon.png",
     equipment_slot: "hand",
     equipable: true,
     instance_tracked: true,
+    hand_item: true,
+    punch_animation: "punch_sword",
     shop_price: 0,
   }),
   void_trident: item("tool", {
