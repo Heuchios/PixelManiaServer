@@ -3203,6 +3203,17 @@ const ITEM_DEFINITIONS = {
         equipable: true,
         shop_price: 0,
     }),
+    phoenix_sword: item("tool", {
+        display_name: "Phoenix Sword",
+        rarity: "legendary",
+        texture: "res://Assets/items/swords/phoenix_sword_1.png",
+        inventory_icon: "res://Assets/items/swords/phoenix_sword_icon.png",
+        equipment_slot: "hand",
+        equipable: true,
+        hand_item: true,
+        punch_animation: "punch_sword",
+        shop_price: 0,
+    }),
     neptune_trident: item("tool", {
         display_name: "Neptune Trident",
         rarity: "legendary",
