@@ -3171,6 +3171,16 @@ const ITEM_DEFINITIONS = {
         equipment_slot: "hair",
         equipable: true,
     }),
+    black_combed_hair: item("hair", {
+        rarity: "common",
+        equipment_slot: "hair",
+        equipable: true,
+    }),
+    frosty_hair: item("hair", {
+        rarity: "common",
+        equipment_slot: "hair",
+        equipable: true,
+    }),
     hairpack: item("material", {
         display_name: "Hair Pack",
         rarity: "common",
