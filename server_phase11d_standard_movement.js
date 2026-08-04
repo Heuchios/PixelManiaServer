@@ -5,12 +5,94 @@ function createServerPhase11dStandardMovement(deps) {
     const nowMs = typeof deps.nowMs === "function" ? deps.nowMs : () => Date.now();
     const MOVEMENT_SEQUENCE_MAX = 2147483647;
     const MOVEMENT_SEQUENCE_WRAP_WINDOW = 1073741824;
+    // Development/ops diagnostics for rollback investigations are rate limited per
+    // player so a sustained anomaly cannot flood production logs.
+    const MOVEMENT_ANOMALY_LOG_INTERVAL_MS = Math.max(250, Math.trunc(Number(deps.MOVEMENT_ANOMALY_LOG_INTERVAL_MS) || 2000));
+    // Global ceiling on top of the per-player interval so a world-wide incident
+    // cannot flood production logs.
+    const MOVEMENT_ANOMALY_LOG_MAX_PER_MINUTE = Math.max(1, Math.trunc(Number(deps.MOVEMENT_ANOMALY_LOG_MAX_PER_MINUTE) || 60));
+    const logMovementAnomaly = typeof deps.logMovementAnomaly === "function"
+        ? deps.logMovementAnomaly
+        : (label, details) => {
+            console.warn(`[movement_anomaly] ${label}`, details);
+        };
+    const movementAnomalyWindow = { startedAt: 0, count: 0, dropped: 0 };
     const hardSnapCorrectionReasons = new Set([
         "movement_blocked",
         "outside_world_bounds",
         "invalid_position",
         "world_entry_position_pending",
     ]);
+    function reportMovementAnomaly(player, label, details) {
+        if (!player)
+            return;
+        const now = nowMs();
+        const lastAt = Math.max(0, Math.trunc(Number(player.movement_anomaly_logged_at) || 0));
+        const suppressed = Math.max(0, Math.trunc(Number(player.movement_anomaly_suppressed) || 0));
+        if (lastAt > 0 && now - lastAt < MOVEMENT_ANOMALY_LOG_INTERVAL_MS) {
+            player.movement_anomaly_suppressed = suppressed + 1;
+            return;
+        }
+        if (movementAnomalyWindow.startedAt === 0 || now - movementAnomalyWindow.startedAt >= 60000) {
+            movementAnomalyWindow.startedAt = now;
+            movementAnomalyWindow.count = 0;
+            movementAnomalyWindow.dropped = 0;
+        }
+        if (movementAnomalyWindow.count >= MOVEMENT_ANOMALY_LOG_MAX_PER_MINUTE) {
+            movementAnomalyWindow.dropped += 1;
+            player.movement_anomaly_suppressed = suppressed + 1;
+            return;
+        }
+        movementAnomalyWindow.count += 1;
+        player.movement_anomaly_logged_at = now;
+        player.movement_anomaly_suppressed = 0;
+        logMovementAnomaly(label, {
+            player_id: String(player.id || ""),
+            username: cleanAccountName(player.account_username || player.name || ""),
+            world: cleanWorld(player.world || "START"),
+            world_entry_session_id: String(player.world_entry_session_id || ""),
+            world_entry_state: String(player.world_entry_state || ""),
+            last_accepted_sequence: Math.max(0, Math.trunc(Number(player.movement_sequence) || 0)),
+            last_accepted_client_time_msec: Math.max(0, Math.trunc(Number(player.movement_client_time_msec) || 0)),
+            server_time_msec: now,
+            server_x: Number(player.x || 0),
+            server_y: Number(player.y || 0),
+            suppressed_since_last_log: suppressed,
+            dropped_by_global_rate_limit: movementAnomalyWindow.dropped,
+            ...details,
+        });
+    }
+    /**
+     * Projects a rejected movement request back onto the furthest point the server
+     * is willing to authorise this tick. Returning a clamped point (instead of
+     * refusing to move at all) keeps the authoritative position advancing at, and
+     * never above, the existing speed limit. Without this the authoritative
+     * position freezes while the client keeps simulating, the measured divergence
+     * grows every packet, and every subsequent packet is rejected forever.
+     */
+    function clampMovementTowardAuthoritative(player, position, maxDistance, distance) {
+        if (!Number.isFinite(maxDistance) || maxDistance <= 0)
+            return null;
+        if (!Number.isFinite(distance) || distance <= maxDistance)
+            return null;
+        const originX = Number(player.x);
+        const originY = Number(player.y);
+        if (!Number.isFinite(originX) || !Number.isFinite(originY))
+            return null;
+        const ratio = maxDistance / distance;
+        const clampedX = originX + (Number(position.x) - originX) * ratio;
+        const clampedY = originY + (Number(position.y) - originY) * ratio;
+        if (!Number.isFinite(clampedX) || !Number.isFinite(clampedY))
+            return null;
+        if (!isPositionInWorldBounds(clampedX, clampedY))
+            return null;
+        const clampedPosition = { ...position, x: clampedX, y: clampedY };
+        // Never advance the authority through solid geometry, even by a partial step.
+        if (getMovementCollisionAtPosition(clampedPosition.world || player.world || "START", clampedPosition)) {
+            return null;
+        }
+        return clampedPosition;
+    }
     function sanitizeMovementSequence(data) {
         const raw = data?.movement_sequence ?? data?.sequence ?? data?.seq ?? data?.input_sequence;
         const sequence = Math.trunc(Number(raw) || 0);
@@ -233,6 +315,16 @@ function createServerPhase11dStandardMovement(deps) {
                         sequence,
                         last_sequence: lastSequence,
                     });
+                    reportMovementAnomaly(player, "stale_movement_sequence_dropped", {
+                        reason: "stale_sequence",
+                        stale: true,
+                        rejected_sequence: sequence,
+                        requested_x: Number(position?.x),
+                        requested_y: Number(position?.y),
+                        packet_age_ms: clientTimeMsec > 0
+                            ? Math.max(0, Math.trunc(now - clientTimeMsec))
+                            : -1,
+                    });
                 }
                 return false;
             }
@@ -285,12 +377,72 @@ function createServerPhase11dStandardMovement(deps) {
         }
         if (distance > maxDistance) {
             playerNetworkStats.rejected_player_position_messages += 1;
+            const requestedPosition = { ...position };
+            const clampedPosition = clampMovementTowardAuthoritative(player, position, maxDistance, distance);
+            if (clampedPosition) {
+                // Advance the authoritative position by exactly the distance the speed
+                // limit allows, then tell the client where that is. The cap is unchanged;
+                // only the "stay frozen until the client gives up" behaviour is removed,
+                // so a lagging honest client converges within a few packets instead of
+                // diverging without bound and being yanked back on every packet.
+                //
+                // The counter is incremented defensively so this module owns it without
+                // needing a matching field in the shared runtime stats object.
+                playerNetworkStats.clamped_player_position_messages =
+                    (Number(playerNetworkStats.clamped_player_position_messages) || 0) + 1;
+                player.x = clampedPosition.x;
+                player.y = clampedPosition.y;
+                position.x = clampedPosition.x;
+                position.y = clampedPosition.y;
+                commitAcceptedMovementTiming(player, data, now);
+                if (!silent) {
+                    sendPlayerPositionCorrection(socket, player, requestedPosition, "movement_too_fast", {
+                        data,
+                        extra: {
+                            max_distance: Math.round(maxDistance),
+                            correction_clamped: true,
+                        },
+                    });
+                    reportMovementAnomaly(player, "movement_clamped_to_speed_limit", {
+                        reason: "movement_too_fast",
+                        clamped: true,
+                        stale: false,
+                        collision_blocked: false,
+                        rejected_sequence: sequence,
+                        requested_x: Number(requestedPosition.x),
+                        requested_y: Number(requestedPosition.y),
+                        requested_distance: Math.round(distance),
+                        max_distance: Math.round(maxDistance),
+                        correction_distance: Math.round(distance - maxDistance),
+                        elapsed_seconds: Number(elapsedSeconds.toFixed(3)),
+                        real_elapsed_ms: Math.max(0, Math.trunc(now - lastAt)),
+                        packet_age_ms: clientTimeMsec > 0
+                            ? Math.max(0, Math.trunc(now - clientTimeMsec))
+                            : -1,
+                    });
+                }
+                return true;
+            }
+            // A partial step is not safe here (out of bounds, or it would land inside
+            // solid geometry). Preserve the original hard rejection in that case.
             if (!silent) {
                 sendPlayerPositionCorrection(socket, player, position, "movement_too_fast", {
                     data,
                     extra: {
                         max_distance: Math.round(maxDistance),
+                        correction_clamped: false,
                     },
+                });
+                reportMovementAnomaly(player, "movement_rejected_unclampable", {
+                    reason: "movement_too_fast",
+                    clamped: false,
+                    collision_blocked: true,
+                    rejected_sequence: sequence,
+                    requested_x: Number(requestedPosition.x),
+                    requested_y: Number(requestedPosition.y),
+                    requested_distance: Math.round(distance),
+                    max_distance: Math.round(maxDistance),
+                    real_elapsed_ms: Math.max(0, Math.trunc(now - lastAt)),
                 });
             }
             return false;
@@ -323,6 +475,15 @@ function createServerPhase11dStandardMovement(deps) {
                 sendPlayerPositionCorrection(socket, player, position, "movement_blocked", {
                     data,
                     extra: collision,
+                });
+                reportMovementAnomaly(player, "movement_rejected_collision", {
+                    reason: "movement_blocked",
+                    collision_blocked: true,
+                    clamped: false,
+                    rejected_sequence: sequence,
+                    requested_x: Number(position?.x),
+                    requested_y: Number(position?.y),
+                    real_elapsed_ms: Math.max(0, Math.trunc(now - lastAt)),
                 });
             }
             return false;

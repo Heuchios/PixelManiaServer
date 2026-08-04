@@ -263,6 +263,30 @@ assert.equal(
   true,
 );
 
+// An over-budget request is clamped back onto the speed limit rather than
+// rejected outright: the authoritative position advances by exactly the allowed
+// distance, the client is corrected to that point, and `position` is rewritten
+// in place so the caller commits the clamped coordinate.
+player = createPlayer();
+const overBudgetPosition = { x: 200, y: 100, world: "TEST" };
+assert.equal(
+  movement.acceptPlayerMovement({}, player, overBudgetPosition, {
+    data: { movement_sequence: 6, velocity_x: 0, velocity_y: 0 },
+  }),
+  true,
+);
+// elapsed 0.1s * 100 px/s + 8 px grace = 18 px of allowed travel from x=100.
+assert.equal(overBudgetPosition.x, 118);
+assert.equal(player.x, 118);
+assert.equal(player.movement_sequence, 6);
+assert.equal(player.last_position_at, fixture.clock.value);
+assert.equal(fixture.correctionRejections.at(-1).details.reason, "movement_too_fast");
+assert.equal(fixture.correctionRejections.at(-1).details.correction_clamped, true);
+assert.equal(fixture.correctionRejections.at(-1).details.server_x, 118);
+
+// When the clamped point would land inside solid geometry the original hard
+// rejection is preserved and the authority stays put.
+fixture.state.collision = { grid_x: 4, grid_y: 3, block_type: "stone" };
 player = createPlayer();
 assert.equal(
   movement.acceptPlayerMovement({}, player, { x: 200, y: 100, world: "TEST" }, {
@@ -270,7 +294,9 @@ assert.equal(
   }),
   false,
 );
-assert.equal(fixture.correctionRejections.at(-1).details.reason, "movement_too_fast");
+assert.equal(player.x, 100);
+assert.equal(fixture.correctionRejections.at(-1).details.correction_clamped, false);
+fixture.state.collision = null;
 
 fixture.state.lava = true;
 player = createPlayer();
@@ -318,6 +344,20 @@ assert.equal(player.movement_server_time_msec, fixture.clock.value);
 
 const rejectionCount = fixture.correctionRejections.length;
 player = createPlayer();
+const silentPosition = { x: 500, y: 100, world: "TEST" };
+assert.equal(
+  movement.acceptPlayerMovement({}, player, silentPosition, {
+    silent: true,
+    data: { movement_sequence: 6 },
+  }),
+  true,
+);
+assert.equal(silentPosition.x, 118, "silent callers still receive the clamped coordinate");
+assert.equal(fixture.correctionRejections.length, rejectionCount, "silent callers never emit corrections");
+
+// Silent callers that cannot be clamped safely still return false.
+fixture.state.collision = { grid_x: 4, grid_y: 3, block_type: "stone" };
+player = createPlayer();
 assert.equal(
   movement.acceptPlayerMovement({}, player, { x: 500, y: 100, world: "TEST" }, {
     silent: true,
@@ -326,6 +366,7 @@ assert.equal(
   false,
 );
 assert.equal(fixture.correctionRejections.length, rejectionCount);
+fixture.state.collision = null;
 
 assert.equal(
   movement.isValidRespawnTeleportPosition(
