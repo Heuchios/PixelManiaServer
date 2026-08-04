@@ -234,6 +234,10 @@ const MAX_ITEM_CATEGORY_LENGTH = 64;
 const MAX_DROP_ID_LENGTH = 96;
 const MAX_ROLLBACK_PRESERVED_DROP_IDS_LOGGED = 8;
 const MAX_DROP_TOMBSTONE_HISTORY = 512;
+// How long after a successful pickup a repeat request from the same player is
+// treated as a duplicate of it rather than a miss. Client auto-pickup re-sends
+// within tens of milliseconds; this only has to outlive a round trip.
+const DUPLICATE_DROP_PICKUP_GRACE_MS = 15000;
 const PLAYER_LEVEL_MIN = 1;
 const PLAYER_LEVEL_MAX = 100;
 const PLAYER_XP_FIRST_LEVEL = 300;
@@ -1437,6 +1441,8 @@ function getServerPhase8FinalRoutes() {
             isValidRespawnTeleportPosition,
             logDropPickupInventoryIssue,
             logDropPickupNotAvailable,
+            wasDropJustCollectedByPlayer,
+            acknowledgeDropAlreadyCollected,
             logDropPickupTooFar,
             logItemLedgerForState,
             logWorldChange,
@@ -24793,6 +24799,7 @@ async function handleBulkDropPickup(socket, player, data, worldName, requestId) 
     let latestPickupState = null;
     let successWorld = cleanWorld(bulkUpdate.world || worldName);
     let worldStateDirty = false;
+    let duplicateAckCount = 0;
     const worldUpdates = [];
     const rewardEntries = [];
     const deltaMap = new Map();
@@ -24801,6 +24808,11 @@ async function handleBulkDropPickup(socket, player, data, worldName, requestId) 
             const singleUpdate = { ...bulkUpdate, drop_id: dropId };
             const initialPlan = prepareDropPickup(bulkUpdate.world, player, singleUpdate);
             if (!initialPlan.ok) {
+                if (wasDropJustCollectedByPlayer(bulkUpdate.world, dropId, player)) {
+                    acknowledgeDropAlreadyCollected(socket, player, bulkUpdate.world, dropId);
+                    duplicateAckCount += 1;
+                    continue;
+                }
                 pickupResults.push(makeBulkDropPickupFailure(dropId, initialPlan.reason, getPreparedDropPickupFailureMessage(initialPlan)));
                 continue;
             }
@@ -24813,6 +24825,11 @@ async function handleBulkDropPickup(socket, player, data, worldName, requestId) 
             lockedDropEntries.push({ dropLock, dropId, singleUpdate });
         }
         if (lockedDropEntries.length === 0) {
+            // Every id was a duplicate of a pickup that already succeeded for this
+            // player. They have been told the drops are gone; an error on top of that
+            // would report a failure that never happened.
+            if (duplicateAckCount > 0 && pickupResults.length === 0)
+                return;
             sendActionRejected(socket, "world_item_drop_pickup", "Those drops are not available.", {
                 drop_id: bulkUpdate.drop_id,
                 drop_ids: bulkUpdate.drop_ids,
@@ -24836,6 +24853,11 @@ async function handleBulkDropPickup(socket, player, data, worldName, requestId) 
         for (const entry of lockedDropEntries) {
             let pickupPlan = prepareDropPickup(bulkUpdate.world, player, entry.singleUpdate);
             if (!pickupPlan.ok) {
+                if (wasDropJustCollectedByPlayer(bulkUpdate.world, entry.dropId, player)) {
+                    acknowledgeDropAlreadyCollected(socket, player, bulkUpdate.world, entry.dropId);
+                    duplicateAckCount += 1;
+                    continue;
+                }
                 pickupResults.push(makeBulkDropPickupFailure(entry.dropId, pickupPlan.reason, getPreparedDropPickupFailureMessage(pickupPlan)));
                 continue;
             }
@@ -24990,6 +25012,8 @@ async function handleBulkDropPickup(socket, player, data, worldName, requestId) 
             }
         }
         if (successCount <= 0) {
+            if (duplicateAckCount > 0 && pickupResults.length === 0)
+                return;
             sendActionRejected(socket, "world_item_drop_pickup", "Those drops are not available.", {
                 drop_id: bulkUpdate.drop_id,
                 drop_ids: bulkUpdate.drop_ids,
@@ -25186,6 +25210,61 @@ function recordDropCreationTime(dropId) {
     dropCreationTimes.set(cleanDropId, Date.now());
     dropRemovalTombstones.delete(cleanDropId);
     pruneDropLifecycleHistory();
+}
+const DROP_COLLECTED_TOMBSTONE_REASONS = new Set([
+    "picked_up",
+    "picked_up_legacy",
+    "postgres_reported_collected",
+]);
+/**
+ * True when this exact player collected this exact drop moments ago, i.e. the
+ * request is a duplicate of one that already succeeded. Auto-pickup can re-send
+ * a drop id before the first response lands, and answering that with a hard
+ * "not available" is what players see as a spurious error on a pickup that in
+ * fact worked.
+ *
+ * The tombstone is read ONLY to choose the response. It never grants an item,
+ * never moves inventory, and never authorises removing anything: the drop is
+ * already gone from authoritative state by the time this can match.
+ */
+function wasDropJustCollectedByPlayer(worldName, dropId, player) {
+    const cleanDropId = clampString(dropId || "", MAX_DROP_ID_LENGTH);
+    if (cleanDropId === "")
+        return false;
+    const tombstone = dropRemovalTombstones.get(cleanDropId);
+    if (!tombstone)
+        return false;
+    if (!DROP_COLLECTED_TOMBSTONE_REASONS.has(tombstone.reason))
+        return false;
+    if (tombstone.world !== cleanWorld(worldName))
+        return false;
+    const requester = cleanAccountName(player?.account_username || "");
+    if (requester === "" || tombstone.collector !== requester)
+        return false;
+    return Math.max(0, Date.now() - tombstone.at_ms) <= DUPLICATE_DROP_PICKUP_GRACE_MS;
+}
+/**
+ * Idempotent answer to a duplicate pickup: confirm to the one client that asked
+ * that the drop is gone. No error, no inventory change, no broadcast — the rest
+ * of the world removed this drop when it was actually collected.
+ */
+function acknowledgeDropAlreadyCollected(socket, player, worldName, dropId) {
+    const cleanWorldName = cleanWorld(worldName);
+    const cleanDropId = clampString(dropId || "", MAX_DROP_ID_LENGTH);
+    const payload = DropContracts.buildDropPickupRemovePayload({
+        world: cleanWorldName,
+        dropId: cleanDropId,
+        requestedBy: String(player?.id || ""),
+        requestedByName: cleanName(player?.name || ""),
+        reason: "already_collected",
+    });
+    sendJson(socket, sanitizeWorldInteractionPayloadForClient(payload, cleanWorldName));
+    console.warn("[drop_pickup_duplicate_ack]", {
+        username: cleanAccountName(player?.account_username || ""),
+        world: cleanWorldName,
+        drop_id: cleanDropId,
+        collected_ms_ago: Math.max(0, Date.now() - (dropRemovalTombstones.get(cleanDropId)?.at_ms || 0)),
+    });
 }
 /**
  * @param {PixelMania.WorldName | string} worldName

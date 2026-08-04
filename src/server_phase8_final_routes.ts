@@ -73,6 +73,8 @@ function createServerPhase8FinalRoutes(deps: Phase8FinalRouteDeps) {
     isValidRespawnTeleportPosition,
     logDropPickupInventoryIssue,
     logDropPickupNotAvailable,
+    wasDropJustCollectedByPlayer,
+    acknowledgeDropAlreadyCollected,
     logDropPickupTooFar,
     logItemLedgerForState,
     logWorldChange,
@@ -546,6 +548,14 @@ function createServerPhase8FinalRoutes(deps: Phase8FinalRouteDeps) {
                 });
                 return true;
               }
+              // Auto-pickup can re-send a drop id before the first response
+              // lands. If this player already collected this drop moments ago,
+              // the pickup did not fail — confirm the drop is gone instead of
+              // reporting an error for a request that succeeded.
+              if (wasDropJustCollectedByPlayer(worldName, update.drop_id, player)) {
+                acknowledgeDropAlreadyCollected(socket, player, worldName, update.drop_id);
+                return true;
+              }
               logDropPickupNotAvailable(player, worldName, update.drop_id);
               rejectPickup(plan, "That drop is not available.");
               return true;
@@ -772,6 +782,10 @@ function createServerPhase8FinalRoutes(deps: Phase8FinalRouteDeps) {
                 drop_id: update.drop_id,
                 world: worldName,
               });
+              return;
+            }
+            if (wasDropJustCollectedByPlayer(worldName, update.drop_id, player)) {
+              acknowledgeDropAlreadyCollected(socket, player, worldName, update.drop_id);
               return;
             }
             logDropPickupNotAvailable(player, worldName, update.drop_id);
