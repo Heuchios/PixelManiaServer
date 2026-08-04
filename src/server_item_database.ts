@@ -2287,6 +2287,8 @@ const ITEM_DEFINITIONS = {
     placeable: true,
     placement_cost: { item_id: "crafting_station", item_category: "block", amount: 1 },
     shop_price: 80,
+    no_collision: true,
+    collidable: false,
     drop_rules: { seed_chance: 0, gem_range: [0, 0] },
   }),
   crafting_station_left: block({
@@ -2298,6 +2300,8 @@ const ITEM_DEFINITIONS = {
     admin_grantable: false,
     placeable: false,
     legacy_station_part: "left",
+    no_collision: true,
+    collidable: false,
   }),
   crafting_station_right: block({
     rarity: "uncommon",
@@ -2308,6 +2312,8 @@ const ITEM_DEFINITIONS = {
     admin_grantable: false,
     placeable: false,
     legacy_station_part: "right",
+    no_collision: true,
+    collidable: false,
   }),
   wood_plank: block({
     rarity: "uncommon",
@@ -2472,6 +2478,8 @@ const ITEM_DEFINITIONS = {
     block_health: 2,
     seed: "glass_panel_seed",
     craft_only: true,
+    no_collision: true,
+    collidable: false,
   }),
   gem_block: block({
     rarity: "epic",

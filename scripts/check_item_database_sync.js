@@ -182,6 +182,110 @@ function extractGeneratedSeedIds(dictionaryBody) {
 }
 
 /**
+ * @param {string} source
+ * @param {number} openIndex
+ * @returns {string}
+ */
+function readBracedBody(source, openIndex) {
+  let depth = 0;
+
+  for (let i = openIndex; i < source.length; i += 1) {
+    const ch = source[i];
+
+    if (ch === "#") {
+      i = skipLineComment(source, i);
+      continue;
+    }
+
+    if (ch === "\"" || ch === "'") {
+      i = readQuotedString(source, i).nextIndex - 1;
+      continue;
+    }
+
+    if (ch === "{") {
+      depth += 1;
+    } else if (ch === "}") {
+      depth -= 1;
+      if (depth === 0) {
+        return source.slice(openIndex + 1, i);
+      }
+    }
+  }
+
+  return "";
+}
+
+/**
+ * Client block ids explicitly flagged as non-collidable.
+ * @param {string} dictionaryBody
+ * @returns {Set<string>}
+ */
+function extractClientNonCollidableIds(dictionaryBody) {
+  /** @type {Set<string>} */
+  const ids = new Set();
+  let depth = 0;
+
+  for (let i = 0; i < dictionaryBody.length; i += 1) {
+    const ch = dictionaryBody[i];
+
+    if (ch === "#") {
+      i = skipLineComment(dictionaryBody, i);
+      continue;
+    }
+
+    if (ch === "\"" || ch === "'") {
+      const parsed = readQuotedString(dictionaryBody, i);
+
+      if (depth === 0) {
+        const afterString = skipWhitespace(dictionaryBody, parsed.nextIndex);
+        if (dictionaryBody[afterString] === ":") {
+          const afterColon = skipWhitespace(dictionaryBody, afterString + 1);
+          if (dictionaryBody[afterColon] === "{") {
+            const body = readBracedBody(dictionaryBody, afterColon);
+            if (
+              /["']no_collision["']\s*:\s*true/.test(body)
+              || /["']collidable["']\s*:\s*false/.test(body)
+            ) {
+              ids.add(parsed.value);
+            }
+          }
+        }
+      }
+
+      i = parsed.nextIndex - 1;
+      continue;
+    }
+
+    if (ch === "{") {
+      depth += 1;
+    } else if (ch === "}") {
+      depth = Math.max(0, depth - 1);
+    }
+  }
+
+  return ids;
+}
+
+/**
+ * Mirrors isSolidMovementCollisionBlock() in src/server.ts. A block the client
+ * treats as non-collidable must never be solid here: the client walks into the
+ * tile, the server rejects the move as movement_blocked, and the correction
+ * hard-snaps the player back every frame. In game that reads as being trapped
+ * by the block.
+ * @param {unknown} value
+ * @returns {boolean}
+ */
+function isSolidMovementCollisionBlock(value) {
+  if (!value || typeof value !== "object" || Array.isArray(value)) return false;
+  const definition = /** @type {Record<string, unknown>} */ (value);
+  if (definition.category !== "block") return false;
+  if (definition.no_collision === true || definition.collidable === false) return false;
+  if (definition.platform_collision === true) return false;
+  const collisionType = String(definition.collision_type || "full").trim().toLowerCase();
+  return collisionType === "" || collisionType === "full" || collisionType === "custom";
+}
+
+/**
  * @param {Iterable<string>} ids
  * @returns {string[]}
  */
@@ -210,11 +314,16 @@ function main() {
 
   const missingOnServer = sortIds([...clientItemIds].filter((itemId) => !serverItemIds.has(itemId)));
   const serverOnly = sortIds([...serverItemIds].filter((itemId) => !clientItemIds.has(itemId)));
+  const clientNonCollidableIds = extractClientNonCollidableIds(clientBody);
+  const collisionMismatches = sortIds(
+    [...clientNonCollidableIds].filter((itemId) => isSolidMovementCollisionBlock(ITEMS[itemId])),
+  );
 
   console.log(`Client item database: ${clientItemDatabasePath}`);
   console.log(`Client items: ${clientItemIds.size}`);
   console.log(`Client virtual block seeds: ${generatedClientSeedIds.size}`);
   console.log(`Server items: ${serverItemIds.size}`);
+  console.log(`Client non-collidable blocks: ${clientNonCollidableIds.size}`);
 
   if (missingOnServer.length > 0) {
     console.error("\nMissing from server_item_database.js:");
@@ -230,12 +339,26 @@ function main() {
     }
   }
 
+  if (collisionMismatches.length > 0) {
+    console.error("\nCollision mismatch - client says non-collidable, server says solid:");
+    for (const itemId of collisionMismatches) {
+      console.error(` - ${itemId}`);
+    }
+    console.error("Add `no_collision: true` (and `collidable: false`) to these server definitions.");
+    console.error("Otherwise the server rejects movement into the tile and hard-snaps the player back.");
+  }
+
   if (missingOnServer.length > 0) {
     console.error("\nItem database sync failed. Add the missing item IDs to the server database before release.");
     process.exit(1);
   }
 
-  console.log("\nItem database sync OK. Every client item exists on the server.");
+  if (collisionMismatches.length > 0) {
+    console.error("\nItem database sync failed on collision parity.");
+    process.exit(1);
+  }
+
+  console.log("\nItem database sync OK. Every client item exists on the server, and collision flags agree.");
 }
 
 main();
