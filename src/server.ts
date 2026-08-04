@@ -27208,8 +27208,8 @@ async function handleBulkDropPickup(socket: any, player: any, data: any, worldNa
   const lockedDropEntries: any = [];
   const pickupResults: any = [];
   let inventoryLocks: any = null;
-  let successCount: any = 0;
-  let successAmount: any = 0;
+  let successCount = 0;
+  let successAmount = 0;
   let latestPickupState: any = null;
   let successWorld: any = cleanWorld(bulkUpdate.world || worldName);
   let worldStateDirty = false;
