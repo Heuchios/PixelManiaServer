@@ -232,6 +232,8 @@ const ADMIN_INVENTORY_LOOKUP_FIELDS = Object.freeze([
 const MAX_ITEM_ID_LENGTH = 64;
 const MAX_ITEM_CATEGORY_LENGTH = 64;
 const MAX_DROP_ID_LENGTH = 96;
+const MAX_ROLLBACK_PRESERVED_DROP_IDS_LOGGED = 8;
+const MAX_DROP_TOMBSTONE_HISTORY = 512;
 const PLAYER_LEVEL_MIN = 1;
 const PLAYER_LEVEL_MAX = 100;
 const PLAYER_XP_FIRST_LEVEL = 300;
@@ -1240,6 +1242,7 @@ function getServerPhase8WorldActionRoutes() {
             debugActionPositionFlow,
             debugNetfoxAction,
             deserializeWorldState,
+            restoreWorldStateSnapshot,
             ELECTRICAL_DEVICE_GENERATOR,
             ELECTRICAL_DEVICE_METAL_PAD,
             ELECTRICAL_DEVICE_POLE,
@@ -24789,6 +24792,7 @@ async function handleBulkDropPickup(socket, player, data, worldName, requestId) 
     let successAmount = 0;
     let latestPickupState = null;
     let successWorld = cleanWorld(bulkUpdate.world || worldName);
+    let worldStateDirty = false;
     const worldUpdates = [];
     const rewardEntries = [];
     const deltaMap = new Map();
@@ -24836,15 +24840,6 @@ async function handleBulkDropPickup(socket, player, data, worldName, requestId) 
                 continue;
             }
             const pickupTransactionId = makeAuditId("pickup");
-            const worldRollback = captureWorldMutationRollback(pickupPlan.world);
-            const worldApply = applyDropPickupWorldState(pickupPlan.world, pickupPlan);
-            if (!worldApply.ok) {
-                restoreWorldMutationRollback(pickupPlan.world, worldRollback);
-                pickupResults.push(makeBulkDropPickupFailure(entry.dropId, worldApply.reason || "not_available", "That drop is not available."));
-                continue;
-            }
-            advanceAuthoritativeWorldRevision(pickupPlan.world, "drop_pickup");
-            const serializedWorld = serializeWorldState(pickupPlan.world);
             const pickedDrop = {
                 ...pickupPlan.drop,
                 amount: pickupPlan.pickedAmount,
@@ -24887,8 +24882,13 @@ async function handleBulkDropPickup(socket, player, data, worldName, requestId) 
                 stack_grid_y: pickupPlan.drop.stack_grid_y,
                 pickup_delay: pickupPlan.drop.pickup_delay,
                 drop_amount: pickupPlan.dropAmount,
-                world_state: serializedWorld,
-                world_changes: [worldChange],
+                // Deliberately no world_state / world_changes here. Passing a snapshot
+                // taken before this await made the transaction persist a stale world:
+                // any drop another request created meanwhile was missing from it, so
+                // mirrorWorldDropsState marked that drop 'removed', and a concurrent
+                // block break that bumped the revision first made this save fail with
+                // stale_world_revision. The live world is persisted after the batch
+                // instead, from state serialized at persist time.
                 world_persistence: ownership,
                 ip_address: getSocketAddress(socket),
                 user_agent: getSocketUserAgent(socket, data),
@@ -24902,7 +24902,9 @@ async function handleBulkDropPickup(socket, player, data, worldName, requestId) 
                     reason: persistence.reason || "world_ownership_unverified",
                 });
             if (!postgresPickup.ok) {
-                restoreWorldMutationRollback(pickupPlan.world, worldRollback);
+                // Nothing was mutated in live world state before the transaction, so
+                // there is nothing to roll back and no other request's world mutation
+                // to clobber. The drop simply stays where it is.
                 const postgresPickupReason = DropContracts.getPostgresDropPickupFailureReason(postgresPickup);
                 logDropPickupInventoryIssue(postgresPickupReason, player, pickupPlan.world, entry.dropId, pickupPlan, postgresPickup);
                 // Only remove the drop when PostgreSQL proved it was actually collected.
@@ -24912,13 +24914,12 @@ async function handleBulkDropPickup(socket, player, data, worldName, requestId) 
                     const removal = removeUnavailableDropFromWorldState(pickupPlan.world, pickupPlan.dropId, pickupPlan);
                     if (removal.ok && removal.payload) {
                         worldUpdates.push({ world: pickupPlan.world, payload: removal.payload });
+                        worldStateDirty = true;
                     }
                 }
                 pickupResults.push(makeBulkDropPickupFailure(entry.dropId, postgresPickupReason, getPostgresInventoryFailureMessage(postgresPickup, "Could not pick up that item right now.")));
                 continue;
             }
-            markWorldRevisionPersisted(pickupPlan.world, postgresPickup.persisted_revision || serializedWorld.world_revision);
-            writeWorldStateJsonBackup(pickupPlan.world, serializedWorld);
             const pickupState = pickupPlan.playerState;
             const inventoryField = getInventoryFieldForCategory(pickupPlan.item_category, pickupPlan.item_type);
             if (!pickupState[inventoryField] || typeof pickupState[inventoryField] !== "object" || Array.isArray(pickupState[inventoryField])) {
@@ -24934,13 +24935,19 @@ async function handleBulkDropPickup(socket, player, data, worldName, requestId) 
             pickupPlan.remaining = Number.isFinite(committedDropAfterAmountRaw)
                 ? Math.max(0, Math.trunc(committedDropAfterAmountRaw))
                 : pickupPlan.remaining;
+            // PostgreSQL committed the inventory and consumed the authoritative drop
+            // row, so the live world may now drop it too. Doing this after the commit
+            // (like the single-drop route) means a failed pickup never mutates the
+            // world and never needs a world-wide rollback.
+            const worldApply = applyDropPickupWorldState(pickupPlan.world, pickupPlan);
             const pickupUpdate = worldApply.ok
                 ? worldApply.payload
                 : removeUnavailableDropFromWorldState(pickupPlan.world, pickupPlan.dropId, pickupPlan).payload || null;
             if (pickupUpdate) {
                 worldUpdates.push({ world: pickupPlan.world, payload: pickupUpdate });
             }
-            logWorldChange(socket, player, worldChange, { skipPostgres: true });
+            worldStateDirty = true;
+            logWorldChange(socket, player, worldChange);
             logItemLedgerForState(socket, player, player.account_username, pickupState, pickedDrop.item_type, pickedDrop.item_category, pickedDrop.amount, "world_item_drop_pickup", pickupTransactionId, "drop_pickup", pickupPlan.world, {
                 drop_id: pickedDrop.drop_id,
                 bulk_request_id: bulkTransactionId,
@@ -24967,6 +24974,20 @@ async function handleBulkDropPickup(socket, player, data, worldName, requestId) 
             successAmount += pickedDrop.amount;
             latestPickupState = pickupState;
             successWorld = pickupPlan.world;
+        }
+        if (worldStateDirty) {
+            // Serialized at persist time from the live world, so drops other requests
+            // created while this batch awaited PostgreSQL are included instead of
+            // being mirrored away as 'removed'.
+            const bulkWorldPersistResult = await persistAuthoritativeWorldState(successWorld, null, "drop_pickup");
+            if (!bulkWorldPersistResult.ok) {
+                console.warn("[drop_pickup_world_persist_failed]", {
+                    world: successWorld,
+                    bulk_request_id: bulkTransactionId,
+                    drop_ids: bulkUpdate.drop_ids,
+                    reason: bulkWorldPersistResult.reason || "unknown",
+                });
+            }
         }
         if (successCount <= 0) {
             sendActionRejected(socket, "world_item_drop_pickup", "Those drops are not available.", {
@@ -25123,12 +25144,57 @@ function sanitizeOptionalDropPickupPosition(data, player, worldName) {
     return position;
 }
 /**
+ * Development-only tombstones for drops that recently left live world state.
+ * They exist so a "That drop is not available." rejection can be classified as
+ * never-created / collected / rolled-back / emptied instead of guessed at. They
+ * are never authoritative: nothing reads them to decide inventory or ownership.
+ */
+const dropRemovalTombstones = new Map();
+const dropCreationTimes = new Map();
+function pruneDropLifecycleHistory() {
+    while (dropRemovalTombstones.size > MAX_DROP_TOMBSTONE_HISTORY) {
+        const oldestKey = dropRemovalTombstones.keys().next().value;
+        if (oldestKey === undefined)
+            break;
+        dropRemovalTombstones.delete(oldestKey);
+    }
+    while (dropCreationTimes.size > MAX_DROP_TOMBSTONE_HISTORY) {
+        const oldestKey = dropCreationTimes.keys().next().value;
+        if (oldestKey === undefined)
+            break;
+        dropCreationTimes.delete(oldestKey);
+    }
+}
+function recordDropRemovalTombstone(worldName, dropId, reason, collector = "") {
+    const cleanDropId = clampString(dropId || "", MAX_DROP_ID_LENGTH);
+    if (cleanDropId === "")
+        return;
+    dropRemovalTombstones.delete(cleanDropId);
+    dropRemovalTombstones.set(cleanDropId, {
+        world: cleanWorld(worldName),
+        reason: clampString(reason || "unknown", 64),
+        at_ms: Date.now(),
+        collector: cleanAccountName(collector || ""),
+        created_at_ms: dropCreationTimes.get(cleanDropId) || 0,
+    });
+    pruneDropLifecycleHistory();
+}
+function recordDropCreationTime(dropId) {
+    const cleanDropId = clampString(dropId || "", MAX_DROP_ID_LENGTH);
+    if (cleanDropId === "")
+        return;
+    dropCreationTimes.set(cleanDropId, Date.now());
+    dropRemovalTombstones.delete(cleanDropId);
+    pruneDropLifecycleHistory();
+}
+/**
  * @param {PixelMania.WorldName | string} worldName
  * @param {PixelMania.RuntimeWorldDropCreateInput} update
  * @returns {void}
  */
 function applyDropCreateToWorldState(worldName, update) {
     const state = ensureWorldState(worldName);
+    recordDropCreationTime(update.drop_id);
     state.drops.set(update.drop_id, {
         drop_id: update.drop_id,
         item_type: update.item_type,
@@ -25155,6 +25221,7 @@ function applyDropUpdateToWorldState(worldName, update) {
     if (Object.prototype.hasOwnProperty.call(update, "amount")) {
         if (update.amount <= 0) {
             state.drops.delete(update.drop_id);
+            recordDropRemovalTombstone(worldName, update.drop_id, "drop_update_emptied");
             return;
         }
         drop.amount = Math.min(update.amount, drop.amount);
@@ -25199,6 +25266,7 @@ function applyDropPickupToWorldState(worldName, update, player) {
     const dropAmount = clampInteger(drop.amount || 0, 0, Math.min(MAX_DROP_TILE_AMOUNT, stackLimit));
     if (dropAmount <= 0) {
         state.drops.delete(dropStateKey);
+        recordDropRemovalTombstone(worldName, authoritativeDropId || dropStateKey, "empty_drop");
         return DropContracts.buildDropPickupFailure({ reason: "not_available" });
     }
     const currentCount = getInventoryCount(playerState, itemId, itemCategory);
@@ -25223,6 +25291,7 @@ function applyDropPickupToWorldState(worldName, update, player) {
     let pickupUpdate;
     if (remaining <= 0) {
         state.drops.delete(dropStateKey);
+        recordDropRemovalTombstone(worldName, authoritativeDropId || dropStateKey, "picked_up_legacy", player?.account_username || player?.name || "");
         pickupUpdate = DropContracts.buildDropPickupRemovePayload({
             world: cleanWorld(worldName),
             dropId: authoritativeDropId,
@@ -25400,6 +25469,7 @@ function applyDropPickupWorldState(worldName, pickupPlan) {
         for (const [candidateKey, candidateDrop] of state.drops.entries()) {
             if (candidateKey === dropStateKey || candidateDrop === drop || clampString(candidateDrop?.drop_id || "", MAX_DROP_ID_LENGTH) === dropId) {
                 state.drops.delete(candidateKey);
+                recordDropRemovalTombstone(worldName, candidateDrop?.drop_id || candidateKey, "picked_up", pickupPlan.player?.account_username || pickupPlan.player?.name || "");
             }
         }
         return DropContracts.buildDropPickupWorldApplySuccess(DropContracts.buildDropPickupRemovePayload({
@@ -25445,6 +25515,7 @@ function removeUnavailableDropFromWorldState(worldName, dropId, pickupPlan = nul
             candidateDropId === cleanDropId ||
             candidateDropId === targetDropId) {
             state.drops.delete(candidateKey);
+            recordDropRemovalTombstone(cleanWorldName, candidateDropId || candidateKey, "postgres_reported_collected", pickupPlan?.player?.account_username || pickupPlan?.player?.name || "");
             removed = true;
         }
     }
@@ -25540,14 +25611,26 @@ function logDropPickupNotAvailable(player, worldName, dropId) {
             }
         }
     }
+    const tombstone = dropRemovalTombstones.get(cleanDropId) || null;
+    const createdAtMs = dropCreationTimes.get(cleanDropId) || tombstone?.created_at_ms || 0;
+    const nowMs = Date.now();
     console.warn("[drop_pickup_missing]", {
         username: cleanAccountName(player?.account_username || player?.name || ""),
         current_world: cleanWorldName,
         player_world: cleanWorld(player?.world || "START"),
+        server_instance: SERVER_INSTANCE_ID,
         requested_drop_id: cleanDropId,
         world_drop_count: state.drops.size,
         has_drop_key: state.drops.has(cleanDropId),
         loaded_worlds_with_drop: loadedWorldsWithDrop,
+        // Classifies the miss: never created here / removed and why / how long the
+        // drop lived before the request arrived.
+        known_created: createdAtMs > 0,
+        age_at_request_ms: createdAtMs > 0 ? Math.max(0, nowMs - createdAtMs) : null,
+        removal_reason: tombstone?.reason || (createdAtMs > 0 ? "still_created_never_removed" : "never_created_on_this_instance"),
+        removal_world: tombstone?.world || "",
+        removed_ms_ago: tombstone ? Math.max(0, nowMs - tombstone.at_ms) : null,
+        removal_collector: tombstone?.collector || "",
     });
 }
 function logDropPickupTooFar(player, worldName, dropId, drop, update = {}) {
@@ -26932,11 +27015,101 @@ function captureWorldMutationRollback(worldName) {
         unpersisted: pending ? { ...pending } : null,
     };
 }
+/**
+ * Drop ids present in a serialized world snapshot, using the same key the live
+ * drops map uses (`drop_id`).
+ */
+function collectSerializedWorldDropIds(serialized) {
+    const ids = new Set();
+    const state = serialized && typeof serialized === "object" ? serialized : {};
+    const rawDrops = Array.isArray(state.drops)
+        ? state.drops
+        : (Array.isArray(state.item_drops) ? state.item_drops : []);
+    for (const rawDrop of rawDrops) {
+        const dropId = clampString((rawDrop && rawDrop.drop_id) || "", MAX_DROP_ID_LENGTH);
+        if (dropId !== "")
+            ids.add(dropId);
+    }
+    return ids;
+}
+/**
+ * Drops that other requests added to the live world after `snapshot` was taken.
+ * A rollback owns only the mutations its own request made, so these must survive
+ * it: they have already been broadcast to clients, and dropping them here leaves
+ * players looking at an item the authoritative world no longer knows about — the
+ * exact state that answers a pickup with "That drop is not available."
+ */
+function collectForeignLiveWorldDrops(worldName, snapshot) {
+    const liveState = worldStates.get(worldName);
+    const liveDrops = liveState && liveState.drops instanceof Map ? liveState.drops : null;
+    if (!liveDrops || liveDrops.size === 0)
+        return [];
+    const snapshotDropIds = collectSerializedWorldDropIds(snapshot);
+    const foreignDrops = [];
+    for (const [dropKey, drop] of liveDrops.entries()) {
+        const dropId = clampString((drop && drop.drop_id) || dropKey || "", MAX_DROP_ID_LENGTH);
+        if (snapshotDropIds.has(dropKey) || (dropId !== "" && snapshotDropIds.has(dropId)))
+            continue;
+        foreignDrops.push([dropKey, drop]);
+    }
+    return foreignDrops;
+}
+/**
+ * Restore a serialized world snapshot over the live world without destroying
+ * drops other requests created while this one was awaiting PostgreSQL.
+ * `discardDropIds` are the caller's own speculative drops, which the rollback
+ * does have to undo.
+ *
+ * @param {PixelMania.WorldName | string} worldName
+ * @param {*} snapshot
+ * @param {Array<string | { drop_id?: string }>} discardDropIds
+ */
+function restoreWorldStateSnapshot(worldName, snapshot, discardDropIds = []) {
+    const clean = cleanWorld(worldName);
+    const discarded = new Set();
+    if (Array.isArray(discardDropIds)) {
+        for (const rawId of discardDropIds) {
+            const rawDropId = rawId && typeof rawId === "object" ? rawId.drop_id : rawId;
+            const dropId = clampString(rawDropId || "", MAX_DROP_ID_LENGTH);
+            if (dropId !== "")
+                discarded.add(dropId);
+        }
+    }
+    const foreignDrops = collectForeignLiveWorldDrops(clean, snapshot).filter(([dropKey, drop]) => {
+        const dropId = clampString((drop && drop.drop_id) || dropKey || "", MAX_DROP_ID_LENGTH);
+        return !discarded.has(dropKey) && !(dropId !== "" && discarded.has(dropId));
+    });
+    const liveDropsBeforeRestore = worldStates.get(clean)?.drops;
+    const restored = deserializeWorldState(clean, snapshot);
+    for (const [dropKey, drop] of foreignDrops) {
+        if (!restored.drops.has(dropKey))
+            restored.drops.set(dropKey, drop);
+    }
+    if (liveDropsBeforeRestore instanceof Map) {
+        for (const [dropKey, drop] of liveDropsBeforeRestore.entries()) {
+            if (restored.drops.has(dropKey))
+                continue;
+            recordDropRemovalTombstone(clean, (drop && drop.drop_id) || dropKey, "world_rollback_discarded");
+        }
+    }
+    worldStates.set(clean, restored);
+    if (foreignDrops.length > 0) {
+        console.warn("[world_rollback_preserved_foreign_drops]", {
+            world: clean,
+            preserved_drop_count: foreignDrops.length,
+            discarded_drop_count: discarded.size,
+            preserved_drop_ids: foreignDrops
+                .slice(0, MAX_ROLLBACK_PRESERVED_DROP_IDS_LOGGED)
+                .map(([dropKey, drop]) => clampString((drop && drop.drop_id) || dropKey || "", MAX_DROP_ID_LENGTH)),
+        });
+    }
+    return { preserved_drop_count: foreignDrops.length };
+}
 function restoreWorldMutationRollback(worldName, rollback) {
     const clean = cleanWorld(worldName);
     invalidateWorldEntrySnapshotCache(clean, "mutation_rollback");
     if (rollback.existed) {
-        worldStates.set(clean, deserializeWorldState(clean, rollback.state));
+        restoreWorldStateSnapshot(clean, rollback.state);
     }
     else {
         worldStates.delete(clean);
