@@ -102,6 +102,18 @@ function getMethodSource(source, functionName) {
   return source.slice(start, next === -1 ? source.length : next);
 }
 
+/** @param {string} source @param {string} functionName */
+function getFunctionSource(source, functionName) {
+  const start = source.indexOf(`async function ${functionName}(`);
+  assert.notEqual(start, -1, `${functionName} must exist`);
+  const body = source.slice(start + 1);
+  const nextAsync = body.indexOf("\nasync function ");
+  const nextPlain = body.indexOf("\nfunction ");
+  const candidates = [nextAsync, nextPlain].filter((index) => index !== -1);
+  const next = candidates.length > 0 ? Math.min(...candidates) : -1;
+  return body.slice(0, next === -1 ? body.length : next);
+}
+
 async function main() {
   const ownerA = { instance: "ws-a", token: "process-a:1", epoch: 1 };
   const ownerB = { instance: "ws-b", token: "process-b:2", epoch: 2 };
@@ -311,9 +323,19 @@ async function main() {
   assert.match(serverSource, /const memoryAuthoritative = isMemoryWorldRevisionAuthoritative/);
   assert.match(serverSource, /memory_authoritative: memoryAuthoritative/);
   assert.match(serverSource, /expected_drop_before_amount: pickupPlan\.dropAmount/);
-  assert.match(serverSource, /world_state: serializedWorld,[\s\S]*world_persistence: ownership/);
-  assert.match(serverSource, /restoreWorldMutationRollback\(pickupPlan\.world, worldRollback\)/);
-  assert.doesNotMatch(serverSource, /drop_pickup_bulk_world_persist_failed/);
+  // Bulk drop pickup must stay PostgreSQL-first. Handing the transaction a world
+  // snapshot captured before the await made the save lose to any concurrent block
+  // break that bumped the revision first (stale_world_revision), and the world-wide
+  // rollback that followed erased that break's drop from live world state - the
+  // client kept rendering a drop the server no longer had. The batch now persists
+  // the live world afterwards, from state serialized at persist time.
+  const bulkDropPickupSource = getFunctionSource(serverSource, "handleBulkDropPickup");
+  assert.match(bulkDropPickupSource, /world_persistence: ownership/);
+  assert.doesNotMatch(bulkDropPickupSource, /world_state:/);
+  assert.doesNotMatch(bulkDropPickupSource, /serializeWorldState\(/);
+  assert.doesNotMatch(bulkDropPickupSource, /WorldMutationRollback\(/);
+  assert.match(bulkDropPickupSource, /persistAuthoritativeWorldState\(successWorld, null, "drop_pickup"\)/);
+  assert.match(bulkDropPickupSource, /drop_pickup_world_persist_failed/);
   for (const field of [
     "world_id",
     "server_instance",
