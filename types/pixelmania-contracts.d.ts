@@ -1690,8 +1690,16 @@ declare namespace PixelMania {
       | "stale_world_revision"
       | "world_revision_content_conflict"
       | "world_revision_cas_rejected"
+      | "world_drop_item_instances_pending"
       | "tracked_item_instance_movement_failed";
     drop_id?: string;
+    /**
+     * Authoritative status of the world_drops row at rejection time.
+     * "picked_up" is the only value that proves the drop was actually collected and
+     * may therefore be removed from live world state. Every other value means the
+     * drop must be preserved.
+     */
+    drop_status?: "active" | "picked_up" | "removed" | "expired" | "missing" | string;
     item_type?: ItemId;
     item_category?: string;
     available_amount?: number;

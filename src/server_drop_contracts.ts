@@ -92,6 +92,7 @@ interface DropPickupUpdatePayloadInput {
 interface PostgresDropPickupFailureInput {
   reason: string;
   drop_id?: string;
+  drop_status?: string;
   item_type?: string;
   item_category?: string;
   available_amount?: number;
@@ -245,6 +246,7 @@ function buildPostgresDropPickupFailure(input: PostgresDropPickupFailureInput): 
   };
 
   if (Object.prototype.hasOwnProperty.call(input, "drop_id")) result.drop_id = input.drop_id;
+  if (Object.prototype.hasOwnProperty.call(input, "drop_status")) result.drop_status = input.drop_status;
   if (Object.prototype.hasOwnProperty.call(input, "item_type")) result.item_type = input.item_type;
   if (Object.prototype.hasOwnProperty.call(input, "item_category")) result.item_category = input.item_category;
   if (Object.prototype.hasOwnProperty.call(input, "available_amount")) result.available_amount = input.available_amount;
@@ -285,6 +287,43 @@ function isPostgresDropPickupUnavailableFailure(result: PostgresDropPickupResult
   return reason === "drop_not_available" || reason === "drop_changed" || reason === "drop_amount_changed";
 }
 
+function getPostgresDropPickupDropStatus(
+  result: PostgresDropPickupResult | { ok?: unknown; drop_status?: unknown }
+): string {
+  if (!result || typeof result !== "object" || Array.isArray(result)) return "";
+  const status = (result as { drop_status?: unknown }).drop_status;
+  return String(status || "").trim().toLowerCase();
+}
+
+/**
+ * True only when PostgreSQL proved the drop was fully collected (by this player or
+ * another one). This is the ONLY rejection that may remove the drop from live world
+ * state: every other failure leaves an item sitting in the world that no inventory
+ * ever received, so destroying it would permanently delete the item.
+ */
+function isPostgresDropPickupCollectedFailure(
+  result: PostgresDropPickupResult | { ok?: unknown; reason?: unknown; drop_status?: unknown }
+): boolean {
+  if (!result || result.ok !== false) return false;
+  if (getPostgresDropPickupFailureReason(result, "") !== "drop_not_available") return false;
+  return getPostgresDropPickupDropStatus(result) === "picked_up";
+}
+
+/**
+ * True when the authoritative drop row still exists and still holds items, so the
+ * drop must be preserved and the player may simply retry.
+ */
+function isPostgresDropPickupRetryableFailure(
+  result: PostgresDropPickupResult | { ok?: unknown; reason?: unknown; drop_status?: unknown }
+): boolean {
+  if (!result || result.ok !== false) return false;
+  if (isPostgresDropPickupCollectedFailure(result)) return false;
+  const reason = getPostgresDropPickupFailureReason(result, "");
+  if (reason === "drop_changed" || reason === "drop_amount_changed") return true;
+  if (reason === "world_drop_item_instances_pending") return true;
+  return getPostgresDropPickupDropStatus(result) === "active";
+}
+
 const DropContracts = {
   buildDropPickupFailure,
   buildDropPickupRemovePayload,
@@ -299,7 +338,10 @@ const DropContracts = {
   buildSanitizedDropCreate,
   buildSanitizedDropPickup,
   buildSanitizedDropUpdate,
+  getPostgresDropPickupDropStatus,
   getPostgresDropPickupFailureReason,
+  isPostgresDropPickupCollectedFailure,
+  isPostgresDropPickupRetryableFailure,
   isPostgresDropPickupUnavailableFailure,
 };
 

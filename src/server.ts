@@ -27300,7 +27300,10 @@ async function handleBulkDropPickup(socket: any, player: any, data: any, worldNa
         restoreWorldMutationRollback(pickupPlan.world, worldRollback);
         const postgresPickupReason = DropContracts.getPostgresDropPickupFailureReason(postgresPickup);
         logDropPickupInventoryIssue(postgresPickupReason, player, pickupPlan.world, entry.dropId, pickupPlan, postgresPickup);
-        if (DropContracts.isPostgresDropPickupUnavailableFailure(postgresPickup)) {
+        // Only remove the drop when PostgreSQL proved it was actually collected.
+        // Any other failure rolled the transaction back with no inventory change, so
+        // the drop must survive or the item is destroyed for good.
+        if (DropContracts.isPostgresDropPickupCollectedFailure(postgresPickup)) {
           const removal = removeUnavailableDropFromWorldState(pickupPlan.world, pickupPlan.dropId, pickupPlan);
           if (removal.ok && removal.payload) {
             worldUpdates.push({ world: pickupPlan.world, payload: removal.payload });

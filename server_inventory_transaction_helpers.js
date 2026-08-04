@@ -110,6 +110,12 @@ function createServerInventoryTransactionHelpers(config) {
             const item = config.clampString(raw.item_type || "that item");
             return `Your inventory cannot hold ${item}.`;
         }
+        if (reason === "world_drop_item_instances_pending") {
+            // The drop is still in the world and was not consumed. Tell the player to
+            // retry rather than implying their item is gone.
+            const item = config.clampString(raw.item_type || "that item");
+            return `${item} is not ready to collect yet. It is still in the world - try again in a moment.`;
+        }
         if (reason === "insufficient_item_instances" ||
             reason === "insufficient_locked_item_instances" ||
             reason === "missing_world_drop_item_instances" ||

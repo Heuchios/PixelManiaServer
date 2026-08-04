@@ -454,7 +454,11 @@ function createServerPhase8FinalRoutes(deps) {
                         rejectPickup(pickupPlan, "Inventory full.", { reason: postgresPickupReason });
                         return;
                     }
-                    if (DropContracts.isPostgresDropPickupUnavailableFailure(postgresPickup)) {
+                    // Only PostgreSQL proving the drop was fully collected may delete it
+                    // from live world state. Every other failure rolled the transaction
+                    // back, so the item is still in the world and no inventory received
+                    // it: destroying the drop here would permanently delete the item.
+                    if (DropContracts.isPostgresDropPickupCollectedFailure(postgresPickup)) {
                         const removal = removeUnavailableDropFromWorldState(pickupPlan.world, pickupPlan.dropId, pickupPlan);
                         if (removal.ok) {
                             sendWorldUpdateToRequesterAndWorld(socket, player, pickupPlan.world, removal.payload);
@@ -465,6 +469,9 @@ function createServerPhase8FinalRoutes(deps) {
                     }
                     rejectPickup(pickupPlan, getPostgresInventoryFailureMessage(postgresPickup, "Could not pick up that item right now."), {
                         reason: postgresPickupReason,
+                        drop_status: DropContracts.getPostgresDropPickupDropStatus(postgresPickup),
+                        drop_preserved: true,
+                        retryable: DropContracts.isPostgresDropPickupRetryableFailure(postgresPickup),
                     });
                     return;
                 }

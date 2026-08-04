@@ -313,6 +313,36 @@ function normalizeItemInstanceSource(value, fallback = "system") {
 function isVagueItemInstanceCreationSource(value) {
     return PostgresContracts.isVagueItemInstanceCreationSource(value);
 }
+/**
+ * Server-authored world drops (block breaks, harvests, server rewards) are minted by
+ * the server itself, so their tracked item instances can be safely rebuilt from the
+ * authoritative world_drops row when they are missing.
+ *
+ * Drops that came out of a player's inventory must never be rebuilt: their tracked
+ * rows are the player's own PM-ITEM instances moved into 'world_drop', and minting
+ * replacements would duplicate real items.
+ *
+ * @param {unknown} source
+ * @param {unknown} action
+ * @returns {boolean}
+ */
+function isServerAuthoredWorldDropOrigin(source, action) {
+    const cleanSource = cleanName(source).toLowerCase();
+    const cleanAction = cleanName(action).toLowerCase();
+    if (cleanSource === "" && cleanAction === "")
+        return false;
+    if (cleanSource.includes("drop_inventory") || cleanSource.includes("world_item_drop_create"))
+        return false;
+    if (cleanAction.includes("drop_inventory") || cleanAction.includes("world_item_drop_create"))
+        return false;
+    if (cleanSource.includes("world_block_break") ||
+        cleanSource.includes("world_block_update") ||
+        cleanSource.includes("seed_harvest") ||
+        cleanSource.includes("server")) {
+        return true;
+    }
+    return cleanAction === "break_drop" || cleanAction === "harvest_drop";
+}
 function normalizeTransactionLedgerStatus(value, fallback = "success") {
     return PostgresContracts.normalizeTransactionLedgerStatus(value, fallback);
 }
@@ -4875,14 +4905,27 @@ class PostgresStore {
         const normalized = normalizeWorldDropPayload(drop, options);
         if (!normalized)
             return { ok: false, reason: "invalid_drop" };
+        const mirroredFromWorldState = Boolean(options.mirrored_from_world_state);
         const metadata = {
             ...safeJson(normalized.metadata),
             ...(safeJson(options.metadata)),
             source: cleanName(options.source || ""),
             action: cleanName(options.action || ""),
             source_id: cleanName(options.source_id || ""),
-            mirrored_from_world_state: Boolean(options.mirrored_from_world_state),
+            mirrored_from_world_state: mirroredFromWorldState,
         };
+        // The world-state mirror republishes every live drop on every world save, so
+        // its metadata must never overwrite the authoritative origin recorded when the
+        // drop was first written. The origin decides whether tracked item instances may
+        // be rebuilt during pickup, and a mirrored "world_state_mirror" source would
+        // erase that provenance.
+        if (!mirroredFromWorldState) {
+            const originSource = cleanName(options.origin_source || options.source || "");
+            if (originSource !== "") {
+                metadata.origin_source = originSource;
+                metadata.origin_action = cleanName(options.origin_action || options.action || "");
+            }
+        }
         await client.query(`
       INSERT INTO ${this.table("world_drops")} (
         world_id,
@@ -8919,6 +8962,7 @@ class PostgresStore {
             : 0;
         const requestedStackLimit = getInventoryStackLimitForItem(itemType, e.stack_limit || DEFAULT_INVENTORY_STACK_LIMIT);
         const allowStateRepair = Boolean(e.allow_state_repair);
+        const allowWorldDropRepair = Boolean(e.allow_world_drop_repair);
         const requestId = cleanName(e.request_id);
         const worldName = cleanName(e.world || "START") || "START";
         const dropId = cleanName(e.drop_id || "");
@@ -8958,7 +9002,8 @@ class PostgresStore {
                  y,
                  stack_grid_x,
                  stack_grid_y,
-                 pickup_delay
+                 pickup_delay,
+                 metadata
             FROM ${this.table("world_drops")}
            WHERE world_id = $1
              AND drop_id = $2
@@ -8995,7 +9040,8 @@ class PostgresStore {
                    y,
                    stack_grid_x,
                    stack_grid_y,
-                   pickup_delay
+                   pickup_delay,
+                   metadata
               FROM ${this.table("world_drops")}
              WHERE world_id = $1
                AND drop_id = $2
@@ -9003,19 +9049,35 @@ class PostgresStore {
             `, [worldId, dropId]);
                 }
                 if ((worldDropRows.rowCount ?? 0) === 0) {
-                    return DropContracts.buildPostgresDropPickupFailure({ reason: "drop_not_available", drop_id: dropId });
+                    // The authoritative drop row is absent, not collected. Report that
+                    // explicitly so callers keep the live world drop instead of destroying it.
+                    return DropContracts.buildPostgresDropPickupFailure({
+                        reason: "drop_not_available",
+                        drop_id: dropId,
+                        drop_status: "missing",
+                        available_amount: 0,
+                    });
                 }
                 const worldDrop = worldDropRows.rows[0] || {};
                 const dropBeforeAmount = Math.max(0, toInt(worldDrop.amount, 0));
                 const dropItemType = cleanName(worldDrop.item_type || "");
                 const dropItemCategory = resolveItemCategory(dropItemType, worldDrop.item_category || "");
-                if (cleanName(worldDrop.status || "active") !== "active" || dropBeforeAmount <= 0) {
-                    return DropContracts.buildPostgresDropPickupFailure({ reason: "drop_not_available", drop_id: dropId });
+                const dropRowStatus = cleanName(worldDrop.status || "active") || "active";
+                if (dropRowStatus !== "active" || dropBeforeAmount <= 0) {
+                    return DropContracts.buildPostgresDropPickupFailure({
+                        reason: "drop_not_available",
+                        drop_id: dropId,
+                        // An 'active' row that is drained to zero was fully collected by someone.
+                        drop_status: dropRowStatus === "active" ? "picked_up" : dropRowStatus,
+                        available_amount: dropBeforeAmount,
+                    });
                 }
                 if (dropItemType !== itemType || dropItemCategory !== itemCategory) {
                     return DropContracts.buildPostgresDropPickupFailure({
                         reason: "drop_changed",
                         drop_id: dropId,
+                        drop_status: dropRowStatus,
+                        available_amount: dropBeforeAmount,
                         item_type: dropItemType,
                         item_category: dropItemCategory,
                     });
@@ -9024,6 +9086,7 @@ class PostgresStore {
                     return DropContracts.buildPostgresDropPickupFailure({
                         reason: "drop_amount_changed",
                         drop_id: dropId,
+                        drop_status: dropRowStatus,
                         available_amount: dropBeforeAmount,
                         requested_amount: amount,
                     });
@@ -9032,6 +9095,7 @@ class PostgresStore {
                     return DropContracts.buildPostgresDropPickupFailure({
                         reason: "drop_amount_changed",
                         drop_id: dropId,
+                        drop_status: dropRowStatus,
                         available_amount: dropBeforeAmount,
                         requested_amount: amount,
                     });
@@ -9216,7 +9280,7 @@ class PostgresStore {
                     ]);
                     gemLedgerId = gemLedgerResult.rows[0]?.gem_ledger_id || null;
                 }
-                const dropClaimResult = await this.claimTrackedWorldDropItemInstances(client, {
+                let dropClaimResult = await this.claimTrackedWorldDropItemInstances(client, {
                     to_player_id: playerId,
                     world_id: worldId,
                     item_transaction_id: pickupTransactionId,
@@ -9237,6 +9301,93 @@ class PostgresStore {
                         expected_before_amount: hasExpectedBefore ? expectedBeforeAmount : null,
                     },
                 });
+                if (!dropClaimResult.ok && dropClaimResult.reason === "missing_world_drop_item_instances") {
+                    // The visible drop exists but its tracked identity does not. Rebuilding is
+                    // only safe when the authoritative drop row proves the server minted this
+                    // drop AND no instance anywhere still carries this drop id. Anything else is
+                    // quarantined: the drop stays in the world and no item is invented.
+                    const dropRowMetadata = toObject(worldDrop.metadata);
+                    const dropOriginSource = cleanName(dropRowMetadata.origin_source || "");
+                    const dropOriginAction = cleanName(dropRowMetadata.origin_action || "");
+                    const serverAuthoredDrop = isServerAuthoredWorldDropOrigin(dropOriginSource, dropOriginAction);
+                    const orphanedInstanceRows = await client.query(`
+            SELECT count(*)::integer AS instance_count
+              FROM ${this.table("item_instances")}
+             WHERE item_type = $1
+               AND item_category = $2
+               AND ($3::uuid IS NULL OR world_id = $3::uuid)
+               AND (
+                 metadata->>'drop_id' = $4
+                 OR metadata #>> '{details,drop_id}' = $4
+                 OR metadata #>> '{details,details,drop_id}' = $4
+               )
+            `, [itemType, itemCategory || "block", worldId, dropId]);
+                    const knownInstanceCount = Math.max(0, toInt(orphanedInstanceRows.rows[0]?.instance_count, 0));
+                    if (!allowWorldDropRepair || !serverAuthoredDrop || knownInstanceCount > 0) {
+                        throw makeTrackedItemMovementError({
+                            ok: false,
+                            tracked: true,
+                            reason: "world_drop_item_instances_pending",
+                            item_type: itemType,
+                            item_category: itemCategory || "block",
+                            drop_id: dropId,
+                            required_instances: amount,
+                            available_instances: toInt(dropClaimResult.available_instances, 0),
+                            known_instances: knownInstanceCount,
+                            drop_origin_source: dropOriginSource,
+                            drop_origin_action: dropOriginAction,
+                            server_authored_drop: serverAuthoredDrop,
+                            message: "That drop is not ready to collect yet.",
+                        });
+                    }
+                }
+                if (!dropClaimResult.ok) {
+                    if (allowWorldDropRepair && dropClaimResult.reason === "missing_world_drop_item_instances") {
+                        const dropRepairResult = await this.createTrackedWorldDropItemInstances(client, {
+                            world_id: worldId,
+                            source: "world_drop",
+                            action: "pickup_repair",
+                            item_type: itemType,
+                            item_category: itemCategory || "block",
+                            amount,
+                            drop_id: dropId,
+                            details: {
+                                source_id: sourceId,
+                                request_id: requestId,
+                                drop_id: dropId,
+                                drop_before_amount: dropBeforeAmount,
+                                drop_after_amount: dropAfterAmount,
+                                repaired_inventory_before_amount: repairedFromAmount,
+                                expected_before_amount: hasExpectedBefore ? expectedBeforeAmount : null,
+                                pickup_repair: true,
+                            },
+                        });
+                        if (!dropRepairResult.ok) {
+                            throw makeTrackedItemMovementError(dropRepairResult);
+                        }
+                        dropClaimResult = await this.claimTrackedWorldDropItemInstances(client, {
+                            to_player_id: playerId,
+                            world_id: worldId,
+                            item_transaction_id: pickupTransactionId,
+                            correlation_id: correlationId,
+                            source: "world_drop",
+                            action: "pickup",
+                            item_type: itemType,
+                            item_category: itemCategory || "block",
+                            amount,
+                            drop_id: dropId,
+                            details: {
+                                drop_id: dropId,
+                                source_id: sourceId,
+                                request_id: requestId,
+                                drop_before_amount: dropBeforeAmount,
+                                drop_after_amount: dropAfterAmount,
+                                repaired_inventory_before_amount: repairedFromAmount,
+                                expected_before_amount: hasExpectedBefore ? expectedBeforeAmount : null,
+                            },
+                        });
+                    }
+                }
                 if (!dropClaimResult.ok) {
                     throw makeTrackedItemMovementError(dropClaimResult);
                 }
@@ -9352,8 +9503,32 @@ class PostgresStore {
             }
             const trackedErrorResult = resultForTrackedItemMovementError(error);
             if (trackedErrorResult) {
+                const trackedReason = cleanName(trackedErrorResult.reason || "tracked_item_instance_movement_failed");
+                if (trackedReason === "world_drop_item_instances_pending") {
+                    // Anomaly, not a normal rejection: the world drop is authoritative but its
+                    // tracked identity is unusable. The whole transaction rolled back, so the
+                    // drop is still collectible once its tracked rows land or an admin repairs it.
+                    this.logger("[postgres] drop_pickup quarantined: tracked drop identity unusable", {
+                        username,
+                        world: worldName,
+                        drop_id: dropId,
+                        item_type: itemType,
+                        item_category: itemCategory,
+                        requested_amount: amount,
+                        available_instances: toInt(trackedErrorResult.available_instances, 0),
+                        known_instances: toInt(trackedErrorResult.known_instances, 0),
+                        drop_origin_source: cleanName(trackedErrorResult.drop_origin_source || ""),
+                        drop_origin_action: cleanName(trackedErrorResult.drop_origin_action || ""),
+                        server_authored_drop: Boolean(trackedErrorResult.server_authored_drop),
+                        request_id: requestId,
+                        source_id: sourceId,
+                    });
+                }
                 return DropContracts.buildPostgresDropPickupFailure({
-                    reason: cleanName(trackedErrorResult.reason || "tracked_item_instance_movement_failed"),
+                    reason: trackedReason,
+                    drop_id: dropId,
+                    // The transaction rolled back: the drop row is untouched and still active.
+                    drop_status: "active",
                     item_instances: Array.isArray(trackedErrorResult.item_instances) ? trackedErrorResult.item_instances : [],
                     message: cleanName(trackedErrorResult.message || ""),
                 });
