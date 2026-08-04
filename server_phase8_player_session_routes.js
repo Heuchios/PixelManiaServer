@@ -10,8 +10,13 @@ function toRecord(value) {
 function errorMessage(error) {
     return error instanceof Error ? error.message : String(error || "unknown error");
 }
-const WORLD_ENTRY_PROFILE_ENABLED = process.env.NODE_ENV !== "production"
-    && ["1", "true", "yes", "on"].includes(String(process.env.WORLD_ENTRY_PROFILE || "").trim().toLowerCase());
+// World entry profiling is log-only and allocates nothing beyond a heap sample per
+// stage, so it is safe to opt into on a production instance while hunting a join
+// stall. Outside production it stays on the historical WORLD_ENTRY_PROFILE switch;
+// in production it additionally requires the explicit ..._IN_PRODUCTION opt-in so
+// it can never be left on by inheriting a development env file.
+const WORLD_ENTRY_PROFILE_ENABLED = ["1", "true", "yes", "on"].includes(String(process.env.WORLD_ENTRY_PROFILE || "").trim().toLowerCase()) && (process.env.NODE_ENV !== "production"
+    || ["1", "true", "yes", "on"].includes(String(process.env.WORLD_ENTRY_PROFILE_IN_PRODUCTION || "").trim().toLowerCase()));
 const WORLD_ENTRY_PROFILE_SERVER_INSTANCE = String(process.env.SERVER_INSTANCE_ID || process.env.INSTANCE_ID || process.env.NODE_APP_INSTANCE || "development").trim().slice(0, 128);
 const WORLD_ENTRY_CATCHUP_MAX_NO_PROGRESS_ATTEMPTS = Math.max(2, Math.trunc(Number(process.env.WORLD_ENTRY_CATCHUP_MAX_NO_PROGRESS_ATTEMPTS) || 10));
 const WORLD_ENTRY_CATCHUP_RETRY_MS = Math.max(25, Math.min(250, Math.trunc(Number(process.env.WORLD_ENTRY_CATCHUP_RETRY_MS) || 100)));
@@ -423,8 +428,17 @@ function createServerPhase8PlayerSessionRoutes(deps) {
                 });
             }
             if (player.joined_world && oldWorld && oldWorld !== newWorld) {
-                await deps.endWorldHonorVisit(player, oldWorld, "world_change");
-                await deps.appendCctvWorldEvent(oldWorld, player, "leave", { reason: "world_change" });
+                // Both of these are PostgreSQL transactions describing the world being left.
+                // They are independent of each other and of the world being joined, so they
+                // overlap instead of running back to back on the join critical path.
+                const departureStartedAt = process.hrtime.bigint();
+                await Promise.all([
+                    deps.endWorldHonorVisit(player, oldWorld, "world_change"),
+                    deps.appendCctvWorldEvent(oldWorld, player, "leave", { reason: "world_change" }),
+                ]);
+                recordWorldEntryServerStage(worldEntryProfile, "previous_world_departure_recorded", {
+                    departure_ms: worldEntryElapsedMs(departureStartedAt),
+                });
                 deps.broadcastSystemToWorld(oldWorld, `${player.name} left ${oldWorld}`, context.playerId);
                 deps.broadcastToWorld(oldWorld, deps.buildPublicPlayerPresencePayload("player_left", player, oldWorld), context.playerId);
                 deps.clearPlayerInterestState(context.playerId);

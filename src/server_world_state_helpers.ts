@@ -1,5 +1,14 @@
 "use strict";
 
+// Encodes an identity-only tile as a bare item id ("12,34": 57) rather than an
+// object. The client already handles both forms: _normalize_world_layer_entries
+// reads a non-Dictionary value as item_id, and apply_network_block_update resolves
+// the block type via ITEM_ATLAS_DB.resolve_item_key when block_type is absent. Set
+// WORLD_STATE_COMPACT_TILE_IDS=0 to fall back to full objects per tile.
+const WORLD_STATE_COMPACT_TILE_IDS_ENABLED = !["0", "false", "no", "off"].includes(
+  String(process.env.WORLD_STATE_COMPACT_TILE_IDS || "true").trim().toLowerCase()
+);
+
 type JsonRecord = Record<string, any>;
 type ClampIntegerFunction = (value: unknown, min: number, max: number) => number;
 type ClampStringFunction = (value: unknown, limit?: number) => string;
@@ -2520,10 +2529,16 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
       const value: JsonRecord = { ...rawEntry };
       delete value.x;
       delete value.y;
+      // "source" ("generated" | "explicit") is stamped onto every effective-map entry
+      // by buildEffectiveForegroundMap/buildEffectiveBackgroundMap for server-side
+      // generation bookkeeping. The client never reads it, and its presence made
+      // hasOnlyIdentityFields false for literally every tile, which silently disabled
+      // the integer encoding below and shipped a full object per tile instead.
+      delete value.source;
 
       const itemId = Math.trunc(Number(value.item_id) || 0);
       const hasOnlyIdentityFields = Object.keys(value).every((key) => key === "block_type" || key === "item_id");
-      compact[`${x},${y}`] = itemId > 0 && hasOnlyIdentityFields
+      compact[`${x},${y}`] = WORLD_STATE_COMPACT_TILE_IDS_ENABLED && itemId > 0 && hasOnlyIdentityFields
         ? itemId
         : value;
     }

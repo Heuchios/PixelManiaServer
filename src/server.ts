@@ -307,6 +307,7 @@ const WORLD_NON_CRITICAL_WORLD_SAVE_DEBOUNCE_MS = Math.max(
   Math.max(250, Math.trunc(Number(process.env.WORLD_NON_CRITICAL_WORLD_SAVE_DEBOUNCE_MS) || 1200))
 );
 const WORLD_JSON_BACKUP_WHEN_PG_READY: any = ["1", "true", "yes", "on"].includes(String(process.env.WORLD_JSON_BACKUP_WHEN_PG_READY || "false").trim().toLowerCase());
+const PLAYER_JSON_BACKUP_WHEN_PG_READY: any = ["1", "true", "yes", "on"].includes(String(process.env.PLAYER_JSON_BACKUP_WHEN_PG_READY || "false").trim().toLowerCase());
 const PERIODIC_SAVE_MS = 30000;
 const MIN_USERNAME_LENGTH = 3;
 const MAX_USERNAME_LENGTH = 16;
@@ -329,6 +330,13 @@ const WORLD_STATE_STREAM_MAX_CHUNKS = Math.max(1, Math.min(4096, Math.trunc(Numb
 const WORLD_ENTRY_SNAPSHOT_CACHE_MAX_WORLDS = Math.max(
   8,
   Math.min(512, Math.trunc(Number(process.env.WORLD_ENTRY_SNAPSHOT_CACHE_MAX_WORLDS) || 128))
+);
+// Allows a joining player to be served from an in-memory world whose revision is
+// ahead of the persisted one, instead of forcing a save-then-reload round trip on
+// the join path. Set to 0/false to fall back to the stricter level-with-database
+// rule if a world state divergence is ever suspected.
+const WORLD_ENTRY_WARM_MEMORY_AHEAD_ENABLED = !["0", "false", "no", "off"].includes(
+  String(process.env.WORLD_ENTRY_WARM_MEMORY_AHEAD_ENABLED || "true").trim().toLowerCase()
 );
 const MAX_DAMAGE_FLASH_MS = 2000;
 const PLAYER_POSITION_BROADCAST_INTERVAL_MS = Math.max(0, Math.trunc(Number(process.env.PLAYER_POSITION_BROADCAST_INTERVAL_MS) || 16));
@@ -14923,6 +14931,16 @@ function writePlayerStateJsonBackup(username: any, state: any) {
   const clean = cleanAccountName(username);
   if (clean === "" || !state) return;
 
+  // writeJsonFileAtomic is synchronous (mkdirSync + writeFileSync + renameSync) and
+  // this runs on every player save, so it stalls the event loop for every socket on
+  // the instance -- including a player mid-join. When PostgreSQL is authoritative
+  // the JSON file is only an emergency-recovery artefact, so it is gated exactly
+  // like the world backup already is. Set PLAYER_JSON_BACKUP_WHEN_PG_READY=1 to
+  // restore the unconditional write.
+  if (!PLAYER_JSON_BACKUP_WHEN_PG_READY && isPostgresAuthoritativeReady()) {
+    return;
+  }
+
   writeJsonFileAtomic(getPlayerSavePath(clean), {
     player_state_version: 1,
     username: clean,
@@ -15118,17 +15136,13 @@ async function refreshWorldStateFromPostgresUncoalesced(
     return finish({ ok: false, reason: "unsupported" });
   }
 
+  // Ownership is verified first because it is the only input the warm-memory
+  // decision needs, and it is a no-op unless world route enforcement is on. The
+  // persistence flush and the per-world coordinator wait only exist to make
+  // PostgreSQL current before we read it, so they are deferred until we actually
+  // know we are going to read it. A world that is already live in memory on this
+  // instance must never pay for a database round trip it will not use.
   let phaseStartedAt = process.hrtime.bigint();
-  const persistenceFlush = await flushPendingSessionPersistence("", clean, `before_${reason}_world_refresh`);
-  timings.persistence_flush_ms = elapsedWorldEntryMs(phaseStartedAt);
-  if (!persistenceFlush.ok) {
-    return finish({ ok: false, reason: persistenceFlush.reason || "world_persistence_flush_failed" });
-  }
-  phaseStartedAt = process.hrtime.bigint();
-  await worldPersistenceCoordinator.wait(clean);
-  timings.persistence_wait_ms = elapsedWorldEntryMs(phaseStartedAt);
-
-  phaseStartedAt = process.hrtime.bigint();
   const ownershipVerification = await verifyWorldPersistenceOwnership(clean);
   timings.ownership_verify_ms = elapsedWorldEntryMs(phaseStartedAt);
   if (!ownershipVerification.ok) {
@@ -15141,15 +15155,27 @@ async function refreshWorldStateFromPostgresUncoalesced(
     ? PersistenceHelpers.normalizeWorldRevision(warmState.world_revision)
     : 0;
   const warmPersistedRevision = PersistenceHelpers.normalizeWorldRevision(worldPersistedRevisions.get(clean));
-  const warmLoadedAuthority = worldLoadedAuthorities.get(clean);
-  const canReuseWarmMemory = Boolean(
+  const warmAuthorityMatches = Boolean(
     warmState
     && worldPersistedRevisions.has(clean)
-    && !worldUnpersistedRevisions.has(clean)
     && doesLoadedWorldAuthorityMatch(clean, ownershipVerification.ownership)
-    && warmPersistedRevision >= warmRevision
-    && PersistenceHelpers.normalizeWorldRevision(warmLoadedAuthority?.persisted_revision) >= warmRevision
   );
+  // Memory may legitimately be AHEAD of PostgreSQL: a block placed a moment ago is
+  // accepted into memory immediately and persisted on a debounce. In that window the
+  // in-memory state is the authoritative one, so reloading from the database would
+  // hand the joining player an older world. Provided this instance still owns the
+  // world under the same ownership epoch it was loaded on, warm memory is correct
+  // whether it is level with the database or ahead of it. The queued save still runs
+  // on its own schedule; the join simply stops waiting for it.
+  const warmMemoryIsCurrent = warmAuthorityMatches && warmRevision >= warmPersistedRevision;
+  const warmMemoryIsLevel = warmAuthorityMatches
+    && !worldUnpersistedRevisions.has(clean)
+    && warmPersistedRevision >= warmRevision
+    && PersistenceHelpers.normalizeWorldRevision(
+      worldLoadedAuthorities.get(clean)?.persisted_revision
+    ) >= warmRevision;
+  const canReuseWarmMemory = warmMemoryIsLevel
+    || (WORLD_ENTRY_WARM_MEMORY_AHEAD_ENABLED && warmMemoryIsCurrent);
   timings.warm_memory_check_ms = elapsedWorldEntryMs(phaseStartedAt);
   if (canReuseWarmMemory) {
     scheduleWorldEventEnd(clean);
@@ -15161,6 +15187,7 @@ async function refreshWorldStateFromPostgresUncoalesced(
       ownership_epoch: ownershipVerification.ownership.ownership_epoch || 0,
       loaded_revision: warmRevision,
       persisted_revision: warmPersistedRevision,
+      warm_memory_ahead: warmRevision > warmPersistedRevision,
       cache_result: "authoritative_memory_hit",
     }));
     return finish({
@@ -15168,6 +15195,7 @@ async function refreshWorldStateFromPostgresUncoalesced(
       found: true,
       world: clean,
       source: "memory_warm",
+      warm_memory_ahead: warmRevision > warmPersistedRevision,
       world_revision: warmRevision,
       foreground: warmState.foreground instanceof Map ? warmState.foreground.size : 0,
       background: warmState.background instanceof Map ? warmState.background.size : 0,
@@ -15176,6 +15204,19 @@ async function refreshWorldStateFromPostgresUncoalesced(
       doors: warmState.interactions instanceof Map ? warmState.interactions.size : 0,
     });
   }
+
+  // Warm memory was not usable, so PostgreSQL is about to become the source of
+  // truth for this world. Only now is it worth making the database current: drain
+  // this world's pending save and wait behind any in-flight write for it.
+  phaseStartedAt = process.hrtime.bigint();
+  const persistenceFlush = await flushPendingSessionPersistence("", clean, `before_${reason}_world_refresh`);
+  timings.persistence_flush_ms = elapsedWorldEntryMs(phaseStartedAt);
+  if (!persistenceFlush.ok) {
+    return finish({ ok: false, reason: persistenceFlush.reason || "world_persistence_flush_failed" });
+  }
+  phaseStartedAt = process.hrtime.bigint();
+  await worldPersistenceCoordinator.wait(clean);
+  timings.persistence_wait_ms = elapsedWorldEntryMs(phaseStartedAt);
 
   phaseStartedAt = process.hrtime.bigint();
   const result: any = await postgresStore.loadWorldState(clean);
@@ -31377,6 +31418,36 @@ function triggerPendingPlayerSave(username: any) {
   return playerSaveWrites.get(key) || null;
 }
 
+// Waits only for the writes that belong to this player and this world, instead of
+// draining the process-wide PostgreSQL write queue. Every write still chains onto
+// the global queue in the same order as before, so ordering and durability are
+// unchanged -- the difference is that a joining player no longer blocks behind an
+// unrelated player's inventory save. Awaiting the latest write for a key is
+// sufficient: because the queue is serial, the newest write for a key can only
+// resolve after every write enqueued before it has already resolved.
+async function drainScopedSessionPersistence(cleanUsername: string, cleanWorldName: string): Promise<void> {
+  const scoped: any[] = [];
+  if (cleanWorldName !== "") {
+    const pendingWorldWrite = worldSaveWrites.get(cleanWorldName);
+    if (pendingWorldWrite && typeof pendingWorldWrite.then === "function") scoped.push(pendingWorldWrite);
+  }
+  if (cleanUsername !== "") {
+    const pendingPlayerWrite = playerSaveWrites.get(accountKey(cleanUsername));
+    if (pendingPlayerWrite && typeof pendingPlayerWrite.then === "function") scoped.push(pendingPlayerWrite);
+  }
+  if (scoped.length > 0) {
+    await Promise.allSettled(scoped);
+    return;
+  }
+  // Nothing has ever been written for this key on this instance, so there is no
+  // scoped tail to wait on. Fall back to the historical global drain.
+  if (typeof postgresStore.flushWriteQueue === "function") {
+    await postgresStore.flushWriteQueue();
+  } else {
+    await waitForPersistenceWrites();
+  }
+}
+
 async function flushPendingSessionPersistence(username: any = "", worldName: any = "", reason: any = "session_transition") {
   const cleanUsername = cleanAccountName(username || "");
   const cleanWorldName = String(worldName || "").trim() === "" ? "" : cleanWorld(worldName);
@@ -31387,11 +31458,7 @@ async function flushPendingSessionPersistence(username: any = "", worldName: any
   if (playerWrite && typeof playerWrite.then === "function") writes.push(playerWrite);
 
   const results = writes.length > 0 ? await Promise.allSettled(writes) : [];
-  if (typeof postgresStore.flushWriteQueue === "function") {
-    await postgresStore.flushWriteQueue();
-  } else {
-    await waitForPersistenceWrites();
-  }
+  await drainScopedSessionPersistence(cleanUsername, cleanWorldName);
 
   let failed: any = results.find((result) => (
     result.status === "rejected"
@@ -31409,11 +31476,7 @@ async function flushPendingSessionPersistence(username: any = "", worldName: any
     flushedWriteCount += retryWrites.length;
 
     const retryResults = retryWrites.length > 0 ? await Promise.allSettled(retryWrites) : [];
-    if (typeof postgresStore.flushWriteQueue === "function") {
-      await postgresStore.flushWriteQueue();
-    } else {
-      await waitForPersistenceWrites();
-    }
+    await drainScopedSessionPersistence(cleanUsername, cleanWorldName);
     failed = retryResults.length === 0
       ? failed
       : retryResults.find((result) => (
