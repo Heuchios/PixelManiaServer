@@ -4,7 +4,7 @@ function getErrorMessage(error) {
     return error instanceof Error ? error.message : String(error);
 }
 function createServerPhase11bLifecycle(deps) {
-    const { ACCOUNTS_SAVE_PATH, ADMIN_LOG_PATH, ALLOW_LEGACY_WORLD_STATE_IMPORT, ANTI_DUPE_AUDIT_INTERVAL_MS, ANTI_DUPE_AUDIT_LIMIT, ANTI_DUPE_AUDIT_LOG_CLEAN, CRASH_REPORT_PATH, INTEGRITY_LOG_FOLDER, LEGACY_DATA_FOLDERS, PERIODIC_SAVE_MS, PLAYER_SAVE_FOLDER, WORLD_SAVE_FOLDER, WORLD_SNAPSHOT_FOLDER, WORLD_SNAPSHOT_INTERVAL_MINUTES, WORLD_SNAPSHOT_INTERVAL_MS, WORLD_SNAPSHOT_MAX_WORLDS_PER_CYCLE, WORLD_SNAPSHOT_STARTUP_RUN, accountKey, accounts, assertAuthoritativePostgresReady, clampInteger, cleanAccountName, cleanText, cleanWorld, createWorldSnapshot, deserializeWorldState, errorToCrashDetails, exitProcess, fileSystem, flushWorldStateJsonBackups, getAccountsSaveTimer, getCrashRuntimeState, getFatalCrashReportWritten, getOwnedWorldNames, isPostgresAuthoritativeReady, loadAccountsFromJson, logger, markFatalCrashReportWritten, pathModule, pendingPersistenceWrites, persistenceHelpers, playerSaveTimers, playerStates, postgresStore, processRuntime, redisStore, refreshOwnedWorldRoutes, safeFileName, sanitizeAccountState, sanitizePlayerState, saveAccounts, savePlayerState, saveWorldState, serializeWorldState, setAccountsSaveTimer, stopGameplaySchedulers, waitForPersistenceWrites, waitForWorldPersistence, WORLD_ROUTE_TTL_MS, worldSaveTimers, worldSnapshotSchedulerState, worldStates, writeCrashReport, } = deps;
+    const { ACCOUNTS_SAVE_PATH, ADMIN_LOG_PATH, ALLOW_LEGACY_WORLD_STATE_IMPORT, ANTI_DUPE_AUDIT_INTERVAL_MS, ANTI_DUPE_AUDIT_LIMIT, ANTI_DUPE_AUDIT_LOG_CLEAN, CRASH_REPORT_PATH, INTEGRITY_LOG_FOLDER, LEGACY_DATA_FOLDERS, PERIODIC_SAVE_MS, PLAYER_SAVE_FOLDER, WORLD_SAVE_FOLDER, WORLD_SNAPSHOT_FOLDER, WORLD_SNAPSHOT_INTERVAL_MINUTES, WORLD_SNAPSHOT_INTERVAL_MS, WORLD_SNAPSHOT_MAX_WORLDS_PER_CYCLE, WORLD_SNAPSHOT_STARTUP_RUN, accountKey, accounts, assertAuthoritativePostgresReady, clampInteger, cleanAccountName, cleanText, cleanWorld, createWorldSnapshot, deserializeWorldState, errorToCrashDetails, exitProcess, fileSystem, flushWorldStateJsonBackups, getAccountsSaveTimer, getCrashRuntimeState, getFatalCrashReportWritten, getOwnedWorldNames, releaseOwnedWorldRoutesForShutdown, isPostgresAuthoritativeReady, loadAccountsFromJson, logger, markFatalCrashReportWritten, pathModule, pendingPersistenceWrites, persistenceHelpers, playerSaveTimers, playerStates, postgresStore, processRuntime, redisStore, refreshOwnedWorldRoutes, safeFileName, sanitizeAccountState, sanitizePlayerState, saveAccounts, savePlayerState, saveWorldState, serializeWorldState, setAccountsSaveTimer, stopGameplaySchedulers, waitForPersistenceWrites, waitForWorldPersistence, WORLD_ROUTE_TTL_MS, worldSaveTimers, worldSnapshotSchedulerState, worldStates, writeCrashReport, } = deps;
     const timerApi = deps.timerApi || {
         clearInterval,
         clearTimeout,
@@ -450,6 +450,20 @@ function createServerPhase11bLifecycle(deps) {
         if (typeof waitForWorldPersistence === "function")
             await waitForWorldPersistence();
         const waitSummary = await waitForPersistenceWrites();
+        // Hand back our Redis world-route leases before closing the connection. Without this a
+        // restart leaves them claimed for the full TTL and the restarted process cannot
+        // reclaim its own worlds, locking players out and triggering a reconnect storm.
+        if (typeof releaseOwnedWorldRoutesForShutdown === "function") {
+            try {
+                const routeRelease = await releaseOwnedWorldRoutesForShutdown();
+                if (routeRelease && (routeRelease.released > 0 || routeRelease.failed > 0)) {
+                    logger.log("[world-route] released owned routes on shutdown", routeRelease);
+                }
+            }
+            catch (error) {
+                logger.error("[world-route] failed to release owned routes on shutdown", error);
+            }
+        }
         await postgresStore.close();
         await redisStore.close();
         if (waitSummary?.ok === false) {

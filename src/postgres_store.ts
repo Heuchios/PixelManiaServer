@@ -571,6 +571,7 @@ class PostgresStore {
   declare writeQueue: Promise<unknown>;
   declare writeQueueDepth: number;
   declare maxWriteQueueDepth: number;
+  declare identityCacheByClient: WeakMap<object, { active: boolean; entries: Map<string, string> }>;
 
   /**
    * @param {PixelMania.PostgresStoreOptions} options
@@ -590,6 +591,12 @@ class PostgresStore {
     this.writeQueue = Promise.resolve();
     this.writeQueueDepth = 0;
     this.maxWriteQueueDepth = Math.max(100, toInt(options.maxWriteQueueDepth, 1000));
+    // Per-transaction identity memo. ensurePlayerIdentity costs two upserts, and the write
+    // path calls it repeatedly for the SAME actor inside one transaction -- once per world
+    // change entry, once per world-lock member per pass, and so on. Scoped strictly to one
+    // in-flight transaction on one pooled client, because a ROLLBACK undoes the row creation
+    // and the client is then handed straight to an unrelated transaction.
+    this.identityCacheByClient = new WeakMap();
 
     if (!this.enabled) return;
     if (!PoolClass) {
@@ -1507,6 +1514,8 @@ class PostgresStore {
       const client = await this.db.connect();
       let released = false;
       try {
+        // Fresh memo per attempt; see endIdentityCache in the finally below.
+        this.beginIdentityCache(client);
         await client.query("BEGIN");
         const result = await work(client);
         await client.query("COMMIT");
@@ -1528,6 +1537,7 @@ class PostgresStore {
 
         throw error;
       } finally {
+        this.endIdentityCache(client);
         if (!released) {
           client.release();
         }
@@ -1535,6 +1545,25 @@ class PostgresStore {
     }
 
     return null;
+  }
+
+  /**
+   * Opens a transaction-scoped identity memo for this client.
+   * @param {object} client
+   * @returns {void}
+   */
+  beginIdentityCache(client: object): void {
+    this.identityCacheByClient.set(client, { active: true, entries: new Map() });
+  }
+
+  /**
+   * Closes the memo. Runs in a finally, so it fires on COMMIT, ROLLBACK and retry alike --
+   * a rolled-back transaction must never leave a cached identity behind for the next one.
+   * @param {object} client
+   * @returns {void}
+   */
+  endIdentityCache(client: object): void {
+    this.identityCacheByClient.delete(client);
   }
 
   runDetached(label: unknown, work: DetachedWork): void {
@@ -1559,6 +1588,25 @@ class PostgresStore {
     const cleanEmail = providedEmail || defaultEmailForUsername(cleanUsername);
     const cleanRole = normalizeDbRole(role || "player");
     const cleanWorld = cleanName(world || "");
+
+    // Two upserts per call, and the write path calls this repeatedly for the SAME actor
+    // inside one transaction: once per world-change entry (insertWorldBlockChange), once per
+    // world-lock member in each of mirrorWorldLockState's two passes, and again in
+    // mirrorWorldAreaLocksState. A single block break with a handful of changes therefore
+    // paid the same two upserts several times over.
+    //
+    // Memoize on the FULL normalized argument tuple, not just the username: the ON CONFLICT
+    // clauses also write email, role and current_world_name, so a later call with different
+    // arguments must still execute. An identical repeat inside one transaction is a genuine
+    // no-op -- the row exists and the upsert already applied those same values.
+    const identityCache = this.identityCacheByClient.get(client);
+    const identityCacheKey = identityCache?.active
+      ? [cleanUsername, cleanEmail, cleanRole, cleanWorld].join("\u0000")
+      : "";
+    if (identityCache?.active) {
+      const cachedPlayerId = identityCache.entries.get(identityCacheKey);
+      if (cachedPlayerId) return cachedPlayerId;
+    }
 
     const accountResult = await client.query(
       `
@@ -1586,7 +1634,12 @@ class PostgresStore {
       `,
       [accountId, cleanUsername, cleanWorld]
     );
-    return playerResult.rows[0] ? playerResult.rows[0].player_id : null;
+    const resolvedPlayerId = playerResult.rows[0] ? playerResult.rows[0].player_id : null;
+    // Never cache a miss -- a later call may legitimately succeed.
+    if (identityCache?.active && resolvedPlayerId) {
+      identityCache.entries.set(identityCacheKey, resolvedPlayerId);
+    }
+    return resolvedPlayerId;
   }
 
   async ensurePlayerIdentityForExistingAccount(client: PoolClient, username: unknown, world = "") {
@@ -5145,7 +5198,7 @@ class PostgresStore {
              world_owner_epoch,
              world_owner_token,
              world_owner_instance,
-             world_state
+             world_checksum
         FROM ${this.table("worlds")}
        WHERE world_name = $1
        FOR UPDATE
@@ -5242,7 +5295,28 @@ class PostgresStore {
     }
 
     if (row && requestedRevision === persistedRevision) {
-      const sameState = worldPersistenceChecksum(toObject(row.world_state)) === checksum;
+      // world_checksum is written in the same statement as world_state on both the INSERT
+      // (:world_checksum, $5) and UPDATE (world_checksum = $5) branches below, and nothing
+      // else in this file writes worlds.world_state -- so the stored column is by
+      // construction the checksum of the stored blob and cannot go stale.
+      //
+      // Comparing against it lets this path skip transferring and re-hashing the entire
+      // world blob (a full jsonb SELECT + parse + stable-key traversal, all synchronous on
+      // the event loop) on every world save. This is the idempotent-retry path, which is
+      // exactly the hot one when a client re-sends. Legacy rows written before the column
+      // was populated fall back to the original comparison, fetching the blob only then --
+      // the row is already locked FOR UPDATE above, so the extra read is safe.
+      const storedWorldChecksum = cleanName(row.world_checksum || "");
+      let sameState: boolean;
+      if (storedWorldChecksum !== "") {
+        sameState = storedWorldChecksum === checksum;
+      } else {
+        const legacyState = await client.query(
+          `SELECT world_state FROM ${this.table("worlds")} WHERE world_name = $1`,
+          [cleanWorldName]
+        );
+        sameState = worldPersistenceChecksum(toObject(legacyState.rows[0]?.world_state)) === checksum;
+      }
       const equalRevision: WorldPersistenceResult = {
         ok: sameState,
         reason: sameState ? "" : "world_revision_content_conflict",
@@ -5588,7 +5662,18 @@ class PostgresStore {
     const rolesByAccountId = toObject(lock.player_roles_by_account_id);
     const rolesByPlayerId = toObject(lock.player_roles_by_player_id);
     const resolvedAllowedIdentities = new Map();
-    for (const rawName of allowedPlayers) {
+    // ensurePlayerIdentity upserts accounts+players, i.e. it takes exclusive row locks on
+    // arbitrary THIRD-PARTY players late in this transaction. Iterating in raw array order
+    // means two worlds with overlapping member lists can acquire the same player rows in
+    // opposite order -- a genuine ABBA deadlock the moment write concurrency exceeds 1.
+    // The app-level inventory mutex does not cover these players (it only covers the acting
+    // player), and per-world serialization does not either (different worlds, different
+    // keys). Acquire in a deterministic global order instead. Both passes below are keyed
+    // upserts with no ordinal semantics, so ordering is unobservable to callers.
+    const orderedAllowedPlayers = [...allowedPlayers].sort((left, right) => (
+      cleanName(left).toLowerCase().localeCompare(cleanName(right).toLowerCase())
+    ));
+    for (const rawName of orderedAllowedPlayers) {
       const memberName = cleanName(rawName);
       if (memberName === "" || (ownerName !== "" && memberName.toLowerCase() === ownerName.toLowerCase())) continue;
       const memberPlayerId = await this.ensurePlayerIdentity(client, memberName);
@@ -5662,7 +5747,7 @@ class PostgresStore {
       await client.query(`DELETE FROM ${this.table("world_members")} WHERE world_id = $1 AND role = 'owner'`, [worldId]);
     }
 
-    for (const rawName of allowedPlayers) {
+    for (const rawName of orderedAllowedPlayers) {
       const memberName = cleanName(rawName);
       if (memberName === "" || (ownerName !== "" && memberName.toLowerCase() === ownerName.toLowerCase())) continue;
       const resolvedMember = resolvedAllowedIdentities.get(memberName.toLowerCase()) || {};
@@ -5785,7 +5870,11 @@ class PostgresStore {
 
       const roles = toObject(lock.player_roles);
       const allowedPlayers = Array.isArray(lock.allowed_players) ? lock.allowed_players : [];
-      for (const rawName of allowedPlayers) {
+      // Same third-party lock-ordering hazard as mirrorWorldLockState above.
+      const orderedAreaLockPlayers = [...allowedPlayers].sort((left, right) => (
+        cleanName(left).toLowerCase().localeCompare(cleanName(right).toLowerCase())
+      ));
+      for (const rawName of orderedAreaLockPlayers) {
         const playerName = cleanName(rawName);
         if (playerName === "") continue;
         const playerId = await this.ensurePlayerIdentity(client, playerName);
@@ -10772,8 +10861,24 @@ class PostgresStore {
 
     try {
       return await this.withTransaction(async (client) => {
-        const requesterId = await this.ensurePlayerIdentity(client, requester);
-        const targetId = await this.ensurePlayerIdentity(client, target);
+        // ensurePlayerIdentity upserts accounts+players and therefore takes exclusive row
+        // locks. Acquiring them in caller-supplied order means an A->B trade and a
+        // concurrent B->A trade lock the same two rows in opposite order (ABBA). Today the
+        // serial write queue plus the sorted app-level inventory mutex
+        // (server.ts acquirePlayerInventoryLocks) mask this; do not rely on that alone.
+        // Acquire in a stable username order and bind to roles afterwards.
+        const tradeIdentityOrder = [
+          { role: "requester", username: requester },
+          { role: "target", username: target },
+        ].sort((left, right) => (
+          String(left.username || "").toLowerCase().localeCompare(String(right.username || "").toLowerCase())
+        ));
+        const tradeIdentityIds = new Map();
+        for (const entry of tradeIdentityOrder) {
+          tradeIdentityIds.set(entry.role, await this.ensurePlayerIdentity(client, entry.username));
+        }
+        const requesterId = tradeIdentityIds.get("requester");
+        const targetId = tradeIdentityIds.get("target");
         if (!requesterId || !targetId) return { ok: false, reason: "player_not_found" };
 
         const worldResult = await client.query(
@@ -10835,22 +10940,22 @@ class PostgresStore {
         if (!tradeId) return { ok: false, reason: "trade_record_failed" };
 
         const txTimestamp = new Date().toISOString();
-        for (const item of normalizedRequesterOffers) {
-          await client.query(
-            `
-            INSERT INTO ${this.table("trade_items")} (
-              trade_id,
-              from_player_id,
-              slot_index,
-              item_type,
-              item_category,
-              amount
-            )
-            VALUES ($1, $2, $3, $4, $5, $6)
-            `,
-            [tradeId, requesterId, 0, item.item_id, item.item_category || "block", item.amount]
-          ).catch(() => {});
-        }
+        // NOTE (2026-08-05): a legacy duplicate of the slot-aware loop below used to run
+        // here. It inserted EVERY requester offer with a hardcoded slot_index of 0 and
+        // swallowed the resulting error with .catch(() => {}).
+        //
+        // trade_items is PRIMARY KEY (trade_id, from_player_id, slot_index), so the second
+        // and subsequent offers raised a duplicate-key error. Catching the JavaScript
+        // rejection does NOT undo that in PostgreSQL: an error inside a transaction block
+        // aborts the whole transaction, and every later statement fails with "current
+        // transaction is aborted" until ROLLBACK. Any trade where the requester offered two
+        // or more distinct stacks therefore could not commit, and the duplicate-key code
+        // (23505) is not in isRetryablePostgresError, so it surfaced as a failed trade
+        // rather than being retried.
+        //
+        // The loop below already writes the same rows correctly, with real slot indices and
+        // an idempotent ON CONFLICT ... DO UPDATE. Removing the legacy loop fixes the abort
+        // and also drops one round trip per offered stack.
 
         for (const [slot, item] of normalizedRequesterOffers.entries()) {
           await client.query(
@@ -11478,8 +11583,22 @@ class PostgresStore {
 
     try {
       return await this.withTransaction(async (client) => {
-        const ownerId = await this.ensurePlayerIdentity(client, owner);
-        const buyerId = await this.ensurePlayerIdentity(client, buyer);
+        // Same ABBA hazard as applyTradeFinalizationTransaction: this locks owner->buyer
+        // while trade locks requester->target, so the same two player rows can be acquired
+        // in opposite order by two concurrent transactions. Acquire in stable username
+        // order and bind to roles afterwards.
+        const vendIdentityOrder = [
+          { role: "owner", username: owner },
+          { role: "buyer", username: buyer },
+        ].sort((left, right) => (
+          String(left.username || "").toLowerCase().localeCompare(String(right.username || "").toLowerCase())
+        ));
+        const vendIdentityIds = new Map();
+        for (const entry of vendIdentityOrder) {
+          vendIdentityIds.set(entry.role, await this.ensurePlayerIdentity(client, entry.username));
+        }
+        const ownerId = vendIdentityIds.get("owner");
+        const buyerId = vendIdentityIds.get("buyer");
         if (!ownerId || !buyerId) return { ok: false, reason: "player_not_found" };
 
         const worldResult = await client.query(

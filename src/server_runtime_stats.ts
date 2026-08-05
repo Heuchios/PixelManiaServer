@@ -5,7 +5,11 @@ type PacketTypeStatsBucket = {
   sum_bytes: number;
   min_bytes: number;
   max_bytes: number;
+  // Fixed-capacity ring buffer of the most recent `sampleLimit` packet sizes.
+  // `sample_cursor` is the next write index. Order within the array is not
+  // chronological; every reader sorts or aggregates, so that is unobservable.
   samples: number[];
+  sample_cursor: number;
 };
 
 type PacketTypeStatsSnapshot = {
@@ -102,6 +106,7 @@ function createPacketTypeSizeStatsBucket(): PacketTypeStatsBucket {
     min_bytes: 0,
     max_bytes: 0,
     samples: [],
+    sample_cursor: 0,
   };
 }
 
@@ -117,6 +122,28 @@ function clampPacketTypeByteSamples(samples: unknown, sampleLimit: unknown): num
     : [];
   if (values.length <= limit) return values.slice();
   return values.slice(values.length - limit);
+}
+
+// Normalizes a bucket that predates the ring buffer (or whose sampleLimit shrank) so the
+// in-place writer below can assume `samples.length <= capacity` and a valid cursor.
+function reconcilePacketTypeSampleWindow(bucket: PacketTypeStatsBucket, capacity: number): number[] {
+  const existing: unknown = bucket.samples;
+  if (!Array.isArray(existing)) {
+    const fresh: number[] = [];
+    bucket.samples = fresh;
+    bucket.sample_cursor = 0;
+    return fresh;
+  }
+  let samples: number[] = bucket.samples;
+  if (samples.length > capacity) {
+    samples = samples.slice(samples.length - capacity);
+    bucket.samples = samples;
+    bucket.sample_cursor = 0;
+    return samples;
+  }
+  const cursor = Number(bucket.sample_cursor);
+  if (!Number.isInteger(cursor) || cursor < 0 || cursor >= capacity) bucket.sample_cursor = 0;
+  return samples;
 }
 
 function recordPacketTypeSize(target: PacketTypeStatsMap, rawMessageType: unknown, rawBytes: unknown, sampleLimit: unknown): void {
@@ -135,14 +162,33 @@ function recordPacketTypeSize(target: PacketTypeStatsMap, rawMessageType: unknow
   const currentSum = Number(bucket.sum_bytes || 0) + bytes;
   const currentMax = Math.max(0, Number(bucket.max_bytes || 0));
   const currentMin = Number(bucket.min_bytes || 0);
-  const samples = clampPacketTypeByteSamples(bucket.samples, sampleLimit);
-  samples.push(bytes);
+
+  // This runs on EVERY inbound and outbound packet. The previous implementation rebuilt
+  // the whole sample window with map+filter+slice per call (three fresh arrays of up to
+  // `sampleLimit` elements), which at 500 players was one of the largest single sources
+  // of GC pressure on the server. Write in place instead; `bytes` is already sanitized
+  // above and every reader re-sanitizes, so the stored values are identical.
+  // Capacity is sampleLimit + 1, not sampleLimit. The original implementation trimmed to
+  // the last `sampleLimit` values at the START of a call and then pushed, so the stored
+  // window was always the most recent sampleLimit + 1 samples. check_server_runtime_stats
+  // pins that behaviour (sample_count 3 at sampleLimit 2), and matching it keeps this a
+  // pure allocation fix with no observable change.
+  const limit = clampInteger(sampleLimit, 1, Number.MAX_SAFE_INTEGER);
+  const capacity = limit + 1;
+  const samples = reconcilePacketTypeSampleWindow(bucket, capacity);
+  if (samples.length < capacity) {
+    samples.push(bytes);
+    bucket.sample_cursor = samples.length % capacity;
+  } else {
+    const cursor = bucket.sample_cursor;
+    samples[cursor] = bytes;
+    bucket.sample_cursor = (cursor + 1) % capacity;
+  }
 
   bucket.count = currentCount;
   bucket.sum_bytes = currentSum;
   bucket.max_bytes = Math.max(currentMax, bytes);
   bucket.min_bytes = currentMin === 0 ? bytes : Math.min(currentMin, bytes);
-  bucket.samples = samples;
 }
 
 function computePercentileFromSamples(samples: unknown, percentile = 95): number {

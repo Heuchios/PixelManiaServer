@@ -12,6 +12,12 @@ interface RouteContext {
 
 interface Phase8FinalRouteDeps extends Record<string, any> {}
 
+// The [APPEARANCE][Server] logs sit on the player_position handler and fire on every
+// idle/walk/jump/fall transition -- roughly 1,500 synchronous stdout writes per second at
+// 500 players, one of which inspects the whole equipment_slots object. Set
+// APPEARANCE_DEBUG_LOGS=1 to restore them while debugging appearance sync.
+const APPEARANCE_DEBUG_LOGS = ["1", "true", "yes", "on"].includes(String(process.env.APPEARANCE_DEBUG_LOGS || "false").trim().toLowerCase());
+
 const DROP_PICKUP_INVENTORY_LOCK_WAIT_MS = Math.max(0, Math.trunc(Number(process.env.DROP_PICKUP_INVENTORY_LOCK_WAIT_MS) || 650));
 const DROP_PICKUP_INVENTORY_LOCK_RETRY_MS = Math.max(5, Math.trunc(Number(process.env.DROP_PICKUP_INVENTORY_LOCK_RETRY_MS) || 25));
 
@@ -933,14 +939,14 @@ function createServerPhase8FinalRoutes(deps: Phase8FinalRouteDeps) {
             const nextEquipmentKey = getEquipmentSlotsComparisonKey(player.equipment_slots || {});
             const animationChanged = previousAnimationState !== String(player.animation_state || "idle");
             const equipmentChanged = previousEquipmentKey !== nextEquipmentKey;
-            if (equipmentChanged) {
+            if (APPEARANCE_DEBUG_LOGS && equipmentChanged) {
               console.log("[APPEARANCE][Server] received equipment change", {
                 player: player.account_username,
                 world: player.world,
                 equipment_slots: player.equipment_slots,
               });
             }
-            if (animationChanged) {
+            if (APPEARANCE_DEBUG_LOGS && animationChanged) {
               console.log("[APPEARANCE][Server] received animation state", {
                 player: player.account_username,
                 world: player.world,
@@ -967,7 +973,7 @@ function createServerPhase8FinalRoutes(deps: Phase8FinalRouteDeps) {
             if (equipmentChanged) {
               sendElectricalVisibilityRefresh(socket, player, position.world);
             }
-            if (equipmentChanged || animationChanged) {
+            if (APPEARANCE_DEBUG_LOGS && (equipmentChanged || animationChanged)) {
               console.log("[APPEARANCE][Server] broadcast appearance update", {
                 player: player.account_username,
                 world: player.world,

@@ -84,6 +84,44 @@ function createServerAccountSessionHelpers(deps) {
         }).toString("hex");
         return { salt, hash, algorithm: parsed.algorithm };
     }
+    // crypto.scryptSync blocks the event loop for ~40ms per call with the configured
+    // N=16384 parameters -- for EVERY login attempt, including failed ones. After a restart,
+    // 500 players reconnecting serialize into ~20 seconds of total server freeze, and login
+    // spam is a free denial of service against every other player. The async form runs on
+    // libuv's threadpool instead, so concurrent logins overlap and the loop stays free.
+    //
+    // The synchronous makePasswordHash/verifyPassword above are retained unchanged for any
+    // caller that cannot await; every call site on the login path uses the async pair.
+    function scryptAsync(password, salt, keylen, options) {
+        return new Promise((resolve, reject) => {
+            crypto.scrypt(password, salt, keylen, options, (error, derivedKey) => {
+                if (error)
+                    reject(error);
+                else
+                    resolve(derivedKey);
+            });
+        });
+    }
+    async function makePasswordHashAsync(password, salt = crypto.randomBytes(16).toString("hex"), algorithm = PASSWORD_HASH_ALGORITHM) {
+        const parsed = parsePasswordHashAlgorithm(algorithm);
+        const derived = await scryptAsync(String(password || ""), salt, parsed.keylen, {
+            N: parsed.N,
+            r: parsed.r,
+            p: parsed.p,
+            maxmem: Math.max(64 * 1024 * 1024, 256 * parsed.N * parsed.r),
+        });
+        return { salt, hash: derived.toString("hex"), algorithm: parsed.algorithm };
+    }
+    async function verifyPasswordAsync(account, password) {
+        if (!account || !account.password_salt || !account.password_hash)
+            return false;
+        const result = await makePasswordHashAsync(password, account.password_salt, account.password_algorithm || "legacy_scrypt");
+        const expected = Buffer.from(account.password_hash, "hex");
+        const actual = Buffer.from(result.hash, "hex");
+        if (expected.length !== actual.length)
+            return false;
+        return crypto.timingSafeEqual(expected, actual);
+    }
     function verifyPassword(account, password) {
         if (!account || !account.password_salt || !account.password_hash)
             return false;
@@ -404,7 +442,7 @@ function createServerAccountSessionHelpers(deps) {
         if (!passwordValidation.ok) {
             return { ok: false, message: passwordValidation.message };
         }
-        const passwordHash = makePasswordHash(passwordValidation.password);
+        const passwordHash = await makePasswordHashAsync(passwordValidation.password);
         if (isPostgresAuthoritativeReady()) {
             const cleanToken = String(token || "").trim();
             if (cleanToken === "") {
@@ -632,6 +670,7 @@ function createServerAccountSessionHelpers(deps) {
         makeEmailVerificationToken,
         makeEmailVerificationUrl,
         makePasswordHash,
+        makePasswordHashAsync,
         makePasswordResetUrl,
         makeSecureToken,
         makeTokenHash,
@@ -648,6 +687,7 @@ function createServerAccountSessionHelpers(deps) {
         validateUsername,
         verifyEmailToken,
         verifyPassword,
+        verifyPasswordAsync,
     };
 }
 module.exports = {

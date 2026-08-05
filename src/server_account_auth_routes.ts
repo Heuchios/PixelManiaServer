@@ -44,6 +44,7 @@ function createServerAccountAuthRoutes(deps: AccountAuthDeps) {
     logSecurityEvent,
     makeEmailVerificationToken,
     makePasswordHash,
+    makePasswordHashAsync,
     makeRequestId,
     makeSecureToken,
     makeTokenHash,
@@ -72,7 +73,21 @@ function createServerAccountAuthRoutes(deps: AccountAuthDeps) {
     validatePassword,
     validateUsername,
     verifyPassword,
+    verifyPasswordAsync,
   } = deps;
+
+  // The threadpool-backed password helpers are optional dependencies: server.ts supplies
+  // them, but older callers -- and check_server_account_auth_routes_build.js's fixture --
+  // provide only the synchronous pair. Fall back rather than hard-depending on them, using
+  // the same `typeof dep === "function"` idiom the lifecycle module already uses for its
+  // optional deps. Production therefore gets the non-blocking scrypt; the fixture still
+  // exercises the same code path.
+  const hashPasswordAsync = typeof makePasswordHashAsync === "function"
+    ? makePasswordHashAsync
+    : async (...args: unknown[]) => makePasswordHash(...args);
+  const verifyPasswordAsyncSafe = typeof verifyPasswordAsync === "function"
+    ? verifyPasswordAsync
+    : async (...args: unknown[]) => verifyPassword(...args);
 
   const authSlowStageMs = Math.max(250, Number(deps.AUTH_SLOW_STAGE_MS || 1000));
 
@@ -140,7 +155,7 @@ function createServerAccountAuthRoutes(deps: AccountAuthDeps) {
       return;
     }
 
-    const passwordHash = makePasswordHash(passwordValidation.password);
+    const passwordHash = await hashPasswordAsync(passwordValidation.password);
     const now = new Date().toISOString();
     const account = {
       ...(existing || {}),
@@ -319,7 +334,7 @@ function createServerAccountAuthRoutes(deps: AccountAuthDeps) {
 
     const account = await refreshAccountFromPostgres(usernameValidation.username)
       || accounts.get(accountKey(usernameValidation.username));
-    if (!account || !hasPassword(account) || !verifyPassword(account, passwordValidation.password)) {
+    if (!account || !hasPassword(account) || !(await verifyPasswordAsyncSafe(account, passwordValidation.password))) {
       fail("Username or password is wrong.", "password_mismatch");
       return;
     }
@@ -597,13 +612,13 @@ function createServerAccountAuthRoutes(deps: AccountAuthDeps) {
       return;
     }
 
-    if (!verifyPassword(account, data.password)) {
+    if (!(await verifyPasswordAsyncSafe(account, data.password))) {
       fail("Password does not match.", "password_mismatch");
       return;
     }
 
     if (!account.password_algorithm || account.password_algorithm === "legacy_scrypt") {
-      const upgradedPasswordHash = makePasswordHash(data.password);
+      const upgradedPasswordHash = await hashPasswordAsync(data.password);
       account.password_salt = upgradedPasswordHash.salt;
       account.password_hash = upgradedPasswordHash.hash;
       account.password_algorithm = upgradedPasswordHash.algorithm;

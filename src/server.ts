@@ -80,6 +80,11 @@ interface WorldSaveOptions {
   critical?: boolean;
   mutation?: boolean;
   reason?: unknown;
+  // Marks a save whose only content is regenerating machine state (oil refineries,
+  // battery chargers, livestock). No inventory is coupled to it, so it may be coalesced
+  // through the debounce even while PostgreSQL is authoritative. Never set this on a path
+  // that also commits inventory.
+  coalesce?: boolean;
 }
 
 interface WorldLoadedAuthority {
@@ -474,6 +479,9 @@ const MOVEMENT_DISTANCE_GRACE_PIXELS = Math.max(0, Math.trunc(Number(process.env
 const MOVEMENT_MAX_ELAPSED_SECONDS = Math.max(0.05, Math.min(1, Number(process.env.MOVEMENT_MAX_ELAPSED_SECONDS) || 0.25));
 const MOVEMENT_COLLISION_GUARD_ENABLED = !["0", "false", "no", "off"].includes(String(process.env.MOVEMENT_COLLISION_GUARD_ENABLED || "true").trim().toLowerCase());
 const MOVEMENT_COLLISION_CACHE_MAX_WORLDS = Math.max(1, Math.trunc(Number(process.env.MOVEMENT_COLLISION_CACHE_MAX_WORLDS) || 128));
+// Bounds the generated-base-terrain cache (see getServerGeneratedBaseTerrain). Each entry
+// holds two Maps of roughly WORLD_WIDTH x WORLD_HEIGHT tile records for one world.
+const SERVER_GENERATED_TERRAIN_CACHE_MAX_WORLDS = Math.max(1, Math.trunc(Number(process.env.SERVER_GENERATED_TERRAIN_CACHE_MAX_WORLDS) || 128));
 const MOVEMENT_CORRECTION_SNAP_DISTANCE = Math.max(TILE_SIZE, Math.trunc(Number(process.env.MOVEMENT_CORRECTION_SNAP_DISTANCE) || TILE_SIZE * 5));
 const MOVEMENT_CORRECTION_SMOOTH_MS = Math.max(0, Math.trunc(Number(process.env.MOVEMENT_CORRECTION_SMOOTH_MS) || 80));
 const WORLD_ENTRY_SPAWN_GUARD_MS = Math.max(5000, Math.trunc(Number(process.env.WORLD_ENTRY_SPAWN_GUARD_MS) || 30000));
@@ -551,7 +559,10 @@ const PLAYER_PUNCH_KNOCKBACK_Y = 0;
 const PLAYER_PUNCH_COOLDOWN_MS = 180;
 const NETFOX_ACTION_DEBUG: any = ["1", "true", "yes", "on", "debug"].includes(String(process.env.NETFOX_ACTION_DEBUG || "false").trim().toLowerCase());
 const NETFOX_TRUSTED_POSITION_DEBUG: any = ["1", "true", "yes", "on", "debug"].includes(String(process.env.NETFOX_TRUSTED_POSITION_DEBUG || "false").trim().toLowerCase());
-const PHASE7_ACTION_LOGS = !["0", "false", "no", "off"].includes(String(process.env.PHASE7_ACTION_LOGS || "true").trim().toLowerCase());
+// Defaulted OFF as of the 2026-08-05 scale pass: this emits a formatted log line on every
+// allowed AND rejected block action, which is a synchronous stdout write on the hottest
+// gameplay path. Set PHASE7_ACTION_LOGS=1 to restore per-action logging while debugging.
+const PHASE7_ACTION_LOGS = ["1", "true", "yes", "on"].includes(String(process.env.PHASE7_ACTION_LOGS || "false").trim().toLowerCase());
 const NETFOX_SERVER_WORLD_STATE_TOKEN = String(process.env.NETFOX_SERVER_WORLD_STATE_TOKEN || "").trim();
 const NETFOX_SERVER_WORLD_STATE_TOKEN_HASH = String(process.env.NETFOX_SERVER_WORLD_STATE_TOKEN_HASH || "").trim().toLowerCase();
 const NETFOX_MOVEMENT_ENABLED = !["0", "false", "no", "off"].includes(String(process.env.NETFOX_MOVEMENT_ENABLED || "true").trim().toLowerCase());
@@ -1910,6 +1921,7 @@ function getServerAccountAuthRoutes() {
       logSecurityEvent,
       makeEmailVerificationToken,
       makePasswordHash,
+      makePasswordHashAsync,
       makeRequestId,
       makeSecureToken,
       makeTokenHash,
@@ -1938,6 +1950,7 @@ function getServerAccountAuthRoutes() {
       validatePassword,
       validateUsername,
       verifyPassword,
+      verifyPasswordAsync,
     });
   }
   return serverAccountAuthRoutes;
@@ -2194,6 +2207,10 @@ const worldJsonBackupTimers: any = new Map();
 const pendingWorldJsonBackups: any = new Map();
 const worldPersistenceGuardWarns: any = new Map();
 const playerSaveTimers: any = new Map();
+// Guards the disconnect-time eviction of playerStates (see the socket close handler).
+const PLAYER_STATE_DISCONNECT_EVICTION_ENABLED = !["0", "false", "no", "off"].includes(
+  String(process.env.PLAYER_STATE_DISCONNECT_EVICTION_ENABLED || "true").trim().toLowerCase()
+);
 const playerSaveWrites: any = new Map();
 const worldEventTimers: any = new Map();
 const worldEventCountdownTimers: any = new Map();
@@ -2424,6 +2441,7 @@ const ServerPhase11bLifecycle = ServerPhase11bLifecycleModule.createServerPhase1
   },
   stopGameplaySchedulers: stopGameplaySchedulersForShutdown,
   getOwnedWorldNames: () => Array.from(ownedWorldRoutes.values()),
+  releaseOwnedWorldRoutesForShutdown,
   refreshOwnedWorldRoutes: refreshOwnedWorldPersistenceLeases,
   waitForWorldPersistence: () => worldPersistenceCoordinator.waitAll(),
   waitForPersistenceWrites,
@@ -3101,6 +3119,28 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
 
         markAccountSeen(player.account_username);
         releaseActiveAccountSession(player);
+
+        // playerStates had five .set() sites and no .delete() anywhere in src/ -- the only
+        // removal was a startup-time clear() -- so every account that logged in during a
+        // process lifetime was retained forever, each holding a full inventory dictionary
+        // (up to MAX_PLAYER_INVENTORY_KEYS entries). Against max_memory_restart: 512M that
+        // is a slow-motion restart loop, and every restart costs a world-route lockout plus
+        // a login storm.
+        //
+        // Evict only when it is provably safe: the disconnect flush persisted the state, no
+        // pending debounced save is still queued for the key, and no other live socket is
+        // using the account. Set PLAYER_STATE_DISCONNECT_EVICTION_ENABLED=0 to keep the old
+        // retain-forever behaviour if an offline-lookup path turns out to depend on it.
+        if (PLAYER_STATE_DISCONNECT_EVICTION_ENABLED && persistenceFlush.ok) {
+          const evictionKey = accountKey(player.account_username);
+          if (
+            evictionKey !== ""
+            && !playerSaveTimers.has(evictionKey)
+            && !findOnlinePlayerByUsername(player.account_username)
+          ) {
+            playerStates.delete(evictionKey);
+          }
+        }
         if (closedAdmissionWorld !== "") {
           await releasePlayerWorldAdmission(player, closedAdmissionWorld).catch((error) => {
             console.warn("[redis] world admission disconnect cleanup failed:", error.message);
@@ -3998,6 +4038,14 @@ function makePasswordHash(password: any, salt: any, algorithm: any = PASSWORD_HA
   return getServerAccountSessionHelpers().makePasswordHash(password, salt, algorithm);
 }
 
+function makePasswordHashAsync(password: unknown, salt: unknown, algorithm: unknown = PASSWORD_HASH_ALGORITHM) {
+  return getServerAccountSessionHelpers().makePasswordHashAsync(password, salt, algorithm);
+}
+
+function verifyPasswordAsync(account: unknown, password: unknown) {
+  return getServerAccountSessionHelpers().verifyPasswordAsync(account, password);
+}
+
 function verifyPassword(account: any, password: any) {
   return getServerAccountSessionHelpers().verifyPassword(account, password);
 }
@@ -4600,6 +4648,22 @@ function shouldLogSocketBackpressure(socket: any) {
 
 function shouldLogSocketPacketWarning(socket: any, warningKey: any, minGapMs: any = 10000) {
   return ServerSocketDeliveryHelpers.shouldLogSocketPacketWarning(socket, warningKey, minGapMs);
+}
+
+// Fan-out helpers that send one loop-invariant payload to many receivers must serialize
+// it once and reuse the string, the way broadcastToWorld already does. Calling sendJson
+// inside a recipient loop re-runs JSON.stringify per receiver, which is O(players)
+// redundant CPU per event. Returns null when the payload cannot be serialized.
+function serializeBroadcastPayloadOnce(payload: unknown, context: string) {
+  try {
+    return JSON.stringify(payload);
+  } catch (error) {
+    console.warn("[broadcast_serialize_error]", {
+      context,
+      message: getErrorMessage(error),
+    });
+    return null;
+  }
 }
 
 function sendRawJsonToSocket(socket: any, raw: any, context: any = "send", details: any = {}) {
@@ -14958,9 +15022,17 @@ function writePlayerStateJsonBackup(username: any, state: any) {
   });
 }
 
+// The world JSON backup is skipped entirely while PostgreSQL is authoritative, so any
+// serializeWorldState() call made *as an argument* to writeWorldStateJsonBackup is pure
+// waste in the default production config -- arguments are evaluated before the callee's
+// early return. Callers must gate on this helper instead of serializing eagerly.
+function isWorldStateJsonBackupEnabled() {
+  return WORLD_JSON_BACKUP_WHEN_PG_READY || !isPostgresAuthoritativeReady();
+}
+
 function writeWorldStateJsonBackup(worldName: any, serialized: any = null) {
   const clean = cleanWorld(worldName);
-  if (!WORLD_JSON_BACKUP_WHEN_PG_READY && isPostgresAuthoritativeReady()) {
+  if (!isWorldStateJsonBackupEnabled()) {
     return;
   }
 
@@ -15018,7 +15090,13 @@ function flushWorldStateJsonBackups(options: any = {}) {
 function persistWorldStateAfterInventoryCommit(worldName: any, postgresCommitted: any, serialized: any = null) {
   void serialized;
   if (postgresCommitted) {
-    writeWorldStateJsonBackup(worldName, serializeWorldState(worldName));
+    // serializeWorldState is a full world rebuild plus a structuredClone (~12ms on a
+    // mature world). It used to be evaluated unconditionally here even though
+    // writeWorldStateJsonBackup discards it immediately while PostgreSQL is
+    // authoritative, i.e. on every block placement in production.
+    if (isWorldStateJsonBackupEnabled()) {
+      writeWorldStateJsonBackup(worldName, serializeWorldState(worldName));
+    }
     return;
   }
 
@@ -18859,9 +18937,23 @@ function makeAuditId(prefix: any = "audit") {
   return `${cleanPrefix}_${Date.now()}_${crypto.randomBytes(6).toString("hex")}`;
 }
 
+// mkdirSync is a blocking stat+mkdir syscall pair. appendJsonLine runs on the world-change,
+// item-ledger and security-event paths (1-2 calls per block action), so doing it per line
+// put a synchronous syscall on the hottest gameplay path. The data folders are already
+// created once at boot by ensureLifecycleDataFolders; this just guarantees the directory
+// exists the first time each distinct log file is written in this process.
+const ensuredAuditLogDirectories: Set<string> = new Set();
+
+function ensureAuditLogDirectory(filePath: string) {
+  const directory = path.dirname(filePath);
+  if (ensuredAuditLogDirectories.has(directory)) return;
+  fs.mkdirSync(directory, { recursive: true });
+  ensuredAuditLogDirectories.add(directory);
+}
+
 function appendJsonLine(filePath: any, entry: any, label: any = "audit") {
   try {
-    fs.mkdirSync(path.dirname(filePath), { recursive: true });
+    ensureAuditLogDirectory(filePath);
     fs.appendFile(filePath, `${JSON.stringify(entry)}\n`, (error: NodeJS.ErrnoException | null) => {
       if (error) console.warn(`Could not write ${label} log:`, error.message);
     });
@@ -23523,9 +23615,14 @@ function refreshElectricalVisibilityForWorld(worldName: any) {
 function sendElectricalPayloadToVisiblePlayers(worldName: any, payload: any) {
   const clean = cleanWorld(worldName || payload?.world || "START");
   if (!payload || typeof payload !== "object" || Array.isArray(payload)) return;
+  // `payload` is identical for every visible receiver -- serialize once, not per recipient.
+  const rawPayload = serializeBroadcastPayloadOnce(payload, "electrical_layer_update");
+  if (rawPayload === null) return;
+  const payloadType = String(payload?.type || "");
+
   for (const { player: receiver, socket: client } of getWorldPlayerRecords(clean, { includeSocket: true })) {
     if (!canPlayerSeeElectricalLayer(receiver, clean)) continue;
-    sendJson(client, payload);
+    sendRawJsonToSocket(client, rawPayload, "direct_send", { message_type: payloadType });
   }
 }
 
@@ -24181,7 +24278,7 @@ function tickOilRefineriesForWorld(worldName: any, state: any, now: any = Date.n
   }
 
   if (!changed && changedGenerators.size === 0) return;
-  queueWorldSave(clean);
+  queueWorldSave(clean, { coalesce: true, reason: "oil_refinery_tick" });
   for (const generatorKey of changedGenerators) {
     const generatorGrid = parseGridKey(generatorKey);
     if (!generatorGrid) continue;
@@ -24324,7 +24421,7 @@ function tickBatteryChargersForWorld(worldName: any, state: any, now: any = Date
 
   const generatorKeysToBroadcast: any = new Set([...changedGenerators, ...displayOnlyGenerators]);
   if (!changed && generatorKeysToBroadcast.size === 0) return;
-  if (changed || changedGenerators.size > 0) queueWorldSave(clean);
+  if (changed || changedGenerators.size > 0) queueWorldSave(clean, { coalesce: true, reason: "battery_charger_tick" });
   for (const generatorKey of generatorKeysToBroadcast) {
     const generatorGrid = parseGridKey(generatorKey);
     if (!generatorGrid) continue;
@@ -24395,7 +24492,7 @@ function tickChickensForWorld(worldName: any, state: any, now: any = Date.now())
   }
 
   if (!changed) return;
-  queueWorldSave(clean);
+  queueWorldSave(clean, { coalesce: true, reason: "chicken_tick" });
   for (const payload of payloads) {
     queueWorldUpdateBroadcast(clean, payload);
   }
@@ -24459,7 +24556,7 @@ function tickCowsForWorld(worldName: any, state: any, now: any = Date.now()) {
   }
 
   if (!changed) return;
-  queueWorldSave(clean);
+  queueWorldSave(clean, { coalesce: true, reason: "cow_tick" });
   for (const payload of payloads) {
     queueWorldUpdateBroadcast(clean, payload);
   }
@@ -24523,7 +24620,7 @@ function tickDucksForWorld(worldName: any, state: any, now: any = Date.now()) {
   }
 
   if (!changed) return;
-  queueWorldSave(clean);
+  queueWorldSave(clean, { coalesce: true, reason: "duck_tick" });
   for (const payload of payloads) {
     queueWorldUpdateBroadcast(clean, payload);
   }
@@ -29773,20 +29870,25 @@ function advanceAuthoritativeWorldRevision(worldName: unknown, reason: unknown):
   const mutationRevision = previousRevision + 1;
   state.world_revision = mutationRevision;
   rememberUnpersistedWorldRevision(clean, mutationRevision);
-  const ownership = worldPersistenceOwnership.get(clean);
-  console.log("[world-persistence]", JSON.stringify({
-    event: "mutation",
-    world_id: clean,
-    server_instance: SERVER_INSTANCE_ID,
-    ownership_token: ownership?.ownership_token || "",
-    ownership_epoch: ownership?.ownership_epoch || 0,
-    loaded_revision: previousRevision,
-    mutation_revision: mutationRevision,
-    requested_save_revision: 0,
-    persisted_revision: 0,
-    affected_row_count: 0,
-    save_result: clampString(reason || "mutation") || "mutation",
-  }));
+  // Fires on every world mutation (i.e. every block place/break). The JSON.stringify plus
+  // the synchronous stdout write were ungated on the hottest gameplay path; gate them
+  // behind the existing trace flag. Set WORLD_STATE_REFRESH_TRACE=1 to restore.
+  if (WORLD_STATE_REFRESH_TRACE) {
+    const ownership = worldPersistenceOwnership.get(clean);
+    console.log("[world-persistence]", JSON.stringify({
+      event: "mutation",
+      world_id: clean,
+      server_instance: SERVER_INSTANCE_ID,
+      ownership_token: ownership?.ownership_token || "",
+      ownership_epoch: ownership?.ownership_epoch || 0,
+      loaded_revision: previousRevision,
+      mutation_revision: mutationRevision,
+      requested_save_revision: 0,
+      persisted_revision: 0,
+      affected_row_count: 0,
+      save_result: clampString(reason || "mutation") || "mutation",
+    }));
+  }
   return mutationRevision;
 }
 
@@ -29899,7 +30001,14 @@ function queueWorldSave(worldName: any, options: WorldSaveOptions = {}) {
   // Authoritative state is captured immediately. The per-world coordinator
   // serializes the database writes, so debouncing here only widens the crash
   // window and risks serializing a later mutable state under an older intent.
-  if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE) {
+  //
+  // The exception is options.coalesce: the machine ticks sweep every loaded world every
+  // 5-60s and each change used to force an immediate full-world write here, producing a
+  // steady stream of whole-world writes into a serial write queue before any player has
+  // acted. Those saves carry only regenerating machine state, so landing a beat later
+  // cannot duplicate or lose anything. The "older intent" concern does not apply either:
+  // saveWorldState re-serializes at flush time rather than capturing at queue time.
+  if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE && options.coalesce !== true) {
     return saveWorldState(clean, {
       mutation: false,
       reason: options.reason || "queued_world_save",
@@ -30818,12 +30927,35 @@ function applyServerDefaultEntranceGateToGeneratedMaps(worldName: any, state: an
   serverMapClear(backgroundMap, gatePos.x, gatePos.y);
 }
 
-function buildServerGeneratedWorldMaps(worldName: any, state: any) {
-  const foreground: any = new Map();
-  const background: any = new Map();
-  if (state?.cleared) return { foreground, background };
+// The procedurally generated base terrain is a pure function of the world's generation
+// seed, which serverWorldGenerationSeed derives solely from cleanWorld(worldName). It
+// never changes at runtime -- player edits live in state.foreground / removed_foreground
+// and are overlaid downstream by buildEffectiveForegroundMap.
+//
+// It was nonetheless rebuilt from scratch on every call: a WORLD_WIDTH x WORLD_HEIGHT
+// noise pass plus pond, decoration and tree generation (~7,000 tiles, thousands of grid-key
+// strings and entry objects, 3-10ms synchronously). Because every block place/break calls
+// invalidateMovementCollisionCache, the next movement packet in that world paid the whole
+// cost -- which is exactly the build-adjacent stutter players notice.
+//
+// Cache the base maps per world and clone them per call. Entries are never mutated in
+// place (serverMapSet always assigns a fresh object and every consumer spread-copies), so
+// a shallow clone is safe. Only the entrance-gate overlay, which reads live `state`, is
+// re-applied per call.
+const serverGeneratedBaseTerrainByWorld: Map<string, {
+  foreground: Map<string, unknown>;
+  background: Map<string, unknown>;
+  surface: unknown;
+}> = new Map();
 
-  const { generationSeed, surface } = buildServerTerrainSurface(worldName);
+function getServerGeneratedBaseTerrain(worldName: unknown) {
+  const clean = cleanWorld(worldName);
+  const cached = serverGeneratedBaseTerrainByWorld.get(clean);
+  if (cached) return cached;
+
+  const foreground = new Map();
+  const background = new Map();
+  const { generationSeed, surface } = buildServerTerrainSurface(clean);
   for (let x: any = 0; x < WORLD_WIDTH; x += 1) {
     const surfaceY = serverSurfaceYAt(surface, x);
     for (let y: any = surfaceY; y < WORLD_HEIGHT; y += 1) {
@@ -30835,11 +30967,31 @@ function buildServerGeneratedWorldMaps(worldName: any, state: any) {
     }
   }
 
-  const rng = makeDeterministicRng(`generated:${cleanWorld(worldName)}:${generationSeed}`);
+  const rng = makeDeterministicRng(`generated:${clean}:${generationSeed}`);
   serverGenerateNaturalPonds(foreground, surface, rng, background);
   serverGenerateSurfaceDecorations(foreground, surface, generationSeed, background);
   serverGenerateTrees(foreground, surface, generationSeed, rng, background);
-  applyServerDefaultEntranceGateToGeneratedMaps(worldName, state, foreground, background, surface);
+
+  const entry = { foreground, background, surface };
+  serverGeneratedBaseTerrainByWorld.set(clean, entry);
+  while (serverGeneratedBaseTerrainByWorld.size > SERVER_GENERATED_TERRAIN_CACHE_MAX_WORLDS) {
+    const oldestKey = serverGeneratedBaseTerrainByWorld.keys().next().value;
+    if (!oldestKey) break;
+    serverGeneratedBaseTerrainByWorld.delete(oldestKey);
+  }
+  return entry;
+}
+
+function buildServerGeneratedWorldMaps(worldName: any, state: any) {
+  const foreground = new Map();
+  const background = new Map();
+  if (state?.cleared) return { foreground, background };
+
+  const base = getServerGeneratedBaseTerrain(worldName);
+  for (const [key, entry] of base.foreground) foreground.set(key, entry);
+  for (const [key, entry] of base.background) background.set(key, entry);
+
+  applyServerDefaultEntranceGateToGeneratedMaps(worldName, state, foreground, background, base.surface);
   return { foreground, background };
 }
 
@@ -31547,7 +31699,13 @@ function saveAccounts() {
     saved_at: new Date().toISOString(),
     accounts: Array.from<any>(accounts.values()),
   };
-  writeJsonFileAtomic(ACCOUNTS_SAVE_PATH, payload);
+  // This writes EVERY registered account, and queueAccountsSave fires it on a 250ms
+  // debounce from every login, join_world and player_state_save. Synchronously, that is
+  // ~40ms of blocked event loop at 2,000 accounts and ~83ms at 5,000 -- up to a third of
+  // the loop spent inside one writeFileSync. The async form is atomic in exactly the same
+  // way (temp file + rename) and trackPersistenceWrite keeps it drained on shutdown, so
+  // the only change is that it no longer stops the world while it writes.
+  trackPersistenceWrite(writeJsonFileAtomicAsync(ACCOUNTS_SAVE_PATH, payload), "account states JSON backup");
   if (postgresStore.isReady()) {
     trackPersistenceWrite(postgresStore.saveAccountStates(payload.accounts), "account states");
   }
@@ -32175,6 +32333,7 @@ async function claimWorldRouteForCurrentInstance(worldName: any) {
     ownedWorldRoutes.add(clean);
     worldPersistenceOwnership.set(clean, ownership);
     return route;
+
   }
 
   ownedWorldRoutes.delete(clean);
@@ -32183,6 +32342,45 @@ async function claimWorldRouteForCurrentInstance(worldName: any) {
   worldPersistenceOwnership.delete(clean);
   worldUnpersistedRevisions.delete(clean);
   return route;
+}
+
+// Shutdown used to leave every owned world route claimed in Redis until its 45s TTL
+// expired. Because SERVER_PROCESS_OWNERSHIP_ID embeds a fresh randomUUID per process, the
+// restarted process could not reclaim its own worlds under the stale fence -- and with
+// route enforcement on it redirected players to its own WS URL, a loop back to itself. So
+// a routine restart locked every player out for up to 45 seconds and produced a retry
+// storm. Releasing the leases we hold collapses that window to roughly zero on a graceful
+// SIGTERM. Crash exits still rely on the TTL, which is the correct fallback.
+async function releaseOwnedWorldRoutesForShutdown() {
+  if (!redisStore.isReady()) return { released: 0, failed: 0, skipped: 0 };
+
+  const worldNames = Array.from<string>(ownedWorldRoutes.values());
+  let released = 0;
+  let failed = 0;
+  let skipped = 0;
+
+  await Promise.all(worldNames.map(async (worldName) => {
+    const clean = cleanWorld(worldName);
+    const ownership = worldPersistenceOwnership.get(clean);
+    const ownershipToken = String(ownership?.ownership_token || "");
+    // Without our fencing token the release script would refuse anyway; leave the TTL to
+    // reclaim it rather than risk releasing a route another instance now owns.
+    if (ownershipToken === "") {
+      skipped += 1;
+      return;
+    }
+
+    try {
+      const result = await redisStore.releaseWorldRoute(clean, SERVER_INSTANCE_ID, ownershipToken);
+      if (result && result.ok === false) failed += 1;
+      else released += 1;
+    } catch {
+      failed += 1;
+    }
+    ownedWorldRoutes.delete(clean);
+  }));
+
+  return { released, failed, skipped };
 }
 
 /**
@@ -32944,7 +33142,10 @@ function getSquaredPlayerDistance(a: any, b: any) {
   const ay = Number(a?.y);
   const bx = Number(b?.x);
   const by = Number(b?.y);
-  if (![ax, ay, bx, by].every(Number.isFinite)) return null;
+  // Called once per (receiver, subject) pair per broadcast flush -- millions of times a
+  // second at 500 players. The previous `[ax, ay, bx, by].every(...)` allocated a throwaway
+  // array and a closure call on every check.
+  if (!Number.isFinite(ax) || !Number.isFinite(ay) || !Number.isFinite(bx) || !Number.isFinite(by)) return null;
 
   const dx = ax - bx;
   const dy = ay - by;
@@ -32956,9 +33157,16 @@ function shouldReceiverSeeSubject(receiver: any, subject: any, worldName: any = 
   if (receiver.id === subject.id) return false;
   if (!receiver.joined_world || !subject.joined_world) return false;
 
+  // This runs once per (receiver, subject) pair per broadcast flush. cleanWorld() is a
+  // trim + uppercase + two regex replaces + slice, and it was being called three times
+  // per pair -- millions of string allocations per second at 500 players. cleanWorld is
+  // idempotent, so a raw value that already equals `clean` needs no second normalization,
+  // and the hot callers all pass an already-cleaned world name.
   const clean = cleanWorld(worldName || receiver.world || subject.world || "START");
-  if (cleanWorld(receiver.world || "START") !== clean) return false;
-  if (cleanWorld(subject.world || "START") !== clean) return false;
+  const receiverWorld = receiver.world || "START";
+  if (receiverWorld !== clean && cleanWorld(receiverWorld) !== clean) return false;
+  const subjectWorld = subject.world || "START";
+  if (subjectWorld !== clean && cleanWorld(subjectWorld) !== clean) return false;
   if (!isPlayerInterestManagementEnabled()) return true;
 
   const distanceSq = getSquaredPlayerDistance(receiver, subject);
@@ -33103,14 +33311,23 @@ function broadcastPlayerPresenceToInterestedPlayers(subject: any, payload: any, 
   }
 }
 
-function queuePlayerPresenceToInterestedPlayers(subject: any, payload: any, excludePlayerId: any = "", batches: any = null) {
+function queuePlayerPresenceToInterestedPlayers(subject: any, payload: any, excludePlayerId: any = "", batches: any = null, sharedRecords: any = null) {
   if (!subject || !payload) return;
   const clean = cleanWorld(payload.world || subject.world || "START");
 
-  for (const { player: receiver, socket: client } of getWorldPlayerRecords(clean, {
+  // sharedRecords lets the broadcast flush build the world's recipient list ONCE per flush
+  // instead of once per moving player. getWorldPlayerRecords allocates an Array.from copy
+  // of the world id set plus one record object per recipient, so rebuilding it per mover
+  // was O(players^2) allocations per flush. When a shared list is supplied we apply the
+  // excludePlayerId filter here, exactly as getWorldPlayerRecords would have.
+  const excludedPlayerId = String(excludePlayerId || "").trim();
+  const recipientRecords = sharedRecords || getWorldPlayerRecords(clean, {
     includeSocket: true,
     excludePlayerId,
-  })) {
+  });
+
+  for (const { playerId, player: receiver, socket: client } of recipientRecords) {
+    if (sharedRecords && excludedPlayerId !== "" && playerId === excludedPlayerId) continue;
 
     if (!isPlayerInterestManagementEnabled() || shouldReceiverSeeSubject(receiver, subject, clean)) {
       setPlayerInterestVisible(receiver.id, subject.id, true);
@@ -33125,14 +33342,17 @@ function queuePlayerPresenceToInterestedPlayers(subject: any, payload: any, excl
   }
 }
 
-function syncPlayerInterestForReceiver(socket: any, receiver: any, worldName: any = "", batches: any = null) {
+function syncPlayerInterestForReceiver(socket: any, receiver: any, worldName: any = "", batches: any = null, sharedRecords: any = null) {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
   if (!receiver || !receiver.joined_world) return;
   if (!isPlayerInterestManagementEnabled()) return;
 
   const clean = cleanWorld(worldName || receiver.world || "START");
   playerNetworkStats.receiver_interest_syncs += 1;
-  for (const { player: subject } of getWorldPlayerRecords(clean)) {
+  // See queuePlayerPresenceToInterestedPlayers: a shared per-flush record list avoids
+  // rebuilding the world recipient list once per moving player. Records built with
+  // includeSocket still expose .player, so the socket-bearing list is safe to reuse here.
+  for (const { player: subject } of (sharedRecords || getWorldPlayerRecords(clean))) {
     if (subject.id === receiver.id) continue;
 
     const shouldSee = shouldReceiverSeeSubject(receiver, subject, clean);
@@ -33166,6 +33386,11 @@ function broadcastPlayerActionToInterestedPlayers(worldName: any, payload: any, 
   }
 
   const actorIds: any = new Set(actorList.map((actor) => String(actor?.id || "")).filter((id) => id !== ""));
+  // `payload` is identical for every receiver -- serialize once, not per recipient.
+  const rawPayload = serializeBroadcastPayloadOnce(payload, "player_action_effect");
+  if (rawPayload === null) return;
+  const payloadType = String(payload?.type || "");
+
   for (const { player: receiver, socket: client } of getWorldPlayerRecords(clean, { includeSocket: true })) {
     const receiverId = String(receiver.id || client.playerId || "");
     let shouldSend: any = actorIds.has(receiverId);
@@ -33178,7 +33403,7 @@ function broadcastPlayerActionToInterestedPlayers(worldName: any, payload: any, 
       continue;
     }
 
-    sendJson(client, payload);
+    sendRawJsonToSocket(client, rawPayload, "direct_send", { message_type: payloadType });
     playerNetworkStats.action_effect_packets_sent += 1;
   }
 }
@@ -33296,11 +33521,16 @@ function flushQueuedPlayerPositionBroadcasts(worldName: any) {
   pendingPlayerPositionBroadcasts.delete(clean);
   const batches: any = new Map();
 
+  // One recipient-list build per flush, shared by every moving player, instead of two
+  // rebuilds per mover. Delivery helpers re-check that each socket is open, so a snapshot
+  // taken here stays correct even if a client disconnects mid-flush.
+  const worldRecords = getWorldPlayerRecords(clean, { includeSocket: true });
+
   for (const entry of worldQueue.values()) {
     const player = players.get(entry.playerId);
     if (!player || !player.joined_world || cleanWorld(player.world || "START") !== clean) continue;
-    queuePlayerPresenceToInterestedPlayers(player, entry.message, entry.excludePlayerId, batches);
-    syncPlayerInterestForReceiver(getSocketByPlayerId(entry.playerId), player, clean, batches);
+    queuePlayerPresenceToInterestedPlayers(player, entry.message, entry.excludePlayerId, batches, worldRecords);
+    syncPlayerInterestForReceiver(getSocketByPlayerId(entry.playerId), player, clean, batches, worldRecords);
     syncDropInterestForReceiver(getSocketByPlayerId(entry.playerId), player, clean);
   }
 
@@ -33447,6 +33677,11 @@ function deliverDropWorldUpdateToInterestedPlayers(worldName: any, message: any,
   const isRemove = isDropRemoveWorldUpdatePayload(message);
   const drop = isRemove ? message : findDropStateForPayload(clean, message);
 
+  // `message` does not vary by receiver -- serialize it once instead of per recipient.
+  const rawMessage = serializeBroadcastPayloadOnce(message, "drop_world_update");
+  if (rawMessage === null) return;
+  const messageType = String(message?.type || "");
+
   for (const { player: receiver, socket: client } of getWorldPlayerRecords(clean, {
     includeSocket: true,
     excludePlayerId,
@@ -33456,14 +33691,14 @@ function deliverDropWorldUpdateToInterestedPlayers(worldName: any, message: any,
     if (isRemove) {
       if (!wasVisible) continue;
       setDropInterestVisible(receiver.id, dropId, false);
-      sendJson(client, message);
+      sendRawJsonToSocket(client, rawMessage, "direct_send", { message_type: messageType });
       worldNetworkStats.drop_interest_culls_sent += 1;
       continue;
     }
 
     if (shouldReceiverSeeDrop(receiver, drop, clean)) {
       setDropInterestVisible(receiver.id, dropId, true);
-      sendJson(client, message);
+      sendRawJsonToSocket(client, rawMessage, "direct_send", { message_type: messageType });
       worldNetworkStats.drop_interest_visible_deliveries += 1;
     } else if (wasVisible) {
       setDropInterestVisible(receiver.id, dropId, false);
@@ -33544,20 +33779,74 @@ function flushQueuedWorldUpdateBroadcasts(worldName: any) {
 
   pendingWorldUpdateBroadcasts.delete(clean);
 
-  for (const { player: receiver, socket: client } of getWorldPlayerRecords(clean, { includeSocket: true })) {
+  // The batch payload is byte-identical for every receiver that shares an exclude id,
+  // and in practice the queue carries only a handful of distinct exclude ids. Building
+  // and serializing it once per receiver was O(players) redundant JSON.stringify calls
+  // per flush (~62/s per world). Group by exclude id instead; the wire bytes are
+  // unchanged, they are just computed once per group.
+  // Sentinel for "this receiver is not the excluded actor of any queued update". It must
+  // never compare === to a real excludePlayerId (including undefined/""), so it is an
+  // object identity rather than a string.
+  const NO_EXCLUDE_KEY = {};
+  const excludedActorIds = new Set();
+  for (const entry of worldQueue) {
+    if (!entry?.message) continue;
+    const excludeId = entry.excludePlayerId;
+    if (excludeId !== undefined && excludeId !== null && excludeId !== "") excludedActorIds.add(excludeId);
+  }
 
-    const updates: any = [];
+  const profile = getAdaptiveWorldUpdateBatchProfile(clean);
+  const maxItems = clampBatchMaxItems(profile.max_items, WORLD_UPDATE_BATCH_MAX_ITEMS);
+  const updatesByExcludeId = new Map();
+  const rawBatchesByExcludeId = new Map();
+
+  function getUpdatesForExcludeId(excludeId: unknown) {
+    const cached = updatesByExcludeId.get(excludeId);
+    if (cached) return cached;
+    const updates = [];
     for (const entry of worldQueue) {
       if (!entry?.message) continue;
-      if (client.playerId === entry.excludePlayerId) continue;
+      if (excludeId === entry.excludePlayerId) continue;
       updates.push(entry.message);
     }
+    updatesByExcludeId.set(excludeId, updates);
+    return updates;
+  }
 
-    if (updates.length === 0) continue;
-    const profile = getAdaptiveWorldUpdateBatchProfile(clean);
-    const maxItems = clampBatchMaxItems(profile.max_items, WORLD_UPDATE_BATCH_MAX_ITEMS);
+  function getRawBatchesForExcludeId(excludeId: unknown) {
+    const cached = rawBatchesByExcludeId.get(excludeId);
+    if (cached) return cached;
+    const updates = getUpdatesForExcludeId(excludeId);
+    const batches = [];
+    for (let index = 0; index < updates.length; index += maxItems) {
+      const batchUpdates = updates.slice(index, index + maxItems);
+      let raw;
+      try {
+        raw = JSON.stringify({
+          type: "world_update_batch",
+          world: clean,
+          updates: batchUpdates,
+        });
+      } catch (error) {
+        console.warn("[world_update_batch_serialize_error]", {
+          world: clean,
+          message: getErrorMessage(error),
+        });
+        continue;
+      }
+      batches.push({ raw, item_count: batchUpdates.length });
+    }
+    rawBatchesByExcludeId.set(excludeId, batches);
+    return batches;
+  }
+
+  for (const { player: receiver, socket: client } of getWorldPlayerRecords(clean, { includeSocket: true })) {
+    // Receivers that are not the actor of any queued update all share one payload.
+    const excludeId = excludedActorIds.has(client.playerId) ? client.playerId : NO_EXCLUDE_KEY;
 
     if (!supportsWorldUpdateBatch(receiver)) {
+      const updates = getUpdatesForExcludeId(excludeId);
+      if (updates.length === 0) continue;
       for (const update of updates) {
         sendJson(client, update);
         worldNetworkStats.batch_fallback_individual_sends += 1;
@@ -33565,15 +33854,10 @@ function flushQueuedWorldUpdateBroadcasts(worldName: any) {
       continue;
     }
 
-    for (let index: any = 0; index < updates.length; index += maxItems) {
-      const batchUpdates = updates.slice(index, index + maxItems);
-      sendJson(client, {
-        type: "world_update_batch",
-        world: clean,
-        updates: batchUpdates,
-      });
+    for (const batch of getRawBatchesForExcludeId(excludeId)) {
+      sendRawJsonToSocket(client, batch.raw, "direct_send", { message_type: "world_update_batch" });
       worldNetworkStats.batch_world_packets_sent += 1;
-      worldNetworkStats.batch_world_items_sent += batchUpdates.length;
+      worldNetworkStats.batch_world_items_sent += batch.item_count;
     }
   }
 

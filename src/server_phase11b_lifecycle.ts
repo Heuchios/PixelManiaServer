@@ -51,6 +51,7 @@ function createServerPhase11bLifecycle(deps: Phase11bLifecycleDeps) {
     getCrashRuntimeState,
     getFatalCrashReportWritten,
     getOwnedWorldNames,
+    releaseOwnedWorldRoutesForShutdown,
     isPostgresAuthoritativeReady,
     loadAccountsFromJson,
     logger,
@@ -565,6 +566,19 @@ function createServerPhase11bLifecycle(deps: Phase11bLifecycleDeps) {
     flushPendingSaves();
     if (typeof waitForWorldPersistence === "function") await waitForWorldPersistence();
     const waitSummary = await waitForPersistenceWrites();
+    // Hand back our Redis world-route leases before closing the connection. Without this a
+    // restart leaves them claimed for the full TTL and the restarted process cannot
+    // reclaim its own worlds, locking players out and triggering a reconnect storm.
+    if (typeof releaseOwnedWorldRoutesForShutdown === "function") {
+      try {
+        const routeRelease = await releaseOwnedWorldRoutesForShutdown();
+        if (routeRelease && (routeRelease.released > 0 || routeRelease.failed > 0)) {
+          logger.log("[world-route] released owned routes on shutdown", routeRelease);
+        }
+      } catch (error: unknown) {
+        logger.error("[world-route] failed to release owned routes on shutdown", error);
+      }
+    }
     await postgresStore.close();
     await redisStore.close();
     if (waitSummary?.ok === false) {

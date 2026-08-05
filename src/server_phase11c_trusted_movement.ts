@@ -1135,6 +1135,8 @@ function createServerPhase11cTrustedMovement(deps: Phase11cTrustedMovementDeps) 
       );
       return;
     }
+    // Captured before the update so the audit log below can fire only on a real transition.
+    const previousMovementMode = String(player.movement_mode || "");
     updatePlayerMovementModeFromPayload(player, { movement_mode: cleanMovementMode });
 
     const position = sanitizePlayerPosition({
@@ -1228,13 +1230,21 @@ function createServerPhase11cTrustedMovement(deps: Phase11cTrustedMovementDeps) 
     player.velocity_y = state.velocity_y;
     player.in_water = position.in_water === true;
     player.in_lava_fire = position.in_lava_fire === true;
-    logSecurityEvent(socket, player, "trusted_movement_mode_set", {
-      reason: "state_update",
-      movement_mode: cleanMovementMode,
-      world: state.world,
-      peer_id: peerId,
-      tick,
-    }, "info");
+    // This used to run on EVERY accepted trusted-movement packet. logSecurityEvent does a
+    // blocking mkdirSync, a crypto.randomBytes, a JSON.stringify + file append, AND
+    // postgresStore.mirrorSecurityEvent, which opens a transaction of ~5-6 statements. At
+    // 500 players sending 20Hz that is ~10k blocking syscalls and ~50k SQL statements per
+    // second for a field that almost never changes. Emit it only on an actual mode
+    // transition; steady-state position updates are not a security event.
+    if (previousMovementMode !== cleanMovementMode) {
+      logSecurityEvent(socket, player, "trusted_movement_mode_set", {
+        reason: "state_update",
+        movement_mode: cleanMovementMode,
+        world: state.world,
+        peer_id: peerId,
+        tick,
+      }, "info");
+    }
     debugNetfoxAction("trusted state updated", {
       player_id: state.player_id,
       peer_id: state.peer_id,

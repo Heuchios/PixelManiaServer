@@ -5,6 +5,11 @@ import crypto = require("node:crypto");
 
 const DEFAULT_SCAN_COUNT = 200;
 const HEALTH_CACHE_TTL_MS = 5000;
+// world_route_epoch keys are fencing tokens, not leases: they must outlive the route TTL
+// (and ordinary restarts) or a stale owner becomes undetectable. They previously had no
+// expiry at all, so one key leaked permanently per world name ever routed. 20x the lease
+// keeps them alive across restarts and rebalances while still reclaiming cold worlds.
+const WORLD_ROUTE_EPOCH_TTL_MULTIPLIER = 20;
 const LOCK_TTL_SAMPLE_LIMIT = 16;
 const RATE_LIMIT_INCREMENT_SCRIPT = [
   "local count = redis.call('INCR', KEYS[1])",
@@ -728,6 +733,7 @@ class RedisStore {
           "local ws_url = ARGV[2]",
           "local ttl_ms = tonumber(ARGV[3])",
           "local claimant_id = ARGV[4]",
+          "local epoch_ttl_ms = tonumber(ARGV[5])",
           "local current_owner = redis.call('GET', owner_key)",
           "local current_token = redis.call('GET', token_key)",
           "if current_owner and current_owner ~= instance_id then",
@@ -747,6 +753,12 @@ class RedisStore {
           "redis.call('SET', owner_key, instance_id, 'PX', ttl_ms)",
           "redis.call('SET', target_key, ws_url, 'PX', ttl_ms)",
           "redis.call('SET', token_key, current_token, 'PX', ttl_ms)",
+          // owner/target/token expire with the lease, but epoch_key was only ever INCR'd --
+          // no TTL, and releaseWorldRoute does not delete it, so every world name ever routed
+          // left a permanent key behind. It must NOT be deleted on release: the monotonic
+          // epoch is the fencing token that makes stale owners detectable. A long TTL lets it
+          // survive restarts while still reclaiming genuinely cold worlds.
+          "redis.call('PEXPIRE', epoch_key, epoch_ttl_ms)",
           "return {1, instance_id, ws_url, current_token, redis.call('GET', epoch_key) or '0'}",
         ].join("\n"),
         "4",
@@ -758,6 +770,7 @@ class RedisStore {
         cleanWsUrl,
         String(safeTtlMs),
         cleanClaimantId,
+        String(WORLD_ROUTE_EPOCH_TTL_MULTIPLIER * safeTtlMs),
       ]);
 
       const values = Array.isArray(reply) ? reply : [];
