@@ -12,7 +12,7 @@ function Fail($msg) {
     exit 1
 }
 
-Write-Host "== PixelManiaServer: build + commit baseball cap / hat item DB entries ==" -ForegroundColor Cyan
+Write-Host "== PixelManiaServer: build + commit hat items + beard/eyewear item DB entries ==" -ForegroundColor Cyan
 Write-Host "Repo path: $RepoPath"
 
 Set-Location -Path $RepoPath
@@ -40,6 +40,13 @@ Write-Host "-- git status before --" -ForegroundColor Yellow
 git status --short $files
 
 Write-Host ""
+Write-Host "-- diff (review before continuing) --" -ForegroundColor Yellow
+git --no-pager diff -- $files
+Write-Host ""
+Write-Host "Press Enter to continue and stage/commit these files, or close this window to abort." -ForegroundColor Cyan
+[void][System.Console]::ReadLine()
+
+Write-Host ""
 Write-Host "-- staging --" -ForegroundColor Yellow
 git add -- $files
 if ($LASTEXITCODE -ne 0) { Fail "ERROR: git add failed." }
@@ -54,15 +61,19 @@ if (-not $staged) {
 }
 
 $commitMessage = @"
-Switch baseball caps to atlas, add 8 new hat items (server)
+Switch baseball caps to atlas, add 8 new hats, add sunglasses + beard category (server)
 
-- Switch red_baseball_cap, green_baseball_cap, blue_baseball_cap
-  texture/inventory_icon fields to the new atlas frame keys, mirroring
-  the client change.
-- Add straw_hat, yellow_cap, white_cap, red_headband, chefs_hat,
-  cowboy_hat, top_hat, black_fedora (hat slot, common rarity,
-  equipable) so scripts/check_item_database_sync.js (npm run
-  check:item-db) does not fail the release gate on these new ids.
+- Switch red_baseball_cap, green_baseball_cap, blue_baseball_cap texture/inventory_icon
+  fields to the new atlas frame keys, mirroring the client change.
+- Add straw_hat, yellow_cap, white_cap, red_headband, chefs_hat, cowboy_hat, top_hat,
+  black_fedora (hat slot, common rarity, equipable) for scripts/check_item_database_sync.js
+  (npm run check:item-db) parity with the client.
+- Add sunglasses (eyewear slot) using the existing eyewear category plumbing.
+- Add "beard" as a new item category server-side: CATEGORY_TO_FIELD now maps
+  beard -> beard_inventory (previously only block/seed/tool/back/hat/hair/eyewear/
+  shirt/pants/shoes/ride/currency/material/lure/fish were recognized -- without this,
+  the server would have rejected black_beard's category). Add black_beard (beard slot,
+  common rarity, equipable) to match the client's new beard equipment slot.
 - Not added to any shop pack in this change.
 "@
 
