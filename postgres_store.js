@@ -5237,6 +5237,7 @@ class PostgresStore {
         else if (!isLocked) {
             await client.query(`DELETE FROM ${this.table("world_members")} WHERE world_id = $1 AND role = 'owner'`, [worldId]);
         }
+        const memberUpsertRows = new Map();
         for (const rawName of orderedAllowedPlayers) {
             const memberName = cleanName(rawName);
             if (memberName === "" || (ownerName !== "" && memberName.toLowerCase() === ownerName.toLowerCase()))
@@ -5248,13 +5249,37 @@ class PostgresStore {
             const memberRole = resolvedMember.role || "member";
             const canBuild = memberRole === "admin" || memberRole === "builder" || Boolean(lock.public_build);
             const canManage = memberRole === "admin";
+            // Collect first, write once. This loop used to issue two upserts PER MEMBER, on every
+            // world save -- and a world save happens on every block placement, so a lock with 20
+            // allowed players cost 40 sequential round trips per placement while holding the
+            // exclusive worlds row lock.
+            //
+            // Keyed by player_id so a duplicate name in allowed_players collapses to one row:
+            // a multi-row INSERT ... ON CONFLICT DO UPDATE errors with "cannot affect row a second
+            // time" if the same conflict target appears twice in one statement. Map.set keeps the
+            // LAST write, matching the previous statement-per-member last-write-wins behaviour,
+            // and preserves the sorted insertion order established above.
+            memberUpsertRows.set(memberPlayerId, {
+                player_id: memberPlayerId,
+                role: memberRole,
+                can_build: canBuild,
+                can_manage: canManage,
+            });
+        }
+        if (memberUpsertRows.size > 0) {
+            const memberRows = [...memberUpsertRows.values()];
+            const memberPlayerIds = memberRows.map((entry) => entry.player_id);
+            const memberRoles = memberRows.map((entry) => entry.role);
+            const memberCanBuild = memberRows.map((entry) => entry.can_build);
+            const memberCanManage = memberRows.map((entry) => entry.can_manage);
             await client.query(`
         INSERT INTO ${this.table("world_members")} (world_id, player_id, role, granted_by_player_id, created_at)
-        VALUES ($1, $2, $3, $4, now())
+        SELECT $1, member.player_id, member.role, $2, now()
+          FROM UNNEST($3::uuid[], $4::text[]) AS member(player_id, role)
         ON CONFLICT (world_id, player_id) DO UPDATE
           SET role = EXCLUDED.role,
               granted_by_player_id = EXCLUDED.granted_by_player_id
-        `, [worldId, memberPlayerId, memberRole, ownerPlayerId]);
+        `, [worldId, ownerPlayerId, memberPlayerIds, memberRoles]);
             await client.query(`
         INSERT INTO ${this.table("world_lock_access")} (
           world_id,
@@ -5267,7 +5292,8 @@ class PostgresStore {
           created_at,
           updated_at
         )
-        VALUES ($1, $2, $3, $4, $4, $5, $5, now(), now())
+        SELECT $1, access.player_id, $2, access.can_build, access.can_build, access.can_manage, access.can_manage, now(), now()
+          FROM UNNEST($3::uuid[], $4::boolean[], $5::boolean[]) AS access(player_id, can_build, can_manage)
         ON CONFLICT (world_id, player_id) DO UPDATE
           SET granted_by_player_id = EXCLUDED.granted_by_player_id,
               can_build = EXCLUDED.can_build,
@@ -5275,7 +5301,7 @@ class PostgresStore {
               can_manage_vending = EXCLUDED.can_manage_vending,
               can_manage_lock = EXCLUDED.can_manage_lock,
               updated_at = now()
-        `, [worldId, memberPlayerId, ownerPlayerId, canBuild, canManage]);
+        `, [worldId, ownerPlayerId, memberPlayerIds, memberCanBuild, memberCanManage]);
         }
     }
     async mirrorWorldAreaLocksState(client, worldId, worldState) {
