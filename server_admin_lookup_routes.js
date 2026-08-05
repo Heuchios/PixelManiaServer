@@ -27,6 +27,7 @@ function createServerAdminLookupRoutes(deps) {
             equipped_hat_item: clampString(source.equipped_hat_item || ""),
             equipped_hair_item: clampString(source.equipped_hair_item || ""),
             equipped_eyewear_item: clampString(source.equipped_eyewear_item || ""),
+            equipped_beard_item: clampString(source.equipped_beard_item || ""),
             equipped_shirt_item: clampString(source.equipped_shirt_item || ""),
             equipped_pants_item: clampString(source.equipped_pants_item || ""),
             equipped_shoes_item: clampString(source.equipped_shoes_item || ""),

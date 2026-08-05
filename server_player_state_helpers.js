@@ -6,17 +6,18 @@ const EQUIPMENT_STATE_FIELDS_BY_SLOT = Object.freeze({
     hat: "equipped_hat_item",
     hair: "equipped_hair_item",
     eyewear: "equipped_eyewear_item",
+    beard: "equipped_beard_item",
     shirt: "equipped_shirt_item",
     pants: "equipped_pants_item",
     shoes: "equipped_shoes_item",
     ride: "equipped_ride_item",
 });
 const EQUIPMENT_SLOT_COMPARISON_ORDER = Object.freeze([
-    "hand", "back", "hat", "hair", "eyewear", "shirt", "pants", "shoes", "ride",
+    "hand", "back", "hat", "hair", "eyewear", "beard", "shirt", "pants", "shoes", "ride",
     "head", "eyes", "face", "legs", "feet", "neck", "aura",
 ]);
 const ALLOWED_EQUIPMENT_SLOTS = Object.freeze([
-    "hand", "back", "hat", "hair", "eyewear", "head", "eyes", "face",
+    "hand", "back", "hat", "hair", "eyewear", "beard", "head", "eyes", "face",
     "shirt", "pants", "legs", "feet", "shoes", "ride",
     "neck", "aura",
 ]);
@@ -28,6 +29,7 @@ const INVENTORY_FIELDS = Object.freeze([
     { field: "hat_inventory", category: "hat" },
     { field: "hair_inventory", category: "hair" },
     { field: "eyewear_inventory", category: "eyewear" },
+    { field: "beard_inventory", category: "beard" },
     { field: "shirt_inventory", category: "shirt" },
     { field: "pants_inventory", category: "pants" },
     { field: "shoes_inventory", category: "shoes" },
@@ -400,6 +402,7 @@ function createPlayerStateHelpers(config) {
             equipped_hat_item: "",
             equipped_hair_item: "",
             equipped_eyewear_item: "",
+            equipped_beard_item: "",
             equipped_shirt_item: "",
             equipped_pants_item: "",
             equipped_shoes_item: "",
@@ -417,6 +420,7 @@ function createPlayerStateHelpers(config) {
             { field: "equipped_hat_item", slot: "hat" },
             { field: "equipped_hair_item", slot: "hair" },
             { field: "equipped_eyewear_item", slot: "eyewear" },
+            { field: "equipped_beard_item", slot: "beard" },
             { field: "equipped_shirt_item", slot: "shirt" },
             { field: "equipped_pants_item", slot: "pants" },
             { field: "equipped_shoes_item", slot: "shoes" },
@@ -446,6 +450,7 @@ function createPlayerStateHelpers(config) {
             hat: clampString(source.equipped_hat_item || ""),
             hair: clampString(source.equipped_hair_item || ""),
             eyewear: clampString(source.equipped_eyewear_item || ""),
+            beard: clampString(source.equipped_beard_item || ""),
             shirt: clampString(source.equipped_shirt_item || ""),
             pants: clampString(source.equipped_pants_item || ""),
             shoes: clampString(source.equipped_shoes_item || ""),
@@ -460,7 +465,7 @@ function createPlayerStateHelpers(config) {
     }
     function isCoreVisibleEquipmentSlot(slot) {
         return slot === "hand" || slot === "back" || slot === "hat" || slot === "hair" || slot === "eyewear" ||
-            slot === "shirt" || slot === "pants" || slot === "shoes" || slot === "ride";
+            slot === "beard" || slot === "shirt" || slot === "pants" || slot === "shoes" || slot === "ride";
     }
     function isItemAllowedInEquipmentSlot(itemId, slot) {
         const definition = itemDatabase.getItemDefinition(itemId);

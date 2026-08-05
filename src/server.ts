@@ -449,6 +449,7 @@ const ADMIN_INVENTORY_LOOKUP_FIELDS = Object.freeze([
   { field: "hat_inventory", category: "hat" },
   { field: "hair_inventory", category: "hair" },
   { field: "eyewear_inventory", category: "eyewear" },
+  { field: "beard_inventory", category: "beard" },
   { field: "shirt_inventory", category: "shirt" },
   { field: "pants_inventory", category: "pants" },
   { field: "shoes_inventory", category: "shoes" },
@@ -21068,6 +21069,9 @@ function mergeClientPlayerStateIntoServerState(username: any, incomingState: any
   merged.equipped_eyewear_item = doesStateOwnEquippedItem(merged, incomingState.equipped_eyewear_item || "", "eyewear")
     ? clampString(incomingState.equipped_eyewear_item || "")
     : "";
+  merged.equipped_beard_item = doesStateOwnEquippedItem(merged, incomingState.equipped_beard_item || "", "beard")
+    ? clampString(incomingState.equipped_beard_item || "")
+    : "";
   merged.equipped_shirt_item = doesStateOwnEquippedItem(merged, incomingState.equipped_shirt_item || "", "shirt")
     ? clampString(incomingState.equipped_shirt_item || "")
     : "";
@@ -21118,6 +21122,9 @@ function mergeClientPlayerStateIntoServerState(username: any, incomingState: any
     merged.equipped_eyewear_item = doesStateOwnEquippedItem(merged, incomingState.equipped_eyewear_item || "", "eyewear")
       ? clampString(incomingState.equipped_eyewear_item || "")
       : merged.equipped_eyewear_item;
+    merged.equipped_beard_item = doesStateOwnEquippedItem(merged, incomingState.equipped_beard_item || "", "beard")
+      ? clampString(incomingState.equipped_beard_item || "")
+      : merged.equipped_beard_item;
     merged.equipped_shirt_item = doesStateOwnEquippedItem(merged, incomingState.equipped_shirt_item || "", "shirt")
       ? clampString(incomingState.equipped_shirt_item || "")
       : merged.equipped_shirt_item;
@@ -33454,6 +33461,7 @@ function getPlayersInWorld(worldName: any, excludePlayerId: any = "", receiverPl
       equipped_hat_item: clampString(equipmentSlots.hat || ""),
       equipped_hair_item: clampString(equipmentSlots.hair || ""),
       equipped_eyewear_item: clampString(equipmentSlots.eyewear || ""),
+      equipped_beard_item: clampString(equipmentSlots.beard || ""),
       equipped_shirt_item: clampString(equipmentSlots.shirt || ""),
       equipped_pants_item: clampString(equipmentSlots.pants || ""),
       equipped_shoes_item: clampString(equipmentSlots.shoes || ""),
