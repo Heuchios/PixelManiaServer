@@ -24,6 +24,7 @@ const INVENTORY_FIELD_CATEGORY = Object.freeze([
     ["hat_inventory", "hat"],
     ["hair_inventory", "hair"],
     ["eyewear_inventory", "eyewear"],
+    ["beard_inventory", "beard"],
     ["shirt_inventory", "shirt"],
     ["pants_inventory", "pants"],
     ["shoes_inventory", "shoes"],
@@ -37,6 +38,15 @@ const INVENTORY_FIELD_BY_CATEGORY = new Map(INVENTORY_FIELD_CATEGORY.map(([field
 const PLAYER_LEVEL_MIN = 1;
 const PLAYER_LEVEL_MAX = 100;
 const PLAYER_XP_FIRST_LEVEL = 300;
+// Column counts for the world-change writers. The single-row and batched writers build
+// their placeholder tuples from these, so the column list and the parameter arity can
+// never drift apart.
+const WORLD_BLOCK_CHANGE_COLUMN_COUNT = 13;
+const WORLD_OBJECT_CHANGE_COLUMN_COUNT = 15;
+// Postgres caps a statement at 65535 bind parameters. 100 rows x 15 columns = 1500, which
+// keeps the batched statement far inside that limit while still collapsing the common
+// "hundreds of changes in one save" case into a handful of round trips.
+const WORLD_CHANGE_INSERT_BATCH_MAX_ROWS = 100;
 const POSTGRES_TRANSACTION_MAX_ATTEMPTS = 5;
 const POSTGRES_TRANSACTION_RETRY_BASE_DELAY_MS = 75;
 const POSTGRES_INIT_MAX_ATTEMPTS = 5;
@@ -1891,6 +1901,13 @@ class PostgresStore {
         if (!playerId)
             return;
         await client.query(`DELETE FROM ${this.table("inventory")} WHERE player_id = $1`, [playerId]);
+        // The rows are identical to the previous one-INSERT-per-stack loop -- same filter, same
+        // order, same row_version 0 -- but a full inventory now costs a single round trip
+        // instead of one per stack, inside a transaction that already holds player row locks.
+        const itemTypes = [];
+        const itemCategories = [];
+        const amounts = [];
+        const stackLimits = [];
         for (const [field, fallbackCategory] of INVENTORY_FIELD_CATEGORY) {
             const bucket = toObject(playerState[field]);
             for (const [itemType, rawAmount] of Object.entries(bucket)) {
@@ -1898,20 +1915,27 @@ class PostgresStore {
                 const amount = Math.max(0, toInt(rawAmount, 0));
                 if (cleanItemType === "" || amount <= 0)
                     continue;
-                const stackLimit = getInventoryStackLimitForItem(cleanItemType);
-                await client.query(`
-          INSERT INTO ${this.table("inventory")} (
-            player_id,
-            item_type,
-            item_category,
-            amount,
-            stack_limit,
-            row_version,
-            updated_at
-          )
-          VALUES ($1, $2, $3, $4, $5, 0, now())
-          `, [playerId, cleanItemType, fallbackCategory, amount, stackLimit]);
+                itemTypes.push(cleanItemType);
+                itemCategories.push(String(fallbackCategory));
+                amounts.push(amount);
+                stackLimits.push(getInventoryStackLimitForItem(cleanItemType));
             }
+        }
+        if (itemTypes.length > 0) {
+            await client.query(`
+        INSERT INTO ${this.table("inventory")} (
+          player_id,
+          item_type,
+          item_category,
+          amount,
+          stack_limit,
+          row_version,
+          updated_at
+        )
+        SELECT $1, item_type, item_category, amount, stack_limit, 0, now()
+          FROM UNNEST($2::text[], $3::text[], $4::bigint[], $5::bigint[])
+            AS snapshot(item_type, item_category, amount, stack_limit)
+        `, [playerId, itemTypes, itemCategories, amounts, stackLimits]);
         }
         await this.updatePlayerInventoryHash(client, playerId);
     }
@@ -5459,6 +5483,23 @@ class PostgresStore {
      * @returns {Promise<PixelMania.PostgresWorldChangeInsertResult>}
      */
     async insertWorldBlockChange(client, worldId, entry = {}) {
+        const values = await this.buildWorldBlockChangeRowValues(client, worldId, entry);
+        if (!values)
+            return null;
+        await client.query(this.buildWorldBlockChangeInsertStatement(1), values);
+        return { ok: true };
+    }
+    /**
+     * Field mapping for one `world_block_changes` row, split out from the statement so the
+     * single-row writer and the batched writer share one definition of what a row means.
+     * Resolving the actor identity is the only await here; it is memoized per transaction by
+     * `ensurePlayerIdentity`, so a batch of changes by one actor pays for it once.
+     * @param {unknown} client
+     * @param {unknown} worldId
+     * @param {PixelMania.WorldChangeEntry | Record<string, unknown>} entry
+     * @returns {Promise<any[] | null>}
+     */
+    async buildWorldBlockChangeRowValues(client, worldId, entry = {}) {
         if (!worldId)
             return null;
         const e = toObject(entry);
@@ -5496,38 +5537,7 @@ class PostgresStore {
             || "");
         const rawHitCount = Number(e.hit_count ?? details.hit_count ?? details.damage ?? NaN);
         const hitCount = Number.isFinite(rawHitCount) ? Math.max(0, Math.trunc(rawHitCount)) : null;
-        await client.query(`
-      INSERT INTO ${this.table("world_block_changes")} (
-        world_id,
-        player_id,
-        action,
-        reason,
-        layer,
-        block_x,
-        block_y,
-        block_type_before,
-        block_type_after,
-        hit_count,
-        tx_uuid,
-        metadata,
-        created_at
-      )
-      VALUES (
-        $1,
-        $2,
-        $3,
-        NULLIF($4, ''),
-        $5,
-        $6,
-        $7,
-        NULLIF($8, ''),
-        NULLIF($9, ''),
-        $10,
-        $11::uuid,
-        $12::jsonb,
-        COALESCE(NULLIF($13, '')::timestamptz, now())
-      )
-      `, [
+        return [
             worldId,
             playerId,
             mappedAction,
@@ -5547,8 +5557,39 @@ class PostgresStore {
                 details: safeJson(e.details),
             }),
             cleanName(e.at || ""),
-        ]);
-        return { ok: true };
+        ];
+    }
+    /**
+     * @param {number} rowCount
+     * @returns {string}
+     */
+    buildWorldBlockChangeInsertStatement(rowCount) {
+        const tuples = [];
+        for (let row = 0; row < rowCount; row += 1) {
+            const base = row * WORLD_BLOCK_CHANGE_COLUMN_COUNT;
+            tuples.push(`($${base + 1}, $${base + 2}, $${base + 3}, NULLIF($${base + 4}, ''), $${base + 5}, `
+                + `$${base + 6}, $${base + 7}, NULLIF($${base + 8}, ''), NULLIF($${base + 9}, ''), `
+                + `$${base + 10}, $${base + 11}::uuid, $${base + 12}::jsonb, `
+                + `COALESCE(NULLIF($${base + 13}, '')::timestamptz, now()))`);
+        }
+        return `
+      INSERT INTO ${this.table("world_block_changes")} (
+        world_id,
+        player_id,
+        action,
+        reason,
+        layer,
+        block_x,
+        block_y,
+        block_type_before,
+        block_type_after,
+        hit_count,
+        tx_uuid,
+        metadata,
+        created_at
+      )
+      VALUES ${tuples.join(", ")}
+      `;
     }
     isWorldObjectChangeEntry(entry = {}) {
         return shouldTreatAsWorldObjectChange(entry);
@@ -5560,6 +5601,21 @@ class PostgresStore {
      * @returns {Promise<PixelMania.PostgresWorldChangeInsertResult>}
      */
     async insertWorldObjectChange(client, worldId, entry = {}) {
+        const values = await this.buildWorldObjectChangeRowValues(client, worldId, entry);
+        if (!values)
+            return null;
+        await client.query(this.buildWorldObjectChangeInsertStatement(1), values);
+        return { ok: true };
+    }
+    /**
+     * Field mapping for one `world_object_changes` row. See buildWorldBlockChangeRowValues
+     * for why the mapping is split from the statement.
+     * @param {unknown} client
+     * @param {unknown} worldId
+     * @param {PixelMania.WorldChangeEntry | Record<string, unknown>} entry
+     * @returns {Promise<any[] | null>}
+     */
+    async buildWorldObjectChangeRowValues(client, worldId, entry = {}) {
         if (!worldId)
             return null;
         const e = toObject(entry);
@@ -5579,42 +5635,7 @@ class PostgresStore {
         const y = Number.isFinite(Number(e.y)) ? Math.trunc(Number(e.y)) : null;
         const oldData = clonePlainJson(e.old_data || e.previous_data || e.before || {});
         const newData = clonePlainJson(e.new_data || e.next_data || e.after || e.state || {});
-        await client.query(`
-      INSERT INTO ${this.table("world_object_changes")} (
-        world_id,
-        player_id,
-        object_type,
-        object_id,
-        block_x,
-        block_y,
-        action,
-        reason,
-        source_type,
-        source_id,
-        request_id,
-        old_data,
-        new_data,
-        metadata,
-        created_at
-      )
-      VALUES (
-        $1,
-        $2,
-        $3,
-        $4,
-        $5,
-        $6,
-        $7,
-        NULLIF($8, ''),
-        NULLIF($9, ''),
-        NULLIF($10, ''),
-        NULLIF($11, ''),
-        $12::jsonb,
-        $13::jsonb,
-        $14::jsonb,
-        COALESCE(NULLIF($15, '')::timestamptz, now())
-      )
-      `, [
+        return [
             worldId,
             playerId,
             objectType,
@@ -5635,8 +5656,42 @@ class PostgresStore {
                 details: safeJson(e.details),
             }),
             cleanName(e.at || ""),
-        ]);
-        return { ok: true };
+        ];
+    }
+    /**
+     * @param {number} rowCount
+     * @returns {string}
+     */
+    buildWorldObjectChangeInsertStatement(rowCount) {
+        const tuples = [];
+        for (let row = 0; row < rowCount; row += 1) {
+            const base = row * WORLD_OBJECT_CHANGE_COLUMN_COUNT;
+            tuples.push(`($${base + 1}, $${base + 2}, $${base + 3}, $${base + 4}, $${base + 5}, $${base + 6}, `
+                + `$${base + 7}, NULLIF($${base + 8}, ''), NULLIF($${base + 9}, ''), `
+                + `NULLIF($${base + 10}, ''), NULLIF($${base + 11}, ''), `
+                + `$${base + 12}::jsonb, $${base + 13}::jsonb, $${base + 14}::jsonb, `
+                + `COALESCE(NULLIF($${base + 15}, '')::timestamptz, now()))`);
+        }
+        return `
+      INSERT INTO ${this.table("world_object_changes")} (
+        world_id,
+        player_id,
+        object_type,
+        object_id,
+        block_x,
+        block_y,
+        action,
+        reason,
+        source_type,
+        source_id,
+        request_id,
+        old_data,
+        new_data,
+        metadata,
+        created_at
+      )
+      VALUES ${tuples.join(", ")}
+      `;
     }
     /**
      * @param {unknown} client
@@ -5658,6 +5713,18 @@ class PostgresStore {
      */
     async recordWorldChangeAndTrackedDrops(client, worldId, change = {}) {
         await this.recordWorldChangeEntry(client, worldId, change);
+        await this.recordTrackedDropsForWorldChange(client, worldId, change);
+    }
+    /**
+     * The drop-row and item-instance side effects of one world change, split out from the
+     * audit-row insert so the batched writer below can emit every audit row in one statement
+     * and then replay only these effects, in the original change order.
+     * @param {unknown} client
+     * @param {unknown} worldId
+     * @param {PixelMania.TrackedWorldDropChangeEntry | PixelMania.WorldChangeEntry | Record<string, unknown>} change
+     * @returns {Promise<void>}
+     */
+    async recordTrackedDropsForWorldChange(client, worldId, change = {}) {
         /** @type {PixelMania.TrackedWorldDropChangeDetails} */
         const changeDetails = toObject(change?.details);
         const dropId = cleanName(changeDetails.drop_id || change?.drop_id || "");
@@ -5708,6 +5775,60 @@ class PostgresStore {
                     source_block: cleanName(changeDetails.source_block || ""),
                 },
             });
+        }
+    }
+    /**
+     * Batched world-change writer.
+     *
+     * A single authoritative save can carry hundreds of changes, and the per-change writer
+     * issued one INSERT per change while holding the exclusive lock on the `worlds` row.
+     * Grouping the audit rows by target table collapses that into a handful of statements.
+     *
+     * Ordering and durability are unchanged: every row still lands inside the SAME
+     * transaction as the world state it describes, the per-change drop side effects still
+     * run sequentially in the original order after the audit rows are written, and any error
+     * still aborts the whole transaction. Rows are built before any statement is issued so a
+     * mapping failure cannot leave a partially written batch.
+     * @param {unknown} client
+     * @param {unknown} worldId
+     * @param {Array<PixelMania.WorldChangeEntry | Record<string, unknown>>} changes
+     * @returns {Promise<void>}
+     */
+    async recordWorldChangesAndTrackedDrops(client, worldId, changes = []) {
+        const pendingChanges = Array.isArray(changes) ? changes : [];
+        if (pendingChanges.length === 0)
+            return;
+        if (!worldId)
+            return;
+        if (pendingChanges.length === 1) {
+            // One change is the overwhelmingly common case (a single block place or break).
+            // Keep it on the single-row path so its statement text stays identical.
+            await this.recordWorldChangeAndTrackedDrops(client, worldId, pendingChanges[0]);
+            return;
+        }
+        const blockChangeRows = [];
+        const objectChangeRows = [];
+        for (const change of pendingChanges) {
+            if (this.isWorldObjectChangeEntry(change)) {
+                const objectRow = await this.buildWorldObjectChangeRowValues(client, worldId, change);
+                if (objectRow)
+                    objectChangeRows.push(objectRow);
+                continue;
+            }
+            const blockRow = await this.buildWorldBlockChangeRowValues(client, worldId, change);
+            if (blockRow)
+                blockChangeRows.push(blockRow);
+        }
+        for (let offset = 0; offset < blockChangeRows.length; offset += WORLD_CHANGE_INSERT_BATCH_MAX_ROWS) {
+            const chunk = blockChangeRows.slice(offset, offset + WORLD_CHANGE_INSERT_BATCH_MAX_ROWS);
+            await client.query(this.buildWorldBlockChangeInsertStatement(chunk.length), chunk.flat());
+        }
+        for (let offset = 0; offset < objectChangeRows.length; offset += WORLD_CHANGE_INSERT_BATCH_MAX_ROWS) {
+            const chunk = objectChangeRows.slice(offset, offset + WORLD_CHANGE_INSERT_BATCH_MAX_ROWS);
+            await client.query(this.buildWorldObjectChangeInsertStatement(chunk.length), chunk.flat());
+        }
+        for (const change of pendingChanges) {
+            await this.recordTrackedDropsForWorldChange(client, worldId, change);
         }
     }
     async loadWorldStateForUpdate(client, worldName) {
@@ -5936,9 +6057,7 @@ class PostgresStore {
                         source_type: cleanName(worldChanges[0]?.source_type || "world_state_save"),
                         action: cleanName(worldChanges[0]?.action || "world_state_save"),
                     });
-                for (const change of [...worldChanges, ...inferredObjectChanges]) {
-                    await this.recordWorldChangeAndTrackedDrops(client, worldId, change);
-                }
+                await this.recordWorldChangesAndTrackedDrops(client, worldId, [...worldChanges, ...inferredObjectChanges]);
                 return persisted;
             });
             if (!result?.ok) {
@@ -8606,9 +8725,7 @@ class PostgresStore {
                         },
                     })
                     : [];
-                for (const change of [...worldChanges, ...inferredObjectChanges]) {
-                    await this.recordWorldChangeAndTrackedDrops(client, worldId, change);
-                }
+                await this.recordWorldChangesAndTrackedDrops(client, worldId, [...worldChanges, ...inferredObjectChanges]);
                 if (transactionLedgerEntries.length > 0) {
                     const inventoryAfterHash = await this.getInventorySnapshotHash(client, playerId);
                     await this.updatePlayerInventoryHash(client, playerId, inventoryAfterHash);
@@ -9582,9 +9699,7 @@ class PostgresStore {
                             action: "drop_pickup",
                             at,
                         });
-                    for (const change of [...worldChanges, ...inferredObjectChanges]) {
-                        await this.recordWorldChangeAndTrackedDrops(client, persistedWorld.world_id, change);
-                    }
+                    await this.recordWorldChangesAndTrackedDrops(client, persistedWorld.world_id, [...worldChanges, ...inferredObjectChanges]);
                 }
                 return DropContracts.buildPostgresDropPickupSuccess({
                     before_amount: beforeAmount,
@@ -11027,9 +11142,7 @@ class PostgresStore {
                             action: "vending_buy",
                             at,
                         });
-                    for (const change of [...worldChanges, ...inferredObjectChanges]) {
-                        await this.recordWorldChangeAndTrackedDrops(client, persistedWorld.world_id, change);
-                    }
+                    await this.recordWorldChangesAndTrackedDrops(client, persistedWorld.world_id, [...worldChanges, ...inferredObjectChanges]);
                 }
                 return {
                     ok: true,

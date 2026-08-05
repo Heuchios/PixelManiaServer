@@ -104,7 +104,11 @@ const checks = [
       && files.server.includes("action: \"vending_buy\"")
       && files.server.includes("world_changes: [worldChange]")
       && files.server.includes("world_persistence: ownership")
-      && files.postgres.includes("recordWorldChangeAndTrackedDrops(client, persistedWorld.world_id, change)"),
+      // The vend-buy and drop-pickup paths now batch their journal rows -- one INSERT per
+      // target table instead of one per change -- so pin the batched writer at that call
+      // site. The plural method name is what makes this assertion fail on the pre-batching
+      // source; the journal rows themselves are unchanged.
+      && files.postgres.includes("recordWorldChangesAndTrackedDrops(client, persistedWorld.world_id,"),
   },
   {
     name: "JSON mirror carries object old/new details",

@@ -65,6 +65,7 @@ assert.deepEqual(
     hat_inventory: {},
     hair_inventory: {},
     eyewear_inventory: {},
+    beard_inventory: {},
     shirt_inventory: {},
     pants_inventory: {},
     shoes_inventory: {},
