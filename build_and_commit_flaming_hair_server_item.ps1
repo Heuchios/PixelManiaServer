@@ -54,13 +54,16 @@ if (-not $staged) {
 }
 
 $commitMessage = @"
-Add flaming_hair to server item database
+Add 6 new hair items to server database, update hair pack rewards
 
-- Mirrors client's flaming_hair (hair slot, common rarity, equipable)
-  so scripts/check_item_database_sync.js (npm run check:item-db) stops
-  failing the release gate with "Missing from server_item_database.js".
-- Server entry is intentionally minimal: textures/icons/hair_animations
-  are client presentation with no server counterpart.
+- Mirrors client's old_men_hair, brown_fringe, brown_combed_hair,
+  blonde_hair, brunette_hair, crazy_hair (hair slot, common rarity,
+  equipable) so scripts/check_item_database_sync.js (npm run
+  check:item-db) does not fail the release gate on these new ids.
+- Add the same 10 previously-unlisted hair items (black_slick_hair,
+  black_combed_hair, frosty_hair, flaming_hair, plus the 6 new items)
+  to hairpack's pack_rewards, matching the client's HAIR_PACK_REWARDS
+  update, ahead of baby_hair.
 "@
 
 Write-Host ""
