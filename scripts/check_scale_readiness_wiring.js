@@ -211,7 +211,9 @@ const checks = [
       && files.projectGodot.includes("network/world_route_ws_urls=PackedStringArray")
       && files.projectGodot.includes("wss://api.pixelmaniagame.com/ws-a")
       && files.projectGodot.includes("wss://api.pixelmaniagame.com/ws-b")
-      && files.redisStore.includes("async claimWorldRoute(worldName, instanceId, wsUrl, ttlMs, claimantId = \"\")")
+      // minEpoch is the PostgreSQL high-water floor that lets a lost Redis epoch counter
+      // recover. Without it a world becomes permanently unjoinable, so pin it here.
+      && files.redisStore.includes("async claimWorldRoute(worldName, instanceId, wsUrl, ttlMs, claimantId = \"\", minEpoch = 0)")
       && files.redisStore.includes("world_route_owner")
       && files.redisStore.includes("world_route_target")
       && files.redisStore.includes("async releaseWorldRoute(worldName, instanceId, ownershipToken = \"\")")

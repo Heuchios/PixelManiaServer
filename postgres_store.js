@@ -4581,6 +4581,35 @@ class PostgresStore {
             save_result: cleanName(payload.save_result || payload.result || "unknown"),
         }));
     }
+    /**
+     * The PostgreSQL high-water mark for a world's ownership fence.
+     *
+     * `claimWorldPersistenceOwnership` only accepts an epoch strictly greater than the value
+     * stored on the row, and that value is never cleared. The epoch itself is minted by a
+     * Redis counter that CAN be lost (TTL expiry, flush, replica failover), and when it is,
+     * the counter restarts near 1 while this column still holds the historical maximum -- so
+     * every subsequent claim is refused and the world becomes permanently unjoinable.
+     *
+     * Callers read this on the rejection path only and feed it back to
+     * `redisStore.claimWorldRoute` as a floor, which re-seeds the counter above the mark.
+     * It is a plain read, deliberately outside the write queue: it must never add latency to
+     * the join path or queue behind unrelated writes.
+     * @param {PixelMania.WorldName | string} worldName
+     * @returns {Promise<number>}
+     */
+    async getWorldOwnerEpoch(worldName) {
+        const cleanWorldName = cleanName(worldName || "");
+        if (cleanWorldName === "" || !this.isReady())
+            return 0;
+        try {
+            const result = await this.queryReadWithRetry("world owner epoch load", `SELECT world_owner_epoch FROM ${this.table("worlds")} WHERE world_name = $1`, [cleanWorldName]);
+            return normalizeWorldRevision(result.rows[0]?.world_owner_epoch);
+        }
+        catch (error) {
+            this.logger("[postgres] world owner epoch load failed:", getErrorMessage(error));
+            return 0;
+        }
+    }
     async claimWorldPersistenceOwnership(worldName, ownership = {}) {
         if (!this.isReady()) {
             return {

@@ -694,7 +694,7 @@ class RedisStore {
    * @param {number} ttlMs
    * @returns {Promise<RedisWorldRouteResult>}
    */
-  async claimWorldRoute(worldName: string, instanceId: string, wsUrl: string, ttlMs: number, claimantId = ""): Promise<RedisWorldRouteResult> {
+  async claimWorldRoute(worldName: string, instanceId: string, wsUrl: string, ttlMs: number, claimantId = "", minEpoch = 0): Promise<RedisWorldRouteResult> {
     const cleanClaimantId = clean(claimantId) || `${clean(instanceId)}:local`;
     if (!this.isReady()) {
       return {
@@ -716,6 +716,9 @@ class RedisStore {
     }
 
     const safeTtlMs = Math.max(10000, toInt(ttlMs, 45000));
+    // Floor supplied by the caller from PostgreSQL's world_owner_epoch high-water mark.
+    // See the epoch_floor block in the script below for why this exists.
+    const safeMinEpoch = Math.max(0, toInt(minEpoch, 0));
     const ownerKey = this.key("world_route_owner", cleanWorldName);
     const targetKey = this.key("world_route_target", cleanWorldName);
     const tokenKey = this.key("world_route_token", cleanWorldName);
@@ -734,8 +737,24 @@ class RedisStore {
           "local ttl_ms = tonumber(ARGV[3])",
           "local claimant_id = ARGV[4]",
           "local epoch_ttl_ms = tonumber(ARGV[5])",
+          "local min_epoch = tonumber(ARGV[6]) or 0",
           "local current_owner = redis.call('GET', owner_key)",
           "local current_token = redis.call('GET', token_key)",
+          // The epoch counter lives in Redis but PostgreSQL keeps the high-water mark in
+          // worlds.world_owner_epoch FOREVER, and the claim there only accepts an epoch
+          // strictly greater than the stored one. So if this key is ever lost -- it expires
+          // (see epoch_ttl_ms below), Redis is flushed, or a replica fails over -- INCR
+          // restarts near 1, every claim asks for a smaller epoch than PostgreSQL already
+          // holds, and the world becomes PERMANENTLY unjoinable. That is exactly what took
+          // TEST (epoch 322 in PostgreSQL, 3 in Redis) offline on 2026-08-05.
+          //
+          // Raising the counter to the caller's floor first makes the loss recoverable.
+          // Raising only ever moves the fence forward, so no stale owner can win a race it
+          // would otherwise have lost.
+          "local stored_epoch = tonumber(redis.call('GET', epoch_key) or '0') or 0",
+          "if stored_epoch < min_epoch then",
+          "  redis.call('SET', epoch_key, tostring(min_epoch))",
+          "end",
           "if current_owner and current_owner ~= instance_id then",
           "  return {0, current_owner, redis.call('GET', target_key) or '', current_token or '', redis.call('GET', epoch_key) or '0'}",
           "end",
@@ -771,6 +790,9 @@ class RedisStore {
         String(safeTtlMs),
         cleanClaimantId,
         String(WORLD_ROUTE_EPOCH_TTL_MULTIPLIER * safeTtlMs),
+        // Appended last on purpose: check_redis_store_build.js pins the claimant id at
+        // argv index 10, so existing positions must not shift.
+        String(safeMinEpoch),
       ]);
 
       const values = Array.isArray(reply) ? reply : [];
