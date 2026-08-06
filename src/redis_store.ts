@@ -751,6 +751,18 @@ class RedisStore {
           // Raising the counter to the caller's floor first makes the loss recoverable.
           // Raising only ever moves the fence forward, so no stale owner can win a race it
           // would otherwise have lost.
+          // A second recovery source, for the case where the key is lost while the world is
+          // still actively owned (a flush or replica failover, not just TTL expiry). The
+          // live token already ends in the epoch it was minted with -- "<claimant>:<epoch>"
+          // -- so it restores the counter exactly, with no extra read anywhere. Without this
+          // the periodic lease renewal reads the missing key as 0, the server treats that as
+          // a missing fence, and it drops a route it legitimately holds.
+          "if current_token then",
+          "  local token_epoch = tonumber(string.match(current_token, ':(%d+)$') or '0') or 0",
+          "  if token_epoch > min_epoch then",
+          "    min_epoch = token_epoch",
+          "  end",
+          "end",
           "local stored_epoch = tonumber(redis.call('GET', epoch_key) or '0') or 0",
           "if stored_epoch < min_epoch then",
           "  redis.call('SET', epoch_key, tostring(min_epoch))",

@@ -78,6 +78,25 @@ async function main() {
     script.includes("redis.call('SET', epoch_key, tostring(min_epoch))"),
     "the floor must be written to the epoch key"
   );
+  // Second recovery source: if the key is lost while the world is STILL OWNED (a flush or
+  // failover rather than TTL expiry), the live token already ends in the epoch it was minted
+  // with, so the counter can be restored exactly. Without this the periodic lease renewal
+  // reads the missing key as 0, the server calls that a missing fence, and it drops a route
+  // it legitimately holds -- observed live on 2026-08-06 as
+  // "presence refresh could not renew local world route".
+  const tokenRestoreIndex = script.indexOf("string.match(current_token, ':(%d+)$')");
+  assert.ok(tokenRestoreIndex >= 0, "the epoch must be recoverable from the live token");
+  assert.ok(
+    script.indexOf("local current_token = redis.call") < tokenRestoreIndex,
+    "the token must be read before it is parsed"
+  );
+  assert.ok(tokenRestoreIndex < floorIndex, "the token floor must be folded in before the write");
+  assert.equal(
+    "pixelmania-a:820032:58e4a728-cf23-4b17-a444-a39d9199e7f0:334".match(/:(\d+)$/)?.[1],
+    "334",
+    "sanity: a real production token ends in its epoch"
+  );
+
   // The epoch is the fencing token. Deleting it is what creates the unjoinable world.
   assert.doesNotMatch(script, /DEL[^\n]*epoch_key/, "the epoch key must never be deleted");
   assert.match(script, /PEXPIRE/, "the lease keys must still expire");
