@@ -30,5 +30,6 @@ ops_dashboard_admin*.json
 
 # Local scratch scripts and compiler metadata.
 tmp_*.js
+tmp_*.jsonl
 *.tsbuildinfo
 coverage/

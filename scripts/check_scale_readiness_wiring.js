@@ -318,6 +318,21 @@ const checks = [
       && files.loadTest.includes("max-clients-per-world")
       && files.loadTest.includes("waitWithHealth")
       && files.loadTest.includes("failed before any token rotation")
+      // A load stage that captures only client telemetry cannot separate a server code defect
+      // from capacity, which is what made the July 2026 250-player result inconclusive.
+      && files.loadTest.includes("extractServerHealthMetrics")
+      && files.loadTest.includes("sampleServerHealth")
+      && files.loadTest.includes("printServerHealthSummary")
+      && files.loadTest.includes("max_event_loop_lag_ms")
+      && files.loadTest.includes("inbound_message_queue_wait_max_ms")
+      // max_memory_restart trips restart every player on a route instance, so /health must
+      // publish process memory and the load test must record it.
+      && runtimeHealthSources.includes("process_runtime: getProcessRuntimeSnapshot()")
+      && files.loadTest.includes("process_runtime_available")
+      && files.loadTest.includes("--metrics-out")
+      && files.loadTest.includes("--health-urls")
+      && files.loadTestSafety.includes("extractServerHealthMetrics")
+      && files.loadTestSafety.includes("summarizeMetricSeries")
       && files.packageJson.includes('"check:load-staged-safety": "node scripts/check_staged_ws_load_test_safety.js"')
       && files.loadTestSafety.includes("[staged-load-safety] success")
       && files.scaleReadinessDoc.includes("npm run load:staged"),

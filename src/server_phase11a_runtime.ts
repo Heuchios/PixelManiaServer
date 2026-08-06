@@ -223,6 +223,39 @@ function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
     });
   }
 
+  function toMegabytes(bytes: unknown): number {
+    return Math.round((Math.max(0, Number(bytes) || 0) / (1024 * 1024)) * 10) / 10;
+  }
+
+  // PM2 restarts a route instance at max_memory_restart (512M in production), which drops every
+  // player on that process. /health previously reported no memory at all, so sustained load
+  // could not be checked against that ceiling without shelling into the droplet. Read-only and
+  // allocation-free apart from the memoryUsage() result itself.
+  function getProcessRuntimeSnapshot(): PacketRecord {
+    let memory: PacketRecord = {};
+    try {
+      memory = (processRuntime.memoryUsage() || {}) as PacketRecord;
+    } catch (error) {
+      return { snapshot_error: getErrorMessage(error) };
+    }
+    let uptimeSeconds = 0;
+    try {
+      uptimeSeconds = Math.max(0, Math.round(Number(processRuntime.uptime()) || 0));
+    } catch {
+      uptimeSeconds = 0;
+    }
+    return {
+      pid: Math.trunc(Number(processRuntime.pid) || 0),
+      node_version: String(processRuntime.version || ""),
+      uptime_seconds: uptimeSeconds,
+      rss_mb: toMegabytes(memory.rss),
+      heap_used_mb: toMegabytes(memory.heapUsed),
+      heap_total_mb: toMegabytes(memory.heapTotal),
+      external_mb: toMegabytes(memory.external),
+      array_buffers_mb: toMegabytes(memory.arrayBuffers),
+    };
+  }
+
   function getPendingPlayerPositionUpdateCount(): number {
     let count = 0;
     for (const worldQueue of pendingPlayerPositionBroadcasts.values()) {
@@ -832,6 +865,7 @@ function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
             pending_persistence_writes: pendingPersistenceWrites.size,
           },
           server_tick: getServerTickSnapshot(),
+          process_runtime: getProcessRuntimeSnapshot(),
           player_network: getPlayerNetworkStatsSnapshot(),
           world_network: getWorldNetworkStatsSnapshot(),
           world_index: getWorldIndexStatsSnapshot(),
@@ -1108,6 +1142,7 @@ function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
     getPendingPlayerPositionUpdateCount,
     getPendingWorldUpdateCount,
     getPlayerNetworkStatsSnapshot,
+    getProcessRuntimeSnapshot,
     getServerTickSnapshot,
     getWorldNetworkStatsSnapshot,
     handleFatalProcessError,

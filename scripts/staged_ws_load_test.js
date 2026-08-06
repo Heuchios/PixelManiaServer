@@ -195,7 +195,12 @@ Useful knobs:
   --urls <url-a,url-b>        Multi-route mode. Clients are assigned round-robin.
   --worlds <world-a,...>      At least one distinct world per URL. Extra worlds cycle across URLs.
   --max-clients-per-world 50  Refuse a stage that exceeds the authoritative world capacity.
-  --health-url <url>          Defaults to /health in single-route mode; disabled by default in multi-route mode.
+  --health-url <url>          Single server /health endpoint.
+  --health-urls <a,b>         Server /health endpoints, one per game process. Accepts "label=url" entries.
+                              Defaults to one derived endpoint per distinct --urls value.
+  --no-health                 Disable server-side health sampling entirely.
+  --metrics-out <file.jsonl>  Server metric time series, one JSON line per endpoint per sample.
+                              Defaults to ./tmp_load_metrics_<timestamp>.jsonl. Pass "off" to disable.
   --token-out-file <file>     Defaults to <token-file>.next.json.
   --token-offset 0            Start assigning clients at this token row.
   --auth-spacing-ms 2s        Live token logins are paced below the shared 8-per-15s pre-auth limit.
@@ -228,6 +233,200 @@ function deriveHealthUrl(wsUrl) {
   } catch (_error) {
     return "";
   }
+}
+
+// A route URL only carries the instance in its PATH (/ws-a, /ws-b), and /health lives at the
+// host root, so every route on one host collapses to the SAME health endpoint. That is exactly
+// how the July 2026 250-player run ended up with zero per-process server telemetry. Dedupe here
+// and let the caller warn; the operator has to pass explicit per-instance --health-urls
+// (for example http://127.0.0.1:18091/health) to observe each game process separately.
+function deriveHealthEndpoints(routeUrls) {
+  const seen = new Set();
+  const endpoints = [];
+  for (const routeUrl of routeUrls) {
+    const url = deriveHealthUrl(routeUrl);
+    if (!url || seen.has(url)) continue;
+    seen.add(url);
+    endpoints.push({ label: `h${endpoints.length}`, url });
+  }
+  return endpoints;
+}
+
+function parseHealthEndpoints(rawValue) {
+  const endpoints = [];
+  const seen = new Set();
+  for (const entry of parseCsvList(rawValue)) {
+    const separatorIndex = entry.indexOf("=");
+    // Only treat "label=url" as a label when the left side is not itself a scheme.
+    const hasLabel = separatorIndex > 0 && !/^[a-z][a-z0-9+.-]*:$/i.test(entry.slice(0, separatorIndex + 1));
+    const label = hasLabel ? entry.slice(0, separatorIndex).trim() : "";
+    const url = (hasLabel ? entry.slice(separatorIndex + 1) : entry).trim();
+    if (url === "" || seen.has(url)) continue;
+    let parsed;
+    try {
+      parsed = new URL(url);
+    } catch (_error) {
+      throw new Error(`Invalid health URL entry: ${entry}`);
+    }
+    if (!["http:", "https:"].includes(parsed.protocol)) {
+      throw new Error(`Health URL must use http:// or https://: ${url}`);
+    }
+    seen.add(url);
+    endpoints.push({ label: label || `h${endpoints.length}`, url });
+  }
+  return endpoints;
+}
+
+function toFiniteNumber(value) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function copyCounterRecord(source) {
+  const result = {};
+  if (!source || typeof source !== "object" || Array.isArray(source)) return result;
+  for (const [key, value] of Object.entries(source)) {
+    const count = Number(value);
+    if (Number.isFinite(count)) result[key] = count;
+  }
+  return result;
+}
+
+function mergeCounterRecords(records) {
+  const merged = {};
+  for (const record of Array.isArray(records) ? records : []) {
+    for (const [key, value] of Object.entries(copyCounterRecord(record))) {
+      merged[key] = (merged[key] || 0) + value;
+    }
+  }
+  return merged;
+}
+
+// Flattens the /health payload into the small set of fields that decides "code defect vs
+// capacity" for the 250-player liveness decay. Field names are pinned to what
+// server_phase11a_runtime.ts actually emits: server_tick reports event_loop_lag_ms /
+// max_event_loop_lag_ms, NOT last_lag_ms / max_lag_ms.
+function extractServerHealthMetrics(payload) {
+  const health = payload && typeof payload === "object" ? payload : {};
+  const persistence = health.persistence && typeof health.persistence === "object" ? health.persistence : {};
+  const features = health.features && typeof health.features === "object" ? health.features : {};
+  const tick = persistence.server_tick || health.server_tick || {};
+  const playerNetwork = persistence.player_network || health.player_network || {};
+  const worldNetwork = persistence.world_network || health.world_network || {};
+  const worldIndex = persistence.world_index || health.world_index || {};
+  const worldRoute = persistence.world_route || health.world_route || {};
+  const persistenceQueue = persistence.persistence_queue || {};
+  const processRuntime = persistence.process_runtime || health.process_runtime || {};
+
+  return {
+    reachable: Boolean(payload && typeof payload === "object"),
+    ok: Boolean(health.ok),
+    release_id: String(health.release_id || ""),
+    // Identifies the process that answered. Two health URLs reporting one instance_id means
+    // only one game process was actually observed.
+    instance_id: String(worldRoute.instance_id || features.server_instance_id || ""),
+    instance_ws_url: String(worldRoute.ws_url || ""),
+    postgres_ready: Boolean(persistence.postgres_ready),
+    redis_ready: Boolean(persistence.redis_ready),
+
+    // PM2 restarts a route instance at max_memory_restart (512M production, 256M route
+    // staging) and drops every player on it. Requires a server new enough to publish
+    // persistence.process_runtime; older builds report 0 and `process_runtime_available`
+    // false, so a flat zero series reads as unmeasured rather than as healthy.
+    process_runtime_available: Boolean(processRuntime && Object.keys(processRuntime).length > 0),
+    process_pid: toFiniteNumber(processRuntime.pid),
+    process_uptime_seconds: toFiniteNumber(processRuntime.uptime_seconds),
+    rss_mb: toFiniteNumber(processRuntime.rss_mb),
+    heap_used_mb: toFiniteNumber(processRuntime.heap_used_mb),
+    heap_total_mb: toFiniteNumber(processRuntime.heap_total_mb),
+    external_mb: toFiniteNumber(processRuntime.external_mb),
+    array_buffers_mb: toFiniteNumber(processRuntime.array_buffers_mb),
+
+    tick_enabled: Boolean(tick.enabled),
+    tick_interval_ms: toFiniteNumber(tick.interval_ms),
+    tick_sample_count: toFiniteNumber(tick.sample_count),
+    tick_time_ms: toFiniteNumber(tick.tick_time_ms),
+    tick_avg_time_ms: toFiniteNumber(tick.avg_tick_time_ms),
+    tick_max_time_ms: toFiniteNumber(tick.max_tick_time_ms),
+    event_loop_lag_ms: toFiniteNumber(tick.event_loop_lag_ms),
+    max_event_loop_lag_ms: toFiniteNumber(tick.max_event_loop_lag_ms),
+
+    inbound_message_queue_pending: toFiniteNumber(playerNetwork.inbound_message_queue_pending),
+    inbound_message_queue_pending_max: toFiniteNumber(playerNetwork.inbound_message_queue_pending_max),
+    inbound_message_queue_max_socket_depth: toFiniteNumber(playerNetwork.inbound_message_queue_max_socket_depth),
+    inbound_message_queue_wait_avg_ms: toFiniteNumber(playerNetwork.inbound_message_queue_wait_avg_ms),
+    inbound_message_queue_wait_max_ms: toFiniteNumber(playerNetwork.inbound_message_queue_wait_max_ms),
+    player_position_queue_wait_avg_ms: toFiniteNumber(playerNetwork.player_position_queue_wait_avg_ms),
+    player_position_queue_wait_max_ms: toFiniteNumber(playerNetwork.player_position_queue_wait_max_ms),
+    player_position_queue_wait_over_250ms: toFiniteNumber(playerNetwork.player_position_queue_wait_over_250ms),
+
+    inbound_messages_received: toFiniteNumber(playerNetwork.inbound_messages_received),
+    coalesced_inbound_player_position_messages: toFiniteNumber(playerNetwork.coalesced_inbound_player_position_messages),
+    outbound_packets_attempted: toFiniteNumber(playerNetwork.outbound_packets_attempted),
+    outbound_bytes_sent: toFiniteNumber(playerNetwork.outbound_bytes_sent),
+    outbound_backpressure_skips: toFiniteNumber(playerNetwork.outbound_backpressure_skips),
+    outbound_send_failures: toFiniteNumber(playerNetwork.outbound_send_failures),
+    movement_backpressure_queued_batches: toFiniteNumber(playerNetwork.movement_backpressure_queued_batches),
+    movement_backpressure_coalesced_batches: toFiniteNumber(playerNetwork.movement_backpressure_coalesced_batches),
+    movement_backpressure_dropped_items: toFiniteNumber(playerNetwork.movement_backpressure_dropped_items),
+    movement_backpressure_flushes: toFiniteNumber(playerNetwork.movement_backpressure_flushes),
+    message_rate_limit_rejections: toFiniteNumber(playerNetwork.message_rate_limit_rejections),
+    bot_rate_limit_rejections: toFiniteNumber(playerNetwork.bot_rate_limit_rejections),
+    rate_limit_checks_by_bucket: copyCounterRecord(playerNetwork.rate_limit_checks_by_bucket),
+    rate_limit_rejections_by_bucket: copyCounterRecord(playerNetwork.rate_limit_rejections_by_bucket),
+    // Unbounded growth in these maps is the signature of a fan-out/leak defect rather than
+    // a saturated box, so they are captured every sample.
+    active_interest_receivers: toFiniteNumber(playerNetwork.active_interest_receivers),
+    active_interest_links: toFiniteNumber(playerNetwork.active_interest_links),
+    pending_position_worlds: toFiniteNumber(playerNetwork.pending_position_worlds),
+    pending_position_updates: toFiniteNumber(playerNetwork.pending_position_updates),
+
+    active_drop_interest_receivers: toFiniteNumber(worldNetwork.active_drop_interest_receivers),
+    active_drop_interest_links: toFiniteNumber(worldNetwork.active_drop_interest_links),
+    pending_world_update_worlds: toFiniteNumber(worldNetwork.pending_world_update_worlds),
+    pending_world_updates: toFiniteNumber(worldNetwork.pending_world_updates),
+    batch_world_packets_sent: toFiniteNumber(worldNetwork.batch_world_packets_sent),
+
+    active_world_count: toFiniteNumber(worldIndex.active_world_count),
+    indexed_player_count: toFiniteNumber(worldIndex.indexed_player_count),
+    largest_world_population: toFiniteNumber(worldIndex.largest_world_population),
+
+    local_owned_world_count: toFiniteNumber(worldRoute.local_owned_world_count),
+    route_redirects: toFiniteNumber(worldRoute.redirects),
+    route_conflicts: toFiniteNumber(worldRoute.conflicts),
+    route_unavailable: toFiniteNumber(worldRoute.unavailable),
+    route_redis_unhealthy: toFiniteNumber(worldRoute.redis_unhealthy),
+
+    pending_persistence_writes: toFiniteNumber(persistenceQueue.pending_persistence_writes),
+    pending_world_save_timers: toFiniteNumber(persistenceQueue.pending_world_save_timers),
+  };
+}
+
+// Running max is monotonic by construction, so the trend that answers "is the server
+// progressively degrading?" has to come from the INSTANTANEOUS per-sample values. Compare the
+// first quarter of the hold against the last quarter.
+function summarizeMetricSeries(values) {
+  const clean = (Array.isArray(values) ? values : [])
+    .map((value) => Number(value))
+    .filter((value) => Number.isFinite(value));
+  if (clean.length === 0) {
+    return { samples: 0, min: 0, avg: 0, max: 0, first_quarter_avg: 0, last_quarter_avg: 0, growth: 0 };
+  }
+  const average = (slice) => (slice.length === 0
+    ? 0
+    : Number((slice.reduce((sum, value) => sum + value, 0) / slice.length).toFixed(3)));
+  const quarter = Math.max(1, Math.floor(clean.length / 4));
+  const firstQuarterAvg = average(clean.slice(0, quarter));
+  const lastQuarterAvg = average(clean.slice(clean.length - quarter));
+  return {
+    samples: clean.length,
+    min: Number(Math.min(...clean).toFixed(3)),
+    avg: average(clean),
+    max: Number(Math.max(...clean).toFixed(3)),
+    first_quarter_avg: firstQuarterAvg,
+    last_quarter_avg: lastQuarterAvg,
+    growth: Number((lastQuarterAvg - firstQuarterAvg).toFixed(3)),
+  };
 }
 
 function readTokenPool(tokenFile) {
@@ -976,7 +1175,9 @@ class LoadRunner {
   constructor(options) {
     this.routes = options.routes;
     this.url = this.routes[0].url;
-    this.healthUrl = options.healthUrl;
+    this.healthEndpoints = Array.isArray(options.healthEndpoints) ? options.healthEndpoints : [];
+    this.healthUrl = this.healthEndpoints[0]?.url || "";
+    this.metricsOutFile = options.metricsOutFile || "";
     this.world = this.routes[0].world;
     this.clientVersion = options.clientVersion;
     this.clientsTarget = options.clientsTarget;
@@ -1012,6 +1213,39 @@ class LoadRunner {
     this.lastStats = null;
     this.lastHealth = null;
     this.healthBaseline = null;
+    this.phase = "startup";
+    this.healthSampleAt = 0;
+    this.healthSampleCount = 0;
+    this.healthSampleFailures = 0;
+    this.healthSampleInFlight = null;
+    // Per-endpoint accumulators. Full samples go to the metrics file; only the series needed
+    // for the end-of-run verdict is held in memory, so a long hold cannot grow unbounded.
+    this.healthEndpointState = new Map(
+      this.healthEndpoints.map((endpoint) => [endpoint.url, {
+        label: endpoint.label,
+        url: endpoint.url,
+        samples: 0,
+        failures: 0,
+        instanceIds: new Set(),
+        baseline: null,
+        latest: null,
+        series: {
+          event_loop_lag_ms: [],
+          tick_time_ms: [],
+          rss_mb: [],
+          heap_used_mb: [],
+          inbound_message_queue_pending: [],
+          inbound_message_queue_wait_max_ms: [],
+          player_position_queue_wait_max_ms: [],
+          pending_position_updates: [],
+          pending_world_updates: [],
+          active_interest_links: [],
+          indexed_player_count: [],
+        },
+      }]),
+    );
+    this.metricsStream = null;
+    this.metricsWriteErrors = 0;
     this.statsTimer = null;
     this.shuttingDown = false;
     this.shutdownPromise = null;
@@ -1194,6 +1428,214 @@ class LoadRunner {
     this.localEventLoopMonitorEnabled = false;
   }
 
+  openMetricsStream() {
+    if (this.metricsStream || !this.metricsOutFile || this.healthEndpoints.length === 0) return;
+    const fullPath = path.resolve(this.metricsOutFile);
+    fs.mkdirSync(path.dirname(fullPath), { recursive: true });
+    this.metricsStream = fs.createWriteStream(fullPath, { flags: "a" });
+    // A write error must never abort the load stage; it only costs telemetry.
+    this.metricsStream.on("error", (error) => {
+      this.metricsWriteErrors += 1;
+      console.warn(`[load] metrics write failed: ${error && error.message ? error.message : error}`);
+    });
+    console.log(`[load] server metric time series: ${fullPath}`);
+  }
+
+  writeMetricsRecord(record) {
+    if (!this.metricsStream) return;
+    try {
+      this.metricsStream.write(`${JSON.stringify(record)}\n`);
+    } catch (error) {
+      this.metricsWriteErrors += 1;
+      console.warn(`[load] metrics serialize failed: ${error && error.message ? error.message : error}`);
+    }
+  }
+
+  closeMetricsStream() {
+    const stream = this.metricsStream;
+    if (!stream) return Promise.resolve();
+    this.metricsStream = null;
+    return new Promise((resolve) => stream.end(resolve));
+  }
+
+  // One JSONL row per endpoint per sample, carrying BOTH the server metric and the client-side
+  // liveness numbers at the same instant. Correlating server event-loop lag against the client
+  // maxPongAge decay is the whole point of the instrumented repeat; splitting them across two
+  // artifacts is what made the July run inconclusive.
+  async sampleServerHealth(options = {}) {
+    if (this.healthEndpoints.length === 0) return [];
+    // printStats runs on an interval and a slow endpoint can outlive one tick. Without this
+    // guard two samples interleave and inflate the series with duplicated rows.
+    if (this.healthSampleInFlight) return this.healthSampleInFlight;
+    const requestedAt = Date.now();
+    const phase = String(options.phase || this.phase || "");
+    const baseline = Boolean(options.baseline);
+    const clientSnapshot = this.getClientMetricSnapshot();
+
+    const samplePromise = Promise.all(this.healthEndpoints.map(async (endpoint) => {
+      const startedAt = Date.now();
+      const payload = await getJson(endpoint.url);
+      const metrics = extractServerHealthMetrics(payload);
+      const state = this.healthEndpointState.get(endpoint.url);
+      const sample = {
+        at: new Date(startedAt).toISOString(),
+        t_ms: Math.max(0, startedAt - this.startedAt),
+        phase,
+        baseline,
+        endpoint: endpoint.label,
+        health_url: endpoint.url,
+        poll_ms: Date.now() - startedAt,
+        client: clientSnapshot,
+        server: metrics,
+      };
+
+      if (state) {
+        state.samples += 1;
+        if (!metrics.reachable) {
+          state.failures += 1;
+          this.healthSampleFailures += 1;
+        } else {
+          if (metrics.instance_id !== "") state.instanceIds.add(metrics.instance_id);
+          if (!state.baseline) state.baseline = metrics;
+          state.latest = metrics;
+          // Baseline rows anchor the deltas but are not part of the load-phase trend.
+          if (!baseline) {
+            for (const key of Object.keys(state.series)) {
+              state.series[key].push(toFiniteNumber(metrics[key]));
+            }
+          }
+        }
+      }
+
+      this.writeMetricsRecord(sample);
+      return sample;
+    }));
+
+    this.healthSampleInFlight = samplePromise;
+    let samples;
+    try {
+      samples = await samplePromise;
+    } finally {
+      this.healthSampleInFlight = null;
+    }
+
+    this.healthSampleAt = Date.now();
+    this.healthSampleCount += 1;
+    this.lastHealth = { at: requestedAt, payload: samples[0]?.server || {}, samples };
+    if (baseline) this.healthBaseline = samples;
+    return samples;
+  }
+
+  getClientMetricSnapshot() {
+    return {
+      elapsed_ms: Math.max(0, Date.now() - this.startedAt),
+      active: this.clients.filter((client) => client.ws && client.ws.readyState === WebSocket.OPEN).length,
+      authenticated: this.stats.authenticated,
+      joined: this.clients.filter((client) => client.joined).length,
+      position_sent: this.stats.positionSent,
+      messages_received: this.stats.messagesReceived,
+      max_pong_age_ms: this.stats.maximumPongAgeMs,
+      max_buffered_bytes: this.stats.maximumBufferedAmount,
+      max_position_write_ms: this.stats.maximumPositionWriteMs,
+      transport_backpressure_skips: this.stats.transportBackpressureSkips,
+      rate_limited: this.stats.rateLimited,
+      rejections: this.stats.rejections,
+      route_redirects: this.stats.routeRedirects,
+      abnormal_closes: this.stats.abnormalCloses,
+      local_runtime: this.getLocalRuntimeSnapshot(),
+    };
+  }
+
+  formatServerHealthLine(sample) {
+    const server = sample.server || {};
+    if (!server.reachable) return `[load] server[${sample.endpoint}] unreachable url=${sample.health_url}`;
+    return `[load] server[${sample.endpoint}]`
+      + ` instance=${server.instance_id || "(unknown)"}`
+      + `${server.process_runtime_available ? ` rss=${server.rss_mb}MB heap=${server.heap_used_mb}/${server.heap_total_mb}MB` : " rss=(unreported)"}`
+      + ` tick=${server.tick_time_ms}ms/avg${server.tick_avg_time_ms}ms/max${server.tick_max_time_ms}ms`
+      + ` elLag=${server.event_loop_lag_ms}ms elLagMax=${server.max_event_loop_lag_ms}ms`
+      + ` inQPend=${server.inbound_message_queue_pending}/${server.inbound_message_queue_pending_max}`
+      + ` inQWait=${server.inbound_message_queue_wait_avg_ms}ms/max${server.inbound_message_queue_wait_max_ms}ms`
+      + ` posQWait=${server.player_position_queue_wait_avg_ms}ms/max${server.player_position_queue_wait_max_ms}ms`
+      + ` posQOver250=${server.player_position_queue_wait_over_250ms}`
+      + ` pendingPos=${server.pending_position_updates} pendingWorld=${server.pending_world_updates}`
+      + ` interestLinks=${server.active_interest_links}`
+      + ` outSkips=${server.outbound_backpressure_skips} outFails=${server.outbound_send_failures}`
+      + ` moveCoalesced=${server.movement_backpressure_coalesced_batches}`
+      + ` moveDropped=${server.movement_backpressure_dropped_items}`
+      + ` players=${server.indexed_player_count} worlds=${server.active_world_count}`
+      + ` biggestWorld=${server.largest_world_population}`
+      + ` pgReady=${server.postgres_ready} redisReady=${server.redis_ready}`;
+  }
+
+  printServerHealthSummary() {
+    if (this.healthEndpoints.length === 0) {
+      console.warn("[load] server-side health sampling was DISABLED; this run cannot separate a server code defect from capacity.");
+      return;
+    }
+
+    const observedInstances = new Set();
+    for (const state of this.healthEndpointState.values()) {
+      const summaries = Object.fromEntries(
+        Object.entries(state.series).map(([key, values]) => [key, summarizeMetricSeries(values)]),
+      );
+      for (const instanceId of state.instanceIds) observedInstances.add(instanceId);
+      console.log(
+        `[load] server-summary[${state.label}] url=${state.url}`
+        + ` polls=${state.samples} failures=${state.failures}`
+        + ` instances=${Array.from(state.instanceIds).join("|") || "(unknown)"}`,
+      );
+      for (const [key, summary] of Object.entries(summaries)) {
+        if (summary.samples === 0) continue;
+        console.log(
+          `[load]   ${key}: min=${summary.min} avg=${summary.avg} max=${summary.max}`
+          + ` firstQuarterAvg=${summary.first_quarter_avg} lastQuarterAvg=${summary.last_quarter_avg}`
+          + ` growth=${summary.growth}`,
+        );
+      }
+      this.writeMetricsRecord({
+        at: new Date().toISOString(),
+        t_ms: Math.max(0, Date.now() - this.startedAt),
+        phase: "summary",
+        endpoint: state.label,
+        health_url: state.url,
+        summary: {
+          samples: state.samples,
+          failures: state.failures,
+          instance_ids: Array.from(state.instanceIds),
+          baseline: state.baseline,
+          latest: state.latest,
+          series: summaries,
+        },
+        client: this.getClientMetricSnapshot(),
+      });
+    }
+
+    const distinctRouteUrls = new Set(this.routes.map((route) => route.url)).size;
+    if (observedInstances.size > 0 && observedInstances.size < distinctRouteUrls) {
+      console.warn(
+        `[load] WARNING: ${distinctRouteUrls} distinct route URL(s) but only ${observedInstances.size} server instance(s)`
+        + ` answered /health (${Array.from(observedInstances).join("|")}).`
+        + ` Server metrics above describe those instance(s) only.`
+        + ` Pass per-instance --health-urls (for example http://127.0.0.1:18091/health,http://127.0.0.1:18092/health)`
+        + ` to observe every game process.`,
+      );
+    }
+    const memoryUnreported = Array.from(this.healthEndpointState.values())
+      .filter((state) => state.latest && !state.latest.process_runtime_available)
+      .map((state) => state.label);
+    if (memoryUnreported.length > 0) {
+      console.warn(
+        `[load] WARNING: endpoint(s) ${memoryUnreported.join(",")} reported no persistence.process_runtime.`
+        + ` That server build predates process-memory reporting, so the max_memory_restart ceiling stays UNMEASURED`
+        + ` — the zeroed rss_mb/heap_used_mb series means "not measured", not "healthy".`,
+      );
+    }
+    if (this.healthSampleFailures > 0) {
+      console.warn(`[load] WARNING: ${this.healthSampleFailures} health poll(s) returned no JSON; treat gaps in the series as unmeasured, not healthy.`);
+    }
+  }
+
   async acquireAuthPermit() {
     let releasePermit;
     const previousPermit = this.authPermitQueue;
@@ -1304,6 +1746,9 @@ class LoadRunner {
   }
 
   async waitWithHealth(durationMs, phase) {
+    // The phase label is stamped onto every metric row so ramp samples can be separated from
+    // hold samples when reading the series back.
+    this.phase = phase;
     const deadline = Date.now() + Math.max(0, durationMs);
     while (true) {
       const failureReason = this.getFailFastReason();
@@ -1419,7 +1864,10 @@ class LoadRunner {
 
   async run() {
     console.log("[load] staged PixelMania WebSocket load test");
-    console.log(`[load] routes=${this.routes.length} health=${this.healthUrl || "(disabled)"} clients=${this.clientsTarget} step=${this.step} stepMs=${this.stepMs} holdMs=${this.holdMs} rate=${this.rate}/s authSpacingMs=${this.authSpacingMs} maxTransportSkips=${this.maxTransportBackpressureSkips} maxMovementBuffer=${this.maxMovementBufferedBytes} maxPongAgeMs=${this.maxPongAgeMs}`);
+    const healthSummary = this.healthEndpoints.length === 0
+      ? "(disabled)"
+      : this.healthEndpoints.map((endpoint) => `${endpoint.label}=${endpoint.url}`).join(",");
+    console.log(`[load] routes=${this.routes.length} health=${healthSummary} clients=${this.clientsTarget} step=${this.step} stepMs=${this.stepMs} holdMs=${this.holdMs} rate=${this.rate}/s authSpacingMs=${this.authSpacingMs} maxTransportSkips=${this.maxTransportBackpressureSkips} maxMovementBuffer=${this.maxMovementBufferedBytes} maxPongAgeMs=${this.maxPongAgeMs}`);
     this.routes.forEach((route, routeIndex) => {
       console.log(`[load] route[${routeIndex}] url=${route.url} world=${route.world} target=${this.getRouteTarget(routeIndex)}`);
     });
@@ -1432,8 +1880,12 @@ class LoadRunner {
     try {
       this.startedAt = Date.now();
       this.startLocalRuntimeMonitor();
-      if (this.healthUrl) {
-        this.healthBaseline = await getJson(this.healthUrl);
+      this.openMetricsStream();
+      if (this.healthEndpoints.length > 0) {
+        const baselineSamples = await this.sampleServerHealth({ baseline: true, phase: "baseline" });
+        for (const sample of baselineSamples) console.log(this.formatServerHealthLine(sample));
+      } else {
+        console.warn("[load] server-side health sampling is disabled; the run will capture client telemetry only.");
       }
       this.statsTimer = setInterval(() => {
         void this.printStats().catch((error) => this.recordFatalError(error));
@@ -1515,9 +1967,29 @@ class LoadRunner {
       return result;
     } catch (error) {
       failureReason = error instanceof Error ? error.message : String(error || "load stage failed");
+      // The abort path is exactly when the server metrics matter most, and it bypasses
+      // printStats(true). Capture one last sample BEFORE the sockets are torn down.
+      try {
+        const abortSamples = await this.sampleServerHealth({ phase: "abort" });
+        for (const sample of abortSamples) console.log(this.formatServerHealthLine(sample));
+      } catch (sampleError) {
+        console.warn(`[load] final health sample failed: ${sampleError && sampleError.message ? sampleError.message : sampleError}`);
+      }
       throw error;
     } finally {
-      await this.shutdown();
+      // A throw from shutdown must not swallow the run's real failure NOR abandon the metrics
+      // artifact half-written; a failed stage is precisely the one whose telemetry is needed.
+      try {
+        await this.shutdown();
+      } catch (shutdownError) {
+        console.warn(`[load] shutdown error: ${shutdownError && shutdownError.message ? shutdownError.message : shutdownError}`);
+      }
+      try {
+        this.printServerHealthSummary();
+      } catch (summaryError) {
+        console.warn(`[load] server summary failed: ${summaryError && summaryError.message ? summaryError.message : summaryError}`);
+      }
+      await this.closeMetricsStream();
       this.persistTokenPool(
         this.lastResult?.ok === true,
         failureReason || (this.lastResult?.ok ? "stage passed" : "final health gate failed"),
@@ -1538,26 +2010,26 @@ class LoadRunner {
     const active = this.clients.filter((client) => client.ws && client.ws.readyState === WebSocket.OPEN).length;
     const joined = this.clients.filter((client) => client.joined).length;
 
-    if (this.healthUrl && (final || !this.lastHealth || now - this.lastHealth.at >= this.statsMs)) {
-      this.lastHealth = { at: now, payload: await getJson(this.healthUrl) };
+    if (this.healthEndpoints.length > 0 && (final || this.healthSampleAt === 0 || now - this.healthSampleAt >= this.statsMs)) {
+      if (final) this.phase = "final";
+      await this.sampleServerHealth({ phase: final ? "final" : this.phase });
     }
 
-    const health = this.lastHealth?.payload || {};
-    const persistence = health.persistence || {};
-    const baselinePersistence = this.healthBaseline?.persistence || {};
-    const playerNetwork = persistence.player_network || health.player_network || {};
-    const baselinePlayerNetwork = baselinePersistence.player_network || this.healthBaseline?.player_network || {};
-    const worldNetwork = persistence.world_network || health.world_network || {};
-    const tick = persistence.server_tick || health.server_tick || {};
-    const tickLag = tick.max_lag_ms !== undefined
-      ? ` tickMax=${tick.max_lag_ms}ms`
-      : (tick.last_lag_ms !== undefined ? ` tickLag=${tick.last_lag_ms}ms` : "");
-    const pending = playerNetwork.pending_position_updates !== undefined
-      ? ` pendingPos=${playerNetwork.pending_position_updates}`
+    const healthSamples = this.lastHealth?.samples || [];
+    // The aggregate line keeps the worst endpoint's numbers so a single-line scan still shows
+    // the ceiling; per-endpoint detail is printed below and written to the metrics file.
+    const worstServer = healthSamples
+      .map((sample) => sample.server)
+      .filter((server) => server && server.reachable)
+      .reduce((worst, server) => (
+        !worst || toFiniteNumber(server.event_loop_lag_ms) > toFiniteNumber(worst.event_loop_lag_ms) ? server : worst
+      ), null);
+    const tickLag = worstServer
+      ? ` tickLag=${worstServer.event_loop_lag_ms}ms tickMax=${worstServer.max_event_loop_lag_ms}ms`
+        + ` inQWaitMax=${worstServer.inbound_message_queue_wait_max_ms}ms`
       : "";
-    const worldPending = worldNetwork.pending_world_updates !== undefined
-      ? ` pendingWorld=${worldNetwork.pending_world_updates}`
-      : "";
+    const pending = worstServer ? ` pendingPos=${worstServer.pending_position_updates}` : "";
+    const worldPending = worstServer ? ` pendingWorld=${worstServer.pending_world_updates}` : "";
     const closeSummary = this.formatSummary(this.closeReasons);
     const authErrorSummary = this.formatSummary(this.authErrorReasons);
     const rejectionSummary = this.formatSummary(this.rejectionReasons);
@@ -1567,8 +2039,8 @@ class LoadRunner {
     const closePhaseSummary = this.formatSummary(this.closePhases, 3);
     const socketErrorSummary = this.formatSummary(this.socketErrors, 1);
     const serverRateLimitSummary = this.formatCounterDelta(
-      playerNetwork.rate_limit_rejections_by_bucket,
-      baselinePlayerNetwork.rate_limit_rejections_by_bucket,
+      mergeCounterRecords(healthSamples.map((sample) => sample.server?.rate_limit_rejections_by_bucket)),
+      mergeCounterRecords((this.healthBaseline || []).map((sample) => sample.server?.rate_limit_rejections_by_bucket)),
       3,
     );
     const worldStateAverageBytes = this.stats.worldStates > 0
@@ -1603,6 +2075,10 @@ class LoadRunner {
       `${tickLag}${pending}${worldPending}` +
       ` routes=${this.formatRouteProgress()}`
     );
+
+    for (const sample of healthSamples) {
+      console.log(this.formatServerHealthLine(sample));
+    }
 
     this.lastStats = { at: now, ...this.stats };
   }
@@ -1734,14 +2210,47 @@ async function main() {
     );
   }
 
-  const explicitHealthUrl = args["health-url"] || process.env.PIXELMANIA_LOAD_HEALTH_URL;
-  const healthUrl = explicitHealthUrl
-    ? String(explicitHealthUrl).trim()
-    : (routes.length === 1 ? deriveHealthUrl(routes[0].url) : "");
+  const healthDisabled = boolArg(args["no-health"] || process.env.PIXELMANIA_LOAD_NO_HEALTH);
+  // parseArgs yields `true` for a bare `--flag`; treat that as "not supplied" so a valueless
+  // flag falls back to the default instead of producing a literal "true" URL or filename.
+  const argValue = (name, envValue) => {
+    const value = args[name];
+    return value === true || value === undefined ? (envValue || "") : String(value);
+  };
+  const explicitHealthUrls = argValue("health-urls", process.env.PIXELMANIA_LOAD_HEALTH_URLS);
+  const explicitHealthUrl = argValue("health-url", process.env.PIXELMANIA_LOAD_HEALTH_URL);
+  let healthEndpoints = [];
+  if (!healthDisabled) {
+    if (explicitHealthUrls) {
+      healthEndpoints = parseHealthEndpoints(explicitHealthUrls);
+    } else if (explicitHealthUrl) {
+      healthEndpoints = parseHealthEndpoints(String(explicitHealthUrl));
+    } else {
+      // Multi-route runs used to fall back to NO health polling at all, which is why the July
+      // 250-player stage produced client-only telemetry. Derive instead, and warn when the
+      // derived set cannot cover every route process.
+      healthEndpoints = deriveHealthEndpoints(routes.map((route) => route.url));
+    }
+  }
+  const distinctRouteUrlCount = new Set(routes.map((route) => route.url)).size;
+  if (!healthDisabled && healthEndpoints.length > 0 && healthEndpoints.length < distinctRouteUrlCount) {
+    console.warn(
+      `[load] WARNING: ${distinctRouteUrlCount} distinct route URL(s) collapse to ${healthEndpoints.length} derived /health endpoint(s).`
+      + ` /health lives at the host root, so per-path routes such as /ws-a and /ws-b share one URL.`
+      + ` Pass --health-urls a=<url>,b=<url> pointing at each game process to measure them separately.`,
+    );
+  }
+
+  const metricsOutValue = argValue("metrics-out", process.env.PIXELMANIA_LOAD_METRICS_OUT).trim();
+  const metricsDisabled = metricsOutValue !== "" && ["off", "false", "0", "none"].includes(metricsOutValue.toLowerCase());
+  const metricsOutFile = (healthEndpoints.length === 0 || metricsDisabled)
+    ? ""
+    : (metricsOutValue || `tmp_load_metrics_${new Date().toISOString().replace(/[:.]/g, "-")}.jsonl`);
 
   const runner = new LoadRunner({
     routes,
-    healthUrl,
+    healthEndpoints,
+    metricsOutFile,
     clientVersion: String(args["client-version"] || process.env.PIXELMANIA_LOAD_CLIENT_VERSION || "1.0.4"),
     clientsTarget: clients,
     step: parseInteger(args.step || process.env.PIXELMANIA_LOAD_STEP, 25, 1, clients),
@@ -1858,11 +2367,16 @@ module.exports = {
   LoadRunner,
   boolArg,
   buildRoutes,
+  deriveHealthEndpoints,
+  extractServerHealthMetrics,
   getMovementTransportDecision,
+  mergeCounterRecords,
   nanosecondsToMilliseconds,
+  parseHealthEndpoints,
   parseDurationMs,
   parseInteger,
   readTokenPool,
+  summarizeMetricSeries,
   validateLiveTokenPool,
   validateWorldCapacityPlan,
   writeTokenAccounts,

@@ -262,7 +262,13 @@ const deps = new Proxy({
     arch: "x64",
     cwd: () => "/tmp",
     uptime: () => 10,
-    memoryUsage: () => ({ rss: 1 }),
+    memoryUsage: () => ({
+      rss: 268_435_456,
+      heapUsed: 134_217_728,
+      heapTotal: 157_286_400,
+      external: 5_242_880,
+      arrayBuffers: 1_048_576,
+    }),
     hrtime: { bigint: () => process.hrtime.bigint() },
   },
   recoverWorldEventsAfterLoad: async () => calls.push("events:recover"),
@@ -365,6 +371,38 @@ function createResponse() {
   assert.equal(healthPayload.persistence.redis_ready, true);
   assert.equal(Object.hasOwn(healthPayload, "max_client_version"), false);
 
+  // PM2 restarts a route instance at max_memory_restart (512M in production), dropping every
+  // player on it. Without memory in /health, sustained load cannot be checked against that
+  // ceiling remotely, which is why the July 2026 250-player stage left it unmeasured.
+  const processRuntimeSnapshot = healthPayload.persistence.process_runtime;
+  assert.ok(processRuntimeSnapshot, "/health must report process runtime memory");
+  assert.equal(processRuntimeSnapshot.pid, 1);
+  assert.equal(processRuntimeSnapshot.node_version, "v-test");
+  assert.equal(processRuntimeSnapshot.uptime_seconds, 10);
+  assert.equal(processRuntimeSnapshot.rss_mb, 256);
+  assert.equal(processRuntimeSnapshot.heap_used_mb, 128);
+  assert.equal(processRuntimeSnapshot.heap_total_mb, 150);
+  assert.equal(processRuntimeSnapshot.external_mb, 5);
+  assert.equal(processRuntimeSnapshot.array_buffers_mb, 1);
+  assert.equal(typeof runtime.getProcessRuntimeSnapshot, "function");
+  assert.equal(runtime.getProcessRuntimeSnapshot().rss_mb, 256);
+  // A process that refuses memoryUsage() must degrade to a reported error, never a 500 on the
+  // endpoint the deploy activation gate polls.
+  const guardedRuntime = Phase11aRuntimeModule.createServerPhase11aRuntime(new Proxy({
+    processRuntime: {
+      memoryUsage: () => {
+        throw new Error("memory_usage_denied");
+      },
+      hrtime: { bigint: () => process.hrtime.bigint() },
+    },
+  }, {
+    get(target, property, receiver) {
+      if (Reflect.has(target, property)) return Reflect.get(target, property, receiver);
+      return 0;
+    },
+  }));
+  assert.equal(guardedRuntime.getProcessRuntimeSnapshot().snapshot_error, "memory_usage_denied");
+
   const missingResponse = createResponse();
   await runtime.handleHttpRequest({
     method: "GET",
@@ -435,6 +473,7 @@ function createResponse() {
   assert.ok(!serverSource.includes("serverTickMonitorTimer = setInterval"));
   assert.ok(helperSource.includes("[netfox_server_world_state] served"));
   assert.ok(helperSource.includes("player_network: getPlayerNetworkStatsSnapshot()"));
+  assert.ok(helperSource.includes("process_runtime: getProcessRuntimeSnapshot()"));
   assert.ok(helperSource.includes("fileSystem.appendFileSync(CRASH_REPORT_PATH"));
   assert.ok(helperSource.includes("serverTickMonitorTimer = setInterval"));
 
