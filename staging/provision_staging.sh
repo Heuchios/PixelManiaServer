@@ -168,9 +168,13 @@ sudo -u "$STG_USER" -H bash -lc 'pm2 save --force' >/dev/null 2>&1 || true
 
 log "Caddy site for $STG_HOSTNAME"
 if command -v caddy >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ]; then
+  # The staging site logs to journald, not to a file. A file-logging block passes
+  # `caddy validate` (which checks config only, never the filesystem) and then fails the
+  # reload against the caddy unit's sandboxing -- on the same Caddy that fronts
+  # production. Read staging's logs with: journalctl -u caddy | grep staging-api
   SNIPPET_SOURCE="$(dirname "$(readlink -f "${BASH_SOURCE[0]}")")/Caddyfile.staging"
   sed -e "s|__STG_HOSTNAME__|$STG_HOSTNAME|g" -e "s|__STG_PORT__|$STG_PORT|g" \
-    "$SNIPPET_SOURCE" > "$CADDY_SNIPPET"
+    "$SNIPPET_SOURCE" | tr -d '\r' > "$CADDY_SNIPPET"
   chmod 0644 "$CADDY_SNIPPET"
 
   BACKUP="/etc/caddy/Caddyfile.bak.pixelmania-staging"
@@ -178,14 +182,27 @@ if command -v caddy >/dev/null 2>&1 && [ -f /etc/caddy/Caddyfile ]; then
   if ! grep -qF "import $CADDY_SNIPPET" /etc/caddy/Caddyfile; then
     printf '\nimport %s\n' "$CADDY_SNIPPET" >> /etc/caddy/Caddyfile
   fi
-  if caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
-    systemctl reload caddy
-    echo "Caddy reloaded with the staging site. Backup of the previous Caddyfile: $BACKUP"
-  else
+
+  # Restore on ANY failure, not just a validate failure. A reload that fails leaves the
+  # running process on the old config but leaves the BROKEN config on disk, so the next
+  # restart or reboot would take production's edge down. Never leave that state behind.
+  caddy_restore() {
     cp -p "$BACKUP" /etc/caddy/Caddyfile
-    echo "WARNING: caddy validate failed; the original Caddyfile was restored."
-    echo "Add this manually and reload Caddy yourself:"
+    systemctl reload caddy >/dev/null 2>&1 || true
+    echo "The original Caddyfile was restored; production is unaffected."
+    echo "Diagnose with: journalctl -xeu caddy --no-pager | tail -40"
+    echo "Then add this line to /etc/caddy/Caddyfile and reload:"
     echo "  import $CADDY_SNIPPET"
+  }
+
+  if ! caddy validate --config /etc/caddy/Caddyfile --adapter caddyfile >/dev/null 2>&1; then
+    echo "WARNING: caddy validate failed."
+    caddy_restore
+  elif ! systemctl reload caddy; then
+    echo "WARNING: caddy reload failed even though the config validated."
+    caddy_restore
+  else
+    echo "Caddy reloaded with the staging site. Backup of the previous Caddyfile: $BACKUP"
   fi
 else
   echo "Caddy not detected. Serve $STG_HOSTNAME -> 127.0.0.1:$STG_PORT yourself."
