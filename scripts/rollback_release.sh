@@ -3,7 +3,8 @@ set -Eeuo pipefail
 
 YES=false
 STATUS_ONLY=false
-HEALTH_URL="http://127.0.0.1:8080/health"
+HEALTH_URL=""
+HEALTH_URL_EXPLICIT=false
 HEALTH_ATTEMPTS=30
 
 while [ "$#" -gt 0 ]; do
@@ -18,6 +19,7 @@ while [ "$#" -gt 0 ]; do
       ;;
     --health-url)
       HEALTH_URL="${2:?--health-url requires a value}"
+      HEALTH_URL_EXPLICIT=true
       shift 2
       ;;
     --attempts)
@@ -48,6 +50,21 @@ fi
 CURRENT_LINK="$BASE_DIR/current"
 PREVIOUS_LINK="$BASE_DIR/previous"
 SHARED_DIR="$BASE_DIR/shared"
+
+# Resolve the health endpoint for THIS release root, not a hardcoded port. A staging
+# rollback that polls production's 8080 would read another server's release_id, decide the
+# rollback "succeeded", and leave staging broken while reporting success.
+# Precedence: --health-url > PIXELMANIA_HEALTH_URL > shared/health_url > legacy default.
+if [ "$HEALTH_URL_EXPLICIT" != "true" ]; then
+  if [ -n "${PIXELMANIA_HEALTH_URL:-}" ]; then
+    HEALTH_URL="$PIXELMANIA_HEALTH_URL"
+  elif [ -s "$SHARED_DIR/health_url" ]; then
+    HEALTH_URL="$(head -n 1 "$SHARED_DIR/health_url" | tr -d '[:space:]')"
+  fi
+fi
+if [ -z "$HEALTH_URL" ]; then
+  HEALTH_URL="http://127.0.0.1:8080/health"
+fi
 
 describe_target() {
   local label="$1"

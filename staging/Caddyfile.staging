@@ -1,0 +1,23 @@
+# PixelMania staging site. Rendered to /etc/caddy/staging.pixelmania.caddy by
+# provision_staging.sh and pulled in with `import` from the main Caddyfile.
+#
+# Everything on this host goes to the single staging Node process, including the
+# WebSocket upgrade. Proxying the whole host (rather than carving out /ws paths)
+# means the client override can point at /ws, /ws-a or /ws-b and all three work,
+# so a staging session exercises the same URL shape production uses.
+__STG_HOSTNAME__ {
+	encode zstd gzip
+
+	log {
+		output file /var/log/caddy/pixelmania-staging.log {
+			roll_size 10MiB
+			roll_keep 3
+		}
+	}
+
+	# Long-lived WebSockets: do not let the proxy time out an idle gameplay socket
+	# faster than production would, or staging will show disconnects production does not.
+	reverse_proxy 127.0.0.1:__STG_PORT__ {
+		flush_interval -1
+	}
+}

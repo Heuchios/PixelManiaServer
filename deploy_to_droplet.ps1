@@ -6,6 +6,7 @@ param(
   [string]$RemoteDir = "PixelManiaServer",
   [string]$SshKeyPath,
   [string]$SmokeApiBase = "https://api.pixelmaniagame.com",
+  [int]$LocalHealthPort = 8080,
   [string]$ClientVersion,
   [string]$MinClientVersion,
   [string]$UpdateUrl,
@@ -250,6 +251,9 @@ function Invoke-LocalDeployPreflight {
 
 Assert-SafeName "RemoteUser" $RemoteUser
 Assert-SafeName "RemoteDir" $RemoteDir
+if ($LocalHealthPort -lt 1 -or $LocalHealthPort -gt 65535) {
+  throw "LocalHealthPort must be a TCP port between 1 and 65535."
+}
 Assert-VersionValue "ClientVersion" $ClientVersion
 Assert-VersionValue "MinClientVersion" $MinClientVersion
 
@@ -404,6 +408,10 @@ $backendRemoteName = "$ReleaseId-backend.tar.gz"
 $clientRemoteName = "$ReleaseId-client.tar.gz"
 $manifestRemoteName = "$ReleaseId-release.json"
 $healthUrl = ("$SmokeApiBase".TrimEnd("/") + "/health")
+# The activation gate polls the environment's OWN Node listener. Pointing this at another
+# environment's port makes a deploy verify (or roll back) the wrong server.
+$localHealthUrl = "http://127.0.0.1:$LocalHealthPort/health"
+Write-Host "Deploy target: $sshTarget base ~/$RemoteDir, local health $localHealthUrl, public health $healthUrl"
 
 New-Item -ItemType Directory -Path $tempRoot | Out-Null
 try {
@@ -477,7 +485,7 @@ CLIENT_ARCHIVE="$BASE_DIR/incoming/__CLIENT_ARCHIVE__"
 MANIFEST_FILE="$BASE_DIR/incoming/__MANIFEST_FILE__"
 BACKEND_SHA256='__BACKEND_SHA256__'
 CLIENT_SHA256='__CLIENT_SHA256__'
-LOCAL_HEALTH_URL="http://127.0.0.1:8080/health"
+LOCAL_HEALTH_URL='__LOCAL_HEALTH_URL__'
 RUN_REMOTE_FULL_CHECKS='__RUN_REMOTE_FULL_CHECKS__'
 cleanup_release_on_error=1
 
@@ -553,6 +561,11 @@ for state_file in ops_dashboard_admin.json ops_dashboard_audit.log; do
 done
 touch "$SHARED_DIR/ops_dashboard_audit.log"
 chmod 0600 "$SHARED_DIR/ops_dashboard_audit.log"
+
+# Persist this environment's own health endpoint so a manual
+# `bin/rollback_release.sh --yes` on the box never polls a different environment's port.
+printf '%s\n' "$LOCAL_HEALTH_URL" > "$SHARED_DIR/health_url"
+chmod 0644 "$SHARED_DIR/health_url"
 
 cat > "$RELEASE_DIR/.release-env" <<EOF
 __RELEASE_ENV_CONTENT__
@@ -695,6 +708,7 @@ echo "Rollback: $BASE_DIR/bin/rollback_release.sh --yes"
   $remoteCommand = $remoteCommand.Replace("__BACKEND_SHA256__", $backendHash)
   $remoteCommand = $remoteCommand.Replace("__CLIENT_SHA256__", $clientHash)
   $remoteCommand = $remoteCommand.Replace("__RUN_REMOTE_FULL_CHECKS__", $remoteFullChecksValue)
+  $remoteCommand = $remoteCommand.Replace("__LOCAL_HEALTH_URL__", $localHealthUrl)
   $remoteCommand = $remoteCommand.Replace("__RELEASE_ENV_CONTENT__", $releaseEnvContent)
 
   Invoke-RemoteCommand $remoteCommand
@@ -720,7 +734,7 @@ echo "Rollback: $BASE_DIR/bin/rollback_release.sh --yes"
   }
 
   Write-Host "Release $ReleaseId is active."
-  Write-Host "Rollback from Windows: .\rollback_release.ps1 $RemoteIp"
+  Write-Host "Rollback from Windows: .\rollback_release.ps1 $RemoteIp -RemoteUser $RemoteUser -RemoteDir $RemoteDir"
   Write-Host "Rollback on the server: bash ~/$RemoteDir/bin/rollback_release.sh --yes"
 } finally {
   if (Test-Path -LiteralPath $tempRoot) {
