@@ -94,6 +94,34 @@ GRANT ALL ON ALL TABLES IN SCHEMA $STG_SCHEMA TO $STG_DB_USER;
 GRANT ALL ON ALL SEQUENCES IN SCHEMA $STG_SCHEMA TO $STG_DB_USER;
 SQL
 
+log "Releasing cloned world ownership"
+# THE non-obvious step. `worlds` carries the world-route ownership fence:
+#   world_owner_epoch / world_owner_token / world_owner_instance
+# and postgres_store.js claims a world with
+#   WHERE world_name = $1 AND world_owner_epoch < $2
+# a strictly-increasing high-water mark. A straight clone therefore imports
+# PRODUCTION's epoch (382 on world TEST when this was found). Staging's own epoch
+# counter starts at 1, `1 < 382` is false, zero rows update, and EVERY save is
+# refused with save_result=world_ownership_required -> the player sees
+# "PostgreSQL rejected the world update." on every block placed.
+#
+# Flushing Redis alone does not fix this: Redis holds the route TTL, Postgres holds
+# the high-water mark, and only clearing both puts staging back to a claimable state.
+# Ownership bookkeeping only — world_revision and world_state are untouched.
+released="$(sudo -u postgres psql -tA -v ON_ERROR_STOP=1 -d "$STG_DB" -c "
+  WITH released AS (
+    UPDATE $STG_SCHEMA.worlds
+       SET world_owner_epoch = 0,
+           world_owner_token = '',
+           world_owner_instance = ''
+     WHERE world_owner_epoch <> 0
+        OR world_owner_token <> ''
+        OR world_owner_instance <> ''
+    RETURNING 1
+  )
+  SELECT count(*) FROM released;")"
+printf 'Worlds released from production ownership: %s\n' "$released"
+
 log "Flushing staging Redis DB $STG_REDIS_DB"
 # Presence, world routes and admission tickets from before the clone now point at
 # world revisions that no longer exist. Left in place they produce exactly the

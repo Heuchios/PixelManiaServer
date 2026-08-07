@@ -139,6 +139,28 @@ Without that, a staging rollback would poll production's port, read production's
 - **Snapshots and the anti-dupe scanner are disabled on staging** to keep background work
   off the shared CPUs. If you are specifically testing either, turn it on in staging's
   `.env` and turn it back off after.
-- **Route enforcement is off** because staging is a single process. Bugs in world route
-  epoch fencing will not reproduce here; those need a two-route staging topology stood up
-  deliberately.
+- **Route enforcement must stay ON**, even though staging is a single process. It is the
+  persistence guard, not just routing: with it off the instance claims a world on entry but
+  saves through the unowned path, and the row's own fence then rejects every write with
+  *"PostgreSQL rejected the world update."* Cross-route bugs still will not reproduce on a
+  single process — that needs a two-route staging topology stood up deliberately — but the
+  flag is not the thing to turn off for that.
+
+- **`pm2 restart <name> --update-env` does NOT re-read `.env`.** It refreshes env from the
+  calling shell. `.env` is read by `dotenv` inside `ecosystem.config.js`, so a change there
+  only lands via `pm2 start ecosystem.config.js` (or a deploy). After editing staging's
+  `.env`:
+
+  ```bash
+  sudo -u pixelmania-stg -H bash -lc '
+    set -a; . /home/pixelmania-stg/PixelManiaServer/current/.release-env; set +a
+    export PIXELMANIA_RELEASE_ROOT=/home/pixelmania-stg/PixelManiaServer
+    export PIXELMANIA_BACKEND_ROOT=/home/pixelmania-stg/PixelManiaServer/current
+    cd /home/pixelmania-stg/PixelManiaServer/current
+    pm2 delete pixelmania >/dev/null 2>&1
+    pm2 start ecosystem.config.js --only pixelmania --env production
+    pm2 save'
+  ```
+
+  Verify from the server's own boot line, not from PM2:
+  `pm2 logs pixelmania --lines 40 --nostream | grep -i "route enforcement"`
