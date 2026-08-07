@@ -10,6 +10,7 @@ param(
   [string]$MinClientVersion,
   [string]$UpdateUrl,
   [switch]$ForceClientUpdate,
+  [switch]$SkipClientVersionLock,
   [switch]$RunSmokeChecks,
   [switch]$Force
 )
@@ -112,6 +113,10 @@ if ($MinClientVersion)  { $arguments.MinClientVersion = $MinClientVersion }
 if ($UpdateUrl)         { $arguments.UpdateUrl = $UpdateUrl }
 if ($ForceClientUpdate) { $arguments.ForceClientUpdate = $true }
 if ($RunSmokeChecks)    { $arguments.RunSmokeChecks = $true }
+# By default every deploy pins the server to the CLIENT_VERSION constant in the
+# client repo, so an older client cannot connect. Pass -SkipClientVersionLock to
+# ship the backend while a store rollout is still reaching players.
+if ($SkipClientVersionLock) { $arguments.SkipClientVersionLock = $true }
 
 & $deployScript @arguments
 

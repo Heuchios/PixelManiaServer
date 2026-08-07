@@ -56,9 +56,32 @@ git commit -m "what changed"
 ```
 
 ```powershell
-# Promote AND raise the client version gate (only once players have the new client).
-.\promote_staging_to_production.ps1 -ForceClientUpdate -ClientVersion 1.0.5 -MinClientVersion 1.0.1
+# Promote WITHOUT raising the client version gate — use this while a Play rollout is
+# still reaching players, or before the matching client build is published at all.
+.\promote_staging_to_production.ps1 -SkipClientVersionLock
 ```
+
+```powershell
+# Pin an explicit floor instead of the client repo's CLIENT_VERSION.
+.\promote_staging_to_production.ps1 -ClientVersion 1.1.0 -MinClientVersion 1.0.4
+```
+
+### The client version gate
+
+**Every deploy locks the server to the newest client by default.** `deploy_to_droplet.ps1`
+reads `const CLIENT_VERSION` out of `pixel-mania/Scripts/network_manager.gd` and pins both
+`SERVER_CLIENT_VERSION` and `MIN_CLIENT_VERSION` to it, so an older client cannot connect
+at all. It prints the values it locked, and `/health` is checked afterwards.
+
+Out-of-date clients get a full-screen gate (`ClientUpdateGate` autoload) with a store
+button, and anyone already in a world is ejected to the login screen.
+
+**Deploy order matters.** The floor flips the instant the server restarts, but Play
+rollouts take hours and PC players reinstall by hand. Publish the client and let the
+rollout reach 100% *before* the deploy that raises the floor — otherwise players who
+cannot yet get the update are locked out. Use `-SkipClientVersionLock` until then.
+
+`-ForceClientUpdate` still works but is now redundant; the lock is the default.
 
 ---
 
@@ -126,7 +149,52 @@ journalctl -u caddy --since "10 minutes ago" --no-pager | grep staging-api
 
 ---
 
-## 6. Restarting after a `.env` change
+## 6. Restarting
+
+**For code changes, do NOT restart — deploy.** `deploy_staging.ps1` /
+`promote_staging_to_production.ps1` swap the release and restart correctly. A manual
+restart after a code change leaves the old release live and `/health` reporting the old
+`release_id`.
+
+`sudo -u` is not optional. `pm2 restart all` as **root** talks to root's daemon, which is
+empty — it prints success and does nothing.
+
+```bash
+# Staging (one app).
+sudo -u pixelmania-stg pm2 restart pixelmania
+```
+
+```bash
+# Production, one app at a time.
+sudo -u pixelmania pm2 restart pixelmania-a       # gameplay route A (18091)
+sudo -u pixelmania pm2 restart pixelmania-b       # gameplay route B (18092)
+sudo -u pixelmania pm2 restart pixelmania         # login / route instance (8080)
+sudo -u pixelmania pm2 restart pixelmania-ops     # ops dashboard
+```
+
+```bash
+# Everything in one environment.
+sudo -u pixelmania-stg pm2 restart all     # staging — safe
+sudo -u pixelmania     pm2 restart all     # production — all six apps, DROPS EVERY PLAYER
+```
+
+```bash
+# Everything on the box, both environments.
+sudo -u pixelmania-stg pm2 restart all && sudo -u pixelmania pm2 restart all
+```
+
+```bash
+# Confirm afterwards.
+sudo -u pixelmania-stg pm2 list
+sudo -u pixelmania     pm2 list
+```
+
+> `exec_mode` is `fork`, so `pm2 reload` behaves like `restart` — it will not give you a
+> zero-downtime production bounce.
+
+---
+
+## 6b. Restarting after a `.env` change
 
 `.env` is NOT part of a deploy — it lives in `shared/.env` per environment.
 **`pm2 restart --update-env` does not re-read it.** Only loading `ecosystem.config.js` does.

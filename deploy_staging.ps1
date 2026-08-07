@@ -7,6 +7,7 @@ param(
   [string]$SshKeyPath,
   [string]$ReleaseId,
   [switch]$Fast,
+  [switch]$SkipClientVersionLock,
   [switch]$RunSmokeChecks
 )
 
@@ -44,6 +45,11 @@ if ($Fast) {
   $arguments.SkipLocalPreflight = $true
 }
 if ($RunSmokeChecks) { $arguments.RunSmokeChecks = $true }
+
+# Staging normally locks to the client build in this repo, exactly like production, so the
+# gate you test is the gate players get. -SkipClientVersionLock leaves the floor alone when
+# you need to test backend changes against an older client.
+if ($SkipClientVersionLock) { $arguments.SkipClientVersionLock = $true }
 
 if ($arguments.RemoteUser -eq "pixelmania") {
   throw "RemoteUser 'pixelmania' is the production account. Staging must deploy as its own user."
