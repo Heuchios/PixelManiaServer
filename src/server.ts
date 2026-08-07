@@ -3017,6 +3017,30 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
       const clientVersion = getClientVersion(data);
       if (!isClientVersionAllowed(clientVersion)) {
         sendClientUpdateRequired(socket, data, clientVersion);
+        // Clients that predate the update overlay do not understand
+        // client_update_required and drop it silently. For world-entry actions
+        // that silence is fatal: the loading overlay waits for join_world_ok /
+        // world_entry_active forever and the player is parked at 88% with no
+        // error. Reject the world-entry action explicitly as well, so every
+        // client generation's existing action_rejected path fails the join
+        // visibly and returns the player to the lobby with the update message
+        // instead of hanging. UX only — the version gate above remains the
+        // authority and the message is still not processed.
+        const gatedType = String(data.type || "").trim().toLowerCase();
+        if (gatedType === "join_world" || gatedType === "world_entry_ready") {
+          sendActionRejected(
+            socket,
+            gatedType,
+            `A new PixelMania update is live. Update your client to version ${MIN_CLIENT_VERSION} or newer to keep playing.`,
+            {
+              reason: "client_update_required",
+              world: cleanWorld(data.world || ""),
+              join_request_id: clampString(String(data.join_request_id || data.request_id || ""), 128),
+              min_client_version: MIN_CLIENT_VERSION,
+              update_url: UPDATE_URL,
+            }
+          );
+        }
         return;
       }
       player.client_version = clientVersion || player.client_version;
