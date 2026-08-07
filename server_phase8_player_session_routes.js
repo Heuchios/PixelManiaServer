@@ -1,6 +1,5 @@
 // Generated from src/server_phase8_player_session_routes.ts. Do not edit by hand.
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
 function isRecord(value) {
     return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
@@ -20,6 +19,11 @@ const WORLD_ENTRY_PROFILE_ENABLED = ["1", "true", "yes", "on"].includes(String(p
 const WORLD_ENTRY_PROFILE_SERVER_INSTANCE = String(process.env.SERVER_INSTANCE_ID || process.env.INSTANCE_ID || process.env.NODE_APP_INSTANCE || "development").trim().slice(0, 128);
 const WORLD_ENTRY_CATCHUP_MAX_NO_PROGRESS_ATTEMPTS = Math.max(2, Math.trunc(Number(process.env.WORLD_ENTRY_CATCHUP_MAX_NO_PROGRESS_ATTEMPTS) || 10));
 const WORLD_ENTRY_CATCHUP_RETRY_MS = Math.max(25, Math.min(250, Math.trunc(Number(process.env.WORLD_ENTRY_CATCHUP_RETRY_MS) || 100)));
+// How long a provisional world entry (snapshot_sent, not yet activated by
+// world_entry_ready) may stay pending before a fresh join_world on the same socket is
+// allowed to replace it instead of being rejected. See handleJoinWorld for why an
+// unbounded latch locks a player out of every world for the life of the connection.
+const WORLD_ENTRY_PROVISIONAL_TIMEOUT_MS = Math.max(5000, Math.trunc(Number(process.env.WORLD_ENTRY_PROVISIONAL_TIMEOUT_MS) || 20000));
 function worldEntryElapsedMs(startedAt, endedAt = process.hrtime.bigint()) {
     return Math.round((Number(endedAt - startedAt) / 1_000_000) * 1000) / 1000;
 }
@@ -318,19 +322,50 @@ function createServerPhase8PlayerSessionRoutes(deps) {
     async function handleJoinWorld(socket, player, data, context) {
         if (!deps.requireAuthenticated(socket, player, "join worlds"))
             return;
-        const oldWorld = player.world;
         const newWorld = deps.cleanWorld(data.world);
         const joinRequestId = deps.clampString(data.join_request_id || data.request_id || "", 128);
         const worldEntryReadySupported = data.world_entry_ready_v1 === true
             || ["1", "true", "yes", "on"].includes(String(data.world_entry_ready_v1 || "").trim().toLowerCase());
+        // A provisional entry only clears when the client sends world_entry_ready (activate)
+        // or leave_world (cancel). A client that abandons the loading screen sends neither --
+        // its join_world_ok was dropped, the snapshot stream failed, the loading overlay gave
+        // up and returned to the lobby, the scene was torn down. Nothing else clears the flag,
+        // so rejecting unconditionally left the socket permanently unable to join ANY world:
+        // the player's only recovery was closing and reopening the game, which is exactly the
+        // intermittent "cannot join, restart, try again" report. Keep the guard for genuine
+        // concurrent loads (double-clicking a world in the lobby), but treat a pending entry
+        // older than the timeout as abandoned and cancel it so this join can proceed.
         if (String(player.world_entry_state || "") === "snapshot_sent" && !player.joined_world) {
-            deps.sendActionRejected(socket, "join_world", "A world is already loading.", {
-                reason: "world_entry_already_loading",
-                world: deps.cleanWorld(player.world_entry_world || player.world || ""),
+            const pendingWorld = deps.cleanWorld(player.world_entry_world || player.world || "");
+            const pendingStartedAtMsec = Math.max(0, Math.trunc(Number(player.world_entry_started_at_msec || 0)));
+            const pendingAgeMs = pendingStartedAtMsec > 0
+                ? Math.max(0, Date.now() - pendingStartedAtMsec)
+                : Number.MAX_SAFE_INTEGER;
+            if (pendingAgeMs < WORLD_ENTRY_PROVISIONAL_TIMEOUT_MS) {
+                deps.sendActionRejected(socket, "join_world", "A world is already loading.", {
+                    reason: "world_entry_already_loading",
+                    world: pendingWorld,
+                    join_request_id: joinRequestId,
+                    retry_after_msec: WORLD_ENTRY_PROVISIONAL_TIMEOUT_MS - pendingAgeMs,
+                });
+                return;
+            }
+            console.warn("[world-entry-server]", JSON.stringify({
+                event: "world_entry_provisional_timeout",
+                world_id: pendingWorld,
+                server_instance: WORLD_ENTRY_PROFILE_SERVER_INSTANCE,
+                entry_session_id: deps.clampString(player.world_entry_session_id || "", 128),
+                previous_join_request_id: deps.clampString(player.world_entry_join_request_id || "", 128),
                 join_request_id: joinRequestId,
-            });
-            return;
+                requested_world: newWorld,
+                pending_age_ms: pendingAgeMs,
+                save_result: "provisional_entry_cancelled_for_rejoin",
+            }));
+            // Releases the admission reservation, world index entry and route lease, and clears
+            // player.world -- so the join below correctly sees no previous world to leave.
+            await cancelProvisionalWorldEntry(player, pendingWorld, context, "provisional_entry_timeout");
         }
+        const oldWorld = player.world;
         const worldEntryProfile = beginWorldEntryServerProfile(newWorld, joinRequestId);
         recordWorldEntryServerStage(worldEntryProfile, "request_validated");
         if (await deps.rejectIfWorldBanned(socket, player, newWorld, "join_world")) {
