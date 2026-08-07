@@ -1,6 +1,5 @@
 // Generated from src/server_friend_routes.ts. Do not edit by hand.
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
 function createServerFriendRoutes(deps) {
     const { accountKey, accounts, cleanAccountName, findOnlinePlayerByUsername, makeRequestId, queueAccountsSave, requireAuthenticated, sendJson, } = deps;
     function sanitizeAccountNameArray(rawValue, limit = 200) {

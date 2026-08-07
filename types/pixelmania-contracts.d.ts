@@ -1545,6 +1545,9 @@ declare namespace PixelMania {
     item_category: string;
     amount: number;
     remaining: number;
+    // Read before `remaining` by the client's key-fallback chain
+    // (pixel-mania/Scripts/drop_manager.gd:364 and :612).
+    remaining_amount: number;
     requested_by: PlayerId | string;
     requested_by_name: string;
   }

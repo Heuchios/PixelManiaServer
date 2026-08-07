@@ -1,6 +1,5 @@
 "use strict";
 
-export {};
 
 type PacketRecord = Record<string, any>;
 type MaybePromise<T> = T | Promise<T>;
@@ -348,6 +347,6 @@ function createServerPhase9RemainingRoutes(deps: Phase9RemainingRouteDeps) {
   };
 }
 
-module.exports = {
+export = {
   createServerPhase9RemainingRoutes,
 };

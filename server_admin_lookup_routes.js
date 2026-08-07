@@ -1,6 +1,5 @@
 // Generated from src/server_admin_lookup_routes.ts. Do not edit by hand.
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
 function toErrorMessage(error) {
     return error && error.message ? String(error.message) : String(error || "unknown");
 }

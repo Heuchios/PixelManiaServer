@@ -1,6 +1,5 @@
 // Generated from src/server_phase8_final_routes.ts. Do not edit by hand.
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
 // The [APPEARANCE][Server] logs sit on the player_position handler and fire on every
 // idle/walk/jump/fall transition -- roughly 1,500 synchronous stdout writes per second at
 // 500 players, one of which inspects the whole equipment_slots object. Set

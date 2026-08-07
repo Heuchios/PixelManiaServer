@@ -1,6 +1,5 @@
 "use strict";
 
-export {};
 
 type PacketRecord = Record<string, any>;
 
@@ -332,6 +331,6 @@ function createServerFriendRoutes(deps: FriendRoutesDeps) {
   };
 }
 
-module.exports = {
+export = {
   createServerFriendRoutes,
 };

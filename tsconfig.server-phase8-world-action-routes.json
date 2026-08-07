@@ -11,8 +11,7 @@
     "target": "ES2022",
     "types": [
       "node"
-    ],
-    "useUnknownInCatchVariables": false
+    ]
   },
   "include": [
     "src/server_phase8_world_action_routes.ts"

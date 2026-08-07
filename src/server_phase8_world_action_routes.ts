@@ -1,6 +1,5 @@
 "use strict";
 
-export {};
 
 type PacketRecord = Record<string, any>;
 
@@ -1675,6 +1674,6 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
   };
 }
 
-module.exports = {
+export = {
   createServerPhase8WorldActionRoutes,
 };

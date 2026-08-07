@@ -1,3 +1,4 @@
+/// <reference path="../types/pixelmania-contracts.d.ts" />
 "use strict";
 
 type PacketRecord = Record<string, unknown>;
@@ -238,9 +239,13 @@ function createServerPhase6Helpers(config: Phase6HelperConfig) {
     pickupResults: unknown,
     worldUpdates: unknown,
     successAmount: unknown
-  ): PacketRecord {
+  ): PacketRecord & {
+    drop_ids: string[];
+    removed_drop_ids: string[];
+    updated_drops: PixelMania.DropPickupWorldUpdatePayload[];
+  } {
     const removedDropIds: string[] = [];
-    const updatedDrops: PacketRecord[] = [];
+    const updatedDrops: PixelMania.DropPickupWorldUpdatePayload[] = [];
     const seenRemoved = new Set<string>();
     const safeWorld = config.cleanWorld(worldName || "START");
     const updateEntries = Array.isArray(worldUpdates) ? worldUpdates : [];

@@ -1,6 +1,5 @@
 // Generated from src/server_trade_routes.ts. Do not edit by hand.
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
 function createServerTradeRoutes(deps) {
     const { ItemDatabase, MAX_ITEM_STACK, PUNISHMENT_SCOPE_GLOBAL, TRADE_SLOT_COUNT, accountKey, activeTrades, arePlayersCloseEnoughForTrade, cancelTrade, cleanAccountName, clampInteger, clampString, cryptoRandomUUID, ensureWritablePlayerState, executeTrade, findOnlinePlayerByPlayerId, findOnlinePlayerByUsername, formatPunishmentBlockMessage, getBlockingPunishment, getInventoryCount, getTradeParticipantRecord, getTradePartyIds, isTradeParticipant, logSecurityEvent, makeTradeSlots, requireAuthenticated, resolveInventoryCategory, sendJson, sendPunishmentNotice, sendTradeChat, sendTradeError, sendTradeState, tradeByPlayerId, } = deps;
     function getCurrentTrade(player, data) {

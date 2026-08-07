@@ -1,6 +1,5 @@
 "use strict";
 
-export {};
 
 type PacketRecord = Record<string, any>;
 
@@ -995,6 +994,6 @@ function createServerPhase8FinalRoutes(deps: Phase8FinalRouteDeps) {
   };
 }
 
-module.exports = {
+export = {
   createServerPhase8FinalRoutes,
 };

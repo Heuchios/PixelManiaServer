@@ -1,6 +1,5 @@
 "use strict";
 
-export {};
 
 type PacketRecord = Record<string, any>;
 
@@ -930,6 +929,6 @@ function createServerAdminLookupRoutes(deps: AdminLookupRoutesDeps) {
   };
 }
 
-module.exports = {
+export = {
   createServerAdminLookupRoutes,
 };

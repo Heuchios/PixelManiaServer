@@ -1,6 +1,5 @@
 "use strict";
 
-export {};
 
 type PacketRecord = Record<string, any>;
 
@@ -873,6 +872,6 @@ function createServerAccountAuthRoutes(deps: AccountAuthDeps) {
   };
 }
 
-module.exports = {
+export = {
   createServerAccountAuthRoutes,
 };

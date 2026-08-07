@@ -1,3 +1,4 @@
+/// <reference path="../types/pixelmania-contracts.d.ts" />
 "use strict";
 
 type JsonRecord = Record<string, unknown>;
@@ -19,14 +20,14 @@ interface InventoryContractsLike {
     delta: number;
     expectedBeforeAmount?: number;
     stackLimit?: number;
-  }): InventoryDelta;
+  }): PixelMania.InventoryDeltaSource;
   buildInventoryDeltaClientPayload(input: {
     itemType: string;
     itemCategory: string;
     delta: number;
     stackLimit: number;
     afterCount?: number;
-  }): JsonRecord;
+  }): PixelMania.InventoryDeltaClientPayload;
   buildInventoryTransactionResultResponse(payload: unknown, username: string): JsonRecord;
 }
 
@@ -53,8 +54,8 @@ function createServerInventoryTransactionHelpers(config: InventoryTransactionHel
   const itemDatabase = config.itemDatabase;
   const inventoryContracts = config.inventoryContracts;
 
-  function buildInventoryDeltasBetweenStates(beforeState: unknown, afterState: unknown): InventoryDelta[] {
-    const deltas: InventoryDelta[] = [];
+  function buildInventoryDeltasBetweenStates(beforeState: unknown, afterState: unknown): PixelMania.InventoryDeltaSource[] {
+    const deltas: PixelMania.InventoryDeltaSource[] = [];
     const seen = new Set<string>();
     const fields = Object.values(itemDatabase.CATEGORY_TO_FIELD || {});
 
@@ -90,10 +91,10 @@ function createServerInventoryTransactionHelpers(config: InventoryTransactionHel
     return deltas;
   }
 
-  function buildInventoryDeltaClientPayloads(deltas: unknown = [], state: unknown = null): JsonRecord[] {
+  function buildInventoryDeltaClientPayloads(deltas: unknown = [], state: unknown = null): PixelMania.InventoryDeltaClientPayload[] {
     if (!Array.isArray(deltas) || deltas.length === 0) return [];
 
-    const payloads: JsonRecord[] = [];
+    const payloads: PixelMania.InventoryDeltaClientPayload[] = [];
     const seen = new Set<string>();
     for (const rawDelta of deltas) {
       if (!isRecord(rawDelta)) continue;

@@ -1,6 +1,5 @@
 "use strict";
 
-export {};
 
 type PacketRecord = Record<string, any>;
 type MaybePromise<T> = T | Promise<T>;
@@ -477,6 +476,6 @@ function createServerInventoryEconomyRoutes(deps: InventoryEconomyRoutesDeps) {
   };
 }
 
-module.exports = {
+export = {
   createServerInventoryEconomyRoutes,
 };

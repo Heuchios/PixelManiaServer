@@ -1,6 +1,5 @@
 // Generated from src/server_phase8_world_action_routes.ts. Do not edit by hand.
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
 const WORLD_BLOCK_PLACE_INVENTORY_LOCK_WAIT_MS = 650;
 const WORLD_BLOCK_PLACE_INVENTORY_LOCK_RETRY_MS = 25;
 function createServerPhase8WorldActionRoutes(deps) {

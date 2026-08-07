@@ -8,45 +8,45 @@ const http = require("http");
 const nodemailer = require("nodemailer");
 const os = require("os");
 const path = require("path");
-const ItemDatabase = require("./server_item_database");
-const ItemAtlasDB = require("./item_atlas_db");
-const DropContracts = require("./server_drop_contracts");
-const InventoryContracts = require("./server_inventory_contracts");
-const PacketContracts = require("./server_packet_contracts");
-const ServerMessageRouterHelpersModule = require("./server_message_router_helpers");
-const ServerBotRateLimitHelpersModule = require("./server_bot_rate_limit_helpers");
-const ServerInventoryTransactionHelpersModule = require("./server_inventory_transaction_helpers");
-const ServerWorldInteractionPayloadHelpersModule = require("./server_world_interaction_payload_helpers");
-const ServerSocketDeliveryHelpersModule = require("./server_socket_delivery_helpers");
-const ServerPunishmentHelpersModule = require("./server_punishment_helpers");
-const ServerPhase6HelpersModule = require("./server_phase6_helpers");
-const ServerPhase7DispatcherModule = require("./server_phase7_dispatcher");
-const ServerPhase8PlayerSessionRoutesModule = require("./server_phase8_player_session_routes");
-const ServerPhase8WorldActionRoutesModule = require("./server_phase8_world_action_routes");
-const ServerPhase8FinalRoutesModule = require("./server_phase8_final_routes");
-const ServerPhase9RemainingRoutesModule = require("./server_phase9_remaining_routes");
-const ServerAccountAuthRoutesModule = require("./server_account_auth_routes");
-const ServerAccountSessionHelpersModule = require("./server_account_session_helpers");
-const ServerAdminLookupRoutesModule = require("./server_admin_lookup_routes");
-const ServerFriendRoutesModule = require("./server_friend_routes");
-const ServerTradeRoutesModule = require("./server_trade_routes");
-const ServerInventoryEconomyRoutesModule = require("./server_inventory_economy_routes");
-const ServerPhase11aRuntimeModule = require("./server_phase11a_runtime");
-const ServerPhase11bLifecycleModule = require("./server_phase11b_lifecycle");
-const ServerPhase11cTrustedMovementModule = require("./server_phase11c_trusted_movement");
-const ServerPhase11dStandardMovementModule = require("./server_phase11d_standard_movement");
-const PostgresStore = require("./postgres_store");
-const RedisStore = require("./redis_store");
-const CrashDetails = require("./server_crash_details");
-const ServerEnvConfig = require("./server_env_config");
-const IdentityHelpers = require("./server_identity_helpers");
-const TextHelpers = require("./server_text_helpers");
-const VersionHelpers = require("./server_version_helpers");
-const AccountHelpers = require("./server_account_helpers");
-const PersistenceHelpers = require("./server_persistence_helpers");
-const PlayerStateHelpersModule = require("./server_player_state_helpers");
-const WorldStateHelpersModule = require("./server_world_state_helpers");
-const ServerRuntimeStats = require("./server_runtime_stats");
+import ItemDatabase = require("./server_item_database");
+import ItemAtlasDB = require("./item_atlas_db");
+import DropContracts = require("./server_drop_contracts");
+import InventoryContracts = require("./server_inventory_contracts");
+import PacketContracts = require("./server_packet_contracts");
+import ServerMessageRouterHelpersModule = require("./server_message_router_helpers");
+import ServerBotRateLimitHelpersModule = require("./server_bot_rate_limit_helpers");
+import ServerInventoryTransactionHelpersModule = require("./server_inventory_transaction_helpers");
+import ServerWorldInteractionPayloadHelpersModule = require("./server_world_interaction_payload_helpers");
+import ServerSocketDeliveryHelpersModule = require("./server_socket_delivery_helpers");
+import ServerPunishmentHelpersModule = require("./server_punishment_helpers");
+import ServerPhase6HelpersModule = require("./server_phase6_helpers");
+import ServerPhase7DispatcherModule = require("./server_phase7_dispatcher");
+import ServerPhase8PlayerSessionRoutesModule = require("./server_phase8_player_session_routes");
+import ServerPhase8WorldActionRoutesModule = require("./server_phase8_world_action_routes");
+import ServerPhase8FinalRoutesModule = require("./server_phase8_final_routes");
+import ServerPhase9RemainingRoutesModule = require("./server_phase9_remaining_routes");
+import ServerAccountAuthRoutesModule = require("./server_account_auth_routes");
+import ServerAccountSessionHelpersModule = require("./server_account_session_helpers");
+import ServerAdminLookupRoutesModule = require("./server_admin_lookup_routes");
+import ServerFriendRoutesModule = require("./server_friend_routes");
+import ServerTradeRoutesModule = require("./server_trade_routes");
+import ServerInventoryEconomyRoutesModule = require("./server_inventory_economy_routes");
+import ServerPhase11aRuntimeModule = require("./server_phase11a_runtime");
+import ServerPhase11bLifecycleModule = require("./server_phase11b_lifecycle");
+import ServerPhase11cTrustedMovementModule = require("./server_phase11c_trusted_movement");
+import ServerPhase11dStandardMovementModule = require("./server_phase11d_standard_movement");
+import PostgresStore = require("./postgres_store");
+import RedisStore = require("./redis_store");
+import CrashDetails = require("./server_crash_details");
+import ServerEnvConfig = require("./server_env_config");
+import IdentityHelpers = require("./server_identity_helpers");
+import TextHelpers = require("./server_text_helpers");
+import VersionHelpers = require("./server_version_helpers");
+import AccountHelpers = require("./server_account_helpers");
+import PersistenceHelpers = require("./server_persistence_helpers");
+import PlayerStateHelpersModule = require("./server_player_state_helpers");
+import WorldStateHelpersModule = require("./server_world_state_helpers");
+import ServerRuntimeStats = require("./server_runtime_stats");
 
 type ServerPacketRecord = Record<string, unknown>;
 
@@ -4017,8 +4017,14 @@ function sendClientUpdateRequired(socket: any, data: any, clientVersion: any = "
   });
 }
 
-function cloneJson(value: any) {
-  return AccountHelpers.cloneJson(value);
+function isRecord(value: unknown): value is Record<string, any> {
+  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
+
+function cloneJson<T>(value: T): T {
+  // AccountHelpers.cloneJson is declared (value: unknown) => unknown; it is a JSON
+  // deep clone, so the result is structurally identical to the input.
+  return AccountHelpers.cloneJson(value) as T;
 }
 
 function makeAuditHash(value: any) {
@@ -5859,16 +5865,17 @@ async function executeTrade(trade: any) {
       ip_address: getSocketAddress(requesterRecord.socket),
     });
 
-    if (!tradeResult.ok) {
+    if (!tradeResult || !tradeResult.ok) {
       cancelTrade(trade, "Trade was canceled because server inventory changed. Try again.");
       return;
     }
 
-    if (!applyInventoryLedgerToState(stateA, tradeResult.request_ledgers?.requester)) {
+    const tradeCommit = tradeResult as Record<string, any>;
+    if (!applyInventoryLedgerToState(stateA, tradeCommit.request_ledgers?.requester)) {
       cancelTrade(trade, "Trade was canceled because inventory reconciliation failed.");
       return;
     }
-    if (!applyInventoryLedgerToState(stateB, tradeResult.request_ledgers?.target)) {
+    if (!applyInventoryLedgerToState(stateB, tradeCommit.request_ledgers?.target)) {
       cancelTrade(trade, "Trade was canceled because inventory reconciliation failed.");
       return;
     }
@@ -5879,7 +5886,7 @@ async function executeTrade(trade: any) {
     const worldKeyTransferResult = await applyWorldLockKeyTradeOwnershipTransfers(
       trade,
       worldKeyValidation.transfers,
-      tradeResult.item_instance_movements || [],
+      tradeCommit.item_instance_movements || [],
       requesterRecord,
       targetRecord,
       tradeTransactionId
@@ -7511,7 +7518,7 @@ async function handleVendBuy(socket: any, player: any, data: any, worldName: any
       persistence.ok
         ? persistence.value
         : { ok: false, reason: persistence.reason || "world_persistence_failed" }
-    ) as Awaited<ReturnType<typeof postgresStore.applyVendBuyTransaction>>;
+    ) as NonNullable<Awaited<ReturnType<typeof postgresStore.applyVendBuyTransaction>>>;
 
     if (!transaction.ok) {
       restoreWorldMutationRollback(worldName, worldRollback);
@@ -8257,7 +8264,9 @@ async function handleSafeWithdraw(socket: any, player: any, data: any, worldName
  */
 async function prepareSafeBreakInventoryReturn(socket: any, player: any, worldName: any, update: any) {
   const safe = getSafeStateAt(worldName, update.x, update.y, false);
-  const slots = Array.isArray(safe.slots) ? safe.slots.map(sanitizeSafeSlot).filter(Boolean) : [];
+  const slots = Array.isArray(safe.slots)
+    ? safe.slots.map(sanitizeSafeSlot).filter((entry): entry is Exclude<ReturnType<typeof sanitizeSafeSlot>, null> => Boolean(entry))
+    : [];
 
   if (slots.length === 0) {
     return { ok: true, playerState: null, message: "" };
@@ -10221,7 +10230,7 @@ function parseTackleBoxTimestampMs(value: any) {
 
 function getTimedProviderCooldownMsForBlockType(blockType: any) {
   const clean = clampString(blockType || "");
-  const definition = ItemDatabase.getItemDefinition(clean) || {};
+  const definition: Record<string, any> = ItemDatabase.getItemDefinition(clean) || {};
   if (isWaterWellBlockType(clean)) {
     const seconds = Number(definition.water_well_cooldown_seconds);
     if (Number.isFinite(seconds)) return clampInteger(Math.round(seconds * 1000), 0, 30 * 24 * 60 * 60 * 1000);
@@ -11608,7 +11617,7 @@ async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName:
       return false;
     }
 
-    const definition = ItemDatabase.getItemDefinition(block.block_type) || {};
+    const definition: Record<string, any> = ItemDatabase.getItemDefinition(block.block_type) || {};
     let atmBeforeState = null;
     let atmStagedState = null;
     let atmReward: { item_id: string; item_category: string; amount: number } | null = null;
@@ -12428,9 +12437,11 @@ async function handleStationRecipeTransaction(socket: any, player: any, data: an
     return;
   }
 
-  const costs = recipe.cost.map(normalizeInventoryAmountEntry);
+  const costs = recipe.cost
+    .map(normalizeInventoryAmountEntry)
+    .filter((entry): entry is Exclude<ReturnType<typeof normalizeInventoryAmountEntry>, null> => entry !== null);
   const output = normalizeInventoryAmountEntry(recipe.output);
-  if (costs.some((entry: unknown) => entry === null) || !output) {
+  if (costs.length !== recipe.cost.length || !output) {
     sendInventoryTransactionRejected(socket, data, "Recipe has invalid server item data.");
     return;
   }
@@ -13366,7 +13377,7 @@ async function removeWorldLockKeysFromPlayerInventory(socket: any, player: any, 
 
   const committedState = commit.state;
   const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
-  const keyInventoryDelta = inventoryDeltas.find((entry: ServerInventoryDeltaRecord | null) =>
+  const keyInventoryDelta = inventoryDeltas.find((entry) =>
     entry &&
     entry.item_type === WORLD_LOCK_KEY_ITEM_TYPE &&
     entry.item_category === WORLD_LOCK_KEY_ITEM_CATEGORY
@@ -13703,7 +13714,7 @@ async function handleWorldLockGetKeyTransaction(socket: any, player: any, data: 
 
   const committedState = commit.state;
   const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
-  const keyInventoryDelta = inventoryDeltas.find((entry: ServerInventoryDeltaRecord | null) =>
+  const keyInventoryDelta = inventoryDeltas.find((entry) =>
     entry &&
     entry.item_type === WORLD_LOCK_KEY_ITEM_TYPE &&
     entry.item_category === WORLD_LOCK_KEY_ITEM_CATEGORY
@@ -14523,7 +14534,7 @@ function isPersistentInteractionBlockType(blockType: any) {
 }
 
 function getBlockCollisionRectForGrid(x: any, y: any, blockType: any) {
-  const definition = ItemDatabase.getItemDefinition(blockType) || {};
+  const definition: Record<string, any> = ItemDatabase.getItemDefinition(blockType) || {};
   const size = parseBlockVector2(definition.collision_size || definition.visual_size, TILE_SIZE, TILE_SIZE);
   const offset = parseBlockVector2(definition.collision_offset || definition.visual_offset, 0, 0);
   const centerX = (Number(x) || 0) * TILE_SIZE + offset.x;
@@ -17369,9 +17380,9 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
   if (!spendResult.ok) {
     sendActionRejected(socket, "world_block_update", spendResult.message, {
       reason: spendResult.reason || "inventory_denied",
-      item_id: cost.item_id,
-      item_category: cost.item_category,
-      amount: cost.amount,
+      item_id: cost?.item_id,
+      item_category: cost?.item_category,
+      amount: cost?.amount,
       request_id: requestId,
       action: update.action,
       block_action: update.action,
@@ -17723,7 +17734,7 @@ function canPlayerPassWoodenEntrance(player: any, worldName: any) {
 function isSpringboardBlockType(blockType: any) {
   const clean = clampString(blockType || "");
   if (clean === "mushroom" || clean === "mushroom_1" || clean === "mushroom_2") return true;
-  const definition = ItemDatabase.getItemDefinition(clean) || {};
+  const definition: Record<string, any> = ItemDatabase.getItemDefinition(clean) || {};
   return Boolean(definition.springboard || definition.pinball_block || (Array.isArray(definition.springboard_animation_frames) && definition.springboard_animation_frames.length > 1));
 }
 
@@ -18261,7 +18272,7 @@ function prepareToggleBlockStateUpdate(socket: any, player: any, worldName: any,
     return false;
   }
 
-  const definition = ItemDatabase.getItemDefinition(block.block_type) || {};
+  const definition: Record<string, any> = ItemDatabase.getItemDefinition(block.block_type) || {};
   const toggleAction = clampString(definition.toggle_action || `${block.block_type}_state`);
   if (toggleAction !== expectedAction) {
     sendActionRejected(socket, "world_interaction_update", "Toggle block missing.");
@@ -18296,7 +18307,7 @@ function prepareThemeMachineStateUpdate(socket: any, player: any, worldName: any
     return false;
   }
 
-  const definition = ItemDatabase.getItemDefinition(block.block_type) || {};
+  const definition: Record<string, any> = ItemDatabase.getItemDefinition(block.block_type) || {};
   const configuredTheme = sanitizeWorldBackgroundTheme(definition.theme_machine_theme || "");
   update.enabled = Boolean(update.enabled);
   update.theme = configuredTheme || sanitizeWorldBackgroundTheme(update.theme || "night") || "night";
@@ -21020,7 +21031,7 @@ function appendServerHotbarItem(state: any, items: any, categories: any, itemId:
     hotbar_items: ["punch", ...items.slice(1), itemId],
     hotbar_item_categories: ["tool", ...categories.slice(1), itemCategory],
   });
-  if (!normalized || typeof normalized !== "object" || Array.isArray(normalized)) return;
+  if (!isRecord(normalized)) return;
   if (normalized.hotbar_items.length <= beforeLength) return;
   items.splice(0, items.length, ...normalized.hotbar_items);
   categories.splice(0, categories.length, ...normalized.hotbar_item_categories);
@@ -21195,7 +21206,7 @@ function canAddItemToState(state: any, itemId: any, itemCategory: any, amount: a
   if (currentCount + safeAmount > stackLimit) return false;
   if (safeAmount <= 0 || currentCount > 0 || resolvedCategory === "currency") return true;
 
-  const definition = ItemDatabase.getItemDefinition(cleanItemId) || {};
+  const definition: Record<string, any> = ItemDatabase.getItemDefinition(cleanItemId) || {};
   if (definition.hidden === true) return true;
 
   return getInventoryOccupiedSlotCount(state) < resolveInventorySlotCount(state);
@@ -21212,7 +21223,7 @@ function getDisplayReturnCapacity(state: unknown, slot: Record<string, unknown>)
     return { ok: false, reason: "invalid_category", message: "That displayed item is no longer valid." };
   }
 
-  const definition = ItemDatabase.getItemDefinition(itemId) || {};
+  const definition: Record<string, any> = ItemDatabase.getItemDefinition(itemId) || {};
   const displayName = clampString(definition.display_name || itemId, MAX_ITEM_ID_LENGTH);
   const stackLimit = ItemDatabase.getStackLimit(itemId);
   const currentCount = getInventoryCount(state, itemId, itemCategory);
@@ -24419,6 +24430,7 @@ function tickBatteryChargersForWorld(worldName: any, state: any, now: any = Date
     chargerState.produced_count = chargerState.output_count;
     chargerState.production_progress = chargerState.battery_progress;
     const savedState = setBatteryChargerState(state, clean, chargerState);
+    if (!savedState) continue;
     const after = getBatteryChargerChangeSignature(savedState);
     const afterPendingConsumption = Math.max(0, Number(savedState.pending_consumption_watts) || 0);
     if (activeGeneratorKeys.length > 0 && Math.abs(afterPendingConsumption - beforePendingConsumption) > 0.000001) {
@@ -24932,11 +24944,11 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
     transactionId,
     {
       operation,
-      linked_pole_key: savedState.linked_pole_key || "",
-      output_count: savedState.output_count,
+      linked_pole_key: savedState?.linked_pole_key || "",
+      output_count: savedState?.output_count,
       output_capacity: OIL_REFINERY_OUTPUT_CAPACITY,
-      battery_watts: savedState.battery_watts,
-      battery_count: savedState.battery_count,
+      battery_watts: savedState?.battery_watts,
+      battery_count: savedState?.battery_count,
     }
   );
 
@@ -25258,8 +25270,8 @@ async function handleBatteryChargerRequest(socket: any, player: any, data: any =
     transactionId,
     {
       operation,
-      linked_pole_key: savedState.linked_pole_key || "",
-      output_count: savedState.output_count,
+      linked_pole_key: savedState?.linked_pole_key || "",
+      output_count: savedState?.output_count,
       output_capacity: BATTERY_CHARGER_OUTPUT_CAPACITY,
     }
   );
@@ -28881,7 +28893,7 @@ function getEffectiveWorldCollisionBlockCount(worldName: any, state: any) {
   const effectiveForeground = getEffectiveForegroundBlocksForState(state, worldName);
   return effectiveForeground.filter((entry: ServerPacketRecord) => {
     const blockType = clampString(entry?.block_type || "");
-    const definition = ItemDatabase.getItemDefinition(blockType) || {};
+    const definition: Record<string, any> = ItemDatabase.getItemDefinition(blockType) || {};
     return !definition.no_collision;
   }).length;
 }
@@ -30209,6 +30221,8 @@ function buildActiveWorldEventTileUpdates(worldName: any, state: any) {
 
   for (const rawTile of tiles) {
     const tile = normalizeWorldEventTileEntry(rawTile, eventId);
+    // Returns null for stale entries whose block was removed from the item database.
+    if (!tile) continue;
     if (tile.event_block_id === "") continue;
     updates.push({
       type: "world_block_update",
@@ -31610,7 +31624,7 @@ function loadAccountsFromJson() {
   accounts.clear();
   const data = readJsonFile(ACCOUNTS_SAVE_PATH);
 
-  if (!data || typeof data !== "object" || Array.isArray(data)) {
+  if (!isRecord(data)) {
     return;
   }
 
@@ -31770,7 +31784,7 @@ function ensurePlayerState(username: any) {
   }
 
   const data = readJsonFile(getPlayerSavePath(clean));
-  if (!data || typeof data !== "object" || Array.isArray(data)) {
+  if (!isRecord(data)) {
     return null;
   }
 
@@ -32425,7 +32439,7 @@ async function releaseOwnedWorldRoutesForShutdown() {
 
     try {
       const result = await redisStore.releaseWorldRoute(clean, SERVER_INSTANCE_ID, ownershipToken);
-      if (result && result.ok === false) failed += 1;
+      if (result && result.released === false) failed += 1;
       else released += 1;
     } catch {
       failed += 1;

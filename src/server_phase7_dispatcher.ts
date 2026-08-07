@@ -1,6 +1,5 @@
 "use strict";
 
-export {};
 
 type PacketRecord = Record<string, unknown>;
 type RouteMode = "handler" | "fallback" | "unknown";
@@ -252,7 +251,7 @@ function createServerPhase7Dispatcher(config: Phase7DispatcherConfig) {
   };
 }
 
-module.exports = {
+export = {
   createServerPhase7Dispatcher,
   getPhase7RouteType,
   HANDLED_ROUTE_TYPES,

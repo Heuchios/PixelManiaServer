@@ -1,6 +1,5 @@
 // Generated from src/server_phase7_dispatcher.ts. Do not edit by hand.
 "use strict";
-Object.defineProperty(exports, "__esModule", { value: true });
 const EARLY_HANDLER_ROUTE_TYPES = Object.freeze([
     "login",
     "account_register",

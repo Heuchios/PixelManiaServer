@@ -7,8 +7,7 @@
     "declaration": false,
     "sourceMap": false,
     "strict": true,
-    "noImplicitAny": true,
-    "useUnknownInCatchVariables": false
+    "noImplicitAny": true
   },
   "include": [
     "src/server_phase11a_runtime.ts"
