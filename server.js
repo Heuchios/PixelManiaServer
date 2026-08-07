@@ -3478,7 +3478,15 @@ function sendClientUpdateRequired(socket, data, clientVersion = "") {
         message: `A new PixelMania update is live. Update your client to version ${MIN_CLIENT_VERSION} or newer to keep playing.`,
     });
 }
+function isThenable(value) {
+    return Boolean(value) && typeof value.then === "function";
+}
+function isRecord(value) {
+    return Boolean(value) && typeof value === "object" && !Array.isArray(value);
+}
 function cloneJson(value) {
+    // AccountHelpers.cloneJson is declared (value: unknown) => unknown; it is a JSON
+    // deep clone, so the result is structurally identical to the input.
     return AccountHelpers.cloneJson(value);
 }
 function makeAuditHash(value) {
@@ -5105,21 +5113,22 @@ async function executeTrade(trade) {
             request_id: tradeTransactionId,
             ip_address: getSocketAddress(requesterRecord.socket),
         });
-        if (!tradeResult.ok) {
+        if (!tradeResult || !tradeResult.ok) {
             cancelTrade(trade, "Trade was canceled because server inventory changed. Try again.");
             return;
         }
-        if (!applyInventoryLedgerToState(stateA, tradeResult.request_ledgers?.requester)) {
+        const tradeCommit = tradeResult;
+        if (!applyInventoryLedgerToState(stateA, tradeCommit.request_ledgers?.requester)) {
             cancelTrade(trade, "Trade was canceled because inventory reconciliation failed.");
             return;
         }
-        if (!applyInventoryLedgerToState(stateB, tradeResult.request_ledgers?.target)) {
+        if (!applyInventoryLedgerToState(stateB, tradeCommit.request_ledgers?.target)) {
             cancelTrade(trade, "Trade was canceled because inventory reconciliation failed.");
             return;
         }
         persistPlayerInventoryChange(trade.requester_username, stateA);
         persistPlayerInventoryChange(trade.target_username, stateB);
-        const worldKeyTransferResult = await applyWorldLockKeyTradeOwnershipTransfers(trade, worldKeyValidation.transfers, tradeResult.item_instance_movements || [], requesterRecord, targetRecord, tradeTransactionId);
+        const worldKeyTransferResult = await applyWorldLockKeyTradeOwnershipTransfers(trade, worldKeyValidation.transfers, tradeCommit.item_instance_movements || [], requesterRecord, targetRecord, tradeTransactionId);
         if (!worldKeyTransferResult.ok) {
             const transferMessage = worldKeyTransferResult.message || "World ownership transfer could not be completed.";
             console.warn("[world-lock-key] trade completed but ownership transfer failed", {
@@ -7340,7 +7349,9 @@ async function handleSafeWithdraw(socket, player, data, worldName, safe) {
  */
 async function prepareSafeBreakInventoryReturn(socket, player, worldName, update) {
     const safe = getSafeStateAt(worldName, update.x, update.y, false);
-    const slots = Array.isArray(safe.slots) ? safe.slots.map(sanitizeSafeSlot).filter(Boolean) : [];
+    const slots = Array.isArray(safe.slots)
+        ? safe.slots.map(sanitizeSafeSlot).filter((entry) => Boolean(entry))
+        : [];
     if (slots.length === 0) {
         return { ok: true, playerState: null, message: "" };
     }
@@ -11189,9 +11200,11 @@ async function handleStationRecipeTransaction(socket, player, data) {
         sendInventoryTransactionRejected(socket, data, "Finish or cancel your trade before crafting.");
         return;
     }
-    const costs = recipe.cost.map(normalizeInventoryAmountEntry);
+    const costs = recipe.cost
+        .map(normalizeInventoryAmountEntry)
+        .filter((entry) => entry !== null);
     const output = normalizeInventoryAmountEntry(recipe.output);
-    if (costs.some((entry) => entry === null) || !output) {
+    if (costs.length !== recipe.cost.length || !output) {
         sendInventoryTransactionRejected(socket, data, "Recipe has invalid server item data.");
         return;
     }
@@ -15721,9 +15734,9 @@ async function validateBlockUpdateAgainstServerState(socket, player, worldName, 
     if (!spendResult.ok) {
         sendActionRejected(socket, "world_block_update", spendResult.message, {
             reason: spendResult.reason || "inventory_denied",
-            item_id: cost.item_id,
-            item_category: cost.item_category,
-            amount: cost.amount,
+            item_id: cost?.item_id,
+            item_category: cost?.item_category,
+            amount: cost?.amount,
             request_id: requestId,
             action: update.action,
             block_action: update.action,
@@ -19035,7 +19048,7 @@ function appendServerHotbarItem(state, items, categories, itemId, itemCategory, 
         hotbar_items: ["punch", ...items.slice(1), itemId],
         hotbar_item_categories: ["tool", ...categories.slice(1), itemCategory],
     });
-    if (!normalized || typeof normalized !== "object" || Array.isArray(normalized))
+    if (!isRecord(normalized))
         return;
     if (normalized.hotbar_items.length <= beforeLength)
         return;
@@ -22212,6 +22225,8 @@ function tickBatteryChargersForWorld(worldName, state, now = Date.now()) {
         chargerState.produced_count = chargerState.output_count;
         chargerState.production_progress = chargerState.battery_progress;
         const savedState = setBatteryChargerState(state, clean, chargerState);
+        if (!savedState)
+            continue;
         const after = getBatteryChargerChangeSignature(savedState);
         const afterPendingConsumption = Math.max(0, Number(savedState.pending_consumption_watts) || 0);
         if (activeGeneratorKeys.length > 0 && Math.abs(afterPendingConsumption - beforePendingConsumption) > 0.000001) {
@@ -22695,11 +22710,11 @@ async function handleOilRefineryRequest(socket, player, data = {}) {
         block_type: clampString(block.block_type || OIL_REFINERY_BLOCK_TYPE),
     }, beforeState, afterState, transactionId, {
         operation,
-        linked_pole_key: savedState.linked_pole_key || "",
-        output_count: savedState.output_count,
+        linked_pole_key: savedState?.linked_pole_key || "",
+        output_count: savedState?.output_count,
         output_capacity: OIL_REFINERY_OUTPUT_CAPACITY,
-        battery_watts: savedState.battery_watts,
-        battery_count: savedState.battery_count,
+        battery_watts: savedState?.battery_watts,
+        battery_count: savedState?.battery_count,
     });
     if (operation === "collect") {
         const serializedWorld = serializeWorldState(worldName);
@@ -22999,8 +23014,8 @@ async function handleBatteryChargerRequest(socket, player, data = {}) {
         block_type: clampString(block.block_type || BATTERY_CHARGER_BLOCK_TYPE),
     }, beforeState, afterState, transactionId, {
         operation,
-        linked_pole_key: savedState.linked_pole_key || "",
-        output_count: savedState.output_count,
+        linked_pole_key: savedState?.linked_pole_key || "",
+        output_count: savedState?.output_count,
         output_capacity: BATTERY_CHARGER_OUTPUT_CAPACITY,
     });
     if (operation === "collect") {
@@ -25595,7 +25610,7 @@ function prepareDropPickup(worldName, player, update) {
         playerState,
         item_type: itemType,
         item_category: itemCategory,
-        validationPosition,
+        validationPosition: validationPosition,
         dropAmount,
         pickedAmount,
         stackLimit,
@@ -27611,6 +27626,9 @@ function buildActiveWorldEventTileUpdates(worldName, state) {
     const updates = [];
     for (const rawTile of tiles) {
         const tile = normalizeWorldEventTileEntry(rawTile, eventId);
+        // Returns null for stale entries whose block was removed from the item database.
+        if (!tile)
+            continue;
         if (tile.event_block_id === "")
             continue;
         updates.push({
@@ -28977,7 +28995,7 @@ async function handleFrozenTreasureOpen(socket, player, worldName, update, reque
 function loadAccountsFromJson() {
     accounts.clear();
     const data = readJsonFile(ACCOUNTS_SAVE_PATH);
-    if (!data || typeof data !== "object" || Array.isArray(data)) {
+    if (!isRecord(data)) {
         return;
     }
     const rawAccounts = Array.isArray(data.accounts) ? data.accounts : [];
@@ -29120,7 +29138,7 @@ function ensurePlayerState(username) {
         return null;
     }
     const data = readJsonFile(getPlayerSavePath(clean));
-    if (!data || typeof data !== "object" || Array.isArray(data)) {
+    if (!isRecord(data)) {
         return null;
     }
     const state = sanitizePlayerState(data.player_data || data, clean);
@@ -29249,9 +29267,9 @@ async function flushPendingSessionPersistence(username = "", worldName = "", rea
             ? null
             : saveWorldState(cleanWorldName, { mutation: false, reason: "session_flush_retry" });
         const playerRetry = cleanUsername === "" ? null : savePlayerState(cleanUsername);
-        if (worldRetry && typeof worldRetry.then === "function")
+        if (isThenable(worldRetry))
             retryWrites.push(worldRetry);
-        if (playerRetry && typeof playerRetry.then === "function")
+        if (isThenable(playerRetry))
             retryWrites.push(playerRetry);
         flushedWriteCount += retryWrites.length;
         const retryResults = retryWrites.length > 0 ? await Promise.allSettled(retryWrites) : [];
@@ -29721,7 +29739,7 @@ async function releaseOwnedWorldRoutesForShutdown() {
         }
         try {
             const result = await redisStore.releaseWorldRoute(clean, SERVER_INSTANCE_ID, ownershipToken);
-            if (result && result.ok === false)
+            if (result && result.released === false)
                 failed += 1;
             else
                 released += 1;

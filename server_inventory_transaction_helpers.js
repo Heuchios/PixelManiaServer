@@ -1,4 +1,5 @@
 // Generated from src/server_inventory_transaction_helpers.ts. Do not edit by hand.
+/// <reference path="../types/pixelmania-contracts.d.ts" />
 "use strict";
 function isRecord(value) {
     return Boolean(value && typeof value === "object" && !Array.isArray(value));

@@ -276,7 +276,7 @@ function createServerPhase6Helpers(config: Phase6HelperConfig) {
         amount: config.clampInteger(payload.amount ?? payload.remaining ?? remaining, 0, config.maxDropTileAmount),
         remaining,
         remaining_amount: remaining,
-        requested_by: player.id,
+        requested_by: player.id as string,
         requested_by_name: config.cleanName(player.name),
       });
     }

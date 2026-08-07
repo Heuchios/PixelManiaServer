@@ -2113,7 +2113,7 @@ const POSTGRES_AUTHORITY_LOBBY_ROUTE_TYPES: any = new Set([
   "server_status_request",
   "world_population_request",
 ]);
-const POSTGRES_AUTHORITY_HANDLED_ROUTE_TYPES: any = new Set(ServerPhase7Dispatcher.getRouteCatalog().handled_routes || []);
+const POSTGRES_AUTHORITY_HANDLED_ROUTE_TYPES: any = new Set((ServerPhase7Dispatcher.getRouteCatalog().handled_routes as string[]) || []);
 const POSTGRES_AUTHORITY_UNAVAILABLE_MESSAGE = "Server database is still loading. Please stay on the login screen and try again.";
 
 const httpServer = http.createServer(handleHttpRequest);
@@ -4015,6 +4015,10 @@ function sendClientUpdateRequired(socket: any, data: any, clientVersion: any = "
     update_url: UPDATE_URL,
     message: `A new PixelMania update is live. Update your client to version ${MIN_CLIENT_VERSION} or newer to keep playing.`,
   });
+}
+
+function isThenable(value: unknown): value is Promise<unknown> {
+  return Boolean(value) && typeof (value as { then?: unknown }).then === "function";
 }
 
 function isRecord(value: unknown): value is Record<string, any> {
@@ -8350,7 +8354,7 @@ async function prepareSafeBreakInventoryReturn(socket: any, player: any, worldNa
       rollbackWorldState,
       worldChanges: [safeBreakWorldChange],
       postCommitLogs: {
-        itemLedgerEntries: slots.map((slot: { item_id: string; item_category: string; amount: number }) => ({
+        itemLedgerEntries: slots.map((slot: Record<string, any>) => ({
           item_id: slot.item_id,
           item_category: slot.item_category,
           amount: slot.amount,
@@ -8445,12 +8449,12 @@ function canStoreItemInDonationBox(itemId: unknown, itemCategory: unknown) {
 
 /** @returns {PixelMania.DonationBoxEntry | null} */
 function sanitizeDonationBoxEntry(rawEntry: unknown): ServerDonationBoxEntry | null {
-  return WorldStateHelpers.sanitizeDonationBoxEntry(rawEntry);
+  return WorldStateHelpers.sanitizeDonationBoxEntry(rawEntry) as ServerDonationBoxEntry | null;
 }
 
 /** @returns {PixelMania.DonationBoxState} */
 function sanitizeDonationBoxState(rawEntry: unknown, worldName: unknown, x: unknown, y: unknown): ServerDonationBoxState {
-  return WorldStateHelpers.sanitizeDonationBoxState(rawEntry, worldName, x, y);
+  return WorldStateHelpers.sanitizeDonationBoxState(rawEntry, worldName, x, y) as ServerDonationBoxState;
 }
 
 /** @returns {PixelMania.DonationBoxClientState} */
@@ -8922,7 +8926,7 @@ async function prepareDonationBoxBreakInventoryReturn(socket: unknown, player: S
       playerState: stagedState,
       inventoryDeltas: buildInventoryDeltasBetweenStates(beforeState, stagedState),
       deferred_inventory_commit: InventoryContracts.buildDeferredInventoryCommit({
-        username: player.account_username,
+        username: player.account_username as string,
         beforeState,
         afterState: stagedState,
         options: {
@@ -8930,7 +8934,7 @@ async function prepareDonationBoxBreakInventoryReturn(socket: unknown, player: S
           action: "donation_box_break_return",
           reason: "donation_box_break_return",
           request_id: "",
-          world: worldName,
+          world: worldName as string,
           metadata,
           failure_message: "Server inventory changed. Try again.",
         },
@@ -15649,7 +15653,7 @@ async function commitPlayerInventoryState(socket: any, player: any, username: an
         item_type: result?.item_type || "",
       }, "warning");
       return InventoryContracts.buildInventoryCommitFailure({
-        reason: result?.reason || "postgres_failed",
+        reason: (result?.reason as string) || "postgres_failed",
         message: getPostgresInventoryFailureMessage(result, options.failure_message || "Server inventory changed. Try again."),
       });
     }
@@ -27522,7 +27526,7 @@ async function handleBulkDropPickup(socket: any, player: any, data: any, worldNa
       const worldApply = applyDropPickupWorldState(pickupPlan.world, pickupPlan);
       const pickupUpdate = worldApply.ok
         ? worldApply.payload
-        : removeUnavailableDropFromWorldState(pickupPlan.world, pickupPlan.dropId, pickupPlan).payload || null;
+        : (removeUnavailableDropFromWorldState(pickupPlan.world, pickupPlan.dropId, pickupPlan) as { payload?: any }).payload || null;
       if (pickupUpdate) {
         worldUpdates.push({ world: pickupPlan.world, payload: pickupUpdate });
       }
@@ -28093,7 +28097,7 @@ function prepareDropPickup(worldName: any, player: any, update: any) {
     playerState,
     item_type: itemType,
     item_category: itemCategory,
-    validationPosition,
+    validationPosition: validationPosition as PixelMania.ActorPosition & { ok: true },
     dropAmount,
     pickedAmount,
     stackLimit,
@@ -29547,7 +29551,7 @@ function sendWorldStateToSocket(
       targetPacketBytes: WORLD_STATE_STREAM_TARGET_PACKET_BYTES,
       maxPacketBytes: MAX_PACKET_BYTES,
       maxChunks: WORLD_STATE_STREAM_MAX_CHUNKS,
-      preparedSections: snapshotCache?.prepared_sections || null,
+      preparedSections: (snapshotCache?.prepared_sections as ReturnType<typeof WorldStateHelpersModule.prepareWorldStateStreamSections> | null) || null,
     });
     const streamBuildMs = elapsedWorldEntryMs(phaseStartedAt);
     phaseStartedAt = process.hrtime.bigint();
@@ -31917,8 +31921,8 @@ async function flushPendingSessionPersistence(username: any = "", worldName: any
       ? null
       : saveWorldState(cleanWorldName, { mutation: false, reason: "session_flush_retry" });
     const playerRetry = cleanUsername === "" ? null : savePlayerState(cleanUsername);
-    if (worldRetry && typeof worldRetry.then === "function") retryWrites.push(worldRetry);
-    if (playerRetry && typeof playerRetry.then === "function") retryWrites.push(playerRetry);
+    if (isThenable(worldRetry)) retryWrites.push(worldRetry);
+    if (isThenable(playerRetry)) retryWrites.push(playerRetry);
     flushedWriteCount += retryWrites.length;
 
     const retryResults = retryWrites.length > 0 ? await Promise.allSettled(retryWrites) : [];
