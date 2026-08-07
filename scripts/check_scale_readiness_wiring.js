@@ -78,6 +78,41 @@ const closeHandlerIndex = files.server.indexOf('socket.on("close"');
 const closePlayerDeleteIndex = files.server.indexOf("players.delete(playerId)", closeHandlerIndex);
 const closeQueueDrainIndex = files.server.indexOf("await Promise.resolve(socket.inboundMessageQueue)", closeHandlerIndex);
 
+// World-state streaming turns on for clients at or above this version
+// (WORLD_STATE_STREAM_MIN_CLIENT_VERSION). The check below used to assert the
+// client constant equalled it exactly, which meant every client release failed
+// this gate. What matters is that the shipping client is not BELOW the floor.
+const WORLD_STATE_STREAM_CLIENT_FLOOR = "1.0.4";
+
+function parseVersionParts(value) {
+  const clean = String(value || "").trim().replace(/^v/i, "").split(/[+-]/)[0];
+  if (!clean) return null;
+  const parts = clean.split(".").map((part) => {
+    const match = String(part || "").match(/^\d+/);
+    return match ? Number(match[0]) : 0;
+  });
+  while (parts.length < 3) parts.push(0);
+  return parts.slice(0, 3);
+}
+
+function isAtLeastVersion(value, minimum) {
+  const left = parseVersionParts(value);
+  const right = parseVersionParts(minimum);
+  if (!left || !right) return false;
+  for (let index = 0; index < 3; index += 1) {
+    if (left[index] > right[index]) return true;
+    if (left[index] < right[index]) return false;
+  }
+  return true;
+}
+
+function readClientVersionConstant(source) {
+  const match = String(source || "").match(/const\s+CLIENT_VERSION\s*:=\s*"([^"]+)"/);
+  return match ? match[1] : "";
+}
+
+const clientVersionConstant = readClientVersionConstant(files.networkManager);
+
 const checks = [
   {
     name: "WebSocket payload and send backpressure limits are enforced",
@@ -126,7 +161,7 @@ const checks = [
       && files.server.includes("WORLD_STATE_STREAM_MIN_CLIENT_VERSION")
       && files.server.includes("buildWorldStateStreamPackets")
       && serverAndSessionRouteSources.includes("sendWorldStateToSocket")
-      && files.networkManager.includes('const CLIENT_VERSION := "1.0.4"')
+      && isAtLeastVersion(clientVersionConstant, WORLD_STATE_STREAM_CLIENT_FLOOR)
       && files.networkManager.includes('"world_state_stream_begin"')
       && files.networkManager.includes('"world_state_stream_chunk"')
       && files.networkManager.includes('"world_state_stream_end"')
