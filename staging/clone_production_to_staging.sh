@@ -46,8 +46,15 @@ if [ "${ASSUME_YES:-0}" != "1" ]; then
   [ "$answer" = "CLONE" ] || { echo "Canceled."; exit 0; }
 fi
 
-DUMP_FILE="$(mktemp "$DUMP_DIR/pixelmania-prod-XXXXXX.dump")"
-cleanup() { rm -f -- "$DUMP_FILE"; }
+# pg_dump and pg_restore run as the postgres user, but this script runs as root. A
+# root-created mktemp file is 0600 root:root, so pg_dump cannot write to it
+# ("could not open output file ... Permission denied"). Hand postgres its own private
+# directory and let IT create the file.
+DUMP_WORK_DIR="$(mktemp -d "$DUMP_DIR/pixelmania-clone-XXXXXX")"
+chown postgres:postgres "$DUMP_WORK_DIR"
+chmod 0700 "$DUMP_WORK_DIR"
+DUMP_FILE="$DUMP_WORK_DIR/production.dump"
+cleanup() { rm -rf -- "$DUMP_WORK_DIR"; }
 trap cleanup EXIT
 
 log "Stopping the staging server"
@@ -99,8 +106,39 @@ sudo -u "$STG_USER" -H bash -lc "pm2 start $STG_APP --update-env" >/dev/null 2>&
   || echo "Could not start $STG_APP via PM2; deploy staging first."
 
 log "Verifying"
-worlds="$(sudo -u postgres psql -tA -d "$STG_DB" -c "SELECT count(*) FROM $STG_SCHEMA.world_state;" 2>/dev/null || echo "?")"
-printf 'Staging worlds restored: %s\n' "$worlds"
+# Compare production against staging directly. A single staging-only count proves nothing:
+# it cannot tell "restored correctly" from "restored a fraction". Note `world_state` is a
+# COLUMN on `worlds`, not a table -- an earlier version of this check queried a table that
+# never existed and reported "?" on a perfectly good restore.
+table_count() {
+  sudo -u postgres psql -tA -d "$1" \
+    -c "SELECT count(*) FROM information_schema.tables WHERE table_schema = '$STG_SCHEMA';" 2>/dev/null || echo "?"
+}
+row_count() {
+  sudo -u postgres psql -tA -d "$1" -c "SELECT count(*) FROM $STG_SCHEMA.$2;" 2>/dev/null || echo "MISSING"
+}
+
+prod_tables="$(table_count "$PROD_DB")"
+stg_tables="$(table_count "$STG_DB")"
+printf '%-12s %14s %14s\n' "" "production" "staging"
+printf '%-12s %14s %14s\n' "tables" "$prod_tables" "$stg_tables"
+mismatch=0
+for table in worlds accounts players inventory; do
+  prod_rows="$(row_count "$PROD_DB" "$table")"
+  stg_rows="$(row_count "$STG_DB" "$table")"
+  printf '%-12s %14s %14s\n' "$table" "$prod_rows" "$stg_rows"
+  [ "$prod_rows" = "$stg_rows" ] || mismatch=1
+done
+[ "$prod_tables" = "$stg_tables" ] || mismatch=1
+
+if [ "$mismatch" = "1" ]; then
+  echo
+  echo "WARNING: staging does not match production. The restore may be incomplete."
+  echo "Re-run this script, or inspect with: sudo -u postgres psql -d $STG_DB -c '\\dt $STG_SCHEMA.*'"
+else
+  echo
+  echo "Staging matches production."
+fi
 
 cat <<'SUMMARY'
 
