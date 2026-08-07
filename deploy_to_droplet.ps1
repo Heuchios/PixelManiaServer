@@ -12,6 +12,7 @@ param(
   [string]$UpdateUrl,
   [string]$ReleaseId,
   [switch]$ForceClientUpdate,
+  [switch]$SkipClientVersionLock,
   [switch]$RunSmokeChecks,
   [switch]$RunRemoteFullChecks,
   [switch]$SkipLocalPreflight
@@ -258,7 +259,12 @@ Assert-VersionValue "ClientVersion" $ClientVersion
 Assert-VersionValue "MinClientVersion" $MinClientVersion
 
 $clientRoot = Resolve-ClientRoot
-if ($ForceClientUpdate) {
+# Every deploy pins the server to the client build in this repo, so an older
+# client can never connect to a newer server. -ForceClientUpdate is kept for
+# existing call sites but is now the default; pass -SkipClientVersionLock to
+# deploy the backend without touching the version floor (for example while a
+# store rollout is still in flight).
+if (-not $SkipClientVersionLock) {
   if (-not $ClientVersion) {
     $ClientVersion = Get-LocalClientVersion -ClientRoot $clientRoot
   }
@@ -268,6 +274,11 @@ if ($ForceClientUpdate) {
 }
 if ($MinClientVersion -and -not $ClientVersion) {
   $ClientVersion = $MinClientVersion
+}
+if ($ClientVersion) {
+  Write-Host "Client version lock: server_client_version=$ClientVersion min_client_version=$MinClientVersion"
+} else {
+  Write-Host "Client version lock skipped; leaving the server's existing version floor in place."
 }
 Assert-VersionValue "ClientVersion" $ClientVersion
 Assert-VersionValue "MinClientVersion" $MinClientVersion

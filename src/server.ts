@@ -2887,9 +2887,15 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
     });
   });
 
+  // Version fields let the client raise its update gate the moment the socket
+  // opens, instead of waiting for the first rejected packet. This is UX only —
+  // isClientVersionAllowed() still gates every inbound message below.
   sendJson(socket, {
     type: "connected",
     player_id: playerId,
+    server_client_version: SERVER_CLIENT_VERSION,
+    min_client_version: MIN_CLIENT_VERSION,
+    update_url: UPDATE_URL,
   });
 
   socket.on("message", (raw: import("ws").RawData) => {
@@ -4007,7 +4013,7 @@ function sendClientUpdateRequired(socket: any, data: any, clientVersion: any = "
     server_client_version: SERVER_CLIENT_VERSION,
     min_client_version: MIN_CLIENT_VERSION,
     update_url: UPDATE_URL,
-    message: `This PixelMania version is out of date. Please update to version ${MIN_CLIENT_VERSION} or newer.`,
+    message: `A new PixelMania update is live. Update your client to version ${MIN_CLIENT_VERSION} or newer to keep playing.`,
   });
 }
 
