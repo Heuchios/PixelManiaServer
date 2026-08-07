@@ -231,6 +231,9 @@ const remoteCommand = extractHereString(deploy, "remoteCommand")
   .replaceAll("__BACKEND_SHA256__", "a".repeat(64))
   .replaceAll("__CLIENT_SHA256__", "b".repeat(64))
   .replaceAll("__RUN_REMOTE_FULL_CHECKS__", "0")
+  // Each environment polls its OWN Node listener during activation; the port comes from
+  // deploy_to_droplet.ps1's -LocalHealthPort. Production is 8080, staging 8180.
+  .replaceAll("__LOCAL_HEALTH_URL__", "http://127.0.0.1:8080/health")
   .replaceAll("__RELEASE_ENV_CONTENT__", "PIXELMANIA_RELEASE_ID='release-test'\nPIXELMANIA_RELEASE_ROOT=\"$BASE_DIR\"");
 const serviceUserMigrationCommand = extractHereString(serviceUserMigration, "serviceUserRemoteCommand")
   .replaceAll("__REMOTE_DIR__", "PixelManiaServer")
