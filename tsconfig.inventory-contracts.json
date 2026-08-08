@@ -3,9 +3,7 @@
   "compilerOptions": {
     "noEmit": false,
     "outDir": ".tsbuild",
-    "rootDir": "src",
-    "composite": true,
-    "tsBuildInfoFile": ".tsbuild/inventory-contracts.tsbuildinfo"
+    "rootDir": "src"
   },
   "include": [
     "src/server_inventory_contracts.ts"

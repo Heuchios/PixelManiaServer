@@ -3,9 +3,7 @@
   "compilerOptions": {
     "noEmit": false,
     "outDir": ".tsbuild",
-    "rootDir": "src",
-    "composite": true,
-    "tsBuildInfoFile": ".tsbuild/server-helpers.tsbuildinfo"
+    "rootDir": "src"
   },
   "include": [
     "src/server_identity_helpers.ts",

@@ -80,14 +80,14 @@ assert.deepEqual(
   }
 );
 
-// `tsc --build`, not `tsc --project`: this project now references drop-contracts,
-// inventory-contracts, postgres-contracts and item-data, so it reads their emitted
-// .d.ts instead of recompiling ~195 KB of their source on each of its four
-// invocations in check:security. `tsc --project` would not build those references and
-// would fail with TS6305.
+// Stays on `tsc --project`. This file's dependencies are all
+// `const X = require("./y")`, which tsc treats as a call on Node's `require` returning
+// `any` -- the target module never enters the program. So there is nothing for a
+// project reference to short-circuit. Proven with --listFiles: 200 files in the
+// program, server_item_database in neither source nor .d.ts form.
 assert.equal(
   packageJson.scripts["build:postgres-store"],
-  "tsc --build tsconfig.postgres-store.json && node scripts/sync_postgres_store_build.js"
+  "tsc --project tsconfig.postgres-store.json && node scripts/sync_postgres_store_build.js"
 );
 assert.equal(packageJson.scripts["check:postgres-store"], "npm run build:postgres-store && node scripts/check_postgres_store_build.js");
 assert.match(packageJson.scripts["check:typescript"], /npm run check:postgres-store/);

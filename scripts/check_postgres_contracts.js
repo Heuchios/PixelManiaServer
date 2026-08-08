@@ -312,12 +312,12 @@ assert.match(deploySource, /sync_postgres_contracts_build\.js/);
 assert.match(deploySource, /npm run build:postgres-contracts/);
 assert.match(deploySource, /node --check postgres_store_contracts\.js/);
 assert.match(deploySource, /node --check scripts\/check_postgres_contracts\.js/);
-// `tsc --build`, not `tsc --project`: this project references item-data, because
-// postgres_store_contracts.ts imports server_item_database. `tsc --project` does not
-// build references and fails with TS6305.
+// Stays on `tsc --project`. Line 7 is `const ItemDatabase: any = require(...)`,
+// which is a runtime require, not a type-level import -- server_item_database never
+// enters this program, so a project reference to item-data would be inert.
 assert.equal(
   packageJson.scripts["build:postgres-contracts"],
-  "tsc --build tsconfig.postgres-contracts.json && node scripts/sync_postgres_contracts_build.js"
+  "tsc --project tsconfig.postgres-contracts.json && node scripts/sync_postgres_contracts_build.js"
 );
 assert.equal(packageJson.scripts["check:postgres-contracts"], "npm run build:postgres-contracts && node scripts/check_postgres_contracts.js");
 assert.match(packageJson.scripts["check:typescript"], /npm run check:postgres-contracts/);

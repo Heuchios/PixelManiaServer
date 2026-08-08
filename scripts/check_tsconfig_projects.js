@@ -70,19 +70,19 @@ const PROJECTS = {
   "drop-contracts": {
     include: ["src/server_drop_contracts.ts"],
     outDir: ".tsbuild",
-    localOptions: {"composite":true,"tsBuildInfoFile":".tsbuild/drop-contracts.tsbuildinfo"},
+    localOptions: {},
     references: [],
   },
   "inventory-contracts": {
     include: ["src/server_inventory_contracts.ts"],
     outDir: ".tsbuild",
-    localOptions: {"composite":true,"tsBuildInfoFile":".tsbuild/inventory-contracts.tsbuildinfo"},
+    localOptions: {},
     references: [],
   },
   "item-data": {
     include: ["src/atlas_item_definition.ts","src/item_atlas_db.ts","src/server_item_database.ts"],
     outDir: ".tsbuild",
-    localOptions: {"composite":true,"tsBuildInfoFile":".tsbuild/item-data.tsbuildinfo"},
+    localOptions: {},
     references: [],
   },
   "packet-contracts": {
@@ -94,14 +94,14 @@ const PROJECTS = {
   "postgres-contracts": {
     include: ["src/postgres_store_contracts.ts"],
     outDir: ".tsbuild",
-    localOptions: {"composite":true,"tsBuildInfoFile":".tsbuild/postgres-contracts.tsbuildinfo"},
-    references: ["item-data"],
+    localOptions: {},
+    references: [],
   },
   "postgres-store": {
     include: ["src/postgres_store.ts"],
     outDir: ".tsbuild",
-    localOptions: {"allowJs":false,"noFallthroughCasesInSwitch":true,"noImplicitReturns":true,"incremental":true,"tsBuildInfoFile":".tsbuild/postgres-store.tsbuildinfo"},
-    references: ["drop-contracts","inventory-contracts","postgres-contracts","item-data"],
+    localOptions: {"allowJs":false,"noFallthroughCasesInSwitch":true,"noImplicitReturns":true},
+    references: [],
   },
   "redis-store": {
     include: ["src/redis_store.ts"],
@@ -118,8 +118,8 @@ const PROJECTS = {
   "server-account-session-helpers": {
     include: ["src/server_account_session_helpers.ts"],
     outDir: ".tsbuild",
-    localOptions: {"incremental":true,"tsBuildInfoFile":".tsbuild/server-account-session-helpers.tsbuildinfo"},
-    references: ["server-helpers"],
+    localOptions: {},
+    references: [],
   },
   "server-admin-lookup-routes": {
     include: ["src/server_admin_lookup_routes.ts"],
@@ -161,7 +161,7 @@ const PROJECTS = {
   "server-helpers": {
     include: ["src/server_identity_helpers.ts","src/server_text_helpers.ts","src/server_version_helpers.ts","src/server_account_helpers.ts"],
     outDir: ".tsbuild",
-    localOptions: {"composite":true,"tsBuildInfoFile":".tsbuild/server-helpers.tsbuildinfo"},
+    localOptions: {},
     references: [],
   },
   "server-inventory-economy-routes": {
@@ -547,11 +547,18 @@ for (const start of Object.keys(PROJECTS)) {
   }
 }
 
-// The load-bearing one. Every cross-project import must be backed by a reference.
-// Without this, adding one import to a module silently pulls its dependency's SOURCE
-// into a second project, where it gets compiled again -- possibly under different
-// options than its owning project uses.
-const LOCAL_IMPORT_PATTERN = /(?:\brequire\(|\bfrom\s+)\s*"(\.\/[A-Za-z0-9_.-]+)"/gu;
+// Every cross-project TYPE-LEVEL import must be backed by a reference. Without this,
+// adding one import to a module silently pulls its dependency's SOURCE into a second
+// project, where it gets compiled again -- possibly under different options.
+//
+// CRITICAL: only `import X = require("./y")` and `from "./y"` count. A bare
+// `const X = require("./y")` is NOT an import -- it is a call on Node's `require`,
+// typed `any` by @types/node, and tsc never adds the target module to the program.
+// An earlier version of this guard matched both forms, "proved" that postgres-store
+// needed four project references, and those references turned out to be completely
+// inert: --listFiles showed 200 files in postgres-store's program with
+// server_item_database present in neither source nor .d.ts form.
+const TYPE_IMPORT_PATTERN = /(?:\bimport\s+[A-Za-z0-9_$]+\s*=\s*require\(|\bfrom\s+)\s*"(\.\/[A-Za-z0-9_.-]+)"/gu;
 
 for (const [projectName, pin] of Object.entries(PROJECTS)) {
   /** @type {Set<string>} */
@@ -559,7 +566,7 @@ for (const [projectName, pin] of Object.entries(PROJECTS)) {
 
   for (const included of pin.include) {
     const source = fs.readFileSync(path.join(repoRoot, included), "utf8");
-    for (const match of source.matchAll(LOCAL_IMPORT_PATTERN)) {
+    for (const match of source.matchAll(TYPE_IMPORT_PATTERN)) {
       const target = `src/${match[1].replace(/^\.\//u, "")}.ts`;
       const owner = sourceOwner[target];
       if (!owner) {
@@ -596,6 +603,61 @@ for (const [projectName, pin] of Object.entries(PROJECTS)) {
     `${configNameFor(projectName)} references ${unused.join(", ")} but imports nothing from ${unused.length === 1 ? "it" : "them"}`,
   );
 }
+
+// ---------------------------------------------------------------------------
+// The runtime-require ledger: dependencies tsc cannot see.
+// ---------------------------------------------------------------------------
+
+// `const X = require("./y")` compiles and runs fine, but tsc types X as `any` and
+// never loads ./y, so NOTHING about that boundary is checked. server.ts had 39 of
+// these; converting them to `import X = require(...)` surfaced 118 errors and three
+// real bugs. These 10 are what is left, and they are the reason the cross-project
+// reference graph is currently empty.
+//
+// Pinned so the set can only change deliberately:
+//   * a NEW entry means a fresh unchecked boundary was introduced -- convert it to
+//     `import X = require(...)` instead,
+//   * a REMOVED entry means one was fixed -- delete it here, and check whether that
+//     project now needs a reference (the assertion above will say so).
+const KNOWN_RUNTIME_REQUIRES = [
+  "src/atlas_item_definition.ts -> ./item_atlas_db",
+  "src/postgres_store.ts -> ./postgres_store_contracts",
+  "src/postgres_store.ts -> ./server_drop_contracts",
+  "src/postgres_store.ts -> ./server_inventory_contracts",
+  "src/postgres_store.ts -> ./server_item_database",
+  "src/postgres_store_contracts.ts -> ./server_item_database",
+  "src/server_account_helpers.ts -> ./server_identity_helpers",
+  "src/server_account_session_helpers.ts -> ./server_account_helpers",
+  "src/server_account_session_helpers.ts -> ./server_text_helpers",
+  "src/server_item_database.ts -> ./atlas_item_definition",
+];
+
+const RUNTIME_REQUIRE_PATTERN = /require\(\s*"(\.\/[A-Za-z0-9_.-]+)"/gu;
+const TYPE_IMPORT_LINE_PATTERN = /\bimport\s+[A-Za-z0-9_$]+\s*=\s*require\(/u;
+
+/** @type {string[]} */
+const runtimeRequires = [];
+for (const sourceFile of sourceFiles) {
+  const source = fs.readFileSync(path.join(repoRoot, sourceFile), "utf8");
+  for (const line of source.split(/\r?\n/u)) {
+    if (TYPE_IMPORT_LINE_PATTERN.test(line)) {
+      continue;
+    }
+    for (const match of line.matchAll(RUNTIME_REQUIRE_PATTERN)) {
+      runtimeRequires.push(`${sourceFile} -> ${match[1]}`);
+    }
+  }
+}
+runtimeRequires.sort();
+
+assert.deepEqual(
+  runtimeRequires,
+  KNOWN_RUNTIME_REQUIRES,
+  `the set of runtime-only requires changed.\n  found:\n    ${runtimeRequires.join("\n    ")}\n  pinned:\n    ${KNOWN_RUNTIME_REQUIRES.join("\n    ")}\n` +
+    "  A runtime require is invisible to tsc: the imported value is `any` and the target\n" +
+    "  module is never type-checked against its consumer. Prefer converting it to\n" +
+    "  `import X = require(\"./y\")`. If you did convert one, remove it from the pin.",
+);
 
 // Exactly one project may skip references, and it must be server-entry.
 const exempt = Object.entries(PROJECTS).filter(([, pin]) => pin.referencesExempt).map(([name]) => name);
@@ -683,8 +745,12 @@ console.log(`[tsconfig-projects] ${Object.keys(PROJECTS).length} projects extend
 console.log(`[tsconfig-projects] ${sourceFiles.length} src modules, each owned by exactly one project`);
 console.log(
   `[tsconfig-projects] ${referencedProjects.size} composite projects, ` +
-    `${Object.values(PROJECTS).reduce((total, pin) => total + pin.references.length, 0)} reference edges, ` +
-    "import graph fully covered",
+    `${Object.values(PROJECTS).reduce((total, pin) => total + pin.references.length, 0)} reference edges ` +
+    "(type-level import graph fully covered)",
+);
+console.log(
+  `[tsconfig-projects] ${runtimeRequires.length} runtime-only requires still invisible to tsc ` +
+    "(see KNOWN_RUNTIME_REQUIRES)",
 );
 console.log(`[tsconfig-projects] ${pinCount} build-command pins in check scripts all match package.json`);
 console.log("[tsconfig-projects] success");
