@@ -3188,17 +3188,7 @@ const ITEM_DEFINITIONS = {
     jump_frames: [
       "phoenix_wings_2",
       "phoenix_wings_4",
-      "phoenix_wings_1",
-    ],
-    fall_frames: [
-      "phoenix_wings_3",
       "phoenix_wings_5",
-      "phoenix_wings_1",
-    ],
-    flap_frames: [
-      "phoenix_wings_1",
-      "phoenix_wings_4",
-      "phoenix_wings_2",
     ],
   }),
   green_jetpack: item("back", {
