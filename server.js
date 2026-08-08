@@ -13737,12 +13737,68 @@ const worldStateRefreshesInFlight = new Map();
 function elapsedWorldEntryMs(startedAt) {
     return Math.round((Number(process.hrtime.bigint() - startedAt) / 1_000_000) * 1000) / 1000;
 }
+// Coalescing an in-flight refresh is a real optimisation -- many players joining one
+// world share a single authoritative read -- but the in-flight entry was only ever
+// cleared when its promise SETTLED. A refresh that never settles therefore poisoned
+// that world PERMANENTLY: every later join awaited the same dead promise, with no
+// timeout, no rejection and no log line anywhere. Player-visible as a single world
+// frozen at 88% on the loading screen while every other world joined normally,
+// surviving relog, reconnect and a full game restart, curable only by restarting the
+// server process. Reproduced end to end by injecting one hung refresh: the world was
+// dead for every subsequent connection, and a control world stayed healthy.
+//
+// So: never await a refresh unboundedly, and evict the entry when one stalls, which
+// lets the very next join start a fresh read. The join is rejected with a retryable
+// reason instead of hanging, so the client's existing retry ladder recovers on its own.
+const WORLD_STATE_REFRESH_TIMEOUT_MS = Math.max(5000, Math.trunc(Number(process.env.WORLD_STATE_REFRESH_TIMEOUT_MS) || 20000));
+const WORLD_STATE_REFRESH_TIMEOUT_SENTINEL = {
+    __world_state_refresh_timeout: true,
+};
+async function raceWorldStateRefresh(promise) {
+    let timer = null;
+    try {
+        return await Promise.race([
+            promise,
+            new Promise((resolve) => {
+                timer = setTimeout(() => resolve(WORLD_STATE_REFRESH_TIMEOUT_SENTINEL), WORLD_STATE_REFRESH_TIMEOUT_MS);
+            }),
+        ]);
+    }
+    finally {
+        if (timer)
+            clearTimeout(timer);
+    }
+}
+function evictStalledWorldStateRefresh(clean, promise, reason, role) {
+    if (worldStateRefreshesInFlight.get(clean) === promise) {
+        worldStateRefreshesInFlight.delete(clean);
+    }
+    // The orphan may still settle (or reject) long after nobody is awaiting it; attach a
+    // terminal handler so an abandoned refresh can never surface as an unhandled rejection.
+    void Promise.resolve(promise).then(() => undefined, () => undefined);
+    console.warn("[world-entry] authoritative world refresh timed out; evicted in-flight entry", {
+        world: clean,
+        reason,
+        role,
+        timeout_ms: WORLD_STATE_REFRESH_TIMEOUT_MS,
+        server_instance: SERVER_INSTANCE_ID,
+    });
+}
 async function refreshWorldStateFromPostgres(worldName, reason = "world_state_send") {
     const clean = cleanWorld(worldName);
     const waitStartedAt = process.hrtime.bigint();
     const existingRefresh = worldStateRefreshesInFlight.get(clean);
     if (existingRefresh) {
-        const result = await existingRefresh;
+        const result = await raceWorldStateRefresh(existingRefresh);
+        if (result === WORLD_STATE_REFRESH_TIMEOUT_SENTINEL) {
+            evictStalledWorldStateRefresh(clean, existingRefresh, reason, "coalesced");
+            return {
+                ok: false,
+                reason: "world_state_refresh_timeout",
+                coalesced: true,
+                coalesced_wait_ms: elapsedWorldEntryMs(waitStartedAt),
+            };
+        }
         return {
             ...(result && typeof result === "object" ? result : {}),
             coalesced: true,
@@ -13751,8 +13807,19 @@ async function refreshWorldStateFromPostgres(worldName, reason = "world_state_se
     }
     const refreshPromise = refreshWorldStateFromPostgresUncoalesced(clean, reason);
     worldStateRefreshesInFlight.set(clean, refreshPromise);
+    let timedOut = false;
     try {
-        const result = await refreshPromise;
+        const result = await raceWorldStateRefresh(refreshPromise);
+        if (result === WORLD_STATE_REFRESH_TIMEOUT_SENTINEL) {
+            timedOut = true;
+            evictStalledWorldStateRefresh(clean, refreshPromise, reason, "leader");
+            return {
+                ok: false,
+                reason: "world_state_refresh_timeout",
+                coalesced: false,
+                refresh_total_ms: elapsedWorldEntryMs(waitStartedAt),
+            };
+        }
         return {
             ...(result && typeof result === "object" ? result : {}),
             coalesced: false,
@@ -13760,7 +13827,10 @@ async function refreshWorldStateFromPostgres(worldName, reason = "world_state_se
         };
     }
     finally {
-        if (worldStateRefreshesInFlight.get(clean) === refreshPromise) {
+        // Success and failure both settle the promise, so the entry is cleared as before.
+        // Only the timeout path skips this, because evictStalledWorldStateRefresh already
+        // removed it and a late-settling orphan must not delete a newer entry.
+        if (!timedOut && worldStateRefreshesInFlight.get(clean) === refreshPromise) {
             worldStateRefreshesInFlight.delete(clean);
         }
     }
