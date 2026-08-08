@@ -32384,6 +32384,18 @@ async function claimWorldRouteForCurrentInstance(worldName: any) {
         if (!claimed?.ok && claimed?.reason === "world_ownership_fence_rejected") {
           const fenceEpoch = await postgresStore.getWorldOwnerEpoch(clean);
           if (fenceEpoch >= ownership.ownership_epoch) {
+            // Release the lease the rejected claim just acquired BEFORE re-minting.
+            // That claim SET owner/token for this instance, so without this release the
+            // re-mint below hits the Lua's same-owner branch, skips every INCR, and
+            // returns the floored counter itself -- exactly equal to the Postgres mark,
+            // which the strictly-greater fence then rejects. Worse, every client retry
+            // re-claimed and RENEWED the 45s lease, keeping the trap armed until the
+            // player quit for a full lease TTL and rejoined -- the "hit or miss, relog
+            // and hope" join failure. With the lease released, the re-mint takes the
+            // fresh-claim path and INCRs past the floor (mark + 1), which passes.
+            // Race note: another instance claiming in this window simply wins the route
+            // and this join redirects to it; monotonicity is preserved either way.
+            await redisStore.releaseWorldRoute(clean, SERVER_INSTANCE_ID, ownership.ownership_token);
             const reseeded = await redisStore.claimWorldRoute(
               clean,
               SERVER_INSTANCE_ID,
@@ -32405,6 +32417,17 @@ async function claimWorldRouteForCurrentInstance(worldName: any) {
               ownership.ownership_token = reseededToken;
               ownership.ownership_epoch = reseededEpoch;
               claimed = await postgresStore.claimWorldPersistenceOwnership(clean, ownership);
+            } else {
+              // This path failed silently for two days and cost a full misdiagnosis:
+              // never let the reseed fail without a trace again.
+              console.warn("[world-route] ownership epoch reseed FAILED", {
+                world: clean,
+                server_instance: SERVER_INSTANCE_ID,
+                rejected_epoch: ownership.ownership_epoch,
+                postgres_epoch: fenceEpoch,
+                reseeded_ok: reseeded.ok === true,
+                reseeded_epoch: reseededEpoch,
+              });
             }
           }
         }
