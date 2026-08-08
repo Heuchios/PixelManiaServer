@@ -7,6 +7,8 @@ const childProcess = require("node:child_process");
 const fs = require("node:fs");
 const path = require("node:path");
 
+const { effectiveStrictness, resolveTsconfig } = require("./tsconfig_effective");
+
 const repoRoot = path.join(__dirname, "..");
 
 /**
@@ -98,8 +100,19 @@ const generatedHeader = "// Generated from src/server.ts. Do not edit by hand.\n
 assert.ok(generated.startsWith(generatedHeader), "server.js must be marked as generated");
 assert.equal(generated, `${generatedHeader}${compiled}`, "server.js must exactly match the current TypeScript build");
 assert.ok(!source.includes("@ts-nocheck"), "src/server.ts must not disable TypeScript checking");
-assert.ok(config.compilerOptions?.noEmitOnError === true, "server entry build must refuse emit on compiler errors");
-assert.ok(config.compilerOptions?.noCheck !== true, "server entry build must not use noCheck");
+// tsconfig.server-entry.json extends ./tsconfig.json, so the strict options below
+// are inherited rather than restated locally. Asserting against this file's own JSON
+// would pass no matter what the base said -- and src/server.ts is the one file where
+// losing a strict option silently is most expensive. Resolve the extends chain and
+// assert the values tsc will actually use.
+const entryEffective = resolveTsconfig(path.join(repoRoot, "tsconfig.server-entry.json"));
+const entryStrictness = effectiveStrictness(entryEffective.compilerOptions);
+assert.equal(
+  entryEffective.compilerOptions.noEmitOnError,
+  true,
+  "server entry build must refuse emit on compiler errors",
+);
+assert.notEqual(entryEffective.compilerOptions.noCheck, true, "server entry build must not use noCheck");
 for (const strictOption of [
   "strict",
   "noImplicitAny",
@@ -108,8 +121,16 @@ for (const strictOption of [
   "strictPropertyInitialization",
   "useUnknownInCatchVariables",
 ]) {
-  assert.equal(config.compilerOptions?.[strictOption], true, `server entry build must enable ${strictOption}`);
+  assert.equal(entryStrictness[strictOption], true, `server entry build must enable ${strictOption}`);
 }
+// server.ts is in the base's exclude list, so the entry project has to clear it.
+// If this were ever dropped, the project would compile an empty program and pass.
+assert.deepEqual(config.exclude, [], "server entry build must clear the base exclude list");
+assert.equal(
+  entryEffective.compilerOptions.moduleDetection,
+  "force",
+  "server entry build must keep moduleDetection: force",
+);
 assert.ok(
   explicitAnyCount <= maxExplicitAnyCount,
   `src/server.ts explicit any count increased: ${explicitAnyCount} > ${maxExplicitAnyCount}`,

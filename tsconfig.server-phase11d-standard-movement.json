@@ -3,14 +3,10 @@
   "compilerOptions": {
     "noEmit": false,
     "outDir": ".tsbuild",
-    "rootDir": "src",
-    "declaration": false,
-    "sourceMap": false,
-    "strict": true,
-    "noImplicitAny": true,
-    "useUnknownInCatchVariables": false
+    "rootDir": "src"
   },
   "include": [
     "src/server_phase11d_standard_movement.ts"
-  ]
+  ],
+  "exclude": []
 }

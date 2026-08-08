@@ -1,15 +1,9 @@
 {
+  "extends": "./tsconfig.json",
   "compilerOptions": {
-    "esModuleInterop": true,
-    "forceConsistentCasingInFileNames": true,
-    "module": "CommonJS",
     "noEmit": false,
     "outDir": ".tsbuild",
-    "rootDir": "src",
-    "skipLibCheck": true,
-    "strict": true,
-    "target": "ES2022",
-    "types": ["node"]
+    "rootDir": "src"
   },
   "include": [
     "src/server_identity_helpers.ts",
@@ -17,5 +11,5 @@
     "src/server_version_helpers.ts",
     "src/server_account_helpers.ts"
   ],
-  "exclude": ["node_modules"]
+  "exclude": []
 }

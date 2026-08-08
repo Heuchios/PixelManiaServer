@@ -3,14 +3,10 @@
   "compilerOptions": {
     "noEmit": false,
     "outDir": ".tsbuild",
-    "rootDir": "src",
-    "declaration": false,
-    "sourceMap": false,
-    "strict": true,
-    "noImplicitAny": true,
-    "useUnknownInCatchVariables": false
+    "rootDir": "src"
   },
   "include": [
     "src/server_bot_rate_limit_helpers.ts"
-  ]
+  ],
+  "exclude": []
 }

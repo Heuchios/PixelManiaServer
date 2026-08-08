@@ -7,6 +7,7 @@ const fs = require("node:fs");
 const path = require("node:path");
 
 const PostgresStore = require("../postgres_store");
+const { effectiveStrictness, resolveTsconfig } = require("./tsconfig_effective");
 
 const repoRoot = path.join(__dirname, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
@@ -86,14 +87,26 @@ assert.equal(
 assert.equal(packageJson.scripts["check:postgres-store"], "npm run build:postgres-store && node scripts/check_postgres_store_build.js");
 assert.match(packageJson.scripts["check:typescript"], /npm run check:postgres-store/);
 assert.deepEqual(postgresStoreBuildConfig.include, ["src/postgres_store.ts"]);
-assert.equal(postgresStoreBuildConfig.compilerOptions.strict, true);
-assert.notEqual(postgresStoreBuildConfig.compilerOptions.noImplicitAny, false);
-assert.equal(postgresStoreBuildConfig.compilerOptions.noFallthroughCasesInSwitch, true);
-assert.equal(postgresStoreBuildConfig.compilerOptions.noImplicitReturns, true);
-assert.equal(postgresStoreBuildConfig.compilerOptions.noImplicitThis, true);
-assert.equal(postgresStoreBuildConfig.compilerOptions.strictFunctionTypes, true);
-assert.equal(postgresStoreBuildConfig.compilerOptions.useUnknownInCatchVariables, true);
+
+// tsconfig.postgres-store.json extends ./tsconfig.json, so most of these options
+// are inherited and are absent from its own JSON. Reading the raw file would make
+// every assertion below pass vacuously -- including if the base dropped `strict`
+// entirely. Assert the values tsc will actually use.
+const postgresStoreEffective = resolveTsconfig(path.join(repoRoot, "tsconfig.postgres-store.json"));
+const postgresStoreStrictness = effectiveStrictness(postgresStoreEffective.compilerOptions);
+assert.equal(postgresStoreStrictness.strict, true);
+assert.equal(postgresStoreStrictness.noImplicitAny, true);
+assert.equal(postgresStoreStrictness.noImplicitThis, true);
+assert.equal(postgresStoreStrictness.strictFunctionTypes, true);
+assert.equal(postgresStoreStrictness.useUnknownInCatchVariables, true);
+// Not part of the `strict` family and not in the base: the store keeps these two on
+// its own, and consolidation must not have swept them away.
+assert.equal(postgresStoreEffective.compilerOptions.noFallthroughCasesInSwitch, true);
+assert.equal(postgresStoreEffective.compilerOptions.noImplicitReturns, true);
+// The base leaves this file out so it is only ever checked by the strict project
+// above; postgres-store clears `exclude` so its own include can still see it.
 assert.ok(baseTypeScriptConfig.exclude.includes("src/postgres_store.ts"));
+assert.deepEqual(postgresStoreBuildConfig.exclude, []);
 assert.doesNotMatch(postgresStoreSource, /@ts-nocheck/);
 assert.match(postgresStoreBuildSource, /Generated from src\/postgres_store\.ts/);
 assert.match(postgresStoreSource, /export = PostgresStore/);
