@@ -30069,13 +30069,47 @@ async function verifyWorldPersistenceOwnership(worldName: unknown): Promise<{
   }
 
   const route = await redisStore.getWorldRoute(clean);
+  // owner/target/token expire together on the route lease TTL, but the epoch counter
+  // carries its OWN (much longer, and separately renewed) TTL -- so the counter can
+  // disappear while this instance still verifiably holds the route. getWorldRoute then
+  // reads it back as 0, `0 === <our epoch>` is false, and the lease is declared lost.
+  //
+  // Measured on staging 2026-08-08: a join to START claimed the route successfully at
+  // epoch 27 and then failed this check 0.9 ms later with world_ownership_lease_lost,
+  // on every single attempt. That rejects the join with "World data is still loading.
+  // Try again." -- a message the client treats as retryable and silently re-waits on --
+  // so the world was unjoinable while the server looked like it was answering nothing.
+  //
+  // The ownership token is the real fencing credential and it embeds the epoch it was
+  // minted with ("<claimant>:<epoch>"), which is exactly the value the counter held.
+  // When the counter is missing, recover the epoch from the token rather than treating
+  // a merely-expired bookkeeping key as proof that another instance took the world.
+  // Fencing is not weakened: the token must still match ours exactly, and a genuinely
+  // stolen route carries a different token (and a higher epoch inside it).
+  const routeEpoch = Math.max(0, Math.trunc(Number(route?.ownership_epoch) || 0));
+  const routeTokenEpochMatch = String(route?.ownership_token || "").match(/:(\d+)$/);
+  const routeTokenEpoch = routeTokenEpochMatch ? Math.trunc(Number(routeTokenEpochMatch[1])) : 0;
+  const effectiveRouteEpoch = routeEpoch > 0 ? routeEpoch : routeTokenEpoch;
   const verified = Boolean(
     route?.ok &&
     route.owner_instance_id === SERVER_INSTANCE_ID &&
     route.ownership_token === localOwnership.ownership_token &&
-    Number(route.ownership_epoch || 0) === localOwnership.ownership_epoch
+    effectiveRouteEpoch === localOwnership.ownership_epoch
   );
   if (!verified) {
+    // This path silently tore down ownership and rejected the join with no trace of
+    // WHICH comparand disagreed, which is why it hid for so long. Never again.
+    console.warn("[world-entry] world ownership lease verification failed", {
+      world: clean,
+      server_instance: SERVER_INSTANCE_ID,
+      route_ok: route?.ok === true,
+      route_owner_instance_id: String(route?.owner_instance_id || ""),
+      route_epoch: routeEpoch,
+      route_token_epoch: routeTokenEpoch,
+      effective_route_epoch: effectiveRouteEpoch,
+      local_epoch: localOwnership.ownership_epoch,
+      token_matches: route?.ownership_token === localOwnership.ownership_token,
+    });
     invalidateWorldEntrySnapshotCache(clean, "ownership_lease_lost");
     worldLoadedAuthorities.delete(clean);
     ownedWorldRoutes.delete(clean);
