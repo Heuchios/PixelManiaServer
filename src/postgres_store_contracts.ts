@@ -213,7 +213,7 @@ function clampStackLimit(value: unknown, fallback = DEFAULT_INVENTORY_STACK_LIMI
 function resolveItemCategory(itemType: unknown, itemCategory: unknown = ""): string {
   const cleanItemType = cleanName(itemType);
   if (cleanItemType !== "" && typeof ItemDatabase.resolveItemCategory === "function") {
-    const resolved = cleanName(ItemDatabase.resolveItemCategory(cleanItemType, itemCategory));
+    const resolved = cleanName(ItemDatabase.resolveItemCategory(cleanItemType, cleanName(itemCategory)));
     if (resolved !== "") return resolved;
   }
   return cleanName(itemCategory || "block").toLowerCase();
