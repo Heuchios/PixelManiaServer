@@ -19,6 +19,14 @@ const WORLD_ENTRY_PROFILE_ENABLED = ["1", "true", "yes", "on"].includes(String(p
 const WORLD_ENTRY_PROFILE_SERVER_INSTANCE = String(process.env.SERVER_INSTANCE_ID || process.env.INSTANCE_ID || process.env.NODE_APP_INSTANCE || "development").trim().slice(0, 128);
 const WORLD_ENTRY_CATCHUP_MAX_NO_PROGRESS_ATTEMPTS = Math.max(2, Math.trunc(Number(process.env.WORLD_ENTRY_CATCHUP_MAX_NO_PROGRESS_ATTEMPTS) || 10));
 const WORLD_ENTRY_CATCHUP_RETRY_MS = Math.max(25, Math.min(250, Math.trunc(Number(process.env.WORLD_ENTRY_CATCHUP_RETRY_MS) || 100)));
+// A world_entry_ready whose revisions regress triggers a full snapshot restart. A
+// client stuck re-sending bad revisions (or re-requesting restarts) previously drove
+// UNBOUNDED re-streams -- each one resets the provisional entry, so the loop never
+// converges and the player sits at 88% while the server burns bandwidth. Bound it:
+// after this many restarts within one entry session, cancel the entry and reject
+// visibly (message deliberately does NOT contain "still loading", so clients do not
+// silently auto-retry it).
+const WORLD_ENTRY_MAX_SNAPSHOT_RESTARTS = Math.max(2, Math.trunc(Number(process.env.WORLD_ENTRY_MAX_SNAPSHOT_RESTARTS) || 6));
 // How long a provisional world entry (snapshot_sent, not yet activated by
 // world_entry_ready) may stay pending before a fresh join_world on the same socket is
 // allowed to replace it instead of being rejected. See handleJoinWorld for why an
@@ -91,6 +99,7 @@ function createServerPhase8PlayerSessionRoutes(deps) {
         player.world_entry_snapshot_queued = false;
         player.world_entry_catchup_attempts = 0;
         player.world_entry_catchup_last_client_block_revision = 0;
+        player.world_entry_snapshot_restart_count = 0;
     }
     async function cancelProvisionalWorldEntry(player, worldName, context, reason) {
         player.joined_world = false;
@@ -494,6 +503,7 @@ function createServerPhase8PlayerSessionRoutes(deps) {
             player.world_entry_snapshot_queued = false;
             player.world_entry_catchup_attempts = 0;
             player.world_entry_catchup_last_client_block_revision = 0;
+            player.world_entry_snapshot_restart_count = 0;
             deps.updatePlayerWorldIndex(player);
             await deps.commitWorldAdmissionReservation(admission, player, oldWorld);
             admissionCommitted = true;
@@ -689,6 +699,29 @@ function createServerPhase8PlayerSessionRoutes(deps) {
             || clientSnapshotAhead
             || authoritativeRevisionRegressed
             || catchupStalled) {
+            const restartCount = Math.max(0, Math.trunc(Number(player.world_entry_snapshot_restart_count || 0))) + 1;
+            player.world_entry_snapshot_restart_count = restartCount;
+            if (restartCount > WORLD_ENTRY_MAX_SNAPSHOT_RESTARTS) {
+                console.warn("[world-entry-server]", JSON.stringify({
+                    event: "world_entry_restart_loop_aborted",
+                    world_id: worldName,
+                    server_instance: WORLD_ENTRY_PROFILE_SERVER_INSTANCE,
+                    entry_session_id: sessionId,
+                    restart_count: restartCount,
+                    loaded_revision: clientRevision,
+                    mutation_revision: currentRevision,
+                    requested_save_revision: expectedRevision,
+                    save_result: "restart_loop_aborted",
+                }));
+                deps.sendActionRejected(socket, "world_entry_ready", "Could not finish loading the world. Please rejoin.", {
+                    reason: "world_entry_restart_loop",
+                    world: worldName,
+                    join_request_id: player.world_entry_join_request_id,
+                    world_entry_session_id: sessionId,
+                });
+                await cancelProvisionalWorldEntry(player, worldName, context, "snapshot_restart_loop");
+                return;
+            }
             const joinSpawn = toRecord(deps.getJoinWorldSpawnForWorld(worldName));
             deps.sendJson(socket, {
                 type: "world_entry_snapshot_restart",
