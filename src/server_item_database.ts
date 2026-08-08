@@ -2746,11 +2746,68 @@ const ITEM_DEFINITIONS = {
     dropable: false,
   }),
   angel_wings: item("back", {
+    display_name: "Angel Wings",
     rarity: "legendary",
+    texture: "angel_wings_1",
+    inventory_icon: "angel_wings_icon",
     equipment_slot: "back",
     equipable: true,
     tradeable: true,
     dropable: true,
+    idle_frames: [
+      "angel_wings_1",
+      "angel_wings_2",
+      "angel_wings_3",
+    ],
+    jump_frames: [
+      "angel_wings_2",
+      "angel_wings_4",
+      "angel_wings_1",
+    ],
+    fall_frames: [
+      "angel_wings_3",
+      "angel_wings_5",
+      "angel_wings_1",
+    ],
+    flap_frames: [
+      "angel_wings_1",
+      "angel_wings_4",
+      "angel_wings_2",
+    ],
+  }),
+  golden_angel_wings: item("back", {
+    display_name: "Golden Angel Wings",
+    rarity: "legendary",
+    texture: "golden_angel_wings_1",
+    inventory_icon: "golden_angel_wings_icon",
+    starting_count: 0,
+    equipment_slot: "back",
+    equipable: true,
+    tradeable: true,
+    vendable: true,
+    dropable: true,
+    jump_type: "double",
+    idle_frames: [
+      "golden_angel_wings_1",
+      "golden_angel_wings_2",
+      "golden_angel_wings_3",
+    ],
+    jump_frames: [
+      "golden_angel_wings_2",
+      "golden_angel_wings_4",
+      "golden_angel_wings_1",
+    ],
+    fall_frames: [
+      "golden_angel_wings_3",
+      "golden_angel_wings_5",
+      "golden_angel_wings_1",
+    ],
+    flap_frames: [
+      "golden_angel_wings_1",
+      "golden_angel_wings_4",
+      "golden_angel_wings_2",
+    ],
+    order: 211,
   }),
   evil_wings: item("back", {
     rarity: "legendary",
@@ -2936,8 +2993,8 @@ const ITEM_DEFINITIONS = {
   carboard_wings: item("back", {
     display_name: "Carboard Wings",
     rarity: "legendary",
-    texture: "res://Assets/items/back_items/cardboard_wings_1.png",
-    inventory_icon: "res://Assets/items/back_items/cardboard_wings_icon.png",
+    texture: "carboard_wings_1",
+    inventory_icon: "carboard_wings_icon",
     starting_count: 0,
     equipment_slot: "back",
     equipable: true,
@@ -2945,27 +3002,25 @@ const ITEM_DEFINITIONS = {
     vendable: true,
     dropable: true,
     jump_type: "double",
-    sprite_folder: "res://Assets/items/back_items/",
-    idle_sprite: "cardboard_wings_1.png",
     idle_frames: [
-      "cardboard_wings_1.png",
-      "cardboard_wings_2.png",
-      "cardboard_wings_3.png",
+      "carboard_wings_1",
+      "carboard_wings_2",
+      "carboard_wings_3",
     ],
     jump_frames: [
-      "cardboard_wings_1.png",
-      "cardboard_wings_2.png",
-      "cardboard_wings_3.png",
+      "carboard_wings_1",
+      "carboard_wings_2",
+      "carboard_wings_3",
     ],
     fall_frames: [
-      "cardboard_wings_1.png",
-      "cardboard_wings_2.png",
-      "cardboard_wings_3.png",
+      "carboard_wings_1",
+      "carboard_wings_2",
+      "carboard_wings_3",
     ],
     flap_frames: [
-      "cardboard_wings_1.png",
-      "cardboard_wings_2.png",
-      "cardboard_wings_3.png",
+      "carboard_wings_1",
+      "carboard_wings_2",
+      "carboard_wings_3",
     ],
     flap_animation: true,
     scan_flap_frames: false,
@@ -3032,6 +3087,8 @@ const ITEM_DEFINITIONS = {
   void_aura: item("back", {
     display_name: "Void Aura",
     rarity: "legendary",
+    texture: "void_aura_1",
+    inventory_icon: "void_aura_icon",
     instance_tracked: true,
     equipment_slot: "back",
     equipable: true,
@@ -3039,6 +3096,18 @@ const ITEM_DEFINITIONS = {
     vendable: true,
     dropable: true,
     jump_type: "double",
+    idle_frames: [
+      "void_aura_1",
+      "void_aura_2",
+      "void_aura_3",
+      "void_aura_4",
+    ],
+    flap_frames: [
+      "void_aura_1",
+      "void_aura_2",
+      "void_aura_3",
+      "void_aura_4",
+    ],
   }),
   susanoo_wings: item("back", {
     display_name: "Susanoo Wings",
@@ -3053,11 +3122,11 @@ const ITEM_DEFINITIONS = {
     dropable: true,
     jump_type: "double",
   }),
-  flaming_wings: item("back", {
-    display_name: "Flaming Wings",
+  dragon_fire_wings: item("back", {
+    display_name: "Dragon Fire Wings",
     rarity: "legendary",
-    texture: "res://Assets/items/back_items/flaming_wings_idle_1.png",
-    inventory_icon: "res://Assets/items/back_items/flaming_wings_idle_1.png",
+    texture: "dragon_fire_wings_1",
+    inventory_icon: "dragon_fire_wings_icon",
     instance_tracked: true,
     equipment_slot: "back",
     equipable: true,
@@ -3065,6 +3134,26 @@ const ITEM_DEFINITIONS = {
     vendable: true,
     dropable: true,
     jump_type: "double",
+    idle_frames: [
+      "dragon_fire_wings_1",
+      "dragon_fire_wings_2",
+      "dragon_fire_wings_3",
+    ],
+    jump_frames: [
+      "dragon_fire_wings_2",
+      "dragon_fire_wings_4",
+      "dragon_fire_wings_1",
+    ],
+    fall_frames: [
+      "dragon_fire_wings_3",
+      "dragon_fire_wings_5",
+      "dragon_fire_wings_1",
+    ],
+    flap_frames: [
+      "dragon_fire_wings_1",
+      "dragon_fire_wings_4",
+      "dragon_fire_wings_2",
+    ],
   }),
   lucifer_wings: item("back", {
     display_name: "Lucifer Wings",
@@ -3092,11 +3181,11 @@ const ITEM_DEFINITIONS = {
     dropable: true,
     jump_type: "double",
   }),
-  purple_jetpack: item("back", {
-    display_name: "Purple Jetpack",
+  green_jetpack: item("back", {
+    display_name: "Green Jetpack",
     rarity: "legendary",
-    texture: "res://Assets/items/back_items/purple_jetpack.png",
-    inventory_icon: "res://Assets/items/back_items/purple_jetpack_icon.png",
+    texture: "green_jetpack_1",
+    inventory_icon: "green_jetpack_icon",
     starting_count: 0,
     instance_tracked: true,
     equipment_slot: "back",
@@ -3105,13 +3194,11 @@ const ITEM_DEFINITIONS = {
     vendable: true,
     dropable: true,
     jump_type: "double",
-    sprite_folder: "res://Assets/items/back_items/",
-    idle_sprite: "purple_jetpack.png",
     flap_frames: [
-      "purple_jetpack_jump_1.png",
-      "purple_jetpack_jump_2.png",
-      "purple_jetpack_jump_3.png",
-      "purple_jetpack_jump_4.png",
+      "green_jetpack_1",
+      "green_jetpack_2",
+      "green_jetpack_3",
+      "green_jetpack_4",
     ],
     flap_animation: true,
     flap_animation_loop: true,
@@ -3132,8 +3219,8 @@ const ITEM_DEFINITIONS = {
   blue_jetpack: item("back", {
     display_name: "Blue Jetpack",
     rarity: "legendary",
-    texture: "res://Assets/items/back_items/blue_jetpack_idle.png",
-    inventory_icon: "res://Assets/items/back_items/blue_jetpack_icon.png",
+    texture: "blue_jetpack_1",
+    inventory_icon: "blue_jetpack_icon",
     starting_count: 0,
     instance_tracked: true,
     equipment_slot: "back",
@@ -3142,12 +3229,11 @@ const ITEM_DEFINITIONS = {
     vendable: true,
     dropable: true,
     jump_type: "double",
-    sprite_folder: "res://Assets/items/back_items/",
-    idle_sprite: "blue_jetpack_idle.png",
     flap_frames: [
-      "blue_jetpack_jump_1.png",
-      "blue_jetpack_jump_2.png",
-      "blue_jetpack_jump_3.png",
+      "blue_jetpack_1",
+      "blue_jetpack_2",
+      "blue_jetpack_3",
+      "blue_jetpack_4",
     ],
     flap_animation: true,
     flap_animation_loop: true,
@@ -4459,7 +4545,7 @@ function cleanCategory(category: unknown): string {
   return Object.prototype.hasOwnProperty.call(CATEGORY_TO_FIELD, clean) ? clean : "";
 }
 
-function resolveItemCategory(itemId: unknown, requestedCategory: unknown = ""): string {
+function resolveItemCategory(itemId: unknown, requestedCategory = ""): string {
   const definition = getItemDefinition(itemId);
   if (definition) return definition.category;
   return cleanCategory(requestedCategory);
