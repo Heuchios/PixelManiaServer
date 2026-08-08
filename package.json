@@ -148,7 +148,7 @@
 	"test:multiplayer-scaling": "node scripts/multiplayer_scaling_smoke.js",
 	"test:multiplayer-scaling:fast": "node scripts/multiplayer_scaling_smoke.js --skip-security",
 	"test:multiplayer-scaling:redis": "node scripts/multiplayer_scaling_smoke.js --require-redis",
-	"test": "echo \"Error: no test specified\" && exit 1",
+	"test": "node scripts/check_drop_pickup_item_loss.js && node scripts/check_movement_rollback_regression.js",
 	"start": "node server.js",
 	"pm2:reload": "pm2 startOrReload ecosystem.config.js --env production",
 	"ops:dashboard": "node ops_dashboard_server.js",
