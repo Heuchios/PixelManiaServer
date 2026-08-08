@@ -13,6 +13,9 @@ const repoRoot = path.join(__dirname, "..");
 const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json"), "utf8"));
 const deploySource = require("./release_deployment_test_helpers").readDeploymentCoverage(repoRoot);
 const baseTypeScriptConfig = JSON.parse(fs.readFileSync(path.join(repoRoot, "tsconfig.json"), "utf8"));
+// The SOURCE, not the emit. Pins here use the `import X = require(...)` form.
+// check_postgres_contracts.js reads the GENERATED postgres_store.js instead, where the
+// same declaration appears as `const X = require(...)` -- do not unify the two.
 const postgresStoreSource = fs.readFileSync(path.join(repoRoot, "src", "postgres_store.ts"), "utf8");
 const postgresStoreBuildSource = fs.readFileSync(path.join(repoRoot, "scripts", "sync_postgres_store_build.js"), "utf8");
 const postgresStoreBuildConfig = JSON.parse(fs.readFileSync(path.join(repoRoot, "tsconfig.postgres-store.json"), "utf8"));
@@ -80,11 +83,15 @@ assert.deepEqual(
   }
 );
 
-// Stays on `tsc --project`. This file's dependencies are all
-// `const X = require("./y")`, which tsc treats as a call on Node's `require` returning
-// `any` -- the target module never enters the program. So there is nothing for a
-// project reference to short-circuit. Proven with --listFiles: 200 files in the
-// program, server_item_database in neither source nor .d.ts form.
+// Stays on `tsc --project`, but the REASON changed once the four seams became typed
+// imports. It used to be that nothing crossed the boundary at all: as
+// `const X = require("./y")` tsc never loaded the target, so a project reference had
+// nothing to short-circuit (--listFiles showed 200 files with server_item_database in
+// neither source nor .d.ts form). Now those four ARE type-level imports, so this project
+// genuinely compiles their source -- pinned as `inlineDependencies` in
+// check_tsconfig_projects.js. Inline is the deliberate choice: it checks more than
+// reading a .d.ts. Switching to `references` would require `tsc --build` here and
+// `composite: true` on all four targets.
 assert.equal(
   packageJson.scripts["build:postgres-store"],
   "tsc --project tsconfig.postgres-store.json && node scripts/sync_postgres_store_build.js"
@@ -117,7 +124,21 @@ assert.deepEqual(postgresStoreBuildConfig.exclude, []);
 assert.doesNotMatch(postgresStoreSource, /@ts-nocheck/);
 assert.match(postgresStoreBuildSource, /Generated from src\/postgres_store\.ts/);
 assert.match(postgresStoreSource, /export = PostgresStore/);
-assert.match(postgresStoreSource, /const PostgresContracts = require\("\.\/postgres_store_contracts"\)/);
+// All four dependency seams are type-level imports. As `const X = require(...)` they
+// were calls on Node's `require` typed `any`, so none of the 73 call sites across 54
+// distinct members was checked against its producer.
+for (const dependency of [
+  "DropContracts = require(\"./server_drop_contracts\")",
+  "InventoryContracts = require(\"./server_inventory_contracts\")",
+  "PostgresContracts = require(\"./postgres_store_contracts\")",
+  "ItemDatabase = require(\"./server_item_database\")",
+]) {
+  assert.ok(
+    postgresStoreSource.includes(`import ${dependency};`),
+    `src/postgres_store.ts must import ${dependency} as a typed import, not a runtime require`,
+  );
+}
+assert.match(postgresStoreSource, /^import PostgresContracts = require\("\.\/postgres_store_contracts"\);$/m);
 assert.match(postgresStoreSource, /queryReadWithRetry\("account states load"/);
 assert.match(postgresStoreSource, /queryReadWithRetry\("player states load"/);
 assert.match(postgresStoreSource, /queryReadWithRetry\("world states load"/);

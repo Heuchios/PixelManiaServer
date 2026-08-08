@@ -15760,7 +15760,7 @@ async function commitPlayerInventoryState(socket: any, player: any, username: an
           reason: persistence.reason || "world_persistence_failed",
         };
     } else {
-      result = await buildTransaction();
+      result = await buildTransaction() as ServerPacketRecord | null;
     }
 
     if (!result || !result.ok) {

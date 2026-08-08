@@ -269,6 +269,11 @@ assert.equal(PostgresContracts.normalizeSecuritySeverity("error"), "high");
 assert.equal(PostgresContracts.normalizeIp("127.0.0.1"), "127.0.0.1");
 assert.equal(PostgresContracts.normalizeIp("bad ip"), "");
 
+// NOTE: `postgresSource` here is the GENERATED postgres_store.js, not src/postgres_store.ts.
+// src/postgres_store.ts now uses `import PostgresContracts = require(...)`, but that form
+// EMITS as `const PostgresContracts = require(...)`, so the generated file keeps the const.
+// Asserting it here proves the emitted module still delegates to the contracts module.
+// The `import =` form is pinned against the SOURCE in check_postgres_store_build.js.
 assert.match(postgresSource, /const PostgresContracts = require\("\.\/postgres_store_contracts"\)/);
 assert.match(postgresSource, /return PostgresContracts\.normalizeOptionalTimestamp\(value\);/);
 assert.match(postgresSource, /return PostgresContracts\.jsonChecksum\(value\);/);

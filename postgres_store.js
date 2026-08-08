@@ -6024,6 +6024,8 @@ class PostgresStore {
             if (stableJsonString(beforeData) === stableJsonString(afterData))
                 continue;
             const anchor = afterObject || beforeObject;
+            if (!anchor)
+                continue;
             const action = normalizeWorldObjectAction(e.action || "");
             changes.push({
                 ...e,

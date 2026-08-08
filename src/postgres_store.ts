@@ -7,10 +7,10 @@ const fs = require("fs");
 const crypto = require("crypto");
 const net = require("net");
 const path = require("path");
-const DropContracts = require("./server_drop_contracts");
-const InventoryContracts = require("./server_inventory_contracts");
-const PostgresContracts = require("./postgres_store_contracts");
-const ItemDatabase = require("./server_item_database");
+import DropContracts = require("./server_drop_contracts");
+import InventoryContracts = require("./server_inventory_contracts");
+import PostgresContracts = require("./postgres_store_contracts");
+import ItemDatabase = require("./server_item_database");
 
 type PostgresPoolConstructor = new (config?: PoolConfig) => Pool;
 type PostgresError = Error & {
@@ -49,7 +49,6 @@ type InventoryLedgerEntry = {
   before_amount: number;
   after_amount: number;
   repaired_inventory_before_amount: number | null;
-  stack_limit?: number;
 };
 type ReleasePlan = {
   location: string;
@@ -6611,6 +6610,7 @@ class PostgresStore {
       if (stableJsonString(beforeData) === stableJsonString(afterData)) continue;
 
       const anchor = afterObject || beforeObject;
+      if (!anchor) continue;
       const action = normalizeWorldObjectAction(e.action || "");
       changes.push({
         ...e,
@@ -9354,7 +9354,7 @@ class PostgresStore {
         );
         let worldId = worldResult.rows[0]?.world_id || null;
 
-        const ledgerEntries: InventoryLedgerEntry[] = [];
+        const ledgerEntries: PixelMania.PostgresInventoryLedgerEntry[] = [];
         const transactionLedgerEntries: RuntimeRecord[] = [];
         const inventoryBeforeHash = await this.getInventorySnapshotHash(client, playerId);
         for (const deltaEntry of deltas) {

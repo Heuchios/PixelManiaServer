@@ -113,6 +113,7 @@ const PROJECTS = {
     outDir: ".tsbuild",
     localOptions: {"allowJs":false},
     references: [],
+    inlineDependencies: ["drop-contracts", "inventory-contracts", "postgres-contracts", "item-data"],
   },
   "redis-store": {
     include: ["src/redis_store.ts"],
@@ -669,10 +670,6 @@ for (const [projectName, pin] of Object.entries(PROJECTS)) {
 //     project now needs a reference (the assertion above will say so).
 const KNOWN_RUNTIME_REQUIRES = [
   "src/atlas_item_definition.ts -> ./item_atlas_db",
-  "src/postgres_store.ts -> ./postgres_store_contracts",
-  "src/postgres_store.ts -> ./server_drop_contracts",
-  "src/postgres_store.ts -> ./server_inventory_contracts",
-  "src/postgres_store.ts -> ./server_item_database",
   "src/server_item_database.ts -> ./atlas_item_definition",
 ];
 
