@@ -3098,8 +3098,8 @@ const ITEM_DEFINITIONS = {
     phoenix_wings: item("back", {
         display_name: "Phoenix Wings",
         rarity: "legendary",
-        texture: "res://Assets/items/back_items/phoenix_wings_1.png",
-        inventory_icon: "res://Assets/items/back_items/phoenix_wings_1.png",
+        texture: "phoenix_wings_1",
+        inventory_icon: "phoenix_wings_icon",
         instance_tracked: true,
         equipment_slot: "back",
         equipable: true,
@@ -3107,6 +3107,26 @@ const ITEM_DEFINITIONS = {
         vendable: true,
         dropable: true,
         jump_type: "double",
+        idle_frames: [
+            "phoenix_wings_1",
+            "phoenix_wings_2",
+            "phoenix_wings_3",
+        ],
+        jump_frames: [
+            "phoenix_wings_2",
+            "phoenix_wings_4",
+            "phoenix_wings_1",
+        ],
+        fall_frames: [
+            "phoenix_wings_3",
+            "phoenix_wings_5",
+            "phoenix_wings_1",
+        ],
+        flap_frames: [
+            "phoenix_wings_1",
+            "phoenix_wings_4",
+            "phoenix_wings_2",
+        ],
     }),
     green_jetpack: item("back", {
         display_name: "Green Jetpack",
