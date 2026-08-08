@@ -4459,7 +4459,7 @@ function cleanCategory(category: unknown): string {
   return Object.prototype.hasOwnProperty.call(CATEGORY_TO_FIELD, clean) ? clean : "";
 }
 
-function resolveItemCategory(itemId: unknown, requestedCategory = ""): string {
+function resolveItemCategory(itemId: unknown, requestedCategory: unknown = ""): string {
   const definition = getItemDefinition(itemId);
   if (definition) return definition.category;
   return cleanCategory(requestedCategory);
