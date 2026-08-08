@@ -3905,8 +3905,8 @@ const ITEM_DEFINITIONS = {
   void_saber: item("tool", {
     display_name: "Void Saber",
     rarity: "legendary",
-    texture: "res://Assets/items/swords/void_saber.png",
-    inventory_icon: "res://Assets/items/swords/void_saber_icon.png",
+    texture: "void_saber_1",
+    inventory_icon: "void_saber_icon",
     equipment_slot: "hand",
     equipable: true,
     hand_item: true,
