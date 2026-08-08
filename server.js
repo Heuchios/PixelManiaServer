@@ -233,6 +233,19 @@ const ADMIN_INVENTORY_LOOKUP_FIELDS = Object.freeze([
 const MAX_ITEM_ID_LENGTH = 64;
 const MAX_ITEM_CATEGORY_LENGTH = 64;
 const MAX_DROP_ID_LENGTH = 96;
+// World ownership tokens are "<instance>:<pid>:<uuid>:<epoch>" and are compared for
+// EXACT equality when verifying the route lease, so they must never be truncated.
+// They were previously clamped with clampString()'s default (MAX_ITEM_ID_LENGTH = 64),
+// which is a limit for item ids and far too small: a token like
+// "pixelmania-staging:895822:d39ff9fc-ceff-4957-b172-dca639d5de50:12" is 65 characters
+// the moment the epoch reaches two digits, so the trailing digit was silently cut off.
+// The cached token then no longer equalled the one in Redis, every lease verification
+// failed, and EVERY join to that world was rejected forever with
+// "World data is still loading. Try again." -- the 88% loading freeze. Worlds died
+// permanently the first time their epoch counter ticked past 9 (START 34, TEST 25,
+// SHOWCASE 12 were all dead; every still-working world was single-digit).
+// SERVER_INSTANCE_ID alone is allowed 128 characters, so size this for the whole token.
+const MAX_WORLD_OWNERSHIP_TOKEN_LENGTH = 256;
 const MAX_ROLLBACK_PRESERVED_DROP_IDS_LOGGED = 8;
 const MAX_DROP_TOMBSTONE_HISTORY = 512;
 // How long after a successful pickup a repeat request from the same player is
@@ -29757,7 +29770,7 @@ async function claimWorldRouteForCurrentInstance(worldName) {
         const ownership = {
             require_owner: POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE && WORLD_ROUTE_ENFORCEMENT_ENABLED,
             server_instance: SERVER_INSTANCE_ID,
-            ownership_token: clampString(route.ownership_token || ""),
+            ownership_token: clampString(route.ownership_token || "", MAX_WORLD_OWNERSHIP_TOKEN_LENGTH),
             ownership_epoch: Math.max(0, Math.trunc(Number(route.ownership_epoch) || 0)),
             fallback: route.fallback === true,
             verified: route.fallback !== true,
@@ -29808,7 +29821,7 @@ async function claimWorldRouteForCurrentInstance(worldName) {
                         await redisStore.releaseWorldRoute(clean, SERVER_INSTANCE_ID, ownership.ownership_token);
                         const reseeded = await redisStore.claimWorldRoute(clean, SERVER_INSTANCE_ID, SERVER_INSTANCE_WS_URL, WORLD_ROUTE_TTL_MS, SERVER_PROCESS_OWNERSHIP_ID, fenceEpoch);
                         const reseededEpoch = Math.max(0, Math.trunc(Number(reseeded.ownership_epoch) || 0));
-                        const reseededToken = clampString(reseeded.ownership_token || "");
+                        const reseededToken = clampString(reseeded.ownership_token || "", MAX_WORLD_OWNERSHIP_TOKEN_LENGTH);
                         if (reseeded.ok && reseededToken !== "" && reseededEpoch > fenceEpoch) {
                             console.warn("[world-route] ownership epoch reseeded from PostgreSQL", {
                                 world: clean,
