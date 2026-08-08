@@ -45,6 +45,15 @@ const packageJson = JSON.parse(fs.readFileSync(path.join(repoRoot, "package.json
 // in ./tsconfig.json so it applies everywhere.
 const ALWAYS_LOCAL_OPTIONS = ["noEmit", "outDir", "rootDir"];
 
+// Enabled in the base but NOT implied by `strict`, so `effectiveStrictness` cannot see
+// them. Only src/postgres_store.ts had these until they were promoted -- probes measured
+// 0 errors across every other file, including src/server.ts, so the promotion was free.
+// They must never silently regress to one project's private setting again.
+const REQUIRED_NON_STRICT_OPTIONS = [
+  "noFallthroughCasesInSwitch",
+  "noImplicitReturns",
+];
+
 // Options that decide the shape of the emitted JavaScript. Every project must
 // agree on these, or one module's generated .js stops matching the others and
 // deploy_to_droplet.ps1's rebuild-and-diff check starts failing intermittently.
@@ -62,6 +71,7 @@ const EMIT_SHAPE_OPTIONS = [
  * @property {string} outDir
  * @property {Record<string, any>} localOptions
  * @property {string[]} references project names this one reads .d.ts from
+ * @property {string[]} [inlineDependencies] project names whose SOURCE this one compiles
  * @property {boolean} [referencesExempt] see the SERVER-ENTRY note below
  */
 
@@ -96,11 +106,12 @@ const PROJECTS = {
     outDir: ".tsbuild",
     localOptions: {},
     references: [],
+    inlineDependencies: ["item-data"],
   },
   "postgres-store": {
     include: ["src/postgres_store.ts"],
     outDir: ".tsbuild",
-    localOptions: {"allowJs":false,"noFallthroughCasesInSwitch":true,"noImplicitReturns":true},
+    localOptions: {"allowJs":false},
     references: [],
   },
   "redis-store": {
@@ -120,6 +131,7 @@ const PROJECTS = {
     outDir: ".tsbuild",
     localOptions: {},
     references: [],
+    inlineDependencies: ["server-helpers"],
   },
   "server-admin-lookup-routes": {
     include: ["src/server_admin_lookup_routes.ts"],
@@ -314,6 +326,13 @@ for (const option of STRICT_FAMILY_OPTIONS) {
     `tsconfig.json must not weaken ${option}; every project inherits it`,
   );
 }
+for (const option of REQUIRED_NON_STRICT_OPTIONS) {
+  assert.equal(
+    base.compilerOptions[option],
+    true,
+    `tsconfig.json must set ${option}: true -- it is not implied by strict, so nothing else enforces it`,
+  );
+}
 // src/server.ts and src/postgres_store.ts are checked by their own strict
 // projects, so the base leaves them out. tsconfig.server-entry.json and
 // tsconfig.postgres-store.json therefore have to clear `exclude` to see them,
@@ -386,6 +405,14 @@ for (const [projectName, pin] of Object.entries(PROJECTS)) {
   const strictness = effectiveStrictness(resolved.compilerOptions);
   for (const [option, value] of Object.entries(strictness)) {
     assert.equal(value, true, `${configName} resolves ${option} to ${value}, which checks less than the base`);
+  }
+
+  for (const option of REQUIRED_NON_STRICT_OPTIONS) {
+    assert.equal(
+      resolved.compilerOptions[option],
+      true,
+      `${configName} resolves ${option} to ${resolved.compilerOptions[option]}, which checks less than the base`,
+    );
   }
 
   for (const option of EMIT_SHAPE_OPTIONS) {
@@ -580,27 +607,48 @@ for (const [projectName, pin] of Object.entries(PROJECTS)) {
   }
 
   if (pin.referencesExempt) {
-    // server-entry: compiling dependency SOURCE is the point. See the header note.
+    // server-entry: compiling dependency SOURCE is the point, for all 39. See the
+    // header note. It needs no per-dependency pin because the answer is always inline.
     assert.equal(
       pin.references.length,
       0,
       `${configNameFor(projectName)} is marked referencesExempt, so it must have no references`,
     );
+    assert.equal(
+      (pin.inlineDependencies || []).length,
+      0,
+      `${configNameFor(projectName)} is referencesExempt, which already means every dependency is inline`,
+    );
     continue;
   }
 
-  const missing = [...importedProjects].filter((name) => !pin.references.includes(name)).sort();
+  // Two legitimate ways to satisfy a cross-project type import, and the choice must be
+  // deliberate rather than accidental:
+  //   references         -- read the dependency's emitted .d.ts. Faster; needs composite.
+  //   inlineDependencies -- compile the dependency's SOURCE into this program. Slower,
+  //                         but checks more, which is why server-entry does it for all 39.
+  const inlineDependencies = pin.inlineDependencies || [];
+  const missing = [...importedProjects]
+    .filter((name) => !pin.references.includes(name) && !inlineDependencies.includes(name))
+    .sort();
   assert.deepEqual(
     missing,
     [],
-    `${configNameFor(projectName)} imports from ${missing.join(", ")} but does not reference ${missing.length === 1 ? "it" : "them"}. Add the reference, or that dependency gets recompiled here under this project's options.`,
+    `${configNameFor(projectName)} type-imports from ${missing.join(", ")} without pinning how. Add ${missing.length === 1 ? "it" : "them"} to references (reads .d.ts, needs composite on the target) or to inlineDependencies (compiles the source here).`,
   );
 
-  const unused = pin.references.filter((name) => !importedProjects.has(name)).sort();
+  const unusedReferences = pin.references.filter((name) => !importedProjects.has(name)).sort();
   assert.deepEqual(
-    unused,
+    unusedReferences,
     [],
-    `${configNameFor(projectName)} references ${unused.join(", ")} but imports nothing from ${unused.length === 1 ? "it" : "them"}`,
+    `${configNameFor(projectName)} references ${unusedReferences.join(", ")} but type-imports nothing from ${unusedReferences.length === 1 ? "it" : "them"}`,
+  );
+
+  const unusedInline = inlineDependencies.filter((name) => !importedProjects.has(name)).sort();
+  assert.deepEqual(
+    unusedInline,
+    [],
+    `${configNameFor(projectName)} lists ${unusedInline.join(", ")} as an inline dependency but type-imports nothing from ${unusedInline.length === 1 ? "it" : "them"}`,
   );
 }
 
@@ -625,10 +673,6 @@ const KNOWN_RUNTIME_REQUIRES = [
   "src/postgres_store.ts -> ./server_drop_contracts",
   "src/postgres_store.ts -> ./server_inventory_contracts",
   "src/postgres_store.ts -> ./server_item_database",
-  "src/postgres_store_contracts.ts -> ./server_item_database",
-  "src/server_account_helpers.ts -> ./server_identity_helpers",
-  "src/server_account_session_helpers.ts -> ./server_account_helpers",
-  "src/server_account_session_helpers.ts -> ./server_text_helpers",
   "src/server_item_database.ts -> ./atlas_item_definition",
 ];
 
@@ -745,7 +789,8 @@ console.log(`[tsconfig-projects] ${Object.keys(PROJECTS).length} projects extend
 console.log(`[tsconfig-projects] ${sourceFiles.length} src modules, each owned by exactly one project`);
 console.log(
   `[tsconfig-projects] ${referencedProjects.size} composite projects, ` +
-    `${Object.values(PROJECTS).reduce((total, pin) => total + pin.references.length, 0)} reference edges ` +
+    `${Object.values(PROJECTS).reduce((total, pin) => total + pin.references.length, 0)} reference edges, ` +
+    `${Object.values(PROJECTS).reduce((total, pin) => total + (pin.inlineDependencies || []).length, 0)} inline dependencies ` +
     "(type-level import graph fully covered)",
 );
 console.log(

@@ -2,10 +2,7 @@
 
 import crypto = require("node:crypto");
 
-const IdentityHelpers = require("./server_identity_helpers") as {
-  cleanAccountName(value: unknown): string;
-  cleanEmail(value: unknown): string;
-};
+import IdentityHelpers = require("./server_identity_helpers");
 
 type ValidationResult = {
   ok: boolean;

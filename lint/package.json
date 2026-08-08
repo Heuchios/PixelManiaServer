@@ -1,0 +1,11 @@
+{
+  "name": "pixelmaniaserver-lint",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Isolated lint toolchain. The server builds with typescript@7, which removed the classic compiler API (createProgram is undefined) and which typescript-eslint refuses outright ('does not support TS 7.0'). TypeScript 6.0 is the last release with that API, and Microsoft documents running it side by side with 7.0. This folder carries its own node_modules so typescript-eslint resolves typescript@6 here, while the server's tsc keeps using 7.0.2 from the parent. Nothing in this folder is imported, built, or deployed.",
+  "devDependencies": {
+    "eslint": "^10.0.0",
+    "typescript": "^6.0.0",
+    "typescript-eslint": "^8.66.0"
+  }
+}

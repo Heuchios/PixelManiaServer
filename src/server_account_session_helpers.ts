@@ -3,14 +3,8 @@
 import crypto = require("node:crypto");
 import net = require("node:net");
 
-const AccountHelpers = require("./server_account_helpers") as {
-  validateUsername(value: unknown, minUsernameLength?: number, maxUsernameLength?: number): ValidationResult;
-  validateEmail(value: unknown): ValidationResult;
-  validatePassword(value: unknown, minPasswordLength?: number): ValidationResult;
-};
-const TextHelpers = require("./server_text_helpers") as {
-  escapeHtml(value: unknown): string;
-};
+import AccountHelpers = require("./server_account_helpers");
+import TextHelpers = require("./server_text_helpers");
 const nodemailer = require("nodemailer") as any;
 
 type PacketRecord = Record<string, any>;

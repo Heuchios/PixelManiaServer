@@ -4,9 +4,7 @@
     "noEmit": false,
     "outDir": ".tsbuild",
     "rootDir": "src",
-    "allowJs": false,
-    "noFallthroughCasesInSwitch": true,
-    "noImplicitReturns": true
+    "allowJs": false
   },
   "include": [
     "src/postgres_store.ts"

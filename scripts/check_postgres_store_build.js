@@ -104,8 +104,10 @@ assert.equal(postgresStoreStrictness.noImplicitAny, true);
 assert.equal(postgresStoreStrictness.noImplicitThis, true);
 assert.equal(postgresStoreStrictness.strictFunctionTypes, true);
 assert.equal(postgresStoreStrictness.useUnknownInCatchVariables, true);
-// Not part of the `strict` family and not in the base: the store keeps these two on
-// its own, and consolidation must not have swept them away.
+// Not part of the `strict` family, so `effectiveStrictness` cannot see them. These two
+// were local to this project until measurements showed enabling them everywhere was
+// free; they now come from the base. Asserted on the RESOLVED config so this keeps
+// working whether they are inherited or local.
 assert.equal(postgresStoreEffective.compilerOptions.noFallthroughCasesInSwitch, true);
 assert.equal(postgresStoreEffective.compilerOptions.noImplicitReturns, true);
 // The base leaves this file out so it is only ever checked by the strict project

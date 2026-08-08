@@ -1,0 +1,22 @@
+{
+  "//": "Type-aware linting only. The root tsconfig.json EXCLUDES src/server.ts and",
+  "//2": "src/postgres_store.ts (they build via their own projects), which would silently",
+  "//3": "leave the two largest files unlinted -- exactly where floating promises matter.",
+  "//4": "This project includes all of src/ with no exclusions. It never emits, and it is",
+  "//5": "never referenced by any build script.",
+  "//6": "lint/positive_control.ts is included on purpose -- see that file's header.",
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "allowJs": false
+  },
+  "include": [
+    "src/**/*.ts",
+    "types/**/*.d.ts",
+    "lint/positive_control.ts"
+  ],
+  "exclude": [
+    "node_modules",
+    ".tsbuild"
+  ]
+}

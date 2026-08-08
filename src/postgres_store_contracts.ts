@@ -4,7 +4,7 @@
 import crypto = require("node:crypto");
 import net = require("node:net");
 
-const ItemDatabase: any = require("./server_item_database");
+import ItemDatabase = require("./server_item_database");
 
 type PostgresRecord = Record<string, unknown>;
 
