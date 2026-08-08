@@ -6,10 +6,26 @@
     "rootDir": "src",
     "allowJs": false,
     "noFallthroughCasesInSwitch": true,
-    "noImplicitReturns": true
+    "noImplicitReturns": true,
+    "incremental": true,
+    "tsBuildInfoFile": ".tsbuild/postgres-store.tsbuildinfo"
   },
   "include": [
     "src/postgres_store.ts"
   ],
-  "exclude": []
+  "exclude": [],
+  "references": [
+    {
+      "path": "./tsconfig.drop-contracts.json"
+    },
+    {
+      "path": "./tsconfig.inventory-contracts.json"
+    },
+    {
+      "path": "./tsconfig.postgres-contracts.json"
+    },
+    {
+      "path": "./tsconfig.item-data.json"
+    }
+  ]
 }

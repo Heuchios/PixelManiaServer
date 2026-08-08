@@ -3,10 +3,17 @@
   "compilerOptions": {
     "noEmit": false,
     "outDir": ".tsbuild",
-    "rootDir": "src"
+    "rootDir": "src",
+    "composite": true,
+    "tsBuildInfoFile": ".tsbuild/postgres-contracts.tsbuildinfo"
   },
   "include": [
     "src/postgres_store_contracts.ts"
   ],
-  "exclude": []
+  "exclude": [],
+  "references": [
+    {
+      "path": "./tsconfig.item-data.json"
+    }
+  ]
 }

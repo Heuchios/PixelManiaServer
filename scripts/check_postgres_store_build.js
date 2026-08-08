@@ -80,9 +80,14 @@ assert.deepEqual(
   }
 );
 
+// `tsc --build`, not `tsc --project`: this project now references drop-contracts,
+// inventory-contracts, postgres-contracts and item-data, so it reads their emitted
+// .d.ts instead of recompiling ~195 KB of their source on each of its four
+// invocations in check:security. `tsc --project` would not build those references and
+// would fail with TS6305.
 assert.equal(
   packageJson.scripts["build:postgres-store"],
-  "tsc --project tsconfig.postgres-store.json && node scripts/sync_postgres_store_build.js"
+  "tsc --build tsconfig.postgres-store.json && node scripts/sync_postgres_store_build.js"
 );
 assert.equal(packageJson.scripts["check:postgres-store"], "npm run build:postgres-store && node scripts/check_postgres_store_build.js");
 assert.match(packageJson.scripts["check:typescript"], /npm run check:postgres-store/);

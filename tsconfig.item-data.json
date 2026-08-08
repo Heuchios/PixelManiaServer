@@ -3,7 +3,9 @@
   "compilerOptions": {
     "noEmit": false,
     "outDir": ".tsbuild",
-    "rootDir": "src"
+    "rootDir": "src",
+    "composite": true,
+    "tsBuildInfoFile": ".tsbuild/item-data.tsbuildinfo"
   },
   "include": [
     "src/atlas_item_definition.ts",

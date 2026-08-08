@@ -3,7 +3,9 @@
   "compilerOptions": {
     "noEmit": false,
     "outDir": ".tsbuild",
-    "rootDir": "src"
+    "rootDir": "src",
+    "composite": true,
+    "tsBuildInfoFile": ".tsbuild/drop-contracts.tsbuildinfo"
   },
   "include": [
     "src/server_drop_contracts.ts"

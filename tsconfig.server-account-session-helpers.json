@@ -3,10 +3,17 @@
   "compilerOptions": {
     "noEmit": false,
     "outDir": ".tsbuild",
-    "rootDir": "src"
+    "rootDir": "src",
+    "incremental": true,
+    "tsBuildInfoFile": ".tsbuild/server-account-session-helpers.tsbuildinfo"
   },
   "include": [
     "src/server_account_session_helpers.ts"
   ],
-  "exclude": []
+  "exclude": [],
+  "references": [
+    {
+      "path": "./tsconfig.server-helpers.json"
+    }
+  ]
 }

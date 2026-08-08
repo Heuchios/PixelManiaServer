@@ -5,7 +5,7 @@
   to a shape for it. Changes nothing in the repo.
 
 .DESCRIPTION
-  Three questions, three probes. All output goes to .tsbuild\probe\ and *.log, both
+  Five questions, five probes. All output goes to .tsbuild\probe\ and *.log, both
   gitignored, so this leaves no untracked files and cannot affect a deploy.
 
     A. Can these modules emit .d.ts at all?
@@ -23,6 +23,15 @@
        reference. composite requires every file in the program to be listed in
        include/files (TS6307). If C1 fails and C2 passes, composite projects need
        that .d.ts added to their include -- which is the one real unknown in the plan.
+
+    E. Are the project references from batch 2 actually being used?
+       Reads the real program file list for postgres-store. This is the measurement
+       that justifies batch 2, and the .tsbuildinfo inspection could not answer it.
+
+    D. Same as B, but for src/server.ts alone.
+       B excluded it, yet tsconfig.server-entry.json extends the base, so promoting
+       those two options reaches a 34k-line file with 3,671 explicit `any`. If D is
+       clean the promotion is one batch; if not, it is two.
 
   This replaces the broken step 5/6 in build_and_verify_tsconfig_consolidation.ps1,
   which piped tsc straight into Tee-Object. TypeScript 7 exits silently on success,
@@ -194,6 +203,84 @@ $resultC2 = Invoke-Probe -Name "composite_listed" -EmitSubdirectory "c2" -Config
 '@
 
 # ---------------------------------------------------------------------------
+# D. The one file probe B could not cover: src/server.ts
+# ---------------------------------------------------------------------------
+
+Write-Section "D. noImplicitReturns + noFallthroughCasesInSwitch on src/server.ts"
+Write-Host "Probe B excluded server.ts. But tsconfig.server-entry.json EXTENDS the base, so"
+Write-Host "promoting those two options there hits a 34k-line file with 3,671 explicit any."
+Write-Host "This is the number that decides whether the promotion is one batch or two."
+
+$resultD = Invoke-Probe -Name "server_entry_extra_strictness" -ConfigJson @'
+{
+  "extends": "../../tsconfig.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "noImplicitReturns": true,
+    "noFallthroughCasesInSwitch": true,
+    "moduleDetection": "force"
+  },
+  "include": ["../../src/server.ts"],
+  "exclude": []
+}
+'@
+
+# ---------------------------------------------------------------------------
+# E. Is postgres-store REALLY reading the .d.ts instead of the source?
+# ---------------------------------------------------------------------------
+
+Write-Section "E. Proof that the project references are actually being used"
+Write-Host "This is the whole justification for batch 2: postgres-store should no longer"
+Write-Host "recompile server_item_database.ts (162 KB) plus three contract modules on each"
+Write-Host "of its four invocations in check:security."
+Write-Host ""
+Write-Host "The .tsbuildinfo check in build_and_verify_composite_projects.ps1 came back"
+Write-Host "inconclusive because TypeScript 7 does not store paths there as plain text."
+Write-Host "--listFiles prints the real program file list, which settles it."
+
+# The referenced outputs have to exist for `-p` to resolve them, so build first.
+$null = & $tscShim --build (Join-Path $PSScriptRoot "tsconfig.postgres-store.json") 2>&1
+$buildExit = $LASTEXITCODE
+if ($buildExit -ne 0) {
+  Write-Host "  tsc --build failed (exit $buildExit); cannot probe. Run the batch 2 verify script first." -ForegroundColor Yellow
+} else {
+  $listLog = Join-Path $PSScriptRoot "tsconfig_probe_listfiles.log"
+  # `-p` (not `-b`) so tsc reports THIS project's program only. With references
+  # already built, tsc redirects each import to the referenced project's .d.ts.
+  $listOutput = (& $tscShim --project (Join-Path $PSScriptRoot "tsconfig.postgres-store.json") --noEmit --listFiles 2>&1 | Out-String)
+  $listExit = $LASTEXITCODE
+  Set-Content -LiteralPath $listLog -Value $listOutput -Encoding UTF8
+
+  $lines = @($listOutput -split '\r?\n' | Where-Object { $_ })
+  $declarationHits = @($lines | Where-Object { $_ -match 'server_item_database\.d\.ts' })
+  $sourceHits = @($lines | Where-Object { $_ -match '[\\/]src[\\/]server_item_database\.ts' })
+
+  Write-Host ""
+  Write-Host ("  exit code            : {0}" -f $listExit)
+  Write-Host ("  files in program     : {0}" -f $lines.Count)
+  Write-Host ("  reads *.d.ts         : {0}" -f $declarationHits.Count)
+  Write-Host ("  reads src/*.ts       : {0}" -f $sourceHits.Count)
+  foreach ($hit in ($declarationHits + $sourceHits)) { Write-Host ("      {0}" -f $hit.Trim()) }
+
+  if ($lines.Count -eq 0) {
+    Write-Host "  -> --listFiles produced nothing. Trying --explainFiles instead." -ForegroundColor Yellow
+    $explainOutput = (& $tscShim --project (Join-Path $PSScriptRoot "tsconfig.postgres-store.json") --noEmit --explainFiles 2>&1 | Out-String)
+    Set-Content -LiteralPath (Join-Path $PSScriptRoot "tsconfig_probe_explainfiles.log") -Value $explainOutput -Encoding UTF8
+    $explainLines = @($explainOutput -split '\r?\n' | Where-Object { $_ -match 'server_item_database' })
+    Write-Host ("  --explainFiles mentions of server_item_database: {0}" -f $explainLines.Count)
+    $explainLines | Select-Object -First 8 | ForEach-Object { Write-Host ("      {0}" -f $_.Trim()) }
+  } elseif ($declarationHits.Count -gt 0 -and $sourceHits.Count -eq 0) {
+    Write-Host "  -> CONFIRMED. The reference is live; the 162 KB source is not in this program." -ForegroundColor Green
+  } elseif ($sourceHits.Count -gt 0) {
+    Write-Host "  -> The SOURCE is still being compiled here. The reference is not taking effect," -ForegroundColor Yellow
+    Write-Host "     so batch 2 bought nothing for this project. Report this." -ForegroundColor Yellow
+  } else {
+    Write-Host "  -> server_item_database appears in neither form. Read the log by hand." -ForegroundColor Yellow
+  }
+  Write-Host ("  full log             : {0}" -f (Split-Path -Leaf $listLog))
+}
+
+# ---------------------------------------------------------------------------
 # Verdict
 # ---------------------------------------------------------------------------
 
@@ -219,8 +306,15 @@ if ($resultC1.Exit -ne 0 -and $resultC2.Exit -eq 0) {
   Write-Host "C: unexpected -- C1 exit $($resultC1.Exit), C2 exit $($resultC2.Exit). Read both logs." -ForegroundColor Yellow
 }
 
+if ($resultD.Exit -eq 0) {
+  Write-Host "D: server.ts is CLEAN under both -> promote them into tsconfig.json in one batch." -ForegroundColor Green
+} else {
+  Write-Host "D: server.ts costs $($resultD.ErrorCount) errors -> promote to the base and keep server-entry" -ForegroundColor Yellow
+  Write-Host "   on a temporary explicit opt-out, or fix those first as their own batch." -ForegroundColor Yellow
+}
+
 Write-Host ""
-Write-Host "Paste back these four lines plus any error codes shown above." -ForegroundColor Cyan
+Write-Host "Paste back these lines plus any error codes shown above." -ForegroundColor Cyan
 Write-Host ""
 Write-Host "Cleanup (optional -- .tsbuild and *.log are gitignored):"
 Write-Host "  Remove-Item -Recurse -Force .tsbuild\probe"
