@@ -8,45 +8,45 @@ const http = require("http");
 const nodemailer = require("nodemailer");
 const os = require("os");
 const path = require("path");
-import ItemDatabase = require("./server_item_database");
-import ItemAtlasDB = require("./item_atlas_db");
-import DropContracts = require("./server_drop_contracts");
-import InventoryContracts = require("./server_inventory_contracts");
-import PacketContracts = require("./server_packet_contracts");
-import ServerMessageRouterHelpersModule = require("./server_message_router_helpers");
-import ServerBotRateLimitHelpersModule = require("./server_bot_rate_limit_helpers");
-import ServerInventoryTransactionHelpersModule = require("./server_inventory_transaction_helpers");
-import ServerWorldInteractionPayloadHelpersModule = require("./server_world_interaction_payload_helpers");
-import ServerSocketDeliveryHelpersModule = require("./server_socket_delivery_helpers");
-import ServerPunishmentHelpersModule = require("./server_punishment_helpers");
-import ServerPhase6HelpersModule = require("./server_phase6_helpers");
-import ServerPhase7DispatcherModule = require("./server_phase7_dispatcher");
-import ServerPhase8PlayerSessionRoutesModule = require("./server_phase8_player_session_routes");
-import ServerPhase8WorldActionRoutesModule = require("./server_phase8_world_action_routes");
-import ServerPhase8FinalRoutesModule = require("./server_phase8_final_routes");
-import ServerPhase9RemainingRoutesModule = require("./server_phase9_remaining_routes");
-import ServerAccountAuthRoutesModule = require("./server_account_auth_routes");
-import ServerAccountSessionHelpersModule = require("./server_account_session_helpers");
-import ServerAdminLookupRoutesModule = require("./server_admin_lookup_routes");
-import ServerFriendRoutesModule = require("./server_friend_routes");
-import ServerTradeRoutesModule = require("./server_trade_routes");
-import ServerInventoryEconomyRoutesModule = require("./server_inventory_economy_routes");
-import ServerPhase11aRuntimeModule = require("./server_phase11a_runtime");
-import ServerPhase11bLifecycleModule = require("./server_phase11b_lifecycle");
-import ServerPhase11cTrustedMovementModule = require("./server_phase11c_trusted_movement");
-import ServerPhase11dStandardMovementModule = require("./server_phase11d_standard_movement");
-import PostgresStore = require("./postgres_store");
-import RedisStore = require("./redis_store");
-import CrashDetails = require("./server_crash_details");
-import ServerEnvConfig = require("./server_env_config");
-import IdentityHelpers = require("./server_identity_helpers");
-import TextHelpers = require("./server_text_helpers");
-import VersionHelpers = require("./server_version_helpers");
-import AccountHelpers = require("./server_account_helpers");
-import PersistenceHelpers = require("./server_persistence_helpers");
-import PlayerStateHelpersModule = require("./server_player_state_helpers");
-import WorldStateHelpersModule = require("./server_world_state_helpers");
-import ServerRuntimeStats = require("./server_runtime_stats");
+const ItemDatabase = require("./server_item_database");
+const ItemAtlasDB = require("./item_atlas_db");
+const DropContracts = require("./server_drop_contracts");
+const InventoryContracts = require("./server_inventory_contracts");
+const PacketContracts = require("./server_packet_contracts");
+const ServerMessageRouterHelpersModule = require("./server_message_router_helpers");
+const ServerBotRateLimitHelpersModule = require("./server_bot_rate_limit_helpers");
+const ServerInventoryTransactionHelpersModule = require("./server_inventory_transaction_helpers");
+const ServerWorldInteractionPayloadHelpersModule = require("./server_world_interaction_payload_helpers");
+const ServerSocketDeliveryHelpersModule = require("./server_socket_delivery_helpers");
+const ServerPunishmentHelpersModule = require("./server_punishment_helpers");
+const ServerPhase6HelpersModule = require("./server_phase6_helpers");
+const ServerPhase7DispatcherModule = require("./server_phase7_dispatcher");
+const ServerPhase8PlayerSessionRoutesModule = require("./server_phase8_player_session_routes");
+const ServerPhase8WorldActionRoutesModule = require("./server_phase8_world_action_routes");
+const ServerPhase8FinalRoutesModule = require("./server_phase8_final_routes");
+const ServerPhase9RemainingRoutesModule = require("./server_phase9_remaining_routes");
+const ServerAccountAuthRoutesModule = require("./server_account_auth_routes");
+const ServerAccountSessionHelpersModule = require("./server_account_session_helpers");
+const ServerAdminLookupRoutesModule = require("./server_admin_lookup_routes");
+const ServerFriendRoutesModule = require("./server_friend_routes");
+const ServerTradeRoutesModule = require("./server_trade_routes");
+const ServerInventoryEconomyRoutesModule = require("./server_inventory_economy_routes");
+const ServerPhase11aRuntimeModule = require("./server_phase11a_runtime");
+const ServerPhase11bLifecycleModule = require("./server_phase11b_lifecycle");
+const ServerPhase11cTrustedMovementModule = require("./server_phase11c_trusted_movement");
+const ServerPhase11dStandardMovementModule = require("./server_phase11d_standard_movement");
+const PostgresStore = require("./postgres_store");
+const RedisStore = require("./redis_store");
+const CrashDetails = require("./server_crash_details");
+const ServerEnvConfig = require("./server_env_config");
+const IdentityHelpers = require("./server_identity_helpers");
+const TextHelpers = require("./server_text_helpers");
+const VersionHelpers = require("./server_version_helpers");
+const AccountHelpers = require("./server_account_helpers");
+const PersistenceHelpers = require("./server_persistence_helpers");
+const PlayerStateHelpersModule = require("./server_player_state_helpers");
+const WorldStateHelpersModule = require("./server_world_state_helpers");
+const ServerRuntimeStats = require("./server_runtime_stats");
 
 type ServerPacketRecord = Record<string, unknown>;
 
@@ -449,7 +449,6 @@ const ADMIN_INVENTORY_LOOKUP_FIELDS = Object.freeze([
   { field: "hat_inventory", category: "hat" },
   { field: "hair_inventory", category: "hair" },
   { field: "eyewear_inventory", category: "eyewear" },
-  { field: "beard_inventory", category: "beard" },
   { field: "shirt_inventory", category: "shirt" },
   { field: "pants_inventory", category: "pants" },
   { field: "shoes_inventory", category: "shoes" },
@@ -462,19 +461,6 @@ const ADMIN_INVENTORY_LOOKUP_FIELDS = Object.freeze([
 const MAX_ITEM_ID_LENGTH = 64;
 const MAX_ITEM_CATEGORY_LENGTH = 64;
 const MAX_DROP_ID_LENGTH = 96;
-// World ownership tokens are "<instance>:<pid>:<uuid>:<epoch>" and are compared for
-// EXACT equality when verifying the route lease, so they must never be truncated.
-// They were previously clamped with clampString()'s default (MAX_ITEM_ID_LENGTH = 64),
-// which is a limit for item ids and far too small: a token like
-// "pixelmania-staging:895822:d39ff9fc-ceff-4957-b172-dca639d5de50:12" is 65 characters
-// the moment the epoch reaches two digits, so the trailing digit was silently cut off.
-// The cached token then no longer equalled the one in Redis, every lease verification
-// failed, and EVERY join to that world was rejected forever with
-// "World data is still loading. Try again." -- the 88% loading freeze. Worlds died
-// permanently the first time their epoch counter ticked past 9 (START 34, TEST 25,
-// SHOWCASE 12 were all dead; every still-working world was single-digit).
-// SERVER_INSTANCE_ID alone is allowed 128 characters, so size this for the whole token.
-const MAX_WORLD_OWNERSHIP_TOKEN_LENGTH = 256;
 const MAX_ROLLBACK_PRESERVED_DROP_IDS_LOGGED = 8;
 const MAX_DROP_TOMBSTONE_HISTORY = 512;
 // How long after a successful pickup a repeat request from the same player is
@@ -609,10 +595,11 @@ const DEV_BACKEND_LOGIN_ENABLED: any = ["1", "true", "yes", "on", "debug"].inclu
 const DEV_BACKEND_LOGIN_ALLOWED = DEV_BACKEND_LOGIN_ENABLED && DEV_TOOLS_ALLOWED;
 const PHASE7_DEV_JSON_FALLBACK_ALLOWED = DEV_BACKEND_LOGIN_ENABLED &&
   DEV_TOOLS_ALLOWED;
-const VEND_BLOCK_EMPTY = "vend_empty";
-const VEND_BLOCK_PENDING = "vend_pending";
-const VEND_BLOCK_SOLD = "vend_sold";
-const VEND_BLOCK_TYPES: any = new Set([VEND_BLOCK_EMPTY, VEND_BLOCK_PENDING, VEND_BLOCK_SOLD]);
+const VEND_BLOCK_TYPE = "vending_machine";
+// "vend_empty"/"vend_pending"/"vend_sold" are legacy block types kept only so
+// worlds saved before the blocks-atlas migration keep recognizing already
+// -placed vending machines; new placements always use VEND_BLOCK_TYPE.
+const VEND_BLOCK_TYPES: any = new Set([VEND_BLOCK_TYPE, "vend_empty", "vend_pending", "vend_sold"]);
 const VEND_LOG_LIMIT = 30;
 const SAFE_BLOCK_TYPE = "safe";
 const DONATION_BOX_BLOCK_TYPE = "donation_box";
@@ -985,7 +972,7 @@ const SHOP_CATALOG: any = new Map([
   ["big_lock", { item_id: "big_lock", item_category: "block", amount: 1, price: 1500 }],
   ["world_lock", { item_id: "world_lock", item_category: "block", amount: 1, price: 3500 }],
   ["crafting_station", { item_id: "crafting_station", item_category: "block", amount: 1, price: 80 }],
-  ["vend_empty", { item_id: "vend_empty", item_category: "block", amount: 1, price: 7500 }],
+  ["vending_machine", { item_id: "vending_machine", item_category: "block", amount: 1, price: 7500 }],
   ["safe", { item_id: "safe", item_category: "block", amount: 1, price: 7500 }],
   ["fish_monger", { item_id: "fish_monger", item_category: "block", amount: 1, price: 15000 }],
   ["anti_punch", { item_id: "anti_punch", item_category: "block", amount: 1, price: 25000 }],
@@ -2126,7 +2113,7 @@ const POSTGRES_AUTHORITY_LOBBY_ROUTE_TYPES: any = new Set([
   "server_status_request",
   "world_population_request",
 ]);
-const POSTGRES_AUTHORITY_HANDLED_ROUTE_TYPES: any = new Set((ServerPhase7Dispatcher.getRouteCatalog().handled_routes as string[]) || []);
+const POSTGRES_AUTHORITY_HANDLED_ROUTE_TYPES: any = new Set(ServerPhase7Dispatcher.getRouteCatalog().handled_routes || []);
 const POSTGRES_AUTHORITY_UNAVAILABLE_MESSAGE = "Server database is still loading. Please stay on the login screen and try again.";
 
 const httpServer = http.createServer(handleHttpRequest);
@@ -2900,15 +2887,9 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
     });
   });
 
-  // Version fields let the client raise its update gate the moment the socket
-  // opens, instead of waiting for the first rejected packet. This is UX only —
-  // isClientVersionAllowed() still gates every inbound message below.
   sendJson(socket, {
     type: "connected",
     player_id: playerId,
-    server_client_version: SERVER_CLIENT_VERSION,
-    min_client_version: MIN_CLIENT_VERSION,
-    update_url: UPDATE_URL,
   });
 
   socket.on("message", (raw: import("ws").RawData) => {
@@ -3030,30 +3011,6 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
       const clientVersion = getClientVersion(data);
       if (!isClientVersionAllowed(clientVersion)) {
         sendClientUpdateRequired(socket, data, clientVersion);
-        // Clients that predate the update overlay do not understand
-        // client_update_required and drop it silently. For world-entry actions
-        // that silence is fatal: the loading overlay waits for join_world_ok /
-        // world_entry_active forever and the player is parked at 88% with no
-        // error. Reject the world-entry action explicitly as well, so every
-        // client generation's existing action_rejected path fails the join
-        // visibly and returns the player to the lobby with the update message
-        // instead of hanging. UX only — the version gate above remains the
-        // authority and the message is still not processed.
-        const gatedType = String(data.type || "").trim().toLowerCase();
-        if (gatedType === "join_world" || gatedType === "world_entry_ready") {
-          sendActionRejected(
-            socket,
-            gatedType,
-            `A new PixelMania update is live. Update your client to version ${MIN_CLIENT_VERSION} or newer to keep playing.`,
-            {
-              reason: "client_update_required",
-              world: cleanWorld(data.world || ""),
-              join_request_id: clampString(String(data.join_request_id || data.request_id || ""), 128),
-              min_client_version: MIN_CLIENT_VERSION,
-              update_url: UPDATE_URL,
-            }
-          );
-        }
         return;
       }
       player.client_version = clientVersion || player.client_version;
@@ -4050,22 +4007,12 @@ function sendClientUpdateRequired(socket: any, data: any, clientVersion: any = "
     server_client_version: SERVER_CLIENT_VERSION,
     min_client_version: MIN_CLIENT_VERSION,
     update_url: UPDATE_URL,
-    message: `A new PixelMania update is live. Update your client to version ${MIN_CLIENT_VERSION} or newer to keep playing.`,
+    message: `This PixelMania version is out of date. Please update to version ${MIN_CLIENT_VERSION} or newer.`,
   });
 }
 
-function isThenable(value: unknown): value is Promise<unknown> {
-  return Boolean(value) && typeof (value as { then?: unknown }).then === "function";
-}
-
-function isRecord(value: unknown): value is Record<string, any> {
-  return Boolean(value) && typeof value === "object" && !Array.isArray(value);
-}
-
-function cloneJson<T>(value: T): T {
-  // AccountHelpers.cloneJson is declared (value: unknown) => unknown; it is a JSON
-  // deep clone, so the result is structurally identical to the input.
-  return AccountHelpers.cloneJson(value) as T;
+function cloneJson(value: any) {
+  return AccountHelpers.cloneJson(value);
 }
 
 function makeAuditHash(value: any) {
@@ -5906,17 +5853,16 @@ async function executeTrade(trade: any) {
       ip_address: getSocketAddress(requesterRecord.socket),
     });
 
-    if (!tradeResult || !tradeResult.ok) {
+    if (!tradeResult.ok) {
       cancelTrade(trade, "Trade was canceled because server inventory changed. Try again.");
       return;
     }
 
-    const tradeCommit = tradeResult as Record<string, any>;
-    if (!applyInventoryLedgerToState(stateA, tradeCommit.request_ledgers?.requester)) {
+    if (!applyInventoryLedgerToState(stateA, tradeResult.request_ledgers?.requester)) {
       cancelTrade(trade, "Trade was canceled because inventory reconciliation failed.");
       return;
     }
-    if (!applyInventoryLedgerToState(stateB, tradeCommit.request_ledgers?.target)) {
+    if (!applyInventoryLedgerToState(stateB, tradeResult.request_ledgers?.target)) {
       cancelTrade(trade, "Trade was canceled because inventory reconciliation failed.");
       return;
     }
@@ -5927,7 +5873,7 @@ async function executeTrade(trade: any) {
     const worldKeyTransferResult = await applyWorldLockKeyTradeOwnershipTransfers(
       trade,
       worldKeyValidation.transfers,
-      tradeCommit.item_instance_movements || [],
+      tradeResult.item_instance_movements || [],
       requesterRecord,
       targetRecord,
       tradeTransactionId
@@ -6072,10 +6018,9 @@ function isVendAwaitingCollection(vend: any) {
 }
 
 function getVendVisualBlockType(vend: any) {
-  const status = getVendStatus(vend);
-  if (status === "sold") return VEND_BLOCK_SOLD;
-  if (status === "listed") return VEND_BLOCK_PENDING;
-  return VEND_BLOCK_EMPTY;
+  // Visual state (empty/full/sold/out-of-stock) is resolved client-side from the
+  // synced vend_state payload; the placed block type stays constant.
+  return VEND_BLOCK_TYPE;
 }
 
 /**
@@ -7117,9 +7062,9 @@ function syncVendVisualBlock(worldName: any, vend: any) {
   const block = state.foreground.get(key);
   if (!block || !isVendBlockType(block.block_type)) return "";
 
-  const blockType = getVendVisualBlockType(vend);
-  block.block_type = blockType;
-  return blockType;
+  // The placed block type no longer changes between states; only the synced
+  // vend_state payload drives the client's visual choice now.
+  return getVendVisualBlockType(vend);
 }
 
 function sendVendStateUpdateToWorld(worldName: any, vend: any) {
@@ -7501,7 +7446,7 @@ async function handleVendBuy(socket: any, player: any, data: any, worldName: any
     }
 
     const savedVend = setVendStateAt(worldName, vend);
-    const visualBlockType = syncVendVisualBlock(worldName, savedVend) || VEND_BLOCK_EMPTY;
+    const visualBlockType = syncVendVisualBlock(worldName, savedVend) || VEND_BLOCK_TYPE;
     advanceAuthoritativeWorldRevision(worldName, "vending_buy");
     const serializedWorld = serializeWorldState(worldName);
     const worldChange = buildWorldObjectChangeEntry(
@@ -7559,7 +7504,7 @@ async function handleVendBuy(socket: any, player: any, data: any, worldName: any
       persistence.ok
         ? persistence.value
         : { ok: false, reason: persistence.reason || "world_persistence_failed" }
-    ) as NonNullable<Awaited<ReturnType<typeof postgresStore.applyVendBuyTransaction>>>;
+    ) as Awaited<ReturnType<typeof postgresStore.applyVendBuyTransaction>>;
 
     if (!transaction.ok) {
       restoreWorldMutationRollback(worldName, worldRollback);
@@ -8305,9 +8250,7 @@ async function handleSafeWithdraw(socket: any, player: any, data: any, worldName
  */
 async function prepareSafeBreakInventoryReturn(socket: any, player: any, worldName: any, update: any) {
   const safe = getSafeStateAt(worldName, update.x, update.y, false);
-  const slots = Array.isArray(safe.slots)
-    ? safe.slots.map(sanitizeSafeSlot).filter((entry): entry is Exclude<ReturnType<typeof sanitizeSafeSlot>, null> => Boolean(entry))
-    : [];
+  const slots = Array.isArray(safe.slots) ? safe.slots.map(sanitizeSafeSlot).filter(Boolean) : [];
 
   if (slots.length === 0) {
     return { ok: true, playerState: null, message: "" };
@@ -8391,7 +8334,7 @@ async function prepareSafeBreakInventoryReturn(socket: any, player: any, worldNa
       rollbackWorldState,
       worldChanges: [safeBreakWorldChange],
       postCommitLogs: {
-        itemLedgerEntries: slots.map((slot: Record<string, any>) => ({
+        itemLedgerEntries: slots.map((slot: { item_id: string; item_category: string; amount: number }) => ({
           item_id: slot.item_id,
           item_category: slot.item_category,
           amount: slot.amount,
@@ -8486,12 +8429,12 @@ function canStoreItemInDonationBox(itemId: unknown, itemCategory: unknown) {
 
 /** @returns {PixelMania.DonationBoxEntry | null} */
 function sanitizeDonationBoxEntry(rawEntry: unknown): ServerDonationBoxEntry | null {
-  return WorldStateHelpers.sanitizeDonationBoxEntry(rawEntry) as ServerDonationBoxEntry | null;
+  return WorldStateHelpers.sanitizeDonationBoxEntry(rawEntry);
 }
 
 /** @returns {PixelMania.DonationBoxState} */
 function sanitizeDonationBoxState(rawEntry: unknown, worldName: unknown, x: unknown, y: unknown): ServerDonationBoxState {
-  return WorldStateHelpers.sanitizeDonationBoxState(rawEntry, worldName, x, y) as ServerDonationBoxState;
+  return WorldStateHelpers.sanitizeDonationBoxState(rawEntry, worldName, x, y);
 }
 
 /** @returns {PixelMania.DonationBoxClientState} */
@@ -8963,7 +8906,7 @@ async function prepareDonationBoxBreakInventoryReturn(socket: unknown, player: S
       playerState: stagedState,
       inventoryDeltas: buildInventoryDeltasBetweenStates(beforeState, stagedState),
       deferred_inventory_commit: InventoryContracts.buildDeferredInventoryCommit({
-        username: player.account_username as string,
+        username: player.account_username,
         beforeState,
         afterState: stagedState,
         options: {
@@ -8971,7 +8914,7 @@ async function prepareDonationBoxBreakInventoryReturn(socket: unknown, player: S
           action: "donation_box_break_return",
           reason: "donation_box_break_return",
           request_id: "",
-          world: worldName as string,
+          world: worldName,
           metadata,
           failure_message: "Server inventory changed. Try again.",
         },
@@ -10271,7 +10214,7 @@ function parseTackleBoxTimestampMs(value: any) {
 
 function getTimedProviderCooldownMsForBlockType(blockType: any) {
   const clean = clampString(blockType || "");
-  const definition: Record<string, any> = ItemDatabase.getItemDefinition(clean) || {};
+  const definition = ItemDatabase.getItemDefinition(clean) || {};
   if (isWaterWellBlockType(clean)) {
     const seconds = Number(definition.water_well_cooldown_seconds);
     if (Number.isFinite(seconds)) return clampInteger(Math.round(seconds * 1000), 0, 30 * 24 * 60 * 60 * 1000);
@@ -11658,7 +11601,7 @@ async function handleTackleBoxHarvestUpdate(socket: any, player: any, worldName:
       return false;
     }
 
-    const definition: Record<string, any> = ItemDatabase.getItemDefinition(block.block_type) || {};
+    const definition = ItemDatabase.getItemDefinition(block.block_type) || {};
     let atmBeforeState = null;
     let atmStagedState = null;
     let atmReward: { item_id: string; item_category: string; amount: number } | null = null;
@@ -12478,11 +12421,9 @@ async function handleStationRecipeTransaction(socket: any, player: any, data: an
     return;
   }
 
-  const costs = recipe.cost
-    .map(normalizeInventoryAmountEntry)
-    .filter((entry): entry is Exclude<ReturnType<typeof normalizeInventoryAmountEntry>, null> => entry !== null);
+  const costs = recipe.cost.map(normalizeInventoryAmountEntry);
   const output = normalizeInventoryAmountEntry(recipe.output);
-  if (costs.length !== recipe.cost.length || !output) {
+  if (costs.some((entry: unknown) => entry === null) || !output) {
     sendInventoryTransactionRejected(socket, data, "Recipe has invalid server item data.");
     return;
   }
@@ -13418,7 +13359,7 @@ async function removeWorldLockKeysFromPlayerInventory(socket: any, player: any, 
 
   const committedState = commit.state;
   const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
-  const keyInventoryDelta = inventoryDeltas.find((entry) =>
+  const keyInventoryDelta = inventoryDeltas.find((entry: ServerInventoryDeltaRecord | null) =>
     entry &&
     entry.item_type === WORLD_LOCK_KEY_ITEM_TYPE &&
     entry.item_category === WORLD_LOCK_KEY_ITEM_CATEGORY
@@ -13755,7 +13696,7 @@ async function handleWorldLockGetKeyTransaction(socket: any, player: any, data: 
 
   const committedState = commit.state;
   const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
-  const keyInventoryDelta = inventoryDeltas.find((entry) =>
+  const keyInventoryDelta = inventoryDeltas.find((entry: ServerInventoryDeltaRecord | null) =>
     entry &&
     entry.item_type === WORLD_LOCK_KEY_ITEM_TYPE &&
     entry.item_category === WORLD_LOCK_KEY_ITEM_CATEGORY
@@ -14575,7 +14516,7 @@ function isPersistentInteractionBlockType(blockType: any) {
 }
 
 function getBlockCollisionRectForGrid(x: any, y: any, blockType: any) {
-  const definition: Record<string, any> = ItemDatabase.getItemDefinition(blockType) || {};
+  const definition = ItemDatabase.getItemDefinition(blockType) || {};
   const size = parseBlockVector2(definition.collision_size || definition.visual_size, TILE_SIZE, TILE_SIZE);
   const offset = parseBlockVector2(definition.collision_offset || definition.visual_offset, 0, 0);
   const centerX = (Number(x) || 0) * TILE_SIZE + offset.x;
@@ -15231,65 +15172,6 @@ function elapsedWorldEntryMs(startedAt: bigint): number {
   return Math.round((Number(process.hrtime.bigint() - startedAt) / 1_000_000) * 1000) / 1000;
 }
 
-// Coalescing an in-flight refresh is a real optimisation -- many players joining one
-// world share a single authoritative read -- but the in-flight entry was only ever
-// cleared when its promise SETTLED. A refresh that never settles therefore poisoned
-// that world PERMANENTLY: every later join awaited the same dead promise, with no
-// timeout, no rejection and no log line anywhere. Player-visible as a single world
-// frozen at 88% on the loading screen while every other world joined normally,
-// surviving relog, reconnect and a full game restart, curable only by restarting the
-// server process. Reproduced end to end by injecting one hung refresh: the world was
-// dead for every subsequent connection, and a control world stayed healthy.
-//
-// So: never await a refresh unboundedly, and evict the entry when one stalls, which
-// lets the very next join start a fresh read. The join is rejected with a retryable
-// reason instead of hanging, so the client's existing retry ladder recovers on its own.
-const WORLD_STATE_REFRESH_TIMEOUT_MS = Math.max(
-  5000,
-  Math.trunc(Number(process.env.WORLD_STATE_REFRESH_TIMEOUT_MS) || 20000)
-);
-const WORLD_STATE_REFRESH_TIMEOUT_SENTINEL: Record<string, unknown> = {
-  __world_state_refresh_timeout: true,
-};
-
-async function raceWorldStateRefresh(promise: Promise<unknown>): Promise<unknown> {
-  let timer: ReturnType<typeof setTimeout> | null = null;
-  try {
-    return await Promise.race([
-      promise,
-      new Promise<unknown>((resolve) => {
-        timer = setTimeout(
-          () => resolve(WORLD_STATE_REFRESH_TIMEOUT_SENTINEL),
-          WORLD_STATE_REFRESH_TIMEOUT_MS
-        );
-      }),
-    ]);
-  } finally {
-    if (timer) clearTimeout(timer);
-  }
-}
-
-function evictStalledWorldStateRefresh(
-  clean: string,
-  promise: Promise<unknown>,
-  reason: string,
-  role: string
-): void {
-  if (worldStateRefreshesInFlight.get(clean) === promise) {
-    worldStateRefreshesInFlight.delete(clean);
-  }
-  // The orphan may still settle (or reject) long after nobody is awaiting it; attach a
-  // terminal handler so an abandoned refresh can never surface as an unhandled rejection.
-  void Promise.resolve(promise).then(() => undefined, () => undefined);
-  console.warn("[world-entry] authoritative world refresh timed out; evicted in-flight entry", {
-    world: clean,
-    reason,
-    role,
-    timeout_ms: WORLD_STATE_REFRESH_TIMEOUT_MS,
-    server_instance: SERVER_INSTANCE_ID,
-  });
-}
-
 async function refreshWorldStateFromPostgres(
   worldName: unknown,
   reason: string = "world_state_send"
@@ -15298,16 +15180,7 @@ async function refreshWorldStateFromPostgres(
   const waitStartedAt = process.hrtime.bigint();
   const existingRefresh = worldStateRefreshesInFlight.get(clean);
   if (existingRefresh) {
-    const result = await raceWorldStateRefresh(existingRefresh);
-    if (result === WORLD_STATE_REFRESH_TIMEOUT_SENTINEL) {
-      evictStalledWorldStateRefresh(clean, existingRefresh, reason, "coalesced");
-      return {
-        ok: false,
-        reason: "world_state_refresh_timeout",
-        coalesced: true,
-        coalesced_wait_ms: elapsedWorldEntryMs(waitStartedAt),
-      } as Record<string, unknown>;
-    }
+    const result = await existingRefresh;
     return {
       ...(result && typeof result === "object" ? result : {}),
       coalesced: true,
@@ -15317,29 +15190,15 @@ async function refreshWorldStateFromPostgres(
 
   const refreshPromise = refreshWorldStateFromPostgresUncoalesced(clean, reason);
   worldStateRefreshesInFlight.set(clean, refreshPromise);
-  let timedOut = false;
   try {
-    const result = await raceWorldStateRefresh(refreshPromise);
-    if (result === WORLD_STATE_REFRESH_TIMEOUT_SENTINEL) {
-      timedOut = true;
-      evictStalledWorldStateRefresh(clean, refreshPromise, reason, "leader");
-      return {
-        ok: false,
-        reason: "world_state_refresh_timeout",
-        coalesced: false,
-        refresh_total_ms: elapsedWorldEntryMs(waitStartedAt),
-      } as Record<string, unknown>;
-    }
+    const result = await refreshPromise;
     return {
       ...(result && typeof result === "object" ? result : {}),
       coalesced: false,
       refresh_total_ms: elapsedWorldEntryMs(waitStartedAt),
     } as Record<string, unknown>;
   } finally {
-    // Success and failure both settle the promise, so the entry is cleared as before.
-    // Only the timeout path skips this, because evictStalledWorldStateRefresh already
-    // removed it and a late-settling orphan must not delete a newer entry.
-    if (!timedOut && worldStateRefreshesInFlight.get(clean) === refreshPromise) {
+    if (worldStateRefreshesInFlight.get(clean) === refreshPromise) {
       worldStateRefreshesInFlight.delete(clean);
     }
   }
@@ -15760,7 +15619,7 @@ async function commitPlayerInventoryState(socket: any, player: any, username: an
           reason: persistence.reason || "world_persistence_failed",
         };
     } else {
-      result = await buildTransaction() as ServerPacketRecord | null;
+      result = await buildTransaction();
     }
 
     if (!result || !result.ok) {
@@ -15772,7 +15631,7 @@ async function commitPlayerInventoryState(socket: any, player: any, username: an
         item_type: result?.item_type || "",
       }, "warning");
       return InventoryContracts.buildInventoryCommitFailure({
-        reason: (result?.reason as string) || "postgres_failed",
+        reason: result?.reason || "postgres_failed",
         message: getPostgresInventoryFailureMessage(result, options.failure_message || "Server inventory changed. Try again."),
       });
     }
@@ -16630,7 +16489,7 @@ function getBreakDropsForBlock(blockType: any, layer: any) {
   if (configuredDrops) return configuredDrops;
 
   if (isVendBlockType(itemId)) {
-    drops.push({ item_id: VEND_BLOCK_EMPTY, item_category: "block", amount: 1 });
+    drops.push({ item_id: VEND_BLOCK_TYPE, item_category: "block", amount: 1 });
   } else if (itemId === "crafting_station") {
     drops.push({ item_id: "crafting_station", item_category: "block", amount: 1 });
   } else if (
@@ -17503,9 +17362,9 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
   if (!spendResult.ok) {
     sendActionRejected(socket, "world_block_update", spendResult.message, {
       reason: spendResult.reason || "inventory_denied",
-      item_id: cost?.item_id,
-      item_category: cost?.item_category,
-      amount: cost?.amount,
+      item_id: cost.item_id,
+      item_category: cost.item_category,
+      amount: cost.amount,
       request_id: requestId,
       action: update.action,
       block_action: update.action,
@@ -17857,7 +17716,7 @@ function canPlayerPassWoodenEntrance(player: any, worldName: any) {
 function isSpringboardBlockType(blockType: any) {
   const clean = clampString(blockType || "");
   if (clean === "mushroom" || clean === "mushroom_1" || clean === "mushroom_2") return true;
-  const definition: Record<string, any> = ItemDatabase.getItemDefinition(clean) || {};
+  const definition = ItemDatabase.getItemDefinition(clean) || {};
   return Boolean(definition.springboard || definition.pinball_block || (Array.isArray(definition.springboard_animation_frames) && definition.springboard_animation_frames.length > 1));
 }
 
@@ -18395,7 +18254,7 @@ function prepareToggleBlockStateUpdate(socket: any, player: any, worldName: any,
     return false;
   }
 
-  const definition: Record<string, any> = ItemDatabase.getItemDefinition(block.block_type) || {};
+  const definition = ItemDatabase.getItemDefinition(block.block_type) || {};
   const toggleAction = clampString(definition.toggle_action || `${block.block_type}_state`);
   if (toggleAction !== expectedAction) {
     sendActionRejected(socket, "world_interaction_update", "Toggle block missing.");
@@ -18430,7 +18289,7 @@ function prepareThemeMachineStateUpdate(socket: any, player: any, worldName: any
     return false;
   }
 
-  const definition: Record<string, any> = ItemDatabase.getItemDefinition(block.block_type) || {};
+  const definition = ItemDatabase.getItemDefinition(block.block_type) || {};
   const configuredTheme = sanitizeWorldBackgroundTheme(definition.theme_machine_theme || "");
   update.enabled = Boolean(update.enabled);
   update.theme = configuredTheme || sanitizeWorldBackgroundTheme(update.theme || "night") || "night";
@@ -21154,7 +21013,7 @@ function appendServerHotbarItem(state: any, items: any, categories: any, itemId:
     hotbar_items: ["punch", ...items.slice(1), itemId],
     hotbar_item_categories: ["tool", ...categories.slice(1), itemCategory],
   });
-  if (!isRecord(normalized)) return;
+  if (!normalized || typeof normalized !== "object" || Array.isArray(normalized)) return;
   if (normalized.hotbar_items.length <= beforeLength) return;
   items.splice(0, items.length, ...normalized.hotbar_items);
   categories.splice(0, categories.length, ...normalized.hotbar_item_categories);
@@ -21209,9 +21068,6 @@ function mergeClientPlayerStateIntoServerState(username: any, incomingState: any
   merged.equipped_eyewear_item = doesStateOwnEquippedItem(merged, incomingState.equipped_eyewear_item || "", "eyewear")
     ? clampString(incomingState.equipped_eyewear_item || "")
     : "";
-  merged.equipped_beard_item = doesStateOwnEquippedItem(merged, incomingState.equipped_beard_item || "", "beard")
-    ? clampString(incomingState.equipped_beard_item || "")
-    : "";
   merged.equipped_shirt_item = doesStateOwnEquippedItem(merged, incomingState.equipped_shirt_item || "", "shirt")
     ? clampString(incomingState.equipped_shirt_item || "")
     : "";
@@ -21262,9 +21118,6 @@ function mergeClientPlayerStateIntoServerState(username: any, incomingState: any
     merged.equipped_eyewear_item = doesStateOwnEquippedItem(merged, incomingState.equipped_eyewear_item || "", "eyewear")
       ? clampString(incomingState.equipped_eyewear_item || "")
       : merged.equipped_eyewear_item;
-    merged.equipped_beard_item = doesStateOwnEquippedItem(merged, incomingState.equipped_beard_item || "", "beard")
-      ? clampString(incomingState.equipped_beard_item || "")
-      : merged.equipped_beard_item;
     merged.equipped_shirt_item = doesStateOwnEquippedItem(merged, incomingState.equipped_shirt_item || "", "shirt")
       ? clampString(incomingState.equipped_shirt_item || "")
       : merged.equipped_shirt_item;
@@ -21329,7 +21182,7 @@ function canAddItemToState(state: any, itemId: any, itemCategory: any, amount: a
   if (currentCount + safeAmount > stackLimit) return false;
   if (safeAmount <= 0 || currentCount > 0 || resolvedCategory === "currency") return true;
 
-  const definition: Record<string, any> = ItemDatabase.getItemDefinition(cleanItemId) || {};
+  const definition = ItemDatabase.getItemDefinition(cleanItemId) || {};
   if (definition.hidden === true) return true;
 
   return getInventoryOccupiedSlotCount(state) < resolveInventorySlotCount(state);
@@ -21346,7 +21199,7 @@ function getDisplayReturnCapacity(state: unknown, slot: Record<string, unknown>)
     return { ok: false, reason: "invalid_category", message: "That displayed item is no longer valid." };
   }
 
-  const definition: Record<string, any> = ItemDatabase.getItemDefinition(itemId) || {};
+  const definition = ItemDatabase.getItemDefinition(itemId) || {};
   const displayName = clampString(definition.display_name || itemId, MAX_ITEM_ID_LENGTH);
   const stackLimit = ItemDatabase.getStackLimit(itemId);
   const currentCount = getInventoryCount(state, itemId, itemCategory);
@@ -24553,7 +24406,6 @@ function tickBatteryChargersForWorld(worldName: any, state: any, now: any = Date
     chargerState.produced_count = chargerState.output_count;
     chargerState.production_progress = chargerState.battery_progress;
     const savedState = setBatteryChargerState(state, clean, chargerState);
-    if (!savedState) continue;
     const after = getBatteryChargerChangeSignature(savedState);
     const afterPendingConsumption = Math.max(0, Number(savedState.pending_consumption_watts) || 0);
     if (activeGeneratorKeys.length > 0 && Math.abs(afterPendingConsumption - beforePendingConsumption) > 0.000001) {
@@ -25067,11 +24919,11 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
     transactionId,
     {
       operation,
-      linked_pole_key: savedState?.linked_pole_key || "",
-      output_count: savedState?.output_count,
+      linked_pole_key: savedState.linked_pole_key || "",
+      output_count: savedState.output_count,
       output_capacity: OIL_REFINERY_OUTPUT_CAPACITY,
-      battery_watts: savedState?.battery_watts,
-      battery_count: savedState?.battery_count,
+      battery_watts: savedState.battery_watts,
+      battery_count: savedState.battery_count,
     }
   );
 
@@ -25393,8 +25245,8 @@ async function handleBatteryChargerRequest(socket: any, player: any, data: any =
     transactionId,
     {
       operation,
-      linked_pole_key: savedState?.linked_pole_key || "",
-      output_count: savedState?.output_count,
+      linked_pole_key: savedState.linked_pole_key || "",
+      output_count: savedState.output_count,
       output_capacity: BATTERY_CHARGER_OUTPUT_CAPACITY,
     }
   );
@@ -27645,7 +27497,7 @@ async function handleBulkDropPickup(socket: any, player: any, data: any, worldNa
       const worldApply = applyDropPickupWorldState(pickupPlan.world, pickupPlan);
       const pickupUpdate = worldApply.ok
         ? worldApply.payload
-        : (removeUnavailableDropFromWorldState(pickupPlan.world, pickupPlan.dropId, pickupPlan) as { payload?: any }).payload || null;
+        : removeUnavailableDropFromWorldState(pickupPlan.world, pickupPlan.dropId, pickupPlan).payload || null;
       if (pickupUpdate) {
         worldUpdates.push({ world: pickupPlan.world, payload: pickupUpdate });
       }
@@ -28216,7 +28068,7 @@ function prepareDropPickup(worldName: any, player: any, update: any) {
     playerState,
     item_type: itemType,
     item_category: itemCategory,
-    validationPosition: validationPosition as PixelMania.ActorPosition & { ok: true },
+    validationPosition,
     dropAmount,
     pickedAmount,
     stackLimit,
@@ -29016,7 +28868,7 @@ function getEffectiveWorldCollisionBlockCount(worldName: any, state: any) {
   const effectiveForeground = getEffectiveForegroundBlocksForState(state, worldName);
   return effectiveForeground.filter((entry: ServerPacketRecord) => {
     const blockType = clampString(entry?.block_type || "");
-    const definition: Record<string, any> = ItemDatabase.getItemDefinition(blockType) || {};
+    const definition = ItemDatabase.getItemDefinition(blockType) || {};
     return !definition.no_collision;
   }).length;
 }
@@ -29670,7 +29522,7 @@ function sendWorldStateToSocket(
       targetPacketBytes: WORLD_STATE_STREAM_TARGET_PACKET_BYTES,
       maxPacketBytes: MAX_PACKET_BYTES,
       maxChunks: WORLD_STATE_STREAM_MAX_CHUNKS,
-      preparedSections: (snapshotCache?.prepared_sections as ReturnType<typeof WorldStateHelpersModule.prepareWorldStateStreamSections> | null) || null,
+      preparedSections: snapshotCache?.prepared_sections || null,
     });
     const streamBuildMs = elapsedWorldEntryMs(phaseStartedAt);
     phaseStartedAt = process.hrtime.bigint();
@@ -30082,47 +29934,13 @@ async function verifyWorldPersistenceOwnership(worldName: unknown): Promise<{
   }
 
   const route = await redisStore.getWorldRoute(clean);
-  // owner/target/token expire together on the route lease TTL, but the epoch counter
-  // carries its OWN (much longer, and separately renewed) TTL -- so the counter can
-  // disappear while this instance still verifiably holds the route. getWorldRoute then
-  // reads it back as 0, `0 === <our epoch>` is false, and the lease is declared lost.
-  //
-  // Measured on staging 2026-08-08: a join to START claimed the route successfully at
-  // epoch 27 and then failed this check 0.9 ms later with world_ownership_lease_lost,
-  // on every single attempt. That rejects the join with "World data is still loading.
-  // Try again." -- a message the client treats as retryable and silently re-waits on --
-  // so the world was unjoinable while the server looked like it was answering nothing.
-  //
-  // The ownership token is the real fencing credential and it embeds the epoch it was
-  // minted with ("<claimant>:<epoch>"), which is exactly the value the counter held.
-  // When the counter is missing, recover the epoch from the token rather than treating
-  // a merely-expired bookkeeping key as proof that another instance took the world.
-  // Fencing is not weakened: the token must still match ours exactly, and a genuinely
-  // stolen route carries a different token (and a higher epoch inside it).
-  const routeEpoch = Math.max(0, Math.trunc(Number(route?.ownership_epoch) || 0));
-  const routeTokenEpochMatch = String(route?.ownership_token || "").match(/:(\d+)$/);
-  const routeTokenEpoch = routeTokenEpochMatch ? Math.trunc(Number(routeTokenEpochMatch[1])) : 0;
-  const effectiveRouteEpoch = routeEpoch > 0 ? routeEpoch : routeTokenEpoch;
   const verified = Boolean(
     route?.ok &&
     route.owner_instance_id === SERVER_INSTANCE_ID &&
     route.ownership_token === localOwnership.ownership_token &&
-    effectiveRouteEpoch === localOwnership.ownership_epoch
+    Number(route.ownership_epoch || 0) === localOwnership.ownership_epoch
   );
   if (!verified) {
-    // This path silently tore down ownership and rejected the join with no trace of
-    // WHICH comparand disagreed, which is why it hid for so long. Never again.
-    console.warn("[world-entry] world ownership lease verification failed", {
-      world: clean,
-      server_instance: SERVER_INSTANCE_ID,
-      route_ok: route?.ok === true,
-      route_owner_instance_id: String(route?.owner_instance_id || ""),
-      route_epoch: routeEpoch,
-      route_token_epoch: routeTokenEpoch,
-      effective_route_epoch: effectiveRouteEpoch,
-      local_epoch: localOwnership.ownership_epoch,
-      token_matches: route?.ownership_token === localOwnership.ownership_token,
-    });
     invalidateWorldEntrySnapshotCache(clean, "ownership_lease_lost");
     worldLoadedAuthorities.delete(clean);
     ownedWorldRoutes.delete(clean);
@@ -30378,8 +30196,6 @@ function buildActiveWorldEventTileUpdates(worldName: any, state: any) {
 
   for (const rawTile of tiles) {
     const tile = normalizeWorldEventTileEntry(rawTile, eventId);
-    // Returns null for stale entries whose block was removed from the item database.
-    if (!tile) continue;
     if (tile.event_block_id === "") continue;
     updates.push({
       type: "world_block_update",
@@ -31781,7 +31597,7 @@ function loadAccountsFromJson() {
   accounts.clear();
   const data = readJsonFile(ACCOUNTS_SAVE_PATH);
 
-  if (!isRecord(data)) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
     return;
   }
 
@@ -31941,7 +31757,7 @@ function ensurePlayerState(username: any) {
   }
 
   const data = readJsonFile(getPlayerSavePath(clean));
-  if (!isRecord(data)) {
+  if (!data || typeof data !== "object" || Array.isArray(data)) {
     return null;
   }
 
@@ -32074,8 +31890,8 @@ async function flushPendingSessionPersistence(username: any = "", worldName: any
       ? null
       : saveWorldState(cleanWorldName, { mutation: false, reason: "session_flush_retry" });
     const playerRetry = cleanUsername === "" ? null : savePlayerState(cleanUsername);
-    if (isThenable(worldRetry)) retryWrites.push(worldRetry);
-    if (isThenable(playerRetry)) retryWrites.push(playerRetry);
+    if (worldRetry && typeof worldRetry.then === "function") retryWrites.push(worldRetry);
+    if (playerRetry && typeof playerRetry.then === "function") retryWrites.push(playerRetry);
     flushedWriteCount += retryWrites.length;
 
     const retryResults = retryWrites.length > 0 ? await Promise.allSettled(retryWrites) : [];
@@ -32476,7 +32292,7 @@ async function claimWorldRouteForCurrentInstance(worldName: any) {
     const ownership: WorldPersistenceOwnership = {
       require_owner: POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE && WORLD_ROUTE_ENFORCEMENT_ENABLED,
       server_instance: SERVER_INSTANCE_ID,
-      ownership_token: clampString(route.ownership_token || "", MAX_WORLD_OWNERSHIP_TOKEN_LENGTH),
+      ownership_token: clampString(route.ownership_token || ""),
       ownership_epoch: Math.max(0, Math.trunc(Number(route.ownership_epoch) || 0)),
       fallback: route.fallback === true,
       verified: route.fallback !== true,
@@ -32496,70 +32312,7 @@ async function claimWorldRouteForCurrentInstance(worldName: any) {
         invalidateWorldEntrySnapshotCache(clean, "ownership_fence_changed");
         worldLoadedAuthorities.delete(clean);
         worldUnpersistedRevisions.delete(clean);
-        let claimed = await postgresStore.claimWorldPersistenceOwnership(clean, ownership);
-        // The Redis epoch counter that mints ownership_epoch can be lost -- it carries a
-        // TTL, and a flush or replica failover drops it too -- while PostgreSQL keeps the
-        // high-water mark in worlds.world_owner_epoch forever and only accepts a strictly
-        // greater epoch. When the counter restarts near 1 every claim is refused as stale,
-        // and the world becomes PERMANENTLY unjoinable: players sit on the loading screen
-        // while this process rejects a join for a world it believes it owns and redirects
-        // them to its own WS URL. That took TEST (PostgreSQL 322 vs Redis 3) offline on
-        // 2026-08-05 and would have reached every world in turn.
-        //
-        // Re-mint the route once using PostgreSQL's mark as a floor, then retry exactly
-        // once. The floor only ever moves the fence FORWARD, so fencing is not weakened: a
-        // genuinely stale claimant still loses, because reaching this point at all requires
-        // holding the live Redis route lease.
-        if (!claimed?.ok && claimed?.reason === "world_ownership_fence_rejected") {
-          const fenceEpoch = await postgresStore.getWorldOwnerEpoch(clean);
-          if (fenceEpoch >= ownership.ownership_epoch) {
-            // Release the lease the rejected claim just acquired BEFORE re-minting.
-            // That claim SET owner/token for this instance, so without this release the
-            // re-mint below hits the Lua's same-owner branch, skips every INCR, and
-            // returns the floored counter itself -- exactly equal to the Postgres mark,
-            // which the strictly-greater fence then rejects. Worse, every client retry
-            // re-claimed and RENEWED the 45s lease, keeping the trap armed until the
-            // player quit for a full lease TTL and rejoined -- the "hit or miss, relog
-            // and hope" join failure. With the lease released, the re-mint takes the
-            // fresh-claim path and INCRs past the floor (mark + 1), which passes.
-            // Race note: another instance claiming in this window simply wins the route
-            // and this join redirects to it; monotonicity is preserved either way.
-            await redisStore.releaseWorldRoute(clean, SERVER_INSTANCE_ID, ownership.ownership_token);
-            const reseeded = await redisStore.claimWorldRoute(
-              clean,
-              SERVER_INSTANCE_ID,
-              SERVER_INSTANCE_WS_URL,
-              WORLD_ROUTE_TTL_MS,
-              SERVER_PROCESS_OWNERSHIP_ID,
-              fenceEpoch
-            );
-            const reseededEpoch = Math.max(0, Math.trunc(Number(reseeded.ownership_epoch) || 0));
-            const reseededToken = clampString(reseeded.ownership_token || "", MAX_WORLD_OWNERSHIP_TOKEN_LENGTH);
-            if (reseeded.ok && reseededToken !== "" && reseededEpoch > fenceEpoch) {
-              console.warn("[world-route] ownership epoch reseeded from PostgreSQL", {
-                world: clean,
-                server_instance: SERVER_INSTANCE_ID,
-                rejected_epoch: ownership.ownership_epoch,
-                postgres_epoch: fenceEpoch,
-                reseeded_epoch: reseededEpoch,
-              });
-              ownership.ownership_token = reseededToken;
-              ownership.ownership_epoch = reseededEpoch;
-              claimed = await postgresStore.claimWorldPersistenceOwnership(clean, ownership);
-            } else {
-              // This path failed silently for two days and cost a full misdiagnosis:
-              // never let the reseed fail without a trace again.
-              console.warn("[world-route] ownership epoch reseed FAILED", {
-                world: clean,
-                server_instance: SERVER_INSTANCE_ID,
-                rejected_epoch: ownership.ownership_epoch,
-                postgres_epoch: fenceEpoch,
-                reseeded_ok: reseeded.ok === true,
-                reseeded_epoch: reseededEpoch,
-              });
-            }
-          }
-        }
+        const claimed = await postgresStore.claimWorldPersistenceOwnership(clean, ownership);
         if (!claimed?.ok) {
           await redisStore.releaseWorldRoute(clean, SERVER_INSTANCE_ID, ownership.ownership_token);
           ownedWorldRoutes.delete(clean);
@@ -32619,7 +32372,7 @@ async function releaseOwnedWorldRoutesForShutdown() {
 
     try {
       const result = await redisStore.releaseWorldRoute(clean, SERVER_INSTANCE_ID, ownershipToken);
-      if (result && result.released === false) failed += 1;
+      if (result && result.ok === false) failed += 1;
       else released += 1;
     } catch {
       failed += 1;
@@ -33701,7 +33454,6 @@ function getPlayersInWorld(worldName: any, excludePlayerId: any = "", receiverPl
       equipped_hat_item: clampString(equipmentSlots.hat || ""),
       equipped_hair_item: clampString(equipmentSlots.hair || ""),
       equipped_eyewear_item: clampString(equipmentSlots.eyewear || ""),
-      equipped_beard_item: clampString(equipmentSlots.beard || ""),
       equipped_shirt_item: clampString(equipmentSlots.shirt || ""),
       equipped_pants_item: clampString(equipmentSlots.pants || ""),
       equipped_shoes_item: clampString(equipmentSlots.shoes || ""),
