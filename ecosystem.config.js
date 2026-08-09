@@ -117,6 +117,20 @@ const productionEnv = {
   SMTP_FROM: env("SMTP_FROM", "PixelMania <no-reply@pixelmaniagame.com>"),
   TEST_EMAIL_TO: env("TEST_EMAIL_TO"),
   DESIGNER_USERNAMES: env("DESIGNER_USERNAMES"),
+  // The random Snow Storm world event is gated behind this flag in server.ts and defaults to
+  // "false" there when the env var is unset. Every other PM2-managed env var in this file is
+  // passed through explicitly with its intended value -- this one was missing entirely, so PM2
+  // never set it and the server always fell back to disabled. That's why the Snow Storm event
+  // has never appeared automatically in any environment launched via this config. Explicitly
+  // enabling it here (matching every other var's existing explicit-pass-through style) is the fix.
+  SNOW_STORM_RANDOM_EVENTS_ENABLED: env("SNOW_STORM_RANDOM_EVENTS_ENABLED", "true"),
+  SNOW_STORM_RANDOM_INTERVAL_MS: env("SNOW_STORM_RANDOM_INTERVAL_MS", "60000"),
+  SNOW_STORM_RANDOM_CHANCE: env("SNOW_STORM_RANDOM_CHANCE", "0.05"),
+  SNOW_STORM_PILE_OF_SNOW_CHANCE: env("SNOW_STORM_PILE_OF_SNOW_CHANCE", "0.08"),
+  SNOW_STORM_EVENT_TILE_BATCH_SIZE: env("SNOW_STORM_EVENT_TILE_BATCH_SIZE", "250"),
+  SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS: env("SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS", "0"),
+  SNOW_STORM_MAX_CHANGED_TILES: env("SNOW_STORM_MAX_CHANGED_TILES", ""),
+  SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS: env("SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS", "1000"),
 };
 
 module.exports = {
