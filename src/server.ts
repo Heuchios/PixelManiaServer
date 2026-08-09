@@ -460,6 +460,11 @@ const ADMIN_INVENTORY_LOOKUP_FIELDS = Object.freeze([
 ]);
 const MAX_ITEM_ID_LENGTH = 64;
 const MAX_ITEM_CATEGORY_LENGTH = 64;
+// World ownership tokens are "instance:pid:uuid:epoch" and become 65+ chars once the
+// route epoch reaches two digits. clampString()'s default limit is MAX_ITEM_ID_LENGTH
+// (64), which is for item ids, not identity tokens compared for exact equality -- do
+// NOT let this fall back to that default. See world_ownership_lease_lost.md.
+const MAX_WORLD_OWNERSHIP_TOKEN_LENGTH = 256;
 const MAX_DROP_ID_LENGTH = 96;
 const MAX_ROLLBACK_PRESERVED_DROP_IDS_LOGGED = 8;
 const MAX_DROP_TOMBSTONE_HISTORY = 512;
@@ -32292,7 +32297,7 @@ async function claimWorldRouteForCurrentInstance(worldName: any) {
     let ownership: WorldPersistenceOwnership = {
       require_owner: POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE && WORLD_ROUTE_ENFORCEMENT_ENABLED,
       server_instance: SERVER_INSTANCE_ID,
-      ownership_token: clampString(route.ownership_token || ""),
+      ownership_token: clampString(route.ownership_token || "", MAX_WORLD_OWNERSHIP_TOKEN_LENGTH),
       ownership_epoch: Math.max(0, Math.trunc(Number(route.ownership_epoch) || 0)),
       fallback: route.fallback === true,
       verified: route.fallback !== true,
@@ -32335,7 +32340,7 @@ async function claimWorldRouteForCurrentInstance(worldName: any) {
             route = reseeded;
             ownership = {
               ...ownership,
-              ownership_token: clampString(reseeded.ownership_token || ""),
+              ownership_token: clampString(reseeded.ownership_token || "", MAX_WORLD_OWNERSHIP_TOKEN_LENGTH),
               ownership_epoch: reseededEpoch,
               fallback: reseeded.fallback === true,
               verified: reseeded.fallback !== true,
