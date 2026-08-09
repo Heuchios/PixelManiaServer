@@ -8508,8 +8508,18 @@ class PostgresStore {
         const releasedInstances: ItemInstanceMovement[] = [];
         for (const plan of releasePlans) {
           let lockedOwnerPlayerId = playerId;
+          // Placing an instance-tracked block (e.g. a vending machine) spends it via the
+          // generic "world_block_place" ledger label, which getItemInstanceLedgerDestination()
+          // does not recognize as vending/safe/donation_box/display/etc, so it falls through
+          // to the default bucket: state=RETIRED_STATE, location="unknown". The machine-recovery
+          // release plan built above (isMachineRecovery) uses that same location="unknown" but,
+          // until now, only searched for state="locked" -- so a placed vending machine's own
+          // tracked instance was invisible to its own break-return, and breaking it always
+          // failed with "Tracked item data is missing for vending_machine.". location="unknown"
+          // is only ever produced by that machine-recovery plan (every other release plan uses
+          // "vending"/"safe"/"donation_box"/"display"), so it is safe to widen the search here.
           const releaseStates =
-            plan.metadata_action === "world_block_place"
+            plan.metadata_action === "world_block_place" || plan.location === "unknown"
               ? ["locked", ITEM_INSTANCE_RETIRED_STATE]
               : ["locked"];
           if (plan.source_owner_username !== "") {
