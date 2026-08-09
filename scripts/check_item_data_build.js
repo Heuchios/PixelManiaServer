@@ -592,8 +592,8 @@ for (const itemId of pickaxeItemIds) {
   assert.equal(definition?.equipment_slot, "hand");
   assert.equal(definition?.hand_item, true);
   assert.equal(definition?.instance_tracked, true);
-  assert.equal(definition?.texture, `res://Assets/items/swords/${itemId}.png`);
-  assert.equal(definition?.inventory_icon, `res://Assets/items/swords/${itemId}_icon.png`);
+  assert.equal(definition?.texture, `${itemId}_1`);
+  assert.equal(definition?.inventory_icon, `${itemId}_icon`);
   assert.equal(itemDatabase.getBreakPower(itemId, "world_lock"), 1);
 }
 
