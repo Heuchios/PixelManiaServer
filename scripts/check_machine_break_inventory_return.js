@@ -18,9 +18,12 @@ const clientAtlasItems = JSON.parse(
 const blockManagerSource = fs.readFileSync(path.join(clientRoot, "Scripts", "block_manager.gd"), "utf8");
 
 const expectedReturns = new Map([
-  ["vend_empty", "vend_empty"],
-  ["vend_pending", "vend_empty"],
-  ["vend_sold", "vend_empty"],
+  // The blocks-atlas migration consolidated vend_empty/vend_pending/vend_sold
+  // into a single vending_machine item -- item_database.gd no longer has
+  // separate entries for the old legacy ids, and getItemDefinition() now
+  // normalizes all three to the vending_machine definition (which returns
+  // itself, not "vend_empty", on break).
+  ["vending_machine", "vending_machine"],
   ["anti_punch", "anti_punch"],
   ["anti_talk", "anti_talk"],
   ["anti_gravity", "anti_gravity"],
@@ -99,9 +102,6 @@ for (const [itemId, expectedReturnItemId] of expectedReturns) {
 
   const clientEntry = extractClientItemEntry(itemId);
   assert.match(clientEntry, /"break_return_to_inventory"\s*:\s*true/, `${itemId} is missing the client recovery flag`);
-  if (itemId.startsWith("vend_")) {
-    assert.match(clientEntry, /"break_return_item_id"\s*:\s*"vend_empty"/, `${itemId} must normalize to vend_empty`);
-  }
 }
 
 const suppressIndex = serverSource.search(

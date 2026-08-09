@@ -108,7 +108,14 @@ const DYNAMIC_FALLBACKS = ["request"];
  * looked at by a human instead of quietly widening the blind spot.
  */
 const EXPECTED_LITERAL_SITES = 278;
-const EXPECTED_DYNAMIC_SITES = 10;
+// Re-pinned from 10 -> 9 after tracing every current dynamic call site (2026-08-09): all
+// nine pass an `action`-shaped variable through unchanged --
+// `cleanRouteType || "request"` / `type || "request"` (both already covered by
+// DYNAMIC_FALLBACKS) and seven generic `sendActionRejected(socket, action, ...)`
+// re-dispatch sites. None is a new unaudited literal action string; the count only
+// changed because there is genuinely one fewer dynamic site in server.js than there
+// used to be, not because a blind spot was introduced.
+const EXPECTED_DYNAMIC_SITES = 9;
 
 let failures = 0;
 let checks = 0;
