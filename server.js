@@ -702,10 +702,11 @@ const SHOP_CATALOG = new Map([
     ["lock_mover", { item_id: "lock_mover", item_category: "tool", amount: 1, price: 17000 }],
     ["door_mover", { item_id: "door_mover", item_category: "tool", amount: 1, price: 500 }],
     ["electric_tool", { item_id: "electric_tool", item_category: "tool", amount: 1, price: 5000 }],
-    ["bamboo_rod", { item_id: "bamboo_rod", item_category: "tool", amount: 1, price: 5000 }],
-    ["fishing_rod", { item_id: "bamboo_rod", item_category: "tool", amount: 1, price: 5000 }],
-    ["fiberglass_rod", { item_id: "fiberglass_rod", item_category: "tool", amount: 1, price: 15000 }],
-    ["tungsten_rod", { item_id: "tungsten_rod", item_category: "tool", amount: 1, price: 50000 }],
+    ["wooden_fishing_rod", { item_id: "wooden_fishing_rod", item_category: "tool", amount: 1, price: 1500 }],
+    ["bamboo_fishing_rod", { item_id: "bamboo_fishing_rod", item_category: "tool", amount: 1, price: 5000 }],
+    ["fishing_rod", { item_id: "bamboo_fishing_rod", item_category: "tool", amount: 1, price: 5000 }],
+    ["fiberglass_fishing_rod", { item_id: "fiberglass_fishing_rod", item_category: "tool", amount: 1, price: 15000 }],
+    ["platinum_rod", { item_id: "platinum_rod", item_category: "tool", amount: 1, price: 50000 }],
     ["lure_pack", { item_id: "lure_pack", item_category: "lure", amount: 1, price: 25, pack_size: 5 }],
     ["tackle_box", { item_id: "tackle_box", item_category: "block", amount: 1, price: 9500 }],
 ]);
@@ -19279,9 +19280,9 @@ function getCraftingCostItemIds(itemId, itemCategory) {
     const ids = [cleanItemId];
     if (cleanCategory !== "tool")
         return ids;
-    if (cleanItemId === "bamboo_rod")
+    if (cleanItemId === "bamboo_fishing_rod")
         ids.push("fishing_rod");
-    if (cleanItemId === "pristine_tungsten_rod")
+    if (cleanItemId === "golden_fishing_rod")
         ids.push("platinum_prestige_rod");
     return ids.filter((id, index) => id !== "" && ids.indexOf(id) === index);
 }

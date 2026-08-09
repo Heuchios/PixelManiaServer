@@ -58,8 +58,8 @@ const FIELD_TO_CATEGORY = Object.freeze(Object.fromEntries(
 
 const ALLOWED_CATEGORIES = Object.freeze(Object.keys(CATEGORY_TO_FIELD));
 const FISHING_ROD_ITEM_ALIASES: Readonly<Record<string, string>> = Object.freeze({
-  fishing_rod: "bamboo_rod",
-  platinum_prestige_rod: "pristine_tungsten_rod",
+  fishing_rod: "bamboo_fishing_rod",
+  platinum_prestige_rod: "golden_fishing_rod",
 });
 
 // Legacy block item ids kept only so worlds/inventories saved before the
@@ -3741,31 +3741,29 @@ const ITEM_DEFINITIONS = {
     shop_price: 0,
   }),
 
-  bamboo_rod: fishingRod("Bamboo Rod", "uncommon", {
+  wooden_fishing_rod: fishingRod("Wooden Fishing Rod", "common", {
+    shop_price: 1500,
+  }),
+  bamboo_fishing_rod: fishingRod("Bamboo Fishing Rod", "uncommon", {
     shop_price: 5000,
   }),
-  refined_bamboo_rod: fishingRod("Refined Bamboo Rod", "rare"),
-  pristine_bamboo_rod: fishingRod("Pristine Bamboo Rod", "epic"),
-  fishing_rod: fishingRod("Bamboo Rod", "uncommon", {
+  fishing_rod: fishingRod("Bamboo Fishing Rod", "uncommon", {
     hidden: true,
     legacy_item_id: true,
-    canonical_item_id: "bamboo_rod",
+    canonical_item_id: "bamboo_fishing_rod",
     shop_price: 0,
   }),
-  fiberglass_rod: fishingRod("Fiberglass Rod", "rare", {
+  fiberglass_fishing_rod: fishingRod("Fiberglass Fishing Rod", "rare", {
     shop_price: 15000,
   }),
-  refined_fiberglass_rod: fishingRod("Refined Fiberglass Rod", "epic"),
-  pristine_fiberglass_rod: fishingRod("Pristine Fiberglass Rod", "legendary"),
-  tungsten_rod: fishingRod("Tungsten Rod", "epic", {
+  platinum_rod: fishingRod("Platinum Rod", "epic", {
     shop_price: 50000,
   }),
-  refined_tungsten_rod: fishingRod("Refined Tungsten Rod", "legendary"),
-  pristine_tungsten_rod: fishingRod("Pristine Tungsten Rod", "legendary"),
-  platinum_prestige_rod: fishingRod("Pristine Tungsten Rod", "legendary", {
+  golden_fishing_rod: fishingRod("Golden Fishing Rod", "legendary"),
+  platinum_prestige_rod: fishingRod("Golden Fishing Rod", "legendary", {
     hidden: true,
     legacy_item_id: true,
-    canonical_item_id: "pristine_tungsten_rod",
+    canonical_item_id: "golden_fishing_rod",
     shop_price: 0,
   }),
   neptune_rod: item("tool", {
@@ -4197,75 +4195,7 @@ ensureSeedDefinitionsFromBlocks(ITEM_DEFINITIONS);
 const ITEMS: Readonly<ItemDefinitions> = Object.freeze(ITEM_DEFINITIONS);
 
 const STATION_RECIPES: Readonly<Record<string, ReadonlyArray<StationRecipe>>> = Object.freeze({
-  crafting_station: Object.freeze([
-    Object.freeze({
-      id: "refined_bamboo_rod",
-      output: Object.freeze({ item_id: "refined_bamboo_rod", category: "tool", amount: 1 }),
-      cost: Object.freeze([
-        Object.freeze({ item_id: "bamboo_rod", category: "tool", amount: 1 }),
-        Object.freeze({ item_id: "seaweed", category: "material", amount: 12 }),
-        Object.freeze({ item_id: "trash_can", category: "material", amount: 4 }),
-        Object.freeze({ item_id: "gem", category: "currency", amount: 100 }),
-      ]),
-    }),
-    Object.freeze({
-      id: "pristine_bamboo_rod",
-      output: Object.freeze({ item_id: "pristine_bamboo_rod", category: "tool", amount: 1 }),
-      cost: Object.freeze([
-        Object.freeze({ item_id: "refined_bamboo_rod", category: "tool", amount: 1 }),
-        Object.freeze({ item_id: "seaweed", category: "material", amount: 20 }),
-        Object.freeze({ item_id: "clam", category: "material", amount: 8 }),
-        Object.freeze({ item_id: "coral", category: "material", amount: 6 }),
-        Object.freeze({ item_id: "pearl", category: "material", amount: 1 }),
-        Object.freeze({ item_id: "gem", category: "currency", amount: 500 }),
-      ]),
-    }),
-    Object.freeze({
-      id: "refined_fiberglass_rod",
-      output: Object.freeze({ item_id: "refined_fiberglass_rod", category: "tool", amount: 1 }),
-      cost: Object.freeze([
-        Object.freeze({ item_id: "fiberglass_rod", category: "tool", amount: 1 }),
-        Object.freeze({ item_id: "refined_glass", category: "material", amount: 10 }),
-        Object.freeze({ item_id: "coral", category: "material", amount: 8 }),
-        Object.freeze({ item_id: "compass", category: "material", amount: 1 }),
-        Object.freeze({ item_id: "gem", category: "currency", amount: 500 }),
-      ]),
-    }),
-    Object.freeze({
-      id: "pristine_fiberglass_rod",
-      output: Object.freeze({ item_id: "pristine_fiberglass_rod", category: "tool", amount: 1 }),
-      cost: Object.freeze([
-        Object.freeze({ item_id: "refined_fiberglass_rod", category: "tool", amount: 1 }),
-        Object.freeze({ item_id: "refined_glass", category: "material", amount: 20 }),
-        Object.freeze({ item_id: "pearl", category: "material", amount: 3 }),
-        Object.freeze({ item_id: "topaz_necklace", category: "material", amount: 1 }),
-        Object.freeze({ item_id: "gem", category: "currency", amount: 1500 }),
-      ]),
-    }),
-    Object.freeze({
-      id: "refined_tungsten_rod",
-      output: Object.freeze({ item_id: "refined_tungsten_rod", category: "tool", amount: 1 }),
-      cost: Object.freeze([
-        Object.freeze({ item_id: "tungsten_rod", category: "tool", amount: 1 }),
-        Object.freeze({ item_id: "metal_scrap", category: "material", amount: 10 }),
-        Object.freeze({ item_id: "rusty_bicycle", category: "material", amount: 3 }),
-        Object.freeze({ item_id: "lost_chapter", category: "material", amount: 1 }),
-        Object.freeze({ item_id: "gem", category: "currency", amount: 2000 }),
-      ]),
-    }),
-    Object.freeze({
-      id: "pristine_tungsten_rod",
-      output: Object.freeze({ item_id: "pristine_tungsten_rod", category: "tool", amount: 1 }),
-      cost: Object.freeze([
-        Object.freeze({ item_id: "refined_tungsten_rod", category: "tool", amount: 1 }),
-        Object.freeze({ item_id: "metal_scrap", category: "material", amount: 25 }),
-        Object.freeze({ item_id: "naval_mines", category: "material", amount: 2 }),
-        Object.freeze({ item_id: "toxic_waste", category: "material", amount: 2 }),
-        Object.freeze({ item_id: "topaz_necklace", category: "material", amount: 2 }),
-        Object.freeze({ item_id: "gem", category: "currency", amount: 5000 }),
-      ]),
-    }),
-  ]),
+  crafting_station: Object.freeze([]),
   furnace: Object.freeze([
     Object.freeze({
       id: "refined_stone",
@@ -4638,7 +4568,7 @@ function getRequiredBreakDamage(toolId: unknown, blockType: unknown): number {
 
 function isFishingRodItem(itemId: unknown): boolean {
   const definition = getItemDefinition(itemId);
-  return Boolean(definition && definition.category === "tool" && (definition.fishing_rod || normalizeFishingRodId(definition.item_id) === "bamboo_rod"));
+  return Boolean(definition && definition.category === "tool" && (definition.fishing_rod || normalizeFishingRodId(definition.item_id) === "bamboo_fishing_rod"));
 }
 
 function getPlacementCost(itemId: unknown): { item_id: unknown; item_category: string; amount: number } | null {
