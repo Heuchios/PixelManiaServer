@@ -26,6 +26,7 @@ const CATEGORY_TO_FIELD = Object.freeze({
     material: "material_inventory",
     lure: "lure_inventory",
     fish: "fish_inventory",
+    beard: "beard_inventory",
 });
 const FIELD_TO_CATEGORY = Object.freeze(Object.fromEntries(Object.entries(CATEGORY_TO_FIELD).map(([category, field]) => [field, category])));
 const ALLOWED_CATEGORIES = Object.freeze(Object.keys(CATEGORY_TO_FIELD));
@@ -33,6 +34,22 @@ const FISHING_ROD_ITEM_ALIASES = Object.freeze({
     fishing_rod: "bamboo_rod",
     platinum_prestige_rod: "pristine_tungsten_rod",
 });
+// Legacy block item ids kept only so worlds/inventories saved before the
+// blocks-atlas migration still resolve to a real item definition.
+// NOTE: declared this early (alongside FISHING_ROD_ITEM_ALIASES) on purpose --
+// fishing tables are built eagerly at module-load time below, and that eager
+// construction calls getItemDefinition() -> normalizeLegacyItemId() before
+// execution ever reaches the middle of this file. Declaring this const any
+// later reintroduces a "Cannot access before initialization" TDZ crash.
+const LEGACY_BLOCK_ITEM_ALIASES = Object.freeze({
+    vend_empty: "vending_machine",
+    vend_pending: "vending_machine",
+    vend_sold: "vending_machine",
+});
+function normalizeLegacyItemId(itemId) {
+    const clean = String(itemId || "").trim().toLowerCase();
+    return LEGACY_BLOCK_ITEM_ALIASES[clean] || clean;
+}
 function item(category, options = {}) {
     return {
         category,
@@ -443,6 +460,21 @@ const ITEM_DEFINITIONS = {
         seed: "leaf_seed",
         drop_rules: { seed_chance: 0.08, gem_range: [0, 2] },
     }),
+    // World-boundary block. Every code path that decides whether a block can be
+    // broken/placed/traded checks for the literal string "bedrock" before ever
+    // consulting the item database, so this entry only exists to give it a
+    // texture/atlas coordinate ([7,2] in image.png) and to satisfy
+    // check:item-db parity with item_database.gd's "bedrock" entry.
+    bedrock: block({
+        rarity: "common",
+        block_health: 9999,
+        placeable: false,
+        tradeable: false,
+        dropable: false,
+        admin_grantable: false,
+        hidden: true,
+        drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+    }),
     lava: block({
         rarity: "rare",
         block_health: 4,
@@ -563,11 +595,20 @@ const ITEM_DEFINITIONS = {
             seed_chance: 0,
             gem_range: [0, 0],
             fixed_drops: Object.freeze([
-                Object.freeze({ item_id: "ice_block", item_category: "block", amount_range: Object.freeze([1, 3]) }),
+                Object.freeze({ item_id: "ice_shard", item_category: "block", amount_range: Object.freeze([1, 3]) }),
                 Object.freeze({ item_id: "ice_block_seed", item_category: "seed", amount_range: Object.freeze([0, 2]) }),
                 Object.freeze({ item_id: "gem", item_category: "currency", amount_range: Object.freeze([0, 4]) }),
             ]),
         },
+    }),
+    // Matches item_database.gd's "ice_shard" -- the blocks-atlas migration
+    // changed ice_block's break drop from itself to this new collectible.
+    ice_shard: block({
+        display_name: "Ice Shard",
+        rarity: "common",
+        block_health: 3,
+        placeable: false,
+        drop_rules: { seed_chance: 0, gem_range: [0, 0] },
     }),
     ice_block_2: block({
         display_name: "Treasure Ice",
@@ -3069,6 +3110,43 @@ const ITEM_DEFINITIONS = {
         back_flip_with_facing: false,
         order: 210,
     }),
+    dragon_fire_wings: item("back", {
+        display_name: "Dragon Fire Wings",
+        rarity: "legendary",
+        texture: "dragon_fire_wings_1",
+        inventory_icon: "dragon_fire_wings_icon",
+        equipment_slot: "back",
+        equipable: true,
+        tradeable: true,
+        vendable: true,
+        dropable: true,
+        jump_type: "double",
+    }),
+    golden_angel_wings: item("back", {
+        display_name: "Golden Angel Wings",
+        rarity: "legendary",
+        texture: "golden_angel_wings_1",
+        inventory_icon: "golden_angel_wings_icon",
+        equipment_slot: "back",
+        equipable: true,
+        tradeable: true,
+        vendable: true,
+        dropable: true,
+        jump_type: "double",
+    }),
+    green_jetpack: item("back", {
+        display_name: "Green Jetpack",
+        rarity: "legendary",
+        texture: "green_jetpack_1",
+        inventory_icon: "green_jetpack_icon",
+        instance_tracked: true,
+        equipment_slot: "back",
+        equipable: true,
+        tradeable: true,
+        vendable: true,
+        dropable: true,
+        jump_type: "double",
+    }),
     neptune_crown: item("hat", {
         display_name: "Neptune Crown",
         rarity: "legendary",
@@ -3117,6 +3195,70 @@ const ITEM_DEFINITIONS = {
         equipment_slot: "hat",
         equipable: true,
     }),
+    straw_hat: item("hat", {
+        display_name: "Straw Hat",
+        rarity: "common",
+        texture: "straw_hat",
+        inventory_icon: "straw_hat_icon",
+        equipment_slot: "hat",
+        equipable: true,
+    }),
+    yellow_cap: item("hat", {
+        display_name: "Yellow Cap",
+        rarity: "common",
+        texture: "yellow_cap",
+        inventory_icon: "yellow_cap_icon",
+        equipment_slot: "hat",
+        equipable: true,
+    }),
+    white_cap: item("hat", {
+        display_name: "White Cap",
+        rarity: "common",
+        texture: "white_cap",
+        inventory_icon: "white_cap_icon",
+        equipment_slot: "hat",
+        equipable: true,
+    }),
+    red_headband: item("hat", {
+        display_name: "Red Headband",
+        rarity: "common",
+        texture: "red_headband",
+        inventory_icon: "red_headband_icon",
+        equipment_slot: "hat",
+        equipable: true,
+    }),
+    chefs_hat: item("hat", {
+        display_name: "Chef's Hat",
+        rarity: "common",
+        texture: "chefs_hat",
+        inventory_icon: "chefs_hat_icon",
+        equipment_slot: "hat",
+        equipable: true,
+    }),
+    cowboy_hat: item("hat", {
+        display_name: "Cowboy Hat",
+        rarity: "common",
+        texture: "cowboy_hat",
+        inventory_icon: "cowboy_hat_icon",
+        equipment_slot: "hat",
+        equipable: true,
+    }),
+    top_hat: item("hat", {
+        display_name: "Top Hat",
+        rarity: "common",
+        texture: "top_hat",
+        inventory_icon: "top_hat_icon",
+        equipment_slot: "hat",
+        equipable: true,
+    }),
+    black_fedora: item("hat", {
+        display_name: "Black Fedora",
+        rarity: "common",
+        texture: "black_fedora",
+        inventory_icon: "black_fedora_icon",
+        equipment_slot: "hat",
+        equipable: true,
+    }),
     purple_shirt: item("shirt", {
         rarity: "common",
         equipment_slot: "shirt",
@@ -3146,6 +3288,62 @@ const ITEM_DEFINITIONS = {
     }),
     frosty_hair: item("hair", {
         rarity: "common",
+        equipment_slot: "hair",
+        equipable: true,
+    }),
+    flaming_hair: item("hair", {
+        display_name: "Flaming Hair",
+        rarity: "common",
+        texture: "flaming_hair_1",
+        inventory_icon: "flaming_hair_icon",
+        equipment_slot: "hair",
+        equipable: true,
+    }),
+    old_men_hair: item("hair", {
+        display_name: "Old Men Hair",
+        rarity: "common",
+        texture: "old_men_hair",
+        inventory_icon: "old_men_hair_icon",
+        equipment_slot: "hair",
+        equipable: true,
+    }),
+    brown_fringe: item("hair", {
+        display_name: "Brown Fringe",
+        rarity: "common",
+        texture: "brown_fringe",
+        inventory_icon: "brown_fringe_icon",
+        equipment_slot: "hair",
+        equipable: true,
+    }),
+    brown_combed_hair: item("hair", {
+        display_name: "Brown Combed Hair",
+        rarity: "common",
+        texture: "brown_combed_hair",
+        inventory_icon: "brown_combed_hair_icon",
+        equipment_slot: "hair",
+        equipable: true,
+    }),
+    blonde_hair: item("hair", {
+        display_name: "Blonde Hair",
+        rarity: "common",
+        texture: "blonde_hair",
+        inventory_icon: "blonde_hair_icon",
+        equipment_slot: "hair",
+        equipable: true,
+    }),
+    brunette_hair: item("hair", {
+        display_name: "Brunette Hair",
+        rarity: "common",
+        texture: "brunette_hair",
+        inventory_icon: "brunette_hair_icon",
+        equipment_slot: "hair",
+        equipable: true,
+    }),
+    crazy_hair: item("hair", {
+        display_name: "Crazy Hair",
+        rarity: "common",
+        texture: "crazy_hair",
+        inventory_icon: "crazy_hair_icon",
         equipment_slot: "hair",
         equipable: true,
     }),
@@ -3291,6 +3489,22 @@ const ITEM_DEFINITIONS = {
         equipable: true,
         tradeable: true,
         dropable: true,
+    }),
+    sunglasses: item("eyewear", {
+        display_name: "Sunglasses",
+        rarity: "common",
+        texture: "sunglasses",
+        inventory_icon: "sunglasses_icon",
+        equipment_slot: "eyewear",
+        equipable: true,
+    }),
+    black_beard: item("beard", {
+        display_name: "Black Beard",
+        rarity: "common",
+        texture: "black_beard",
+        inventory_icon: "black_beard_icon",
+        equipment_slot: "beard",
+        equipable: true,
     }),
     basic_blue_shirt: item("shirt", {
         rarity: "common",
@@ -4170,17 +4384,6 @@ function getFishingTable(lureId, options = {}) {
 }
 function cleanItemId(itemId) {
     return String(itemId || "").trim().toLowerCase();
-}
-// Legacy block item ids kept only so worlds/inventories saved before the
-// blocks-atlas migration still resolve to a real item definition.
-const LEGACY_BLOCK_ITEM_ALIASES = Object.freeze({
-    vend_empty: "vending_machine",
-    vend_pending: "vending_machine",
-    vend_sold: "vending_machine",
-});
-function normalizeLegacyItemId(itemId) {
-    const clean = cleanItemId(itemId);
-    return LEGACY_BLOCK_ITEM_ALIASES[clean] || clean;
 }
 function normalizeFishingRodId(itemId) {
     const clean = cleanItemId(itemId);

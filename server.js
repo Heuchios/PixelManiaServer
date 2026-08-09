@@ -29596,9 +29596,9 @@ async function claimWorldRouteForCurrentInstance(worldName) {
             ownership_epoch: fallbackOwnership.ownership_epoch,
         };
     }
-    const route = await redisStore.claimWorldRoute(clean, SERVER_INSTANCE_ID, SERVER_INSTANCE_WS_URL, WORLD_ROUTE_TTL_MS, SERVER_PROCESS_OWNERSHIP_ID);
+    let route = await redisStore.claimWorldRoute(clean, SERVER_INSTANCE_ID, SERVER_INSTANCE_WS_URL, WORLD_ROUTE_TTL_MS, SERVER_PROCESS_OWNERSHIP_ID);
     if (route.ok) {
-        const ownership = {
+        let ownership = {
             require_owner: POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE && WORLD_ROUTE_ENFORCEMENT_ENABLED,
             server_instance: SERVER_INSTANCE_ID,
             ownership_token: clampString(route.ownership_token || ""),
@@ -29621,7 +29621,30 @@ async function claimWorldRouteForCurrentInstance(worldName) {
                 invalidateWorldEntrySnapshotCache(clean, "ownership_fence_changed");
                 worldLoadedAuthorities.delete(clean);
                 worldUnpersistedRevisions.delete(clean);
-                const claimed = await postgresStore.claimWorldPersistenceOwnership(clean, ownership);
+                let claimed = await postgresStore.claimWorldPersistenceOwnership(clean, ownership);
+                if (!claimed?.ok && claimed?.reason === "world_ownership_fence_rejected") {
+                    // PostgreSQL's world_owner_epoch high-water mark is never cleared, but the
+                    // Redis counter that mints epochs CAN be lost (TTL expiry, flush, replica
+                    // failover). When it is, every claim asks for a smaller epoch than
+                    // PostgreSQL already holds and the world becomes PERMANENTLY unjoinable --
+                    // this took TEST offline on 2026-08-05 (epoch 322 in PostgreSQL, 3 in
+                    // Redis). Recover by reading the PostgreSQL floor and re-minting the Redis
+                    // epoch above it, then retrying the claim exactly once.
+                    const fenceEpoch = await postgresStore.getWorldOwnerEpoch(clean);
+                    const reseeded = await redisStore.claimWorldRoute(clean, SERVER_INSTANCE_ID, SERVER_INSTANCE_WS_URL, WORLD_ROUTE_TTL_MS, SERVER_PROCESS_OWNERSHIP_ID, fenceEpoch);
+                    const reseededEpoch = Math.max(0, Math.trunc(Number(reseeded.ownership_epoch) || 0));
+                    if (reseeded.ok && reseededEpoch > fenceEpoch) {
+                        route = reseeded;
+                        ownership = {
+                            ...ownership,
+                            ownership_token: clampString(reseeded.ownership_token || ""),
+                            ownership_epoch: reseededEpoch,
+                            fallback: reseeded.fallback === true,
+                            verified: reseeded.fallback !== true,
+                        };
+                        claimed = await postgresStore.claimWorldPersistenceOwnership(clean, ownership);
+                    }
+                }
                 if (!claimed?.ok) {
                     await redisStore.releaseWorldRoute(clean, SERVER_INSTANCE_ID, ownership.ownership_token);
                     ownedWorldRoutes.delete(clean);
