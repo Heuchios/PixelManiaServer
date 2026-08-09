@@ -27,6 +27,7 @@ const CATEGORY_TO_FIELD = Object.freeze({
     lure: "lure_inventory",
     fish: "fish_inventory",
     beard: "beard_inventory",
+    body_accessory: "body_accessory_inventory",
 });
 const FIELD_TO_CATEGORY = Object.freeze(Object.fromEntries(Object.entries(CATEGORY_TO_FIELD).map(([category, field]) => [field, category])));
 const ALLOWED_CATEGORIES = Object.freeze(Object.keys(CATEGORY_TO_FIELD));
@@ -3576,6 +3577,14 @@ const ITEM_DEFINITIONS = {
         texture: "brown_beard",
         inventory_icon: "brown_beard_icon",
         equipment_slot: "beard",
+        equipable: true,
+    }),
+    red_scarf: item("body_accessory", {
+        display_name: "Red Scarf",
+        rarity: "common",
+        texture: "red_scarf",
+        inventory_icon: "red_scarf_icon",
+        equipment_slot: "body_accessory",
         equipable: true,
     }),
     basic_blue_shirt: item("shirt", {
