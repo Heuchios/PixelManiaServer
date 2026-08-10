@@ -30819,7 +30819,7 @@ function serverGenerateSurfaceDecorations(map: any, surface: any, generationSeed
     const normalized = total > 0 ? selectionRoll / total : 1;
     let decoration: any = "grass";
     if (normalized < (SERVER_SURFACE_DECORATION_TULIP_CHANCE / total)) {
-      decoration = "tulip";
+      decoration = "sunflower";
     } else if (normalized < ((SERVER_SURFACE_DECORATION_TULIP_CHANCE + SERVER_SURFACE_DECORATION_ROSE_CHANCE) / total)) {
       decoration = "rose";
     }
@@ -30832,7 +30832,7 @@ function serverCreateTree(map: any, surface: any, generationSeed: any, rng: any,
   if (x <= 1 || x >= WORLD_WIDTH - 2) return false;
   const surfaceY = serverSurfaceYAt(surface, x);
   const groundType = map.get(gridKey(x, surfaceY))?.block_type || "";
-  if (!["grass", "dirt", "sand", "stone", "rose", "tulip"].includes(groundType)) return false;
+  if (!["grass", "dirt", "sand", "stone", "rose", "sunflower"].includes(groundType)) return false;
   if (Math.abs(serverSurfaceYAt(surface, x - 1) - surfaceY) > 1) return false;
   if (Math.abs(serverSurfaceYAt(surface, x + 1) - surfaceY) > 1) return false;
 
@@ -31047,7 +31047,7 @@ function buildEffectiveBackgroundMap(worldName: any, state: any, generatedMap: a
 function getSnowStormIceEventBlock(x: any, y: any) {
   const roll = deterministicTileVariantIndex(x, y, 100, SNOW_STORM_ICE_VARIANT_SALT);
   if (roll < 2) return "ice_fossil";
-  if (roll < 7) return "ice_block_2";
+  if (roll < 7) return "ice_treasure";
   return "ice_block";
 }
 

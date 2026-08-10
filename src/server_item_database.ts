@@ -74,6 +74,9 @@ const LEGACY_BLOCK_ITEM_ALIASES: Readonly<Record<string, string>> = Object.freez
   vend_empty: "vending_machine",
   vend_pending: "vending_machine",
   vend_sold: "vending_machine",
+  vines: "hanging_vine",
+  ice_block_2: "ice_treasure",
+  tulip: "sunflower",
 });
 
 function normalizeLegacyItemId(itemId: unknown): string {
@@ -339,9 +342,9 @@ const TIER_1_SPLICE_BALANCE = Object.freeze({
   pile_of_sand: Object.freeze({ grow_time: 24, block_drop_chance: 0.85, seed_drop_chance: 0.55, tree_block_range: Object.freeze([4, 7]), tree_seed_range: Object.freeze([2, 4]) }),
   glass: Object.freeze({ grow_time: 28, block_drop_chance: 0.75, seed_drop_chance: 0.45, tree_block_range: Object.freeze([4, 7]), tree_seed_range: Object.freeze([2, 4]) }),
   wood_plank: Object.freeze({ grow_time: 32, block_drop_chance: 0.80, seed_drop_chance: 0.45, tree_block_range: Object.freeze([4, 7]), tree_seed_range: Object.freeze([2, 4]) }),
-  vines: Object.freeze({ grow_time: 36, block_drop_chance: 0.80, seed_drop_chance: 0.45, tree_block_range: Object.freeze([4, 7]), tree_seed_range: Object.freeze([2, 4]) }),
+  hanging_vine: Object.freeze({ grow_time: 36, block_drop_chance: 0.80, seed_drop_chance: 0.45, tree_block_range: Object.freeze([4, 7]), tree_seed_range: Object.freeze([2, 4]) }),
   rose: Object.freeze({ grow_time: 40, block_drop_chance: 0.75, seed_drop_chance: 0.40, tree_block_range: Object.freeze([4, 7]), tree_seed_range: Object.freeze([2, 4]) }),
-  tulip: Object.freeze({ grow_time: 40, block_drop_chance: 0.75, seed_drop_chance: 0.40, tree_block_range: Object.freeze([4, 7]), tree_seed_range: Object.freeze([2, 4]) }),
+  sunflower: Object.freeze({ grow_time: 40, block_drop_chance: 0.75, seed_drop_chance: 0.40, tree_block_range: Object.freeze([4, 7]), tree_seed_range: Object.freeze([2, 4]) }),
   sun_flower: Object.freeze({ grow_time: 46, block_drop_chance: 0.75, seed_drop_chance: 0.38, tree_block_range: Object.freeze([3, 6]), tree_seed_range: Object.freeze([1, 4]) }),
   apple: Object.freeze({ grow_time: 52, block_drop_chance: 0.70, seed_drop_chance: 0.35, tree_block_range: Object.freeze([3, 6]), tree_seed_range: Object.freeze([1, 4]) }),
   climbing_vine: Object.freeze({ grow_time: 58, block_drop_chance: 0.70, seed_drop_chance: 0.35, tree_block_range: Object.freeze([3, 6]), tree_seed_range: Object.freeze([1, 4]) }),
@@ -682,8 +685,8 @@ const ITEM_DEFINITIONS = {
     placeable: false,
     drop_rules: { seed_chance: 0, gem_range: [0, 0] },
   }),
-  ice_block_2: block({
-    display_name: "Treasure Ice",
+  ice_treasure: block({
+    display_name: "Ice Treasure",
     rarity: "rare",
     block_health: 4,
     placeable: false,
@@ -884,14 +887,14 @@ const ITEM_DEFINITIONS = {
     no_collision: true,
     drop_rules: { seed_chance: 0.04, gem_range: [0, 2] },
   }),
-  tulip: block({
+  sunflower: block({
     rarity: "uncommon",
     block_health: 2,
     seed: "tulip_seed",
     no_collision: true,
     drop_rules: { seed_chance: 0.04, gem_range: [0, 2] },
   }),
-  vines: block({
+  hanging_vine: block({
     rarity: "common",
     block_health: 2,
     seed: "vines_seed",
@@ -920,6 +923,7 @@ const ITEM_DEFINITIONS = {
     block_health: 2,
     seed: "sun_flower_seed",
     no_collision: true,
+    hidden: true,
     drop_rules: makeNaturalBlockDropRules("sun_flower", "sun_flower_seed"),
   }),
   poppy: block({
@@ -2523,6 +2527,32 @@ const ITEM_DEFINITIONS = {
     collidable: false,
     splice_only: true,
   }),
+  wooden_treasure_chest: block({
+    display_name: "Wooden Treasure Chest",
+    rarity: "uncommon",
+    block_health: 2,
+    seed: "",
+    no_collision: true,
+    collidable: false,
+    solid: false,
+    collision_type: "none",
+    drop_rules: { seed_chance: 0, gem_range: [0, 0], drops_self: true },
+    drops_self: true,
+  }),
+  wooden_treasure_chest_open: block({
+    display_name: "Opened Wooden Treasure Chest",
+    rarity: "uncommon",
+    block_health: 2,
+    seed: "",
+    no_collision: true,
+    collidable: false,
+    solid: false,
+    collision_type: "none",
+    placeable: false,
+    dropable: false,
+    hidden: true,
+    drop_rules: { seed_chance: 0, gem_range: [0, 0] },
+  }),
   mechanical_entrance: block({
     rarity: "rare",
     block_health: 4,
@@ -2691,8 +2721,8 @@ const ITEM_DEFINITIONS = {
   yellow_block_seed: seed("yellow_block", { rarity: "uncommon" }),
   black_block_seed: seed("black_block", { rarity: "uncommon" }),
   rose_seed: seed("rose", { rarity: "uncommon" }),
-  tulip_seed: seed("tulip", { rarity: "uncommon" }),
-  vines_seed: seed("vines", { rarity: "common" }),
+  tulip_seed: seed("sunflower", { rarity: "uncommon" }),
+  vines_seed: seed("hanging_vine", { rarity: "common" }),
   sugar_cane_seed: seed("sugar_cane", { display_name: "Sugar Cane Seed", rarity: "common", grow_time: 120, max_grow_time: 120 }),
   barn_block_seed: seed("barn_block", { display_name: "Barn Block Seed", rarity: "common", grow_time: 150, max_grow_time: 150 }),
   royal_door_seed: seed("royal_door", { display_name: "Royal Door Seed", rarity: "uncommon", grow_time: 175, max_grow_time: 175 }),

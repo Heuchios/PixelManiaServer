@@ -28196,7 +28196,7 @@ function serverGenerateSurfaceDecorations(map, surface, generationSeed, backgrou
         const normalized = total > 0 ? selectionRoll / total : 1;
         let decoration = "grass";
         if (normalized < (SERVER_SURFACE_DECORATION_TULIP_CHANCE / total)) {
-            decoration = "tulip";
+            decoration = "sunflower";
         }
         else if (normalized < ((SERVER_SURFACE_DECORATION_TULIP_CHANCE + SERVER_SURFACE_DECORATION_ROSE_CHANCE) / total)) {
             decoration = "rose";
@@ -28210,7 +28210,7 @@ function serverCreateTree(map, surface, generationSeed, rng, x, backgroundMap = 
         return false;
     const surfaceY = serverSurfaceYAt(surface, x);
     const groundType = map.get(gridKey(x, surfaceY))?.block_type || "";
-    if (!["grass", "dirt", "sand", "stone", "rose", "tulip"].includes(groundType))
+    if (!["grass", "dirt", "sand", "stone", "rose", "sunflower"].includes(groundType))
         return false;
     if (Math.abs(serverSurfaceYAt(surface, x - 1) - surfaceY) > 1)
         return false;
@@ -28427,7 +28427,7 @@ function getSnowStormIceEventBlock(x, y) {
     if (roll < 2)
         return "ice_fossil";
     if (roll < 7)
-        return "ice_block_2";
+        return "ice_treasure";
     return "ice_block";
 }
 function getSnowStormEventBlockForOriginal(originalBlockId, effectiveMap, x, y) {
