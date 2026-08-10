@@ -3838,6 +3838,12 @@ const ITEM_DEFINITIONS = {
     equipment_slot: "shoes",
     equipable: true,
   }),
+  light_blue_shoes: item("shoes", {
+    display_name: "Light Blue Shoes",
+    rarity: "common",
+    equipment_slot: "shoes",
+    equipable: true,
+  }),
   basic_yellow_shoes: item("shoes", {
     display_name: "Yellow Shoes",
     rarity: "common",
