@@ -335,28 +335,29 @@ assert.deepEqual(fixedDrop(fireHydrantDefinition, "fire_hydrant"), {
   amount: 1,
 });
 
-const shiftBlockDefinition = itemDatabase.getItemDefinition("shift_block");
-assert.equal(atlasDb.getItemIdForKey("shift_block"), 57);
+const shiftyBlockDefinition = itemDatabase.getItemDefinition("shifty_block");
+assert.equal(atlasDb.getItemIdForKey("shifty_block"), 57);
 assert.deepEqual(Array.from(atlasDb.getItem(57)?.atlas_coords || []), [10, 8]);
-assert.equal(shiftBlockDefinition?.category, "block");
-assert.equal(shiftBlockDefinition?.rarity, "rare");
-assert.equal(shiftBlockDefinition?.block_health, 3);
-assert.equal(shiftBlockDefinition?.seed, "");
-assert.equal(shiftBlockDefinition?.atlas_item_id, 57);
-assert.deepEqual(Array.from(shiftBlockDefinition?.atlas_coords || []), [10, 8]);
-assert.deepEqual(Array.from(shiftBlockDefinition?.texture?.cell || []), [10, 8]);
-assert.deepEqual(Array.from(shiftBlockDefinition?.inventory_icon?.cell || []), [10, 8]);
-assert.equal(itemDatabase.getPlaceLayer("shift_block"), "foreground");
-assert.equal(shiftBlockDefinition?.collidable, true);
-assert.equal(shiftBlockDefinition?.colour_cycle_block, true);
-assert.equal(shiftBlockDefinition?.colour_cycle_speed, 0.08);
-assert.equal(shiftBlockDefinition?.colour_cycle_saturation, 0.85);
-assert.equal(shiftBlockDefinition?.colour_cycle_value, 1.0);
-assert.deepEqual(fixedDrop(shiftBlockDefinition, "shift_block"), {
-  item_id: "shift_block",
+assert.equal(shiftyBlockDefinition?.category, "block");
+assert.equal(shiftyBlockDefinition?.rarity, "rare");
+assert.equal(shiftyBlockDefinition?.block_health, 3);
+assert.equal(shiftyBlockDefinition?.seed, "");
+assert.equal(shiftyBlockDefinition?.atlas_item_id, 57);
+assert.deepEqual(Array.from(shiftyBlockDefinition?.atlas_coords || []), [10, 8]);
+assert.deepEqual(Array.from(shiftyBlockDefinition?.texture?.cell || []), [10, 8]);
+assert.deepEqual(Array.from(shiftyBlockDefinition?.inventory_icon?.cell || []), [10, 8]);
+assert.equal(itemDatabase.getPlaceLayer("shifty_block"), "foreground");
+assert.equal(shiftyBlockDefinition?.collidable, true);
+assert.equal(shiftyBlockDefinition?.colour_cycle_block, true);
+assert.equal(shiftyBlockDefinition?.colour_cycle_speed, 0.08);
+assert.equal(shiftyBlockDefinition?.colour_cycle_saturation, 0.85);
+assert.equal(shiftyBlockDefinition?.colour_cycle_value, 1.0);
+assert.deepEqual(fixedDrop(shiftyBlockDefinition, "shifty_block"), {
+  item_id: "shifty_block",
   item_category: "block",
   amount: 1,
 });
+assert.equal(itemDatabase.getItemDefinition("shift_block")?.atlas_item_id, 57);
 
 const pillarDefinition = itemDatabase.getItemDefinition("pillar");
 assert.equal(atlasDb.getItemIdForKey("pillar"), 58);
