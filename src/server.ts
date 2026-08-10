@@ -853,6 +853,10 @@ const POSTGRES_POOL_MAX = Math.max(1, Math.trunc(Number(process.env.POSTGRES_POO
 const POSTGRES_IDLE_TIMEOUT_MS = Math.max(1000, Math.trunc(Number(process.env.POSTGRES_IDLE_TIMEOUT_MS) || 30000));
 const POSTGRES_CONNECT_TIMEOUT_MS = Math.max(1000, Math.trunc(Number(process.env.POSTGRES_CONNECT_TIMEOUT_MS) || 8000));
 const POSTGRES_WRITE_QUEUE_MAX = Math.max(100, Math.trunc(Number(process.env.POSTGRES_WRITE_QUEUE_MAX) || 1000));
+// Diagnostic only: logs a write to Postgres whose total time (queue wait + exec) crosses this
+// threshold, tagged by transaction label (see postgres_store.ts enqueueWrite/withTransaction).
+// 0 disables. Added to trace an intermittent fishing-cast delay back to root cause.
+const POSTGRES_SLOW_WRITE_LOG_MS = Math.max(0, Math.trunc(Number(process.env.POSTGRES_SLOW_WRITE_LOG_MS) || 250));
 const POSTGRES_BOOTSTRAP_SQL_PATH = String(
   process.env.POSTGRES_BOOTSTRAP_SQL_PATH ||
   path.join(__dirname, "docs", "postgres_security_foundation.sql")
@@ -2344,6 +2348,7 @@ const postgresStore = new PostgresStore({
   idleTimeoutMs: POSTGRES_IDLE_TIMEOUT_MS,
   connectTimeoutMs: POSTGRES_CONNECT_TIMEOUT_MS,
   maxWriteQueueDepth: POSTGRES_WRITE_QUEUE_MAX,
+  slowWriteLogThresholdMs: POSTGRES_SLOW_WRITE_LOG_MS,
   logger: (...args: unknown[]) => console.warn(...args),
 });
 const ServerPunishmentHelpers = ServerPunishmentHelpersModule.createServerPunishmentHelpers({

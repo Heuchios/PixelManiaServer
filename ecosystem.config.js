@@ -73,6 +73,9 @@ const productionEnv = {
   POSTGRES_SCHEMA: env("POSTGRES_SCHEMA", "pixelmania"),
   POSTGRES_POOL_MAX: env("POSTGRES_POOL_MAX", "10"),
   POSTGRES_WRITE_QUEUE_MAX: env("POSTGRES_WRITE_QUEUE_MAX", "1000"),
+  // Diagnostic only (added 2026-08-10 to trace the intermittent fishing-cast delay): logs any
+  // write whose queue-wait + exec time crosses this many ms, tagged by transaction label. 0 disables.
+  POSTGRES_SLOW_WRITE_LOG_MS: env("POSTGRES_SLOW_WRITE_LOG_MS", "250"),
   POSTGRES_BOOTSTRAP_SQL_PATH: env("POSTGRES_BOOTSTRAP_SQL_PATH", "docs/postgres_security_foundation.sql"),
   REDIS_ENABLED: env("REDIS_ENABLED", "false"),
   REDIS_URL: env("REDIS_URL", "redis://127.0.0.1:6379"),

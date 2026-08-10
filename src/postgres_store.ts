@@ -580,6 +580,7 @@ class PostgresStore {
   declare writeQueue: Promise<unknown>;
   declare writeQueueDepth: number;
   declare maxWriteQueueDepth: number;
+  declare slowWriteLogThresholdMs: number;
   declare identityCacheByClient: WeakMap<object, { active: boolean; entries: Map<string, string> }>;
 
   /**
@@ -600,6 +601,10 @@ class PostgresStore {
     this.writeQueue = Promise.resolve();
     this.writeQueueDepth = 0;
     this.maxWriteQueueDepth = Math.max(100, toInt(options.maxWriteQueueDepth, 1000));
+    // Diagnostic only: logs when a write's total time (queue wait + exec) crosses this, so we
+    // can see whether a slow write is stuck behind other work in the single global FIFO queue
+    // (queue_wait_ms) or is itself just a big transaction (exec_ms). 0 disables the log entirely.
+    this.slowWriteLogThresholdMs = Math.max(0, toInt(options.slowWriteLogThresholdMs, 250));
     // Per-transaction identity memo. ensurePlayerIdentity costs two upserts, and the write
     // path calls it repeatedly for the SAME actor inside one transaction -- once per world
     // change entry, once per world-lock member per pass, and so on. Scoped strictly to one
@@ -1497,23 +1502,34 @@ class PostgresStore {
       return Promise.reject(error);
     }
 
+    const queuedAt = Date.now();
+    const queueDepthAtEnqueue = this.writeQueueDepth;
     this.writeQueueDepth += 1;
     const run = this.writeQueue
       .catch(() => null)
       .then(async () => {
+        const startedAt = Date.now();
         try {
           return await work();
         } finally {
           this.writeQueueDepth = Math.max(0, this.writeQueueDepth - 1);
+          const finishedAt = Date.now();
+          const queueWaitMs = startedAt - queuedAt;
+          const execMs = finishedAt - startedAt;
+          if (this.slowWriteLogThresholdMs > 0 && queueWaitMs + execMs >= this.slowWriteLogThresholdMs) {
+            this.logger(
+              `[postgres] slow write: label=${cleanLabel} queue_wait_ms=${queueWaitMs} exec_ms=${execMs} queue_depth_at_enqueue=${queueDepthAtEnqueue}`
+            );
+          }
         }
       });
     this.writeQueue = run.then(() => null, () => null);
     return run;
   }
 
-  async withTransaction<T>(work: TransactionWork<T>): Promise<T | null> {
+  async withTransaction<T>(work: TransactionWork<T>, label: string = "transaction"): Promise<T | null> {
     if (!this.isReady()) return null;
-    return this.enqueueWrite("transaction", () => this.withTransactionNow(work));
+    return this.enqueueWrite(label, () => this.withTransactionNow(work));
   }
 
   async withTransactionNow<T>(work: TransactionWork<T>): Promise<T | null> {
@@ -9712,7 +9728,7 @@ class PostgresStore {
           worldId,
           ledgerEntries,
         });
-      });
+      }, action);
     } catch (error) {
       const persistenceResult = (error as Error & { world_persistence_result?: WorldPersistenceResult })?.world_persistence_result;
       if (persistenceResult) {
