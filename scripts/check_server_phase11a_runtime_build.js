@@ -278,6 +278,7 @@ const deps = new Proxy({
   serverRuntimeStats: ServerRuntimeStats,
   serverTickStats,
   startAntiDupeAuditScanner: () => calls.push("anti-dupe:start"),
+  startCalendarEventScheduler: () => calls.push("calendar-events:start"),
   startPeriodicWorldSnapshotScheduler: () => calls.push("snapshot:start"),
   startWorldEventRandomScheduler: () => calls.push("world-events:start"),
   verifyCustomMovementServerWorldStateRequest: () => false,
@@ -412,13 +413,14 @@ function createResponse() {
   assert.equal(missingResponse.statusCode, 404);
 
   await runtime.bootstrapServer();
-  assert.deepEqual(calls.slice(0, 8), [
+  assert.deepEqual(calls.slice(0, 9), [
     "redis:init",
     "postgres:init",
     "postgres:assert",
     "state:load",
     "events:recover",
     "world-events:start",
+    "calendar-events:start",
     "anti-dupe:start",
     "snapshot:start",
   ]);
@@ -466,6 +468,7 @@ function createResponse() {
   assert.ok(serverSource.includes('require("./server_phase11a_runtime")'));
   assert.ok(serverSource.includes("createServerPhase11aRuntime({"));
   assert.ok(serverSource.includes("function startAntiDupeAuditScanner()"));
+  assert.ok(serverSource.includes("function startCalendarEventScheduler()"));
   assert.ok(serverSource.includes("function startPeriodicWorldSnapshotScheduler()"));
   assert.ok(!serverSource.includes("[netfox_server_world_state] served"));
   assert.ok(!serverSource.includes("player_network: getPlayerNetworkStatsSnapshot()"));
