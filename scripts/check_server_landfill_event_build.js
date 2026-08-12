@@ -24,12 +24,12 @@ function makeFakePostgresStore() {
   return {
     scores,
     claims,
-    async incrementLandfillKilograms(/** @type {string} */ username, /** @type {string} */ seasonKey, /** @type {number} */ amount) {
+    async incrementLandfillKilograms(username, seasonKey, amount) {
       const key = `${username}:${seasonKey}`;
       scores.set(key, (scores.get(key) || 0) + amount);
       return { ok: true, kilograms: scores.get(key) };
     },
-    async getLandfillLeaderboard(/** @type {string} */ seasonKey, /** @type {number} */ limit) {
+    async getLandfillLeaderboard(seasonKey, limit) {
       const entries = Array.from(scores.entries())
         .filter(([key]) => key.endsWith(`:${seasonKey}`))
         .map(([key, kilograms]) => ({ username: key.split(":")[0], kilograms }))
@@ -38,17 +38,17 @@ function makeFakePostgresStore() {
         .map((entry, index) => ({ ...entry, rank: index + 1 }));
       return { ok: true, entries };
     },
-    async getLandfillPlayerScore(/** @type {string} */ username, /** @type {string} */ seasonKey) {
+    async getLandfillPlayerScore(username, seasonKey) {
       const key = `${username}:${seasonKey}`;
       return { kilograms: scores.get(key) || 0, rank: 0 };
     },
-    async insertLandfillPrizeClaim(/** @type {string} */ username, /** @type {string} */ seasonKey, /** @type {number} */ rank) {
+    async insertLandfillPrizeClaim(username, seasonKey, rank) {
       const key = `${username}:${seasonKey}`;
       if (claims.has(key)) return { ok: true, inserted: false };
       claims.add(key);
       return { ok: true, inserted: true };
     },
-    async deleteLandfillPrizeClaim(/** @type {string} */ username, /** @type {string} */ seasonKey) {
+    async deleteLandfillPrizeClaim(username, seasonKey) {
       claims.delete(`${username}:${seasonKey}`);
       return { ok: true };
     },
@@ -72,17 +72,17 @@ async function main() {
   const postgresStore = makeFakePostgresStore();
 
   const system = LandfillEventModule.createLandfillEventSystem({
-    cleanAccountName: (/** @type {unknown} */ value) => String(value || "").trim().toLowerCase(),
-    ensureWritablePlayerState: (/** @type {string} */ username) => playerStates.get(username) || null,
+    cleanAccountName: (value) => String(value || "").trim().toLowerCase(),
+    ensureWritablePlayerState: (username) => playerStates.get(username) || null,
     canAddItemToState: () => true,
     addItemToState: () => true,
-    cloneJson: (/** @type {Record<string, any>} */ value) => JSON.parse(JSON.stringify(value)),
+    cloneJson: (value) => JSON.parse(JSON.stringify(value)),
     commitPlayerInventoryState: async () => ({ ok: true }),
     postgresStore,
-    getWorldPopulationCount: (/** @type {string} */ worldName) => populationByWorld[worldName] || 0,
+    getWorldPopulationCount: (worldName) => populationByWorld[worldName] || 0,
     sendJson: () => {},
     makeRequestId: () => "req_test",
-    getErrorMessage: (/** @type {unknown} */ error) => (error instanceof Error ? error.message : String(error)),
+    getErrorMessage: (error) => String(error && error.message ? error.message : error),
     minPlayersToStart: 2,
     maxPlayersPerInstance: 5,
     isEventWindowOpen: () => eventOpen,
@@ -95,24 +95,24 @@ async function main() {
 
   // Join requests are refused while the event window is closed.
   eventOpen = false;
-  const closedResult = system.requestJoinLandfillRace();
+  const closedResult = await system.requestJoinLandfillRace();
   assert.equal(closedResult.ok, false);
   assert.equal(closedResult.reason, "event_not_active");
   eventOpen = true;
 
   // First join creates a fresh numbered instance.
-  const first = system.requestJoinLandfillRace();
+  const first = await system.requestJoinLandfillRace();
   assert.equal(first.ok, true);
   assert.equal(first.world_name, "landfill_1");
 
   // While that instance still has room, more joiners go to the same instance.
   populationByWorld["landfill_1"] = 3;
-  const second = system.requestJoinLandfillRace();
+  const second = await system.requestJoinLandfillRace();
   assert.equal(second.world_name, "landfill_1");
 
   // Once an instance is full (>= maxPlayersPerInstance), new joiners are routed elsewhere.
   populationByWorld["landfill_1"] = 5;
-  const third = system.requestJoinLandfillRace();
+  const third = await system.requestJoinLandfillRace();
   assert.equal(third.world_name, "landfill_2", "a full instance should overflow joiners to a new instance");
 
   // Kilograms are only awarded inside a Landfill world for a registered trash block.
