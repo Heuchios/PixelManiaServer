@@ -28544,7 +28544,7 @@ function applyServerDefaultEntranceGateToGeneratedMaps(worldName, state, foregro
 const serverGeneratedBaseTerrainByWorld = new Map();
 function serverPickLandfillJunkBlock(generationSeed, x, y) {
     const total = LANDFILL_TRASH_JUNK_BLOCKS.reduce((sum, option) => sum + option.weight, 0);
-    let roll = serverCellNoise(generationSeed, x, y, 8402) * total;
+    let roll = Number(serverCellNoise(generationSeed, x, y, 8402)) * total;
     for (const option of LANDFILL_TRASH_JUNK_BLOCKS) {
         roll -= option.weight;
         if (roll <= 0)

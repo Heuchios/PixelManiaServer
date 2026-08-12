@@ -22953,7 +22953,7 @@ function ensureWorldState(worldName: any) {
 // server_landfill_event.ts's createNewInstance, wired in via the resetLandfillWorldState dep
 // below) so a reused instance name like landfill_1 always starts pristine, even though its
 // previous race edited the world. Not used anywhere in the normal, non-Landfill world lifecycle.
-async function resetWorldStateForFreshInstance(worldName: any): Promise<void> {
+async function resetWorldStateForFreshInstance(worldName: unknown): Promise<void> {
   const clean = cleanWorld(worldName);
   worldStates.delete(clean);
   serverGeneratedBaseTerrainByWorld.delete(clean);
@@ -31165,9 +31165,9 @@ const serverGeneratedBaseTerrainByWorld: Map<string, {
   surface: unknown;
 }> = new Map();
 
-function serverPickLandfillJunkBlock(generationSeed: any, x: any, y: any) {
+function serverPickLandfillJunkBlock(generationSeed: unknown, x: unknown, y: unknown) {
   const total = LANDFILL_TRASH_JUNK_BLOCKS.reduce((sum, option) => sum + option.weight, 0);
-  let roll: any = serverCellNoise(generationSeed, x, y, 8402) * total;
+  let roll = Number(serverCellNoise(generationSeed, x, y, 8402)) * total;
   for (const option of LANDFILL_TRASH_JUNK_BLOCKS) {
     roll -= option.weight;
     if (roll <= 0) return option.type;
@@ -31181,11 +31181,17 @@ function serverPickLandfillJunkBlock(generationSeed: any, x: any, y: any) {
 // (and can override) their output too, matching the design spec ("trash related blocks appear
 // randomly, gets replaced by regular dirt/stone/sand/cave background/grass/flowers"). Confined to
 // everywhere except the bottom lava/stone band and bedrock -- see the constants above for why.
-function serverApplyLandfillTrashOverlay(worldName: any, foreground: any, background: any, surface: any, generationSeed: any) {
+function serverApplyLandfillTrashOverlay(
+  worldName: unknown,
+  foreground: Map<string, any>,
+  background: Map<string, any>,
+  surface: unknown,
+  generationSeed: unknown,
+) {
   if (!ServerLandfillEventModule.isLandfillWorldName(worldName)) return;
-  for (let x: any = 0; x < WORLD_WIDTH; x += 1) {
+  for (let x = 0; x < WORLD_WIDTH; x += 1) {
     const surfaceY = serverSurfaceYAt(surface, x);
-    for (let y: any = surfaceY; y < WORLD_HEIGHT; y += 1) {
+    for (let y = surfaceY; y < WORLD_HEIGHT; y += 1) {
       if (y >= BEDROCK_START_Y || isServerBottomLavaStoneLayer(y)) continue;
       const key = gridKey(x, y);
       const foregroundType = foreground.get(key)?.block_type || "";
