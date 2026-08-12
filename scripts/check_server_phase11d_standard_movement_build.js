@@ -52,6 +52,11 @@ function createFixture(overrides = {}) {
     admin: false,
     spawnCheck: { active: false, accepted: false },
     spawnGuardClears: 0,
+    // Landfill entry-pen confinement (Phase 2.5): null means "no active pen", matching
+    // getLandfillEntryPenBounds's real behavior for any non-Landfill world or an instance whose
+    // gate has already opened. Set to {minX,maxX,minY,maxY} to simulate an instance still in
+    // its "entry" state.
+    landfillPen: null,
   };
   const playerNetworkStats = {
     stale_player_position_messages: 0,
@@ -93,6 +98,7 @@ function createFixture(overrides = {}) {
       x: x * 32 + 16,
       y: y * 32 + 16,
     }),
+    getLandfillEntryPenBounds: () => state.landfillPen,
     getMovementCollisionAtPosition: () => state.collision,
     getPublicPlayerIdentity: (/** @type {Record<string, any>} */ player) => ({
       name: player.account_username || player.name || "Player",
@@ -367,6 +373,88 @@ assert.equal(
 );
 assert.equal(fixture.correctionRejections.length, rejectionCount);
 fixture.state.collision = null;
+
+// Landfill entry-pen confinement (Phase 2.5, project memory landfill_seasonal_event_design.md):
+// getLandfillEntryPenBounds returns a {minX,maxX,minY,maxY} box while a Landfill instance is
+// still in its "entry" state, null otherwise. Pen centered on (100, 100) [the fixture player's
+// starting position], +-16px (half a tile) each way.
+fixture.state.landfillPen = { minX: 84, maxX: 116, minY: 84, maxY: 116 };
+
+// A move that stays inside the pen must be completely unaffected -- no clamp, no correction.
+player = createPlayer();
+const insidePenPosition = { x: 110, y: 100, world: "TEST" };
+assert.equal(
+  movement.acceptPlayerMovement({}, player, insidePenPosition, {
+    data: { movement_sequence: 6, client_time_msec: 600 },
+  }),
+  true,
+);
+assert.equal(insidePenPosition.x, 110, "a move that stays inside the pen must not be altered");
+assert.equal(
+  fixture.correctionRejections.filter((r) => r.details.reason === "landfill_entry_area_confined").length,
+  0,
+  "no pen correction should fire for an in-pen move",
+);
+
+// A move past the pen boundary but within the speed budget is accepted-but-capped (not
+// rejected), with a soft (non-hard-snap) correction telling the client where it actually
+// landed -- player.x=112 (inside the pen), requesting x=125 (distance 13, inside the 18px
+// budget) so this exercises the NORMAL (non-speed-clamped) path's pen check.
+player = createPlayer();
+player.x = 112;
+player.y = 100;
+const pastBoundaryPosition = { x: 125, y: 100, world: "TEST" };
+assert.equal(
+  movement.acceptPlayerMovement({}, player, pastBoundaryPosition, {
+    data: { movement_sequence: 6, client_time_msec: 600, velocity_x: 0, velocity_y: 0 },
+  }),
+  true,
+  "a move past the pen boundary but within the speed budget should be accepted-but-capped, not rejected",
+);
+assert.equal(pastBoundaryPosition.x, 116, "x should be capped to the pen's maxX");
+assert.equal(player.x, 116);
+assert.equal(fixture.correctionRejections.at(-1).details.reason, "landfill_entry_area_confined");
+assert.equal(fixture.correctionRejections.at(-1).details.server_x, 116);
+assert.equal(
+  fixture.correctionRejections.at(-1).details.correction_snap,
+  false,
+  "a small boundary nudge should use smooth correction, not a hard snap",
+);
+
+// The pen must never let a request skip past what the speed cap alone would allow: pen-clamping
+// has to apply AFTER speed-clamping, not instead of it. player.x=100, elapsed 0.1s * 100px/s +
+// 8px grace = 18px of allowed travel -> speed-clamped target is x=118, which itself lands just
+// past the pen's maxX=116, so the correct final answer (118 clamped down to 116) has to be
+// reached by clamping speed-first then pen-second, not by jumping straight to the pen edge.
+player = createPlayer();
+const fastAndOutOfPenPosition = { x: 500, y: 100, world: "TEST" };
+assert.equal(
+  movement.acceptPlayerMovement({}, player, fastAndOutOfPenPosition, {
+    data: { movement_sequence: 6, velocity_x: 0, velocity_y: 0 },
+  }),
+  true,
+);
+assert.equal(
+  fastAndOutOfPenPosition.x,
+  116,
+  "final position must be the pen-clamped SPEED-clamped point, not a raw jump to the pen edge",
+);
+assert.equal(player.x, 116);
+
+// Once the gate opens (getLandfillEntryPenBounds returns null again, same as any non-Landfill
+// world), movement is completely free -- no lingering restriction, respawn teleport still works.
+fixture.state.landfillPen = null;
+player = createPlayer();
+player.x = 116;
+player.y = 100;
+assert.equal(
+  movement.acceptPlayerMovement({}, player, { x: 500, y: 500, world: "TEST" }, {
+    respawnTeleport: true,
+    data: { movement_sequence: 6 },
+  }),
+  true,
+  "once the pen is lifted, movement must behave exactly like any other world",
+);
 
 assert.equal(
   movement.isValidRespawnTeleportPosition(

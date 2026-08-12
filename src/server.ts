@@ -751,7 +751,7 @@ const SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS = Math.max(0, Math.min(10000, Math.tr
 // "Landfill" seasonal race event -- see src/server_landfill_event.ts and project memory
 // landfill_seasonal_event_design.md for the full design. Calendar-scheduled (cron), unlike
 // Snow Storm's random-chance scheduler.
-const LANDFILL_EVENT_ENABLED: any = ["1", "true", "yes"].includes(String(process.env.LANDFILL_EVENT_ENABLED || "false").trim().toLowerCase());
+const LANDFILL_EVENT_ENABLED = ["1", "true", "yes"].includes(String(process.env.LANDFILL_EVENT_ENABLED || "false").trim().toLowerCase());
 // Default: first 7 days of every month, UTC. Active from cronStart up to (not including) cronEnd.
 const LANDFILL_EVENT_CRON_START = String(process.env.LANDFILL_EVENT_CRON_START || "0 0 1 * *");
 const LANDFILL_EVENT_CRON_END = String(process.env.LANDFILL_EVENT_CRON_END || "0 0 8 * *");
@@ -1690,7 +1690,7 @@ function getServerPhase8WorldActionRoutes() {
       applyPunchToggleInstantDeathPresence,
       applySeedUpdateToWorldState,
       applyWorldLockStateForBlockUpdate,
-      awardLandfillKilogramsForBlockBreak: (worldName: any, username: any, blockType: any) =>
+      awardLandfillKilogramsForBlockBreak: (worldName: unknown, username: unknown, blockType: unknown) =>
         getServerLandfillEventSystem().awardKilogramsForBlockBreak(worldName, username, blockType),
       awardPlayerExperience,
       beginPhase7BlockActionContext,
