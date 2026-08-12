@@ -33,6 +33,9 @@ const ServerAdminLookupRoutesModule = require("./server_admin_lookup_routes");
 const ServerFriendRoutesModule = require("./server_friend_routes");
 const ServerTradeRoutesModule = require("./server_trade_routes");
 const ServerInventoryEconomyRoutesModule = require("./server_inventory_economy_routes");
+const ServerIapRoutesModule = require("./server_iap_routes");
+const ServerCalendarEventsModule = require("./server_calendar_events");
+const ServerLandfillEventModule = require("./server_landfill_event");
 const ServerPhase11aRuntimeModule = require("./server_phase11a_runtime");
 const ServerPhase11bLifecycleModule = require("./server_phase11b_lifecycle");
 const ServerPhase11cTrustedMovementModule = require("./server_phase11c_trusted_movement");
@@ -502,6 +505,20 @@ const SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS = Math.max(0, Math.min(250, Math
 const SNOW_STORM_MAX_CHANGED_TILES = Math.max(100, Math.min(WORLD_WIDTH * WORLD_HEIGHT, Math.trunc(Number(process.env.SNOW_STORM_MAX_CHANGED_TILES) || (WORLD_WIDTH * WORLD_HEIGHT))));
 const CONFIGURED_SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS = Number(process.env.SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS);
 const SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS = Math.max(0, Math.min(10000, Math.trunc(Number.isFinite(CONFIGURED_SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS) ? CONFIGURED_SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS : 1000)));
+// "Landfill" seasonal race event -- see src/server_landfill_event.ts and project memory
+// landfill_seasonal_event_design.md for the full design. Calendar-scheduled (cron), unlike
+// Snow Storm's random-chance scheduler.
+const LANDFILL_EVENT_ENABLED = ["1", "true", "yes"].includes(String(process.env.LANDFILL_EVENT_ENABLED || "false").trim().toLowerCase());
+// Default: first 7 days of every month, UTC. Active from cronStart up to (not including) cronEnd.
+const LANDFILL_EVENT_CRON_START = String(process.env.LANDFILL_EVENT_CRON_START || "0 0 1 * *");
+const LANDFILL_EVENT_CRON_END = String(process.env.LANDFILL_EVENT_CRON_END || "0 0 8 * *");
+const LANDFILL_MIN_PLAYERS_TO_START = Math.max(1, Math.min(5, Math.trunc(Number(process.env.LANDFILL_MIN_PLAYERS_TO_START) || 2)));
+const LANDFILL_MAX_PLAYERS_PER_INSTANCE = Math.max(LANDFILL_MIN_PLAYERS_TO_START, Math.min(20, Math.trunc(Number(process.env.LANDFILL_MAX_PLAYERS_PER_INSTANCE) || 5)));
+// Phase 2.5: half-width/half-height (in tiles) of the holding pen players are confined to while
+// an instance is still in "entry" state, centered on that instance's normal join spawn point.
+// Enforced server-side in server_phase11d_standard_movement.ts's acceptPlayerMovement -- see
+// getLandfillEntryPenBounds in server_landfill_event.ts for how the box itself is computed.
+const LANDFILL_ENTRY_PEN_RADIUS_TILES = Math.max(0, Math.min(20, Math.trunc(Number(process.env.LANDFILL_ENTRY_PEN_RADIUS_TILES) || 4)));
 const SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT = Math.max(256 * 1024, Math.min(32 * 1024 * 1024, Math.trunc(Number(process.env.SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT) || (4 * 1024 * 1024))));
 const PLAYER_POSITION_MAX_BUFFERED_AMOUNT = Math.max(64 * 1024, Math.min(SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT, Math.trunc(Number(process.env.PLAYER_POSITION_MAX_BUFFERED_AMOUNT) || (256 * 1024))));
 const PLAYER_POSITION_RESUME_BUFFERED_AMOUNT = Math.max(16 * 1024, Math.min(PLAYER_POSITION_MAX_BUFFERED_AMOUNT, Math.trunc(Number(process.env.PLAYER_POSITION_RESUME_BUFFERED_AMOUNT) || (64 * 1024))));
@@ -1039,6 +1056,127 @@ function getServerFriendRoutes() {
     }
     return serverFriendRoutes;
 }
+let serverIapRoutes = null;
+function getServerIapRoutes() {
+    if (!serverIapRoutes) {
+        let stripeClient = null;
+        let stripeClientInitAttempted = false;
+        let androidPublisherClient = null;
+        let androidPublisherInitAttempted = false;
+        serverIapRoutes = ServerIapRoutesModule.createServerIapRoutes({
+            cleanAccountName,
+            doesAccountExist,
+            ensureWritablePlayerState,
+            addItemToState,
+            commitPlayerInventoryState,
+            findOnlinePlayerByUsername,
+            sendJson,
+            sendInventoryTransactionResult,
+            sendHttpJson: (response, statusCode, payload) => ServerPhase11aRuntime.sendHttpJson(response, statusCode, payload),
+            postgresStore,
+            cloneJson,
+            buildPlayerStateForClient,
+            makeRequestId,
+            getErrorMessage,
+            publicBaseUrl: PUBLIC_BASE_URL,
+            googlePlayPackageName: process.env.GOOGLE_PLAY_PACKAGE_NAME || "",
+            stripeWebhookSecret: process.env.STRIPE_WEBHOOK_SECRET || "",
+            getStripeClient: () => {
+                if (stripeClient || stripeClientInitAttempted)
+                    return stripeClient;
+                stripeClientInitAttempted = true;
+                if (!process.env.STRIPE_SECRET_KEY)
+                    return null;
+                try {
+                    const Stripe = require("stripe");
+                    stripeClient = new Stripe(process.env.STRIPE_SECRET_KEY);
+                }
+                catch (error) {
+                    console.error("[iap] stripe module unavailable (run `npm install stripe`):", getErrorMessage(error));
+                    stripeClient = null;
+                }
+                return stripeClient;
+            },
+            getGooglePlayPublisher: () => {
+                if (androidPublisherClient || androidPublisherInitAttempted)
+                    return androidPublisherClient;
+                androidPublisherInitAttempted = true;
+                if (!process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON || !process.env.GOOGLE_PLAY_PACKAGE_NAME)
+                    return null;
+                try {
+                    const { google } = require("googleapis");
+                    const credentials = JSON.parse(process.env.GOOGLE_PLAY_SERVICE_ACCOUNT_JSON);
+                    const auth = new google.auth.GoogleAuth({
+                        credentials,
+                        scopes: ["https://www.googleapis.com/auth/androidpublisher"],
+                    });
+                    androidPublisherClient = google.androidpublisher({ version: "v3", auth });
+                }
+                catch (error) {
+                    console.error("[iap] googleapis module unavailable (run `npm install googleapis`):", getErrorMessage(error));
+                    androidPublisherClient = null;
+                }
+                return androidPublisherClient;
+            },
+        });
+    }
+    return serverIapRoutes;
+}
+let serverLandfillEventSystem = null;
+function getServerLandfillEventSystem() {
+    if (!serverLandfillEventSystem) {
+        serverLandfillEventSystem = ServerLandfillEventModule.createLandfillEventSystem({
+            cleanAccountName,
+            ensureWritablePlayerState,
+            canAddItemToState,
+            addItemToState,
+            commitPlayerInventoryState,
+            cloneJson,
+            postgresStore,
+            getWorldPopulationCount,
+            sendJson,
+            makeRequestId,
+            getErrorMessage,
+            minPlayersToStart: LANDFILL_MIN_PLAYERS_TO_START,
+            maxPlayersPerInstance: LANDFILL_MAX_PLAYERS_PER_INSTANCE,
+            isEventWindowOpen: () => getServerCalendarEventScheduler().isEventActive("landfill"),
+            // Phase 2.5: used only once per instance, at creation time, to compute+cache the entry
+            // holding-pen bounds around that world's real join spawn point -- see
+            // computeEntryPenBounds in server_landfill_event.ts. Never called from the per-tick
+            // movement path.
+            getJoinWorldSpawnForWorld,
+            entryPenRadiusPixels: LANDFILL_ENTRY_PEN_RADIUS_TILES * TILE_SIZE,
+        });
+    }
+    return serverLandfillEventSystem;
+}
+let serverCalendarEventScheduler = null;
+function getServerCalendarEventScheduler() {
+    if (!serverCalendarEventScheduler) {
+        serverCalendarEventScheduler = ServerCalendarEventsModule.createCalendarEventScheduler({
+            logger: console,
+        });
+        serverCalendarEventScheduler.registerEvent({
+            key: "landfill",
+            label: "Landfill",
+            enabled: LANDFILL_EVENT_ENABLED,
+            cronStart: LANDFILL_EVENT_CRON_START,
+            cronEnd: LANDFILL_EVENT_CRON_END,
+            onWindowStart: () => {
+                getServerLandfillEventSystem().resetInstancesForNewWindow();
+                console.log("[landfill] event window opened; instance registry reset for the new season.");
+            },
+            onWindowEnd: () => {
+                console.log("[landfill] event window closed for this season. Existing instances stay playable; new joins are refused.");
+            },
+        });
+    }
+    return serverCalendarEventScheduler;
+}
+function startCalendarEventScheduler() {
+    getServerCalendarEventScheduler().start();
+    getServerLandfillEventSystem().startInstancePolling();
+}
 let serverTradeRoutes = null;
 function getServerTradeRoutes() {
     if (!serverTradeRoutes) {
@@ -1160,6 +1298,7 @@ function getServerPhase8PlayerSessionRoutes() {
             buildPublicPlayerPresencePayload,
             buildPublicPlayerProfilePayload,
             cancelActiveTradeForPlayer,
+            checkLandfillInstanceJoinEligibility: (worldName, username) => getServerLandfillEventSystem().canPlayerJoinLandfillInstance(worldName, username),
             cleanAccountName,
             cleanWorld,
             clampInteger,
@@ -1193,6 +1332,7 @@ function getServerPhase8PlayerSessionRoutes() {
             publishPlayerPresenceUpdate,
             queuePlayerSave,
             flushPendingSessionPersistence,
+            recordLandfillInstanceJoin: (worldName, username) => getServerLandfillEventSystem().recordLandfillInstanceJoin(worldName, username),
             refreshPlayerStateFromPostgres,
             refreshWorldStateFromPostgres,
             refreshWorldDropsFromPostgres,
@@ -1239,6 +1379,7 @@ function getServerPhase8WorldActionRoutes() {
             applyPunchToggleInstantDeathPresence,
             applySeedUpdateToWorldState,
             applyWorldLockStateForBlockUpdate,
+            awardLandfillKilogramsForBlockBreak: (worldName, username, blockType) => getServerLandfillEventSystem().awardKilogramsForBlockBreak(worldName, username, blockType),
             awardPlayerExperience,
             beginPhase7BlockActionContext,
             broadcastCctvWorldState,
@@ -1780,6 +1921,12 @@ const ServerPhase7Dispatcher = ServerPhase7DispatcherModule.createServerPhase7Di
         world_item_drop_pickup: (socket, player, data, context) => getServerPhase8FinalRoutes().handleWorldItemDropPickup(socket, player, data, context),
         player_position: (socket, player, data, context) => getServerPhase8FinalRoutes().handlePlayerPosition(socket, player, data, context),
         player_punch: (socket, player, data, context) => getServerPhase9RemainingRoutes().handlePlayerPunchRoute(socket, player, data, context),
+        iap_create_stripe_checkout_request: (socket, player, data, context) => getServerIapRoutes().handleIapCreateStripeCheckoutRequest(socket, player, data, context),
+        iap_submit_google_play_purchase_request: (socket, player, data, context) => getServerIapRoutes().handleIapSubmitGooglePlayPurchaseRequest(socket, player, data, context),
+        landfill_status_request: (socket, player, data, context) => getServerLandfillEventSystem().handleLandfillStatusRequest(socket, player, data, context),
+        landfill_join_request: (socket, player, data, context) => getServerLandfillEventSystem().handleLandfillJoinRequest(socket, player, data, context),
+        landfill_leaderboard_request: (socket, player, data, context) => getServerLandfillEventSystem().handleLandfillLeaderboardRequest(socket, player, data, context),
+        landfill_claim_prize_request: (socket, player, data, context) => getServerLandfillEventSystem().handleLandfillClaimPrizeRequest(socket, player, data, context),
     },
 });
 const POSTGRES_AUTHORITY_AUTH_ROUTE_TYPES = new Set([
@@ -2137,6 +2284,7 @@ const ServerPhase11aRuntime = ServerPhase11aRuntimeModule.createServerPhase11aRu
     DROP_INTEREST_RADIUS_PIXELS,
     DROP_INTEREST_SYNC_INTERVAL_MS,
     dropInterestByReceiver,
+    handleStripeIapWebhook: (request, response) => getServerIapRoutes().handleStripeWebhookHttpRequest(request, response),
     HOST,
     IDEMPOTENCY_TTL_MS,
     IDEMPOTENCY_TTL_MS_COMBAT,
@@ -2258,6 +2406,7 @@ const ServerPhase11aRuntime = ServerPhase11aRuntimeModule.createServerPhase11aRu
     serverRuntimeStats: ServerRuntimeStats,
     serverTickStats,
     startAntiDupeAuditScanner,
+    startCalendarEventScheduler,
     startPeriodicWorldSnapshotScheduler,
     startWorldEventRandomScheduler,
     verifyCustomMovementServerWorldStateRequest,
@@ -2340,6 +2489,11 @@ const ServerPhase11dStandardMovement = ServerPhase11dStandardMovementModule.crea
     getDefaultEntranceGateSpawnForWorld,
     getEntranceGateSpawnForWorld,
     getGridCenterPixels,
+    // Landfill Phase 2.5: returns the instance's cached holding-pen bounds while it's still in
+    // "entry" state, or null otherwise (any other world, unknown instance, or gate already open).
+    // See getLandfillEntryPenBounds in server_landfill_event.ts -- this is an O(1) map lookup, not
+    // a spawn-point recomputation, so it's safe to call on every accepted movement tick.
+    getLandfillEntryPenBounds: (worldName) => getServerLandfillEventSystem().getLandfillEntryPenBounds(worldName),
     getMovementCollisionAtPosition,
     getPublicPlayerIdentity,
     gridKey,
