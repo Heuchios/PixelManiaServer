@@ -33,7 +33,6 @@ const ServerAdminLookupRoutesModule = require("./server_admin_lookup_routes");
 const ServerFriendRoutesModule = require("./server_friend_routes");
 const ServerTradeRoutesModule = require("./server_trade_routes");
 const ServerInventoryEconomyRoutesModule = require("./server_inventory_economy_routes");
-const ServerIapRoutesModule = require("./server_iap_routes");
 const ServerCalendarEventsModule = require("./server_calendar_events");
 const ServerLandfillEventModule = require("./server_landfill_event");
 const ServerPhase11aRuntimeModule = require("./server_phase11a_runtime");
@@ -1059,6 +1058,9 @@ function getServerFriendRoutes() {
 let serverIapRoutes = null;
 function getServerIapRoutes() {
     if (!serverIapRoutes) {
+        // Required lazily (not at module load) because the IAP feature is still
+        // in progress and its module is intentionally not committed yet.
+        const ServerIapRoutesModule = require("./server_iap_routes");
         let stripeClient = null;
         let stripeClientInitAttempted = false;
         let androidPublisherClient = null;
