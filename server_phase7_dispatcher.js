@@ -41,6 +41,12 @@ const POST_ACTION_HANDLER_ROUTE_TYPES = Object.freeze([
     "oil_refinery_request",
     "battery_charger_request",
     "player_punch",
+    "iap_create_stripe_checkout_request",
+    "iap_submit_google_play_purchase_request",
+    "landfill_status_request",
+    "landfill_join_request",
+    "landfill_leaderboard_request",
+    "landfill_claim_prize_request",
 ]);
 const DIRECT_HANDLER_ROUTE_TYPES = Object.freeze([
     "world_entry_ready",

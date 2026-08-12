@@ -1,7 +1,7 @@
 // Generated from src/server_phase11d_standard_movement.ts. Do not edit by hand.
 "use strict";
 function createServerPhase11dStandardMovement(deps) {
-    const { LAVA_REBOUND_MOVE_EXTRA_PIXELS, MAX_DAMAGE_FLASH_MS, MAX_MOVE_ACCEL_PIXELS_PER_SECOND2, MAX_MOVE_PIXELS_PER_SECOND, MAX_MOVE_VELOCITY_DELTA_EXTRA, MOVEMENT_CORRECTION_SMOOTH_MS, MOVEMENT_CORRECTION_SNAP_DISTANCE, MOVEMENT_DISTANCE_GRACE_PIXELS, MOVEMENT_MAX_ELAPSED_SECONDS, TILE_SIZE, activeFishingSessions, checkPlayerWorldEntrySpawnGuard, cleanAccountName, cleanWorld, clampInteger, clampString, clearPlayerWorldEntrySpawnGuard, debugNetfoxAction, ensureWorldState, getDefaultEntranceGateSpawnForWorld, getEntranceGateSpawnForWorld, getGridCenterPixels, getMovementCollisionAtPosition, getPublicPlayerIdentity, gridKey, isAdmin, isCheckpointBlockType, isGridInWorld, isMovementNearLavaRebound, isPositionInWorldBounds, playerNetworkStats, sendActionRejected, } = deps;
+    const { LAVA_REBOUND_MOVE_EXTRA_PIXELS, MAX_DAMAGE_FLASH_MS, MAX_MOVE_ACCEL_PIXELS_PER_SECOND2, MAX_MOVE_PIXELS_PER_SECOND, MAX_MOVE_VELOCITY_DELTA_EXTRA, MOVEMENT_CORRECTION_SMOOTH_MS, MOVEMENT_CORRECTION_SNAP_DISTANCE, MOVEMENT_DISTANCE_GRACE_PIXELS, MOVEMENT_MAX_ELAPSED_SECONDS, TILE_SIZE, activeFishingSessions, checkPlayerWorldEntrySpawnGuard, cleanAccountName, cleanWorld, clampInteger, clampString, clearPlayerWorldEntrySpawnGuard, debugNetfoxAction, ensureWorldState, getDefaultEntranceGateSpawnForWorld, getEntranceGateSpawnForWorld, getGridCenterPixels, getLandfillEntryPenBounds, getMovementCollisionAtPosition, getPublicPlayerIdentity, gridKey, isAdmin, isCheckpointBlockType, isGridInWorld, isMovementNearLavaRebound, isPositionInWorldBounds, playerNetworkStats, sendActionRejected, } = deps;
     const nowMs = typeof deps.nowMs === "function" ? deps.nowMs : () => Date.now();
     const MOVEMENT_SEQUENCE_MAX = 2147483647;
     const MOVEMENT_SEQUENCE_WRAP_WINDOW = 1073741824;
@@ -92,6 +92,41 @@ function createServerPhase11dStandardMovement(deps) {
             return null;
         }
         return clampedPosition;
+    }
+    /**
+     * Landfill entry-area confinement (project memory: landfill_seasonal_event_design.md). If
+     * `worldName` is a Landfill instance still in its "entry" state, returns a copy of `point`
+     * clamped to stay within that instance's holding-pen bounds -- or `point` itself, unchanged
+     * (same reference), when there's no active pen or the point is already inside it, so callers
+     * can cheaply detect "did this actually change anything" via `!==`. Returns `null` if the
+     * pen-clamped point would land inside solid geometry (defensive -- pen bounds are sized off
+     * the world's own spawn point, so this is not expected to happen in normal play).
+     *
+     * Callers MUST apply this AFTER any speed-based clamping has already run (see both call
+     * sites in acceptPlayerMovement below), never before: this only ever pulls a destination
+     * closer to the pen, so applying it first would let a client whose requested position is
+     * simultaneously "too fast" and "outside the pen" get clamped straight to the pen boundary in
+     * one tick, bypassing the normal per-tick speed cap for whatever distance lies between the
+     * player and the boundary.
+     */
+    function applyLandfillEntryPenClamp(worldName, point) {
+        if (typeof getLandfillEntryPenBounds !== "function")
+            return point;
+        const pen = getLandfillEntryPenBounds(worldName);
+        if (!pen)
+            return point;
+        const x = Number(point.x);
+        const y = Number(point.y);
+        if (!Number.isFinite(x) || !Number.isFinite(y))
+            return point;
+        const clampedX = Math.min(Math.max(x, Number(pen.minX)), Number(pen.maxX));
+        const clampedY = Math.min(Math.max(y, Number(pen.minY)), Number(pen.maxY));
+        if (clampedX === x && clampedY === y)
+            return point;
+        const clampedPoint = { ...point, x: clampedX, y: clampedY };
+        if (getMovementCollisionAtPosition(worldName, clampedPoint))
+            return null;
+        return clampedPoint;
     }
     function sanitizeMovementSequence(data) {
         const raw = data?.movement_sequence ?? data?.sequence ?? data?.seq ?? data?.input_sequence;
@@ -378,7 +413,14 @@ function createServerPhase11dStandardMovement(deps) {
         if (distance > maxDistance) {
             playerNetworkStats.rejected_player_position_messages += 1;
             const requestedPosition = { ...position };
-            const clampedPosition = clampMovementTowardAuthoritative(player, position, maxDistance, distance);
+            let clampedPosition = clampMovementTowardAuthoritative(player, position, maxDistance, distance);
+            if (clampedPosition) {
+                // Tighten (never loosen) the speed-clamped point to the Landfill entry pen, if one is
+                // active for this world right now. Applied AFTER the speed clamp on purpose -- see
+                // applyLandfillEntryPenClamp's doc comment for why doing this before would let an
+                // overshooting request skip straight to the pen boundary regardless of the speed cap.
+                clampedPosition = applyLandfillEntryPenClamp(clampedPosition.world || player.world || "START", clampedPosition);
+            }
             if (clampedPosition) {
                 // Advance the authoritative position by exactly the distance the speed
                 // limit allows, then tell the client where that is. The cap is unchanged;
@@ -466,6 +508,39 @@ function createServerPhase11dStandardMovement(deps) {
                     });
                 }
                 return false;
+            }
+        }
+        // Landfill entry-area confinement: tighten the accepted destination to the instance's
+        // holding pen, if one is active. Placed here specifically -- AFTER the speed/acceleration
+        // checks above have already resolved the destination the speed cap allows, and BEFORE the
+        // final collision check below, so the collision check always runs against whatever point
+        // actually ends up committed (whether or not the pen changed it).
+        const requestedNormalPosition = { ...position };
+        const penClampedPosition = applyLandfillEntryPenClamp(position.world || player.world || "START", position);
+        if (!penClampedPosition) {
+            // Defensive-only fallback (pen bounds are sized off the world's own spawn point, so this
+            // is not expected in normal play): the pen-clamped point would land inside solid
+            // geometry. Reject this packet the same way a normal collision does -- the client stays
+            // at its last accepted position rather than the server guessing at a safe alternative.
+            playerNetworkStats.rejected_player_position_messages += 1;
+            if (!silent) {
+                sendPlayerPositionCorrection(socket, player, position, "landfill_entry_area_confined", { data });
+            }
+            return false;
+        }
+        if (penClampedPosition !== position) {
+            // The pen actually pulled this request in. Update player.x/y here (not just
+            // position.x/y) so sendPlayerPositionCorrection below reports the new authoritative point
+            // as server_x/server_y, exactly like the speed-clamp branch above does.
+            player.x = penClampedPosition.x;
+            player.y = penClampedPosition.y;
+            position.x = penClampedPosition.x;
+            position.y = penClampedPosition.y;
+            if (!silent) {
+                sendPlayerPositionCorrection(socket, player, requestedNormalPosition, "landfill_entry_area_confined", {
+                    data,
+                    extra: { correction_clamped: true },
+                });
             }
         }
         const collision = getMovementCollisionAtPosition(position.world || player.world || "START", position);
