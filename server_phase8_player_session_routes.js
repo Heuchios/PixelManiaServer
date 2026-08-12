@@ -382,6 +382,23 @@ function createServerPhase8PlayerSessionRoutes(deps) {
             return;
         }
         recordWorldEntryServerStage(worldEntryProfile, "ban_check_complete");
+        // Landfill instances must only be entered through the Join Race flow (which allocates/reuses
+        // an instance and hands its world name back to the client) -- never by /warp or by typing the
+        // instance name directly into the JOIN field. checkLandfillInstanceJoinEligibility is a no-op
+        // (always ok) for any non-Landfill world name, so this is safe to run on every join_world.
+        const landfillEligibility = deps.checkLandfillInstanceJoinEligibility(newWorld, deps.cleanAccountName(player.account_username || player.name));
+        if (!landfillEligibility || landfillEligibility.ok !== true) {
+            recordWorldEntryServerStage(worldEntryProfile, "rejected", {
+                reason: landfillEligibility?.reason || "landfill_join_rejected",
+            });
+            deps.sendActionRejected(socket, "join_world", "This Landfill instance is no longer available to join.", {
+                reason: landfillEligibility?.reason || "landfill_join_rejected",
+                world: newWorld,
+                join_request_id: joinRequestId,
+            });
+            return;
+        }
+        deps.recordLandfillInstanceJoin(newWorld, deps.cleanAccountName(player.account_username || player.name));
         const routeCheck = toRecord(await deps.ensureWorldRouteForAction(socket, player, newWorld, "join_world"));
         recordWorldEntryServerStage(worldEntryProfile, "route_lookup_complete", {
             route_ok: routeCheck.ok === true,

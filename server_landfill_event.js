@@ -43,7 +43,9 @@ function createLandfillEventSystem(deps) {
     const { cleanAccountName, ensureWritablePlayerState, canAddItemToState, addItemToState, commitPlayerInventoryState, cloneJson, postgresStore, getWorldPopulationCount, sendJson, makeRequestId, getErrorMessage, logger = console, minPlayersToStart = 2, maxPlayersPerInstance = 5, isEventWindowOpen, instancePollIntervalMs = 5000, instanceIdleCleanupMs = 30 * 60 * 1000, 
     // Phase 2.5: used ONLY at instance-creation time to compute+cache entryPenBounds (see
     // createNewInstance) -- never called from the per-movement-tick hot path.
-    getJoinWorldSpawnForWorld, entryPenRadiusPixels = 128, } = deps;
+    getJoinWorldSpawnForWorld, entryPenRadiusPixels = 128, 
+    // Task: guarantees every Landfill instance is a fresh regeneration -- see createNewInstance.
+    resetLandfillWorldState, } = deps;
     const instances = new Map();
     let pollTimer = null;
     function listInstances() {
@@ -73,13 +75,16 @@ function createLandfillEventSystem(deps) {
             maxY: spawnY + radius,
         };
     }
-    function createNewInstance() {
+    async function createNewInstance() {
         let index = instances.size + 1;
         let worldName = `${LANDFILL_WORLD_PREFIX}${index}`;
         while (instances.has(worldName)) {
             index += 1;
             worldName = `${LANDFILL_WORLD_PREFIX}${index}`;
         }
+        // Reserve this instance's slot synchronously -- no await between the has()/set() calls
+        // bracketing this object -- so a second, concurrent createNewInstance() call can't pick the
+        // same worldName while this one is still resetting it below.
         const instance = {
             worldName,
             index,
@@ -87,9 +92,20 @@ function createLandfillEventSystem(deps) {
             createdAtMs: Date.now(),
             seasonKey: getCurrentSeasonKey(),
             participantUsernames: new Set(),
-            entryPenBounds: computeEntryPenBounds(worldName),
+            entryPenBounds: null,
         };
         instances.set(worldName, instance);
+        // Task: every Landfill world instance must start as a fresh regeneration, never carrying
+        // over a previous race's block edits -- even when this instance name (e.g. landfill_1) was
+        // used before and has since been garbage-collected from `instances` (the has() loop above
+        // only guards against names currently tracked in-memory, not past occupants; see
+        // resetWorldStateForFreshInstance in server.ts for what actually gets wiped). Reset BEFORE
+        // computing the entry pen so it's derived from genuinely fresh terrain, not a stale
+        // in-memory copy of the previous occupant's world state.
+        if (typeof resetLandfillWorldState === "function") {
+            await resetLandfillWorldState(worldName);
+        }
+        instance.entryPenBounds = computeEntryPenBounds(worldName);
         return instance;
     }
     // Phase 2.5: the join_world-layer guard (canPlayerJoinLandfillInstance) stops a player from
@@ -135,8 +151,15 @@ function createLandfillEventSystem(deps) {
         const cleanUsername = cleanAccountName(username || "");
         if (cleanUsername !== "" && instance.participantUsernames.has(cleanUsername)) {
             // Already-recorded participant (e.g. reconnecting after a disconnect) may always rejoin
-            // their own instance, even if it has since locked or filled up to other players.
+            // their own instance, even if it has since locked or filled up to other players, and even
+            // if the event window has since closed -- this only gates brand-new entries below.
             return { ok: true };
+        }
+        if (instance.state === "entry" && typeof isEventWindowOpen === "function" && !isEventWindowOpen()) {
+            // The calendar window closed while this instance was still sitting open in the entry pen
+            // (e.g. never filled up). Block new direct/typed joins into it -- only requestJoinLandfillRace
+            // (which already checks isEventWindowOpen) may hand out entry into a live instance.
+            return { ok: false, reason: "event_not_active" };
         }
         if (instance.state !== "entry") {
             return { ok: false, reason: "instance_locked" };
@@ -171,12 +194,12 @@ function createLandfillEventSystem(deps) {
     // -- the caller (the join_landfill_race_request handler below) hands the world name back to
     // the client, which then performs a completely normal join_world request, same as joining any
     // other named world.
-    function requestJoinLandfillRace() {
+    async function requestJoinLandfillRace() {
         if (typeof isEventWindowOpen === "function" && !isEventWindowOpen()) {
             return { ok: false, reason: "event_not_active" };
         }
         const existing = findOpenInstance();
-        const instance = existing || createNewInstance();
+        const instance = existing || await createNewInstance();
         return { ok: true, world_name: instance.worldName };
     }
     // Purely additive, read-only polling of already-existing world population data -- see the
@@ -252,7 +275,7 @@ function createLandfillEventSystem(deps) {
         });
     }
     async function handleLandfillJoinRequest(socket, player, data) {
-        const result = requestJoinLandfillRace();
+        const result = await requestJoinLandfillRace();
         sendJson(socket, {
             type: "landfill_join_result",
             request_id: data?.request_id || "",

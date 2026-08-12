@@ -6211,6 +6211,54 @@ class PostgresStore {
             return { ok: false, found: false, reason: "database_error", message: getErrorMessage(error) };
         }
     }
+    /**
+     * Permanently deletes a world's row from `worlds` (and, via ON DELETE CASCADE, every child row
+     * that references its world_id -- world_area_locks, world_drops, world_block_changes,
+     * world_object_changes, world_honor_visits, etc.). A later loadWorldState/saveWorldState for
+     * the same world_name then behaves exactly like a brand-new, never-visited world: no leftover
+     * block edits, locks, or drops. Used by the Landfill event system (see
+     * server_landfill_event.ts's createNewInstance) so a reused instance name (landfill_1,
+     * landfill_2, ...) always starts pristine, even if a previous race left the world edited.
+     * @param {unknown} worldName
+     * @returns {Promise<boolean>}
+     */
+    async deleteWorldState(worldName) {
+        const cleanWorldName = cleanName(worldName || "");
+        if (cleanWorldName === "")
+            return false;
+        if (!this.isReady()) {
+            this.logWorldPersistence("delete", {
+                world_id: cleanWorldName,
+                loaded_revision: 0,
+                persisted_revision: 0,
+                affected_row_count: 0,
+                save_result: "postgres_unavailable",
+            });
+            return false;
+        }
+        try {
+            const result = await this.db.query(`DELETE FROM ${this.table("worlds")} WHERE world_name = $1`, [cleanWorldName]);
+            this.logWorldPersistence("delete", {
+                world_id: cleanWorldName,
+                loaded_revision: 0,
+                persisted_revision: 0,
+                affected_row_count: result.rowCount ?? 0,
+                save_result: "deleted",
+            });
+            return true;
+        }
+        catch (error) {
+            this.logWorldPersistence("delete", {
+                world_id: cleanWorldName,
+                loaded_revision: 0,
+                persisted_revision: 0,
+                affected_row_count: 0,
+                save_result: "database_error",
+            });
+            this.logger("[postgres] world state delete failed:", getErrorMessage(error));
+            return false;
+        }
+    }
     buildWorldObjectChangesFromStateDiff(beforeState = {}, afterState = {}, context = {}) {
         const e = toObject(context);
         const worldName = cleanName(e.world || afterState?.world_name || beforeState?.world_name || "");

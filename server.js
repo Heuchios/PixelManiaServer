@@ -547,6 +547,24 @@ const SERVER_SURFACE_DECORATION_TULIP_CHANCE = 0.30;
 const SERVER_SURFACE_DECORATION_SPACING_GAP_MAX = 0.84;
 const SERVER_SURFACE_DECORATION_NOISE_SCALE_X = 0.17;
 const SERVER_SURFACE_DECORATION_NOISE_SCALE_Y = 2.9;
+// Landfill event: random substitution of normal generated terrain with the trash blocks
+// registered in atlas_items.json (see getServerGeneratedBaseTerrain's Landfill-only overlay
+// pass). Chances are independent per-tile rolls, deterministic per world via serverCellNoise, so
+// they're easy for Hassan to retune without touching the substitution logic itself. Confined to
+// everywhere EXCEPT the bottom lava/stone band and bedrock (see isServerBottomLavaStoneLayer) --
+// read as "top most layer of the world" per the design spec, i.e. everywhere dirt/stone/sand/
+// cave-background naturally generate, but not the deepest sliver where lava spawns.
+const LANDFILL_TRASH_SURFACE_CHANCE = 0.18;
+const LANDFILL_TRASH_JUNK_CHANCE = 0.04;
+const LANDFILL_TRASH_UNDERGROUND_CHANCE = 0.15;
+const LANDFILL_TRASH_WALLPAPER_CHANCE = 0.20;
+const LANDFILL_TRASH_JUNK_BLOCKS = Object.freeze([
+    { type: "broken_bottle", weight: 30 },
+    { type: "broken_jar", weight: 25 },
+    { type: "broken_flask", weight: 20 },
+    { type: "garbage_box", weight: 15 },
+    { type: "broken_vending_machine", weight: 10 },
+]);
 const SEED_MUTATION_REWARD_TABLE = Object.freeze([
     { item_id: "glowing_dirt", item_category: "block", min_amount: 1, max_amount: 5, y_offset: -16, weight: 80 },
     { item_id: "sakura_sword", item_category: "tool", min_amount: 1, max_amount: 1, y_offset: -16, weight: 10 },
@@ -1148,6 +1166,9 @@ function getServerLandfillEventSystem() {
             // movement path.
             getJoinWorldSpawnForWorld,
             entryPenRadiusPixels: LANDFILL_ENTRY_PEN_RADIUS_TILES * TILE_SIZE,
+            // Task: Landfill worlds must get a fresh seed/regeneration every time -- see
+            // resetWorldStateForFreshInstance and createNewInstance in server_landfill_event.ts.
+            resetLandfillWorldState: resetWorldStateForFreshInstance,
         });
     }
     return serverLandfillEventSystem;
@@ -1461,6 +1482,7 @@ function getServerPhase8WorldActionRoutes() {
             isAntiGravityBlockType,
             isAntiPunchBlockType,
             isAntiTalkBlockType,
+            isAreaLockBlockType,
             isCctvBlockType,
             isChickenBlockType,
             isCowBlockType,
@@ -1470,6 +1492,7 @@ function getServerPhase8WorldActionRoutes() {
             isElectricalDeviceBlockOnLayer,
             isFishMongerBreakAttempt,
             isGridInWorld,
+            isLandfillWorldName: ServerLandfillEventModule.isLandfillWorldName,
             isPlayerNearGrid,
             isPostgresAuthoritativeReady,
             isSafeBlockType,
@@ -20724,6 +20747,27 @@ function ensureWorldState(worldName) {
     }
     return worldStates.get(clean);
 }
+// Wipes every trace of a world's previous life -- in-memory and persisted -- so the next
+// ensureWorldState/loadWorldState for that exact name behaves identically to a brand-new,
+// never-visited world (fresh deterministic terrain via getServerGeneratedBaseTerrain, no
+// leftover block edits/locks/drops). Used exclusively by the Landfill event system (see
+// server_landfill_event.ts's createNewInstance, wired in via the resetLandfillWorldState dep
+// below) so a reused instance name like landfill_1 always starts pristine, even though its
+// previous race edited the world. Not used anywhere in the normal, non-Landfill world lifecycle.
+async function resetWorldStateForFreshInstance(worldName) {
+    const clean = cleanWorld(worldName);
+    worldStates.delete(clean);
+    serverGeneratedBaseTerrainByWorld.delete(clean);
+    worldPersistedRevisions.delete(clean);
+    worldUnpersistedRevisions.delete(clean);
+    worldSaveWrites.delete(clean);
+    movementCollisionCacheByWorld.delete(clean);
+    movementCollisionWorldRevision.delete(clean);
+    ownedWorldRoutes.delete(clean);
+    worldLoadedAuthorities.delete(clean);
+    worldPersistenceOwnership.delete(clean);
+    await postgresStore.deleteWorldState(clean);
+}
 function createEmptyWorldState() {
     return WorldStateHelpers.createEmptyWorldState();
 }
@@ -28498,6 +28542,54 @@ function applyServerDefaultEntranceGateToGeneratedMaps(worldName, state, foregro
 // a shallow clone is safe. Only the entrance-gate overlay, which reads live `state`, is
 // re-applied per call.
 const serverGeneratedBaseTerrainByWorld = new Map();
+function serverPickLandfillJunkBlock(generationSeed, x, y) {
+    const total = LANDFILL_TRASH_JUNK_BLOCKS.reduce((sum, option) => sum + option.weight, 0);
+    let roll = serverCellNoise(generationSeed, x, y, 8402) * total;
+    for (const option of LANDFILL_TRASH_JUNK_BLOCKS) {
+        roll -= option.weight;
+        if (roll <= 0)
+            return option.type;
+    }
+    return LANDFILL_TRASH_JUNK_BLOCKS[LANDFILL_TRASH_JUNK_BLOCKS.length - 1].type;
+}
+// Landfill-only post-process: randomly reskins the terrain that was just generated normally
+// (dirt/sand/stone/grass/flowers/cave-background) with the trash blocks registered in
+// atlas_items.json. No-op for every non-Landfill world. Runs AFTER decorations/trees so it sees
+// (and can override) their output too, matching the design spec ("trash related blocks appear
+// randomly, gets replaced by regular dirt/stone/sand/cave background/grass/flowers"). Confined to
+// everywhere except the bottom lava/stone band and bedrock -- see the constants above for why.
+function serverApplyLandfillTrashOverlay(worldName, foreground, background, surface, generationSeed) {
+    if (!ServerLandfillEventModule.isLandfillWorldName(worldName))
+        return;
+    for (let x = 0; x < WORLD_WIDTH; x += 1) {
+        const surfaceY = serverSurfaceYAt(surface, x);
+        for (let y = surfaceY; y < WORLD_HEIGHT; y += 1) {
+            if (y >= BEDROCK_START_Y || isServerBottomLavaStoneLayer(y))
+                continue;
+            const key = gridKey(x, y);
+            const foregroundType = foreground.get(key)?.block_type || "";
+            if (y === surfaceY) {
+                if (["dirt", "sand", "stone", "grass", "rose", "sunflower"].includes(foregroundType)) {
+                    if (serverCellNoise(generationSeed, x, y, 8401) < LANDFILL_TRASH_JUNK_CHANCE) {
+                        serverMapSet(foreground, x, y, serverPickLandfillJunkBlock(generationSeed, x, y));
+                    }
+                    else if (serverCellNoise(generationSeed, x, y, 8403) < LANDFILL_TRASH_SURFACE_CHANCE) {
+                        serverMapSet(foreground, x, y, "trash_dirt_top");
+                    }
+                }
+            }
+            else if (["dirt", "sand", "stone"].includes(foregroundType)) {
+                if (serverCellNoise(generationSeed, x, y, 8404) < LANDFILL_TRASH_UNDERGROUND_CHANCE) {
+                    serverMapSet(foreground, x, y, "trash_dirt_below");
+                }
+            }
+            const backgroundType = background.get(key)?.block_type || "";
+            if (backgroundType === "cave_background" && serverCellNoise(generationSeed, x, y, 8405) < LANDFILL_TRASH_WALLPAPER_CHANCE) {
+                serverMapSet(background, x, y, "trash_wallpaper");
+            }
+        }
+    }
+}
 function getServerGeneratedBaseTerrain(worldName) {
     const clean = cleanWorld(worldName);
     const cached = serverGeneratedBaseTerrainByWorld.get(clean);
@@ -28521,6 +28613,7 @@ function getServerGeneratedBaseTerrain(worldName) {
     serverGenerateNaturalPonds(foreground, surface, rng, background);
     serverGenerateSurfaceDecorations(foreground, surface, generationSeed, background);
     serverGenerateTrees(foreground, surface, generationSeed, rng, background);
+    serverApplyLandfillTrashOverlay(clean, foreground, background, surface, generationSeed);
     const entry = { foreground, background, surface };
     serverGeneratedBaseTerrainByWorld.set(clean, entry);
     while (serverGeneratedBaseTerrainByWorld.size > SERVER_GENERATED_TERRAIN_CACHE_MAX_WORLDS) {

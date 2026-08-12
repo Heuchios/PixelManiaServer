@@ -104,6 +104,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
     isAntiGravityBlockType,
     isAntiPunchBlockType,
     isAntiTalkBlockType,
+    isAreaLockBlockType,
     isCctvBlockType,
     isChickenBlockType,
     isCowBlockType,
@@ -113,6 +114,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
     isElectricalDeviceBlockOnLayer,
     isFishMongerBreakAttempt,
     isGridInWorld,
+    isLandfillWorldName,
     isPlayerNearGrid,
     isPostgresAuthoritativeReady,
     isSafeBlockType,
@@ -337,9 +339,23 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
             });
             return;
           }
+          if (update.action === "place" && isWorldLockBlockType(update.block_type) && isLandfillWorldName(worldName)) {
+            sendActionRejected(socket, "world_block_update", "Landfill worlds cannot be locked.", {
+              reason: "landfill_lock_blocked",
+              block_type: update.block_type,
+            });
+            return;
+          }
           if (update.action === "place" && isWorldLockBlockType(update.block_type) && isWorldLockPlacementBlocked(worldName)) {
             sendActionRejected(socket, "world_block_update", "This world already has a lock.", {
               reason: "world_lock_exists",
+              block_type: update.block_type,
+            });
+            return;
+          }
+          if (update.action === "place" && isAreaLockBlockType(update.block_type) && isLandfillWorldName(worldName)) {
+            sendActionRejected(socket, "world_block_update", "Landfill worlds cannot be locked.", {
+              reason: "landfill_lock_blocked",
               block_type: update.block_type,
             });
             return;
