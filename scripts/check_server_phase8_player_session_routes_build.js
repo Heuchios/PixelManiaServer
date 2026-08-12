@@ -61,6 +61,13 @@ const deps = {
   buildPublicPlayerPresencePayload: (/** @type {string} */ type, /** @type {unknown} */ _player, /** @type {unknown} */ world) => ({ type, world }),
   buildPublicPlayerProfilePayload: (/** @type {string} */ username, /** @type {string} */ requestId, /** @type {string} */ purpose) => ({ type: "player_profile", username, request_id: requestId, purpose, created_at: "2026-01-01T00:00:00.000Z", last_seen_at: "now", account: { username, created_at: "2026-01-01T00:00:00.000Z" }, equipment_slots: /** @type {any} */ (savedStates.get(username))?.equipment_slots || {} }),
   cancelActiveTradeForPlayer: (/** @type {string} */ playerId) => record(`cancel_trade:${playerId}`),
+  // Landfill join-eligibility guard: a no-op pass-through here since this check exercises the
+  // generic join_world flow, not Landfill-specific instance routing (see
+  // check_server_landfill_event_build.js for that).
+  checkLandfillInstanceJoinEligibility: (/** @type {unknown} */ world, /** @type {unknown} */ username) => {
+    record(`landfill_eligibility:${world}:${username}`);
+    return { ok: true };
+  },
   cleanAccountName: (/** @type {unknown} */ value) => String(value || "").trim().toLowerCase(),
   cleanWorld: (/** @type {unknown} */ value) => String(value || "START").trim().toUpperCase(),
   clampInteger: (/** @type {unknown} */ value, /** @type {number} */ min, /** @type {number} */ max) => Math.max(min, Math.min(max, Math.trunc(Number(value) || 0))),
@@ -99,6 +106,7 @@ const deps = {
   notifyOnlineFriendsOfFriendState: (/** @type {unknown} */ username) => record(`friends:${username}`),
   publishPlayerPresenceUpdate: (/** @type {unknown} */ _socket, /** @type {unknown} */ _player, /** @type {unknown} */ world, /** @type {string} */ type) => record(`presence:${type}:${world}`),
   queuePlayerSave: (/** @type {string} */ username) => record(`save:${username}`),
+  recordLandfillInstanceJoin: (/** @type {unknown} */ world, /** @type {unknown} */ username) => record(`landfill_join:${world}:${username}`),
   refreshPlayerStateFromPostgres: async (/** @type {unknown} */ username, /** @type {string} */ reason) => {
     record(`refresh_player:${username}:${reason}`);
     if (!playerRefreshSucceeds) return { ok: false, found: false, reason: "database_error" };
