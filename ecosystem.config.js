@@ -134,6 +134,26 @@ const productionEnv = {
   SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS: env("SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS", "0"),
   SNOW_STORM_MAX_CHANGED_TILES: env("SNOW_STORM_MAX_CHANGED_TILES", ""),
   SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS: env("SNOW_STORM_EVENT_COMMAND_COOLDOWN_MS", "1000"),
+  // "Landfill" seasonal race event -- see src/server_landfill_event.ts. Every env var this
+  // feature reads is explicitly passed through here from day one specifically to avoid
+  // repeating the Snow Storm bug above (a flag that existed in code but was never mirrored
+  // into this file, so it silently never turned on in any deployed environment).
+  //
+  // Unlike Snow Storm, LANDFILL_EVENT_ENABLED defaults to "false" here on purpose, not by
+  // omission: the trash-block weight registry and the top-10 prize catalog are both
+  // intentionally empty until that content is designed (see project memory
+  // landfill_seasonal_event_design.md). Flip this to "true" once that content exists --
+  // until then, leaving it enabled would let players join a Landfill world where breaking
+  // blocks scores nothing and there's nothing to claim.
+  LANDFILL_EVENT_ENABLED: env("LANDFILL_EVENT_ENABLED", "false"),
+  LANDFILL_EVENT_CRON_START: env("LANDFILL_EVENT_CRON_START", "0 0 1 * *"),
+  LANDFILL_EVENT_CRON_END: env("LANDFILL_EVENT_CRON_END", "0 0 8 * *"),
+  LANDFILL_MIN_PLAYERS_TO_START: env("LANDFILL_MIN_PLAYERS_TO_START", "2"),
+  LANDFILL_MAX_PLAYERS_PER_INSTANCE: env("LANDFILL_MAX_PLAYERS_PER_INSTANCE", "5"),
+  // Half-width/half-height, in tiles, of the holding pen players are confined to while an
+  // instance is still in its "entry" state (see server_phase11d_standard_movement.ts's
+  // acceptPlayerMovement and getLandfillEntryPenBounds in server_landfill_event.ts).
+  LANDFILL_ENTRY_PEN_RADIUS_TILES: env("LANDFILL_ENTRY_PEN_RADIUS_TILES", "4"),
 };
 
 module.exports = {

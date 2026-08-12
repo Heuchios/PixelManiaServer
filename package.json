@@ -84,6 +84,12 @@
 	"check:server-trade-routes": "npm run build:server-trade-routes && node scripts/check_server_trade_routes_build.js",
 	"build:server-inventory-economy-routes": "tsc --project tsconfig.server-inventory-economy-routes.json && node scripts/sync_server_inventory_economy_routes_build.js",
 	"check:server-inventory-economy-routes": "npm run build:server-inventory-economy-routes && node scripts/check_server_inventory_economy_routes_build.js",
+	"build:server-iap-routes": "tsc --project tsconfig.server-iap-routes.json && node scripts/sync_server_iap_routes_build.js",
+	"check:server-iap-routes": "npm run build:server-iap-routes && node scripts/check_server_iap_routes_build.js",
+	"build:server-calendar-events": "tsc --project tsconfig.server-calendar-events.json && node scripts/sync_server_calendar_events_build.js",
+	"check:server-calendar-events": "npm run build:server-calendar-events && node scripts/check_server_calendar_events_build.js",
+	"build:server-landfill-event": "tsc --project tsconfig.server-landfill-event.json && node scripts/sync_server_landfill_event_build.js",
+	"check:server-landfill-event": "npm run build:server-landfill-event && node scripts/check_server_landfill_event_build.js",
 	"check:server-phase10-ownership": "node scripts/check_server_phase10_typescript_ownership.js",
 	"build:server-phase11a-runtime": "tsc --project tsconfig.server-phase11a-runtime.json && node scripts/sync_server_phase11a_runtime_build.js",
 	"check:server-phase11a-runtime": "npm run build:server-phase11a-runtime && node scripts/check_server_phase11a_runtime_build.js",
@@ -106,7 +112,7 @@
 	"check:postgres-contracts": "npm run build:postgres-contracts && node scripts/check_postgres_contracts.js",
 	"check:tsconfig-projects": "node scripts/check_tsconfig_projects.js",
 	"check:types": "tsc --noEmit --project tsconfig.json",
-	"check:typescript": "npm run lint:positive-control && npm run lint && npm run check:types && npm run check:item-data && npm run check:redis-store && npm run check:postgres-store && npm run check:server-runtime-stats && npm run check:server-crash-details && npm run check:server-env-config && npm run check:server-helpers && npm run check:server-persistence-helpers && npm run check:world-revision-persistence && npm run check:server-player-state-helpers && npm run check:server-world-state-helpers && npm run check:server-message-router-helpers && npm run check:server-bot-rate-limit-helpers && npm run check:server-inventory-transaction-helpers && npm run check:server-world-interaction-payload-helpers && npm run check:server-socket-delivery-helpers && npm run check:server-punishment-helpers && npm run check:server-phase6-helpers && npm run check:server-phase7-dispatcher && npm run check:server-phase8-player-session-routes && npm run check:server-phase8-world-action-routes && npm run check:server-phase8-final-routes && npm run check:server-phase9-remaining-routes && npm run check:server-account-auth-routes && npm run check:server-account-session-helpers && npm run check:server-admin-lookup-routes && npm run check:server-friend-routes && npm run check:server-trade-routes && npm run check:server-inventory-economy-routes && npm run check:server-phase10-ownership && npm run check:server-phase11a-runtime && npm run check:server-phase11b-lifecycle && npm run check:server-phase11c-trusted-movement && npm run check:server-phase11d-standard-movement && npm run check:movement-rollback && npm run check:server-entry && npm run check:packet-contracts && npm run check:drop-contracts && npm run check:inventory-contracts && npm run check:postgres-contracts && npm run check:block-placement-consistency",
+	"check:typescript": "npm run lint:positive-control && npm run lint && npm run check:types && npm run check:item-data && npm run check:redis-store && npm run check:postgres-store && npm run check:server-runtime-stats && npm run check:server-crash-details && npm run check:server-env-config && npm run check:server-helpers && npm run check:server-persistence-helpers && npm run check:world-revision-persistence && npm run check:server-player-state-helpers && npm run check:server-world-state-helpers && npm run check:server-message-router-helpers && npm run check:server-bot-rate-limit-helpers && npm run check:server-inventory-transaction-helpers && npm run check:server-world-interaction-payload-helpers && npm run check:server-socket-delivery-helpers && npm run check:server-punishment-helpers && npm run check:server-phase6-helpers && npm run check:server-phase7-dispatcher && npm run check:server-phase8-player-session-routes && npm run check:server-phase8-world-action-routes && npm run check:server-phase8-final-routes && npm run check:server-phase9-remaining-routes && npm run check:server-account-auth-routes && npm run check:server-account-session-helpers && npm run check:server-admin-lookup-routes && npm run check:server-friend-routes && npm run check:server-trade-routes && npm run check:server-inventory-economy-routes && npm run check:server-iap-routes && npm run check:server-calendar-events && npm run check:server-landfill-event && npm run check:server-phase10-ownership && npm run check:server-phase11a-runtime && npm run check:server-phase11b-lifecycle && npm run check:server-phase11c-trusted-movement && npm run check:server-phase11d-standard-movement && npm run check:movement-rollback && npm run check:server-entry && npm run check:packet-contracts && npm run check:drop-contracts && npm run check:inventory-contracts && npm run check:postgres-contracts && npm run check:block-placement-consistency",
 	"check:dependencies": "npm audit --omit=dev --audit-level=high",
 	"check:release-deploy": "node scripts/check_release_deployment_wiring.js",
 	"check:origin-hardening": "node scripts/check_production_origin_hardening.js",
@@ -168,9 +174,11 @@
   "type": "commonjs",
   "dependencies": {
 	"dotenv": "^17.4.2",
+	"googleapis": "^144.0.0",
 	"nodemailer": "^9.0.3",
 	"pg": "^8.16.3",
 	"redis": "^6.0.0",
+	"stripe": "^17.7.0",
 	"ws": "^8.21.1"
   },
   "devDependencies": {

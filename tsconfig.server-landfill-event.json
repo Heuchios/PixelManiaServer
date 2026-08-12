@@ -1,0 +1,12 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": ".tsbuild",
+    "rootDir": "src"
+  },
+  "include": [
+    "src/server_landfill_event.ts"
+  ],
+  "exclude": []
+}

@@ -25,6 +25,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
     applyPunchToggleInstantDeathPresence,
     applySeedUpdateToWorldState,
     applyWorldLockStateForBlockUpdate,
+    awardLandfillKilogramsForBlockBreak,
     awardPlayerExperience,
     beginPhase7BlockActionContext,
     broadcastCctvWorldState,
@@ -642,6 +643,14 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
           let requesterPlayerState = Number(progression.xp_gained || 0) > 0 ? progression.state : (validation.playerState || null);
           const requesterProgressionPayload = buildProgressionPayload(progression);
           logPlayerProgressionAward(player, progression);
+          if (update.action === "break") {
+            // Additive, best-effort: awards Landfill "Kilograms" when this break happens inside
+            // a Landfill instance and the block type is a registered trash block. No-ops for
+            // every other world/block type. Not awaited so it can't add latency to the break
+            // response -- it does its own error logging internally (see
+            // server_landfill_event.ts's awardKilogramsForBlockBreak).
+            void awardLandfillKilogramsForBlockBreak(worldName, update.username, update.block_type);
+          }
           const emittedDrops = createBreakDrops(worldName, update);
           if (update.action === "break") {
             debugActionPositionFlow("world_block_update break request end", player, {

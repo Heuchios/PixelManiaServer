@@ -62,6 +62,7 @@ function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
     DROP_INTEREST_RADIUS_PIXELS,
     DROP_INTEREST_SYNC_INTERVAL_MS,
     dropInterestByReceiver,
+    handleStripeIapWebhook,
     HOST,
     IDEMPOTENCY_TTL_MS,
     IDEMPOTENCY_TTL_MS_COMBAT,
@@ -181,6 +182,7 @@ function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
     serverRuntimeStats,
     serverTickStats,
     startAntiDupeAuditScanner,
+    startCalendarEventScheduler,
     startPeriodicWorldSnapshotScheduler,
     startWorldEventRandomScheduler,
     verifyCustomMovementServerWorldStateRequest,
@@ -994,6 +996,11 @@ function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
       return;
     }
 
+    if (request.method === "POST" && url.pathname === "/iap/stripe/webhook") {
+      await handleStripeIapWebhook(request, response);
+      return;
+    }
+
     if (request.method === "GET" && url.pathname === "/verify-email") {
       const result = await verifyEmailToken(url.searchParams.get("token") || "");
       sendHtml(
@@ -1074,6 +1081,7 @@ function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
     await recoverWorldEventsAfterLoad();
     startServerTickMonitor();
     startWorldEventRandomScheduler();
+    startCalendarEventScheduler();
     startAntiDupeAuditScanner();
     startPeriodicWorldSnapshotScheduler();
     startHttpServer();
