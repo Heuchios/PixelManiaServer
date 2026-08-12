@@ -24,11 +24,20 @@ function makeFakePostgresStore() {
   return {
     scores,
     claims,
+    /**
+     * @param {string} username
+     * @param {string} seasonKey
+     * @param {number} amount
+     */
     async incrementLandfillKilograms(username, seasonKey, amount) {
       const key = `${username}:${seasonKey}`;
       scores.set(key, (scores.get(key) || 0) + amount);
       return { ok: true, kilograms: scores.get(key) };
     },
+    /**
+     * @param {string} seasonKey
+     * @param {number} limit
+     */
     async getLandfillLeaderboard(seasonKey, limit) {
       const entries = Array.from(scores.entries())
         .filter(([key]) => key.endsWith(`:${seasonKey}`))
@@ -38,16 +47,29 @@ function makeFakePostgresStore() {
         .map((entry, index) => ({ ...entry, rank: index + 1 }));
       return { ok: true, entries };
     },
+    /**
+     * @param {string} username
+     * @param {string} seasonKey
+     */
     async getLandfillPlayerScore(username, seasonKey) {
       const key = `${username}:${seasonKey}`;
       return { kilograms: scores.get(key) || 0, rank: 0 };
     },
+    /**
+     * @param {string} username
+     * @param {string} seasonKey
+     * @param {number} rank
+     */
     async insertLandfillPrizeClaim(username, seasonKey, rank) {
       const key = `${username}:${seasonKey}`;
       if (claims.has(key)) return { ok: true, inserted: false };
       claims.add(key);
       return { ok: true, inserted: true };
     },
+    /**
+     * @param {string} username
+     * @param {string} seasonKey
+     */
     async deleteLandfillPrizeClaim(username, seasonKey) {
       claims.delete(`${username}:${seasonKey}`);
       return { ok: true };
@@ -72,16 +94,21 @@ async function main() {
   const postgresStore = makeFakePostgresStore();
 
   const system = LandfillEventModule.createLandfillEventSystem({
+    /** @param {any} value */
     cleanAccountName: (value) => String(value || "").trim().toLowerCase(),
+    /** @param {string} username */
     ensureWritablePlayerState: (username) => playerStates.get(username) || null,
     canAddItemToState: () => true,
     addItemToState: () => true,
+    /** @param {any} value */
     cloneJson: (value) => JSON.parse(JSON.stringify(value)),
     commitPlayerInventoryState: async () => ({ ok: true }),
     postgresStore,
+    /** @param {string} worldName */
     getWorldPopulationCount: (worldName) => populationByWorld[worldName] || 0,
     sendJson: () => {},
     makeRequestId: () => "req_test",
+    /** @param {any} error */
     getErrorMessage: (error) => String(error && error.message ? error.message : error),
     minPlayersToStart: 2,
     maxPlayersPerInstance: 5,
