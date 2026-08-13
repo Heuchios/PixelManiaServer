@@ -518,6 +518,23 @@ const LANDFILL_MAX_PLAYERS_PER_INSTANCE = Math.max(LANDFILL_MIN_PLAYERS_TO_START
 // Enforced server-side in server_phase11d_standard_movement.ts's acceptPlayerMovement -- see
 // getLandfillEntryPenBounds in server_landfill_event.ts for how the box itself is computed.
 const LANDFILL_ENTRY_PEN_RADIUS_TILES = Math.max(0, Math.min(20, Math.trunc(Number(process.env.LANDFILL_ENTRY_PEN_RADIUS_TILES) || 4)));
+// Race session timing. Every one of these is mirrored into ecosystem.config.js -- the Snow Storm
+// incident documented in that file was a flag that existed in code but was never passed through
+// PM2, so it silently never fired in any deployed environment. Clamped so a bad env value degrades
+// to something playable instead of producing a zero-length countdown or an endless race.
+const LANDFILL_COUNTDOWN_SECONDS = Math.max(3, Math.min(60, Math.trunc(Number(process.env.LANDFILL_COUNTDOWN_SECONDS) || 10)));
+const LANDFILL_RACE_SECONDS = Math.max(30, Math.min(1800, Math.trunc(Number(process.env.LANDFILL_RACE_SECONDS) || 120)));
+const LANDFILL_RESULTS_DISPLAY_SECONDS = Math.max(3, Math.min(120, Math.trunc(Number(process.env.LANDFILL_RESULTS_DISPLAY_SECONDS) || 12)));
+const LANDFILL_SESSION_TICK_MS = Math.max(50, Math.min(2000, Math.trunc(Number(process.env.LANDFILL_SESSION_TICK_MS) || 250)));
+const LANDFILL_RACE_BROADCAST_MIN_INTERVAL_MS = Math.max(50, Math.min(5000, Math.trunc(Number(process.env.LANDFILL_RACE_BROADCAST_MIN_INTERVAL_MS) || 250)));
+// Bonus Kilograms by finishing placement (index 0 = 1st). "Points" in this event ARE Kilograms --
+// there is no second currency -- so a placement bonus is added to what the player collected and the
+// sum is credited to their lifetime season total.
+const LANDFILL_PLACEMENT_BONUS_KILOGRAMS = String(process.env.LANDFILL_PLACEMENT_BONUS_KILOGRAMS || "100,75,50")
+    .split(",")
+    .map((part) => Math.max(0, Math.trunc(Number(part.trim()) || 0)))
+    .filter((value) => value > 0);
+const LANDFILL_PARTICIPATION_BONUS_KILOGRAMS = Math.max(0, Math.min(10000, Math.trunc(Number(process.env.LANDFILL_PARTICIPATION_BONUS_KILOGRAMS) || 20)));
 const SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT = Math.max(256 * 1024, Math.min(32 * 1024 * 1024, Math.trunc(Number(process.env.SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT) || (4 * 1024 * 1024))));
 const PLAYER_POSITION_MAX_BUFFERED_AMOUNT = Math.max(64 * 1024, Math.min(SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT, Math.trunc(Number(process.env.PLAYER_POSITION_MAX_BUFFERED_AMOUNT) || (256 * 1024))));
 const PLAYER_POSITION_RESUME_BUFFERED_AMOUNT = Math.max(16 * 1024, Math.min(PLAYER_POSITION_MAX_BUFFERED_AMOUNT, Math.trunc(Number(process.env.PLAYER_POSITION_RESUME_BUFFERED_AMOUNT) || (64 * 1024))));
@@ -1169,6 +1186,25 @@ function getServerLandfillEventSystem() {
             // Task: Landfill worlds must get a fresh seed/regeneration every time -- see
             // resetWorldStateForFreshInstance and createNewInstance in server_landfill_event.ts.
             resetLandfillWorldState: resetWorldStateForFreshInstance,
+            // Race session tunables.
+            countdownMs: LANDFILL_COUNTDOWN_SECONDS * 1000,
+            raceDurationMs: LANDFILL_RACE_SECONDS * 1000,
+            resultsDisplayMs: LANDFILL_RESULTS_DISPLAY_SECONDS * 1000,
+            sessionTickIntervalMs: LANDFILL_SESSION_TICK_MS,
+            broadcastMinIntervalMs: LANDFILL_RACE_BROADCAST_MIN_INTERVAL_MS,
+            placementBonusKilograms: LANDFILL_PLACEMENT_BONUS_KILOGRAMS,
+            participationBonusKilograms: LANDFILL_PARTICIPATION_BONUS_KILOGRAMS,
+            // Read-only roster reader. Same underlying source getWorldPopulationCount already uses, so
+            // it inherits its self-healing of stale entries -- returning identities instead of a count
+            // is what lets the session know WHO arrived and who left without hooking the join/leave
+            // pipeline that server_landfill_event.ts's scope note forbids touching.
+            getWorldPlayerIdentities: (worldName) => getWorldPlayerRecords(cleanWorld(worldName)).map((record) => ({
+                username: cleanAccountName(record.account_username || record.name || ""),
+                displayName: cleanName(record.name || ""),
+            })),
+            // World-scoped push for live race state. Deliberately broadcastToWorld and not
+            // broadcastSystemToWorld (which is chat) or a global fan-out.
+            broadcastToWorld,
         });
     }
     return serverLandfillEventSystem;
@@ -1949,6 +1985,14 @@ const ServerPhase7Dispatcher = ServerPhase7DispatcherModule.createServerPhase7Di
         iap_create_stripe_checkout_request: (socket, player, data, context) => getServerIapRoutes().handleIapCreateStripeCheckoutRequest(socket, player, data, context),
         iap_submit_google_play_purchase_request: (socket, player, data, context) => getServerIapRoutes().handleIapSubmitGooglePlayPurchaseRequest(socket, player, data, context),
         landfill_status_request: (socket, player, data, context) => getServerLandfillEventSystem().handleLandfillStatusRequest(socket, player, data, context),
+        // Point read of the caller's CURRENT world race state. The world is taken from the server's
+        // own player record, never from the packet, so this cannot be used to probe or scrape another
+        // session the caller is not standing in.
+        landfill_race_state_request: (socket, player) => {
+            const state = getServerLandfillEventSystem().getLandfillRaceStateForWorld(player?.world);
+            if (state)
+                sendJson(socket, state);
+        },
         landfill_join_request: (socket, player, data, context) => getServerLandfillEventSystem().handleLandfillJoinRequest(socket, player, data, context),
         landfill_leaderboard_request: (socket, player, data, context) => getServerLandfillEventSystem().handleLandfillLeaderboardRequest(socket, player, data, context),
         landfill_claim_prize_request: (socket, player, data, context) => getServerLandfillEventSystem().handleLandfillClaimPrizeRequest(socket, player, data, context),

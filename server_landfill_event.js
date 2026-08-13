@@ -1,8 +1,29 @@
 // Generated from src/server_landfill_event.ts. Do not edit by hand.
 "use strict";
 const LANDFILL_WORLD_PREFIX = "landfill_";
-// Empty by design -- populated later, block key -> Kilograms awarded per break.
-const TRASH_BLOCK_WEIGHTS = {};
+// ---------------------------------------------------------------------------------------------
+// Default trash weights: block key -> Kilograms awarded per break.
+// ---------------------------------------------------------------------------------------------
+// This registry was empty until now, which meant getTrashBlockWeight() returned 0 for every block
+// and awardKilogramsForBlockBreak short-circuited on EVERY break -- the event was unscoreable in
+// every environment. These defaults are derived from each block's atlas hardness (see
+// Data/items/atlas_items.json ids 71-78), so tougher trash is worth proportionally more:
+//   hardness 1 (bottle/jar/flask) -> 1kg, hardness 2 (garbage box) -> 2kg,
+//   hardness 3 (trash dirt, vending machine) -> 3kg
+// registerTrashBlockWeight still exists and still overrides these at runtime, so tuning does not
+// require a code change here.
+const DEFAULT_TRASH_BLOCK_WEIGHTS = {
+    broken_bottle: 1,
+    broken_jar: 1,
+    broken_flask: 1,
+    garbage_box: 2,
+    trash_dirt_top: 3,
+    trash_dirt_below: 3,
+    broken_vending_machine: 3,
+    trash_wallpaper: 1,
+};
+// Block key -> Kilograms. Seeded from the defaults above; registerTrashBlockWeight mutates it.
+const TRASH_BLOCK_WEIGHTS = { ...DEFAULT_TRASH_BLOCK_WEIGHTS };
 // Empty by design -- populated later, rank (1-10) -> prize items.
 const LANDFILL_PRIZES = {};
 function registerTrashBlockWeight(blockType, kilograms) {
@@ -69,7 +90,27 @@ function canonicalInstanceKey(worldName) {
         .replace(/[^A-Z0-9_-]/g, "");
 }
 function createLandfillEventSystem(deps) {
-    const { cleanAccountName, ensureWritablePlayerState, canAddItemToState, addItemToState, commitPlayerInventoryState, cloneJson, postgresStore, getWorldPopulationCount, sendJson, makeRequestId, getErrorMessage, logger = console, minPlayersToStart = 2, maxPlayersPerInstance = 5, isEventWindowOpen, instancePollIntervalMs = 5000, instanceIdleCleanupMs = 30 * 60 * 1000, 
+    const { cleanAccountName, ensureWritablePlayerState, canAddItemToState, addItemToState, commitPlayerInventoryState, cloneJson, postgresStore, getWorldPopulationCount, sendJson, makeRequestId, getErrorMessage, logger = console, minPlayersToStart = 2, maxPlayersPerInstance = 5, isEventWindowOpen, instancePollIntervalMs = 5000, 
+    // ----- Race session timing (all overridable from ecosystem.config.js; see LANDFILL_* env) --
+    // The session tick. Must be comfortably finer than the countdown so a 10s countdown does not
+    // visibly overshoot -- the original 5s population poll was far too coarse to drive a race.
+    // Population is re-read on each tick, which is O(players in world) over a handful of live
+    // instances, i.e. negligible.
+    sessionTickIntervalMs = 250, countdownMs = 10_000, raceDurationMs = 120_000, 
+    // How long the finished session lingers so clients can render the results screen before
+    // players are released and the world is destroyed.
+    resultsDisplayMs = 12_000, 
+    // Floor between two race-state broadcasts for one session. Progress is coalesced into a dirty
+    // flag and flushed at most this often, following queueWorldUpdateBroadcast's discipline in
+    // server.ts -- a break-heavy race must not turn into a per-break fan-out.
+    broadcastMinIntervalMs = 250, 
+    // Kilograms awarded on top of what a player collected, by finishing placement. Index 0 = 1st.
+    // Anyone who finishes outside this list, or who collected nothing, still gets the
+    // participation award. Centralized here so tuning never means touching several files.
+    placementBonusKilograms = [100, 75, 50], participationBonusKilograms = 20, 
+    // Injectable purely so the build check can mint deterministic world names; production leaves
+    // it undefined and gets Math.random.
+    randomUnit, instanceIdleCleanupMs = 30 * 60 * 1000, 
     // How long an "entry" instance must sit provably empty, with an unchanged participant set,
     // before those recorded slots are treated as abandoned and released -- see the reconciliation
     // in pollInstancesOnce. Comfortably longer than the client's whole join budget (its retry
@@ -81,12 +122,43 @@ function createLandfillEventSystem(deps) {
     // createNewInstance) -- never called from the per-movement-tick hot path.
     getJoinWorldSpawnForWorld, entryPenRadiusPixels = 128, 
     // Task: guarantees every Landfill instance is a fresh regeneration -- see createNewInstance.
-    resetLandfillWorldState, } = deps;
+    resetLandfillWorldState, 
+    // Read-only roster reader: (worldName) => [{ username, displayName }] for the players actually
+    // present in that world right now. This is how the session tracks who is present without
+    // hooking the join/leave pipeline that this module's scope note explicitly forbids touching
+    // (see the header). It is the same underlying reader getWorldPopulationCount already uses,
+    // just returning identities instead of a bare count, so it inherits the same self-healing of
+    // stale roster entries.
+    getWorldPlayerIdentities, 
+    // (worldName, payload) => void. Pushes a message to exactly the players in one world.
+    broadcastToWorld, } = deps;
     // Keyed by canonicalInstanceKey(worldName), never by a raw caller-supplied string. Every read
     // and write goes through the three helpers directly below -- see canonicalInstanceKey's comment
     // for the production failure that made this non-negotiable.
     const instances = new Map();
     let pollTimer = null;
+    let sessionSequence = 0;
+    // World names retired by recent races. A finished world's terrain is a pure function of its
+    // name (serverWorldGenerationSeed in server.ts hashes the name and nothing else), so reusing a
+    // name would hand players the exact map they just finished. Bounded so it cannot grow forever.
+    const recentlyUsedWorldNames = [];
+    const RECENT_WORLD_NAME_MEMORY = 128;
+    // Phase predicates. Every behavioral decision goes through these rather than comparing state
+    // strings at the call site, so a new state cannot silently flip the entry pen on or reopen a
+    // locked session.
+    function isPreRaceState(state) {
+        return state === "waiting_for_players" || state === "countdown";
+    }
+    function isJoinableState(state) {
+        // Joining during the countdown is allowed: the race has not started, so nobody gains an
+        // advantage, and refusing would make a nearly-full lobby feel broken. Once RACING begins the
+        // session is locked for good (no late entry).
+        return isPreRaceState(state);
+    }
+    function isScoringState(state) {
+        // The single gate that stops progress counting before GO and after the finish.
+        return state === "racing";
+    }
     function getInstance(worldName) {
         return instances.get(canonicalInstanceKey(worldName));
     }
@@ -123,29 +195,85 @@ function createLandfillEventSystem(deps) {
             maxY: spawnY + radius,
         };
     }
+    // Mint a world name no live session holds and no recent race used.
+    //
+    // This is what makes "every race is a fresh randomized world" true. Server terrain is a PURE
+    // FUNCTION of the world name -- serverWorldGenerationSeed() in server.ts hashes only
+    // `PIXELMANIA_WORLD_<NAME>` with no time or randomness anywhere -- so a given name always
+    // regenerates byte-for-byte the same map. The previous naming scheme (`instances.size + 1`,
+    // with idle eviction recycling low indices) therefore meant LANDFILL_1 was the identical map
+    // for every race, forever; the first race of any day was always the same map.
+    //
+    // Randomising the suffix rather than incrementing it matters: serverWorldGenerationSeed maps
+    // consecutive names to consecutive integers, and serverCellNoise folds the seed in only as a
+    // small phase offset, so sequential names are a weak spread. A wide random suffix decorrelates
+    // properly. Deliberately NOT threading an explicit seed through the shared terrain generator --
+    // that generator serves every ordinary world in the game, and this achieves the same result
+    // with zero blast radius outside this module.
+    function mintSessionWorldName() {
+        const nextUnit = typeof randomUnit === "function" ? randomUnit : Math.random;
+        for (let attempt = 0; attempt < 64; attempt += 1) {
+            const suffix = 100000 + Math.floor(Number(nextUnit()) * 899999);
+            const candidate = canonicalInstanceKey(`${LANDFILL_WORLD_PREFIX}${suffix}`);
+            if (!instances.has(candidate) && !recentlyUsedWorldNames.includes(candidate))
+                return candidate;
+        }
+        // Exhausting 64 random draws means the namespace is somehow saturated. Fall back to a
+        // monotonic suffix so session creation degrades instead of failing -- a repeated map is far
+        // better than a race that cannot start.
+        let fallbackIndex = instances.size + 1;
+        let fallback = canonicalInstanceKey(`${LANDFILL_WORLD_PREFIX}${fallbackIndex}`);
+        while (instances.has(fallback)) {
+            fallbackIndex += 1;
+            fallback = canonicalInstanceKey(`${LANDFILL_WORLD_PREFIX}${fallbackIndex}`);
+        }
+        logger.warn("[WORLD_JOIN] landfill world-name minting fell back to a sequential name", {
+            world: fallback,
+            live_sessions: instances.size,
+        });
+        return fallback;
+    }
+    function rememberRetiredWorldName(worldName) {
+        const key = canonicalInstanceKey(worldName);
+        if (key === "" || recentlyUsedWorldNames.includes(key))
+            return;
+        recentlyUsedWorldNames.push(key);
+        while (recentlyUsedWorldNames.length > RECENT_WORLD_NAME_MEMORY)
+            recentlyUsedWorldNames.shift();
+    }
     async function createNewInstance() {
         // canonicalInstanceKey() is what makes the name minted here survive the client round trip
         // intact -- see its comment. The generated name is stored in instance.worldName in exactly
         // the form it is keyed by, so the value handed to the client in landfill_join_result, the
         // value passed to getWorldPopulationCount/resetLandfillWorldState, and the Map key are all
         // one and the same string.
-        let index = instances.size + 1;
-        let worldName = canonicalInstanceKey(`${LANDFILL_WORLD_PREFIX}${index}`);
-        while (hasInstance(worldName)) {
-            index += 1;
-            worldName = canonicalInstanceKey(`${LANDFILL_WORLD_PREFIX}${index}`);
-        }
+        sessionSequence += 1;
+        const index = sessionSequence;
+        const worldName = mintSessionWorldName();
         // Reserve this instance's slot synchronously -- no await between the has()/set() calls
         // bracketing this object -- so a second, concurrent createNewInstance() call can't pick the
         // same worldName while this one is still resetting it below.
+        const nowMs = Date.now();
         const instance = {
+            sessionId: `lfs_${nowMs.toString(36)}_${index.toString(36)}_${canonicalInstanceKey(worldName)}`,
             worldName,
             index,
-            state: "entry",
-            createdAtMs: Date.now(),
+            state: "waiting_for_players",
+            createdAtMs: nowMs,
+            countdownEndsAtMs: 0,
+            raceStartedAtMs: 0,
+            raceEndsAtMs: 0,
+            finishedAtMs: 0,
             seasonKey: getCurrentSeasonKey(),
+            participants: new Map(),
+            nextJoinOrder: 1,
+            finalRankings: null,
+            resultsPersistInFlight: false,
+            resultsPersisted: false,
+            broadcastDirty: true,
+            lastBroadcastAtMs: 0,
             participantUsernames: new Set(),
-            lastParticipantChangeMs: Date.now(),
+            lastParticipantChangeMs: nowMs,
             entryPenBounds: null,
         };
         instances.set(canonicalInstanceKey(worldName), instance);
@@ -182,12 +310,18 @@ function createLandfillEventSystem(deps) {
         if (!isLandfillWorldName(worldName))
             return null;
         const instance = getInstance(worldName);
-        if (!instance || instance.state !== "entry")
+        // isPreRaceState covers WAITING_FOR_PLAYERS and COUNTDOWN. The pen is released the instant the
+        // session flips to RACING, which is exactly the GO moment -- so "players cannot leave the
+        // start area before the race begins" is enforced by the same transition that starts the clock,
+        // with no second mechanism to keep in sync.
+        if (!instance || !isPreRaceState(instance.state))
             return null;
         return instance.entryPenBounds;
     }
     function isInstanceJoinable(instance) {
-        if (instance.state !== "entry")
+        if (!isJoinableState(instance.state))
+            return false;
+        if (instance.participants.size >= maxPlayersPerInstance)
             return false;
         if (instance.participantUsernames.size >= maxPlayersPerInstance)
             return false;
@@ -226,13 +360,17 @@ function createLandfillEventSystem(deps) {
             // if the event window has since closed -- this only gates brand-new entries below.
             return { ok: true };
         }
-        if (instance.state === "entry" && typeof isEventWindowOpen === "function" && !isEventWindowOpen()) {
+        if (isPreRaceState(instance.state) && typeof isEventWindowOpen === "function" && !isEventWindowOpen()) {
             // The calendar window closed while this instance was still sitting open in the entry pen
             // (e.g. never filled up). Block new direct/typed joins into it -- only requestJoinLandfillRace
             // (which already checks isEventWindowOpen) may hand out entry into a live instance.
             return { ok: false, reason: "event_not_active" };
         }
-        if (instance.state !== "entry") {
+        if (!isJoinableState(instance.state)) {
+            // RACING and every terminal state. This is the late-entry lock: once the race is underway
+            // nobody new gets in, so a player who joined at t=0 is never racing someone who arrived at
+            // t=90s. Already-recorded participants short-circuited above, so a mid-race reconnect by a
+            // genuine competitor still works.
             return { ok: false, reason: "instance_locked" };
         }
         if (instance.participantUsernames.size >= maxPlayersPerInstance) {
@@ -266,9 +404,27 @@ function createLandfillEventSystem(deps) {
     // -- the caller (the join_landfill_race_request handler below) hands the world name back to
     // the client, which then performs a completely normal join_world request, same as joining any
     // other named world.
-    async function requestJoinLandfillRace() {
+    async function requestJoinLandfillRace(username = "") {
         if (typeof isEventWindowOpen === "function" && !isEventWindowOpen()) {
             return { ok: false, reason: "event_not_active" };
+        }
+        // A player may only belong to one live session. Without this, pressing Join Race again while
+        // already in a race would enrol the same account in a second session: their breaks would score
+        // in whichever world they are standing in, but BOTH sessions would persist a result for them
+        // at completion, awarding KG twice for one race's worth of work. Returning their existing
+        // session instead makes the button idempotent and doubles as the reconnect path.
+        const cleanRequester = cleanAccountName(username || "");
+        if (cleanRequester !== "") {
+            const existingSession = findSessionForParticipant(cleanRequester);
+            if (existingSession) {
+                logger.log("[WORLD_JOIN] landfill join returning player to their existing session", {
+                    world: existingSession.worldName,
+                    session_id: existingSession.sessionId,
+                    state: existingSession.state,
+                    username: cleanRequester,
+                });
+                return { ok: true, world_name: existingSession.worldName };
+            }
         }
         const existing = findOpenInstance();
         const instance = existing || await createNewInstance();
@@ -294,9 +450,13 @@ function createLandfillEventSystem(deps) {
         const now = Date.now();
         for (const instance of instances.values()) {
             const population = Math.max(0, Number(getWorldPopulationCount(instance.worldName)) || 0);
-            if (instance.state === "entry" && population >= minPlayersToStart) {
-                instance.state = "active";
-                logger.log(`[landfill] instance ${instance.worldName} gate opened with ${population} players.`);
+            // Roster reconciliation first: every transition below depends on knowing who is actually
+            // standing in the world right now, not on who once passed the join guard.
+            reconcileParticipants(instance, now);
+            advanceSessionState(instance, now);
+            maybeBroadcastSessionState(instance, now);
+            if (instance.state === "cleanup") {
+                retireSession(instance);
                 continue;
             }
             // Abandoned-entry reconciliation. recordLandfillInstanceJoin runs in handleJoinWorld before
@@ -311,7 +471,7 @@ function createLandfillEventSystem(deps) {
             // must have been untouched for longer than a client could plausibly still be loading. The
             // reconnect guarantee is unaffected -- an instance with zero players present has no session
             // left to reconnect into, and the freed instance stays joinable by anyone including them.
-            if (instance.state === "entry"
+            if (instance.state === "waiting_for_players"
                 && population === 0
                 && instance.participantUsernames.size > 0
                 && now - instance.lastParticipantChangeMs > abandonedEntryReleaseMs) {
@@ -323,10 +483,376 @@ function createLandfillEventSystem(deps) {
                 instance.participantUsernames.clear();
                 instance.lastParticipantChangeMs = now;
             }
-            if (population === 0 && now - instance.createdAtMs > instanceIdleCleanupMs) {
-                deleteInstance(instance.worldName);
+            // Idle sweep. Only ever applies to a session that never got off the ground -- a session that
+            // actually raced retires through the FINISHED -> CLEANUP path above, which also destroys its
+            // world. Kept as the backstop for a session nobody ever entered.
+            if (isPreRaceState(instance.state)
+                && population === 0
+                && instance.participants.size === 0
+                && now - instance.createdAtMs > instanceIdleCleanupMs) {
+                retireSession(instance);
             }
         }
+    }
+    // -------------------------------------------------------------------------------------------
+    // Session state machine
+    // -------------------------------------------------------------------------------------------
+    function findSessionForParticipant(cleanUsername) {
+        if (cleanUsername === "")
+            return null;
+        for (const instance of instances.values()) {
+            // A terminal session is not a membership that should block or redirect a new join.
+            if (instance.state === "finished" || instance.state === "cleanup")
+                continue;
+            if (instance.participants.has(cleanUsername))
+                return instance;
+            if (instance.participantUsernames.has(cleanUsername))
+                return instance;
+        }
+        return null;
+    }
+    function countConnectedParticipants(instance) {
+        let total = 0;
+        for (const participant of instance.participants.values()) {
+            if (participant.connected)
+                total += 1;
+        }
+        return total;
+    }
+    // Sync instance.participants against who is physically in the world. This is the module's only
+    // knowledge of arrivals and departures, and it is deliberately a READ of the existing roster
+    // rather than a hook into the join/leave pipeline -- the header scope note documents why that
+    // pipeline is not to be touched. The cost is up to one tick of latency on a departure, which is
+    // immaterial for a 10s countdown and a 120s race.
+    function reconcileParticipants(instance, nowMs) {
+        if (typeof getWorldPlayerIdentities !== "function")
+            return;
+        let roster;
+        try {
+            roster = getWorldPlayerIdentities(instance.worldName);
+        }
+        catch (error) {
+            logger.warn("[landfill] roster read failed:", getErrorMessage ? getErrorMessage(error) : error);
+            return;
+        }
+        if (!Array.isArray(roster))
+            return;
+        const presentNow = new Set();
+        for (const entry of roster) {
+            const cleanUsername = cleanAccountName(entry?.username || "");
+            if (cleanUsername === "")
+                continue;
+            presentNow.add(cleanUsername);
+            const existing = instance.participants.get(cleanUsername);
+            if (existing) {
+                if (!existing.connected) {
+                    existing.connected = true;
+                    instance.broadcastDirty = true;
+                }
+                const displayName = String(entry?.displayName || "").trim();
+                if (displayName !== "" && displayName !== existing.displayName) {
+                    existing.displayName = displayName;
+                    instance.broadcastDirty = true;
+                }
+                continue;
+            }
+            // A newcomer. Only admitted while the session can still take entrants -- somebody who
+            // reaches a RACING world through an unexpected route is present but never becomes a
+            // competitor, so they cannot score or appear in results.
+            if (!isJoinableState(instance.state))
+                continue;
+            instance.participants.set(cleanUsername, {
+                username: cleanUsername,
+                displayName: String(entry?.displayName || "").trim() || cleanUsername,
+                kilograms: 0,
+                joinOrder: instance.nextJoinOrder,
+                lastProgressAtMs: nowMs,
+                connected: true,
+            });
+            instance.nextJoinOrder += 1;
+            instance.participantUsernames.add(cleanUsername);
+            instance.lastParticipantChangeMs = nowMs;
+            instance.broadcastDirty = true;
+        }
+        for (const participant of instance.participants.values()) {
+            if (participant.connected && !presentNow.has(participant.username)) {
+                // Left or dropped. Kept in the map with their progress intact: mid-race this is a DNF
+                // that still gets ranked and still persists (so a disconnect never silently erases work),
+                // and pre-race it simply stops counting toward the minimum.
+                participant.connected = false;
+                instance.broadcastDirty = true;
+            }
+        }
+    }
+    function advanceSessionState(instance, nowMs) {
+        const connected = countConnectedParticipants(instance);
+        if (instance.state === "waiting_for_players") {
+            if (connected >= minPlayersToStart) {
+                instance.state = "countdown";
+                instance.countdownEndsAtMs = nowMs + countdownMs;
+                instance.broadcastDirty = true;
+                logger.log("[landfill] countdown started", {
+                    world: instance.worldName,
+                    session_id: instance.sessionId,
+                    players: connected,
+                    countdown_ends_at_ms: instance.countdownEndsAtMs,
+                });
+            }
+            return;
+        }
+        if (instance.state === "countdown") {
+            if (connected < minPlayersToStart) {
+                // Someone left and took us back under the minimum. Abort rather than start a race that
+                // does not meet its own entry condition, and clear the deadline so a resumed countdown
+                // starts from a full 10s rather than resuming a stale one.
+                instance.state = "waiting_for_players";
+                instance.countdownEndsAtMs = 0;
+                instance.broadcastDirty = true;
+                logger.log("[landfill] countdown cancelled, dropped below minimum", {
+                    world: instance.worldName,
+                    session_id: instance.sessionId,
+                    players: connected,
+                    required: minPlayersToStart,
+                });
+                return;
+            }
+            if (nowMs >= instance.countdownEndsAtMs) {
+                instance.state = "racing";
+                instance.raceStartedAtMs = nowMs;
+                instance.raceEndsAtMs = nowMs + raceDurationMs;
+                instance.broadcastDirty = true;
+                logger.log("[landfill] race started", {
+                    world: instance.worldName,
+                    session_id: instance.sessionId,
+                    players: connected,
+                    race_ends_at_ms: instance.raceEndsAtMs,
+                });
+            }
+            return;
+        }
+        if (instance.state === "racing") {
+            if (nowMs >= instance.raceEndsAtMs) {
+                // Freeze progress here, once. Everything downstream reads finalRankings, so a block break
+                // that lands after this instant cannot change a placement that has been ranked.
+                instance.state = "finishing";
+                instance.finishedAtMs = nowMs;
+                instance.finalRankings = buildRankings(instance);
+                instance.broadcastDirty = true;
+                logger.log("[landfill] race finished", {
+                    world: instance.worldName,
+                    session_id: instance.sessionId,
+                    rankings: instance.finalRankings.map((row) => `${row.placement}:${row.username}=${row.kilograms}`),
+                });
+            }
+            // Deliberately no early return: fall through to the FINISHING branch below so the persist
+            // starts on this same tick rather than a tick later. Players should not wait an extra tick
+            // for their results, and the branch is a no-op while the race is still running.
+        }
+        if (instance.state === "finishing") {
+            if (instance.resultsPersisted) {
+                instance.state = "finished";
+                instance.broadcastDirty = true;
+                return;
+            }
+            if (!instance.resultsPersistInFlight) {
+                instance.resultsPersistInFlight = true;
+                // Fire-and-forget: the tick must never block the event loop on the DB. The in-flight latch
+                // above means a slow write cannot be started twice by successive ticks.
+                void persistSessionResults(instance);
+            }
+            return;
+        }
+        if (instance.state === "finished") {
+            if (nowMs - instance.finishedAtMs >= resultsDisplayMs) {
+                instance.state = "cleanup";
+            }
+        }
+    }
+    // Deterministic ordering: most kilograms first; on a tie the player who reached that total
+    // earliest ranks higher; and if even that ties, the order they entered the session. The last key
+    // is unique per session, so the sort is total -- the displayed order can never shuffle between
+    // two broadcasts while nothing changed.
+    function buildRankings(instance) {
+        return Array.from(instance.participants.values())
+            .sort((left, right) => {
+            if (right.kilograms !== left.kilograms)
+                return right.kilograms - left.kilograms;
+            if (left.lastProgressAtMs !== right.lastProgressAtMs)
+                return left.lastProgressAtMs - right.lastProgressAtMs;
+            return left.joinOrder - right.joinOrder;
+        })
+            .map((participant, index) => ({
+            username: participant.username,
+            displayName: participant.displayName,
+            kilograms: participant.kilograms,
+            placement: index + 1,
+            connected: participant.connected,
+        }));
+    }
+    function getPlacementBonus(placement) {
+        const table = Array.isArray(placementBonusKilograms) ? placementBonusKilograms : [];
+        const bonus = Number(table[placement - 1]);
+        return Number.isFinite(bonus) && bonus > 0 ? Math.trunc(bonus) : Math.max(0, Math.trunc(Number(participationBonusKilograms) || 0));
+    }
+    function retireSession(instance) {
+        rememberRetiredWorldName(instance.worldName);
+        deleteInstance(instance.worldName);
+        // Destroy the world itself, not just the session bookkeeping. Without this the finished race's
+        // terrain edits would persist under a name that is never reused, leaking a world row per race.
+        if (typeof resetLandfillWorldState === "function") {
+            Promise.resolve(resetLandfillWorldState(instance.worldName)).catch((error) => {
+                logger.warn("[landfill] failed to destroy finished race world:", getErrorMessage ? getErrorMessage(error) : error);
+            });
+        }
+        logger.log("[landfill] session retired", {
+            world: instance.worldName,
+            session_id: instance.sessionId,
+            persisted: instance.resultsPersisted,
+        });
+    }
+    // -------------------------------------------------------------------------------------------
+    // Live race state broadcast
+    // -------------------------------------------------------------------------------------------
+    function buildSessionStatePayload(instance) {
+        const rankings = instance.finalRankings || buildRankings(instance);
+        return {
+            type: "landfill_race_state",
+            session_id: instance.sessionId,
+            world: instance.worldName,
+            state: instance.state,
+            // Absolute server deadlines, not remaining durations. The client renders its countdown and
+            // race clock by differencing these against its own clock, so every client shows the same
+            // number and a dropped or delayed packet does not desynchronise anyone -- as opposed to each
+            // client independently counting down from whenever a "start" packet happened to land.
+            server_time_ms: Date.now(),
+            countdown_ends_at_ms: instance.countdownEndsAtMs,
+            race_started_at_ms: instance.raceStartedAtMs,
+            race_ends_at_ms: instance.raceEndsAtMs,
+            min_players_to_start: minPlayersToStart,
+            max_players: maxPlayersPerInstance,
+            connected_players: countConnectedParticipants(instance),
+            competitors: rankings.map((row) => ({
+                username: row.username,
+                display_name: row.displayName,
+                kilograms: row.kilograms,
+                placement: row.placement,
+                connected: row.connected,
+            })),
+        };
+    }
+    // Coalesced push. Progress marks the session dirty; this flushes at most once per
+    // broadcastMinIntervalMs, so a player breaking blocks as fast as the break-pace limiter allows
+    // produces a bounded, steady stream instead of a fan-out per break. Mirrors the dirty-flag +
+    // single-timer discipline queueWorldUpdateBroadcast uses in server.ts.
+    function maybeBroadcastSessionState(instance, nowMs) {
+        if (!instance.broadcastDirty)
+            return;
+        if (nowMs - instance.lastBroadcastAtMs < broadcastMinIntervalMs)
+            return;
+        if (typeof broadcastToWorld !== "function")
+            return;
+        instance.broadcastDirty = false;
+        instance.lastBroadcastAtMs = nowMs;
+        try {
+            broadcastToWorld(instance.worldName, buildSessionStatePayload(instance));
+        }
+        catch (error) {
+            logger.warn("[landfill] race state broadcast failed:", getErrorMessage ? getErrorMessage(error) : error);
+        }
+    }
+    // -------------------------------------------------------------------------------------------
+    // Result persistence -- exactly once per (session, player)
+    // -------------------------------------------------------------------------------------------
+    async function persistSessionResults(instance) {
+        const rankings = instance.finalRankings || buildRankings(instance);
+        try {
+            for (const row of rankings) {
+                const awarded = row.kilograms + getPlacementBonus(row.placement);
+                if (typeof postgresStore?.recordLandfillRaceResult !== "function") {
+                    logger.warn("[landfill] recordLandfillRaceResult unavailable; race results not persisted", {
+                        session_id: instance.sessionId,
+                    });
+                    break;
+                }
+                // One transaction per player: the result row and the lifetime KG increment commit
+                // together or not at all, so a crash mid-way can never leave a player credited without a
+                // result row (which would let a retry credit them twice) or vice versa. The DB's
+                // UNIQUE(session_id, player_id) makes the insert the idempotency key -- a duplicate call
+                // inserts nothing and, critically, skips the increment.
+                const result = await postgresStore.recordLandfillRaceResult({
+                    sessionId: instance.sessionId,
+                    username: row.username,
+                    seasonKey: instance.seasonKey,
+                    worldName: instance.worldName,
+                    kilograms: row.kilograms,
+                    placement: row.placement,
+                    awardedKilograms: awarded,
+                    finished: row.connected,
+                });
+                if (result && result.ok === false) {
+                    logger.warn("[landfill] failed to persist a race result", {
+                        session_id: instance.sessionId,
+                        username: row.username,
+                        reason: result.reason,
+                    });
+                }
+            }
+            instance.resultsPersisted = true;
+            logger.log("[landfill] race results persisted", {
+                session_id: instance.sessionId,
+                world: instance.worldName,
+                players: rankings.length,
+            });
+            if (typeof broadcastToWorld === "function") {
+                broadcastToWorld(instance.worldName, {
+                    type: "landfill_race_results",
+                    session_id: instance.sessionId,
+                    world: instance.worldName,
+                    season_key: instance.seasonKey,
+                    results: rankings.map((row) => ({
+                        username: row.username,
+                        display_name: row.displayName,
+                        kilograms: row.kilograms,
+                        placement: row.placement,
+                        awarded_kilograms: row.kilograms + getPlacementBonus(row.placement),
+                        finished: row.connected,
+                    })),
+                });
+            }
+        }
+        catch (error) {
+            logger.warn("[landfill] persisting race results failed:", getErrorMessage ? getErrorMessage(error) : error);
+            // Deliberately mark persisted so the session can retire instead of wedging in FINISHING
+            // forever and holding its world open. The transactional, idempotent write means a partial
+            // run left no half-credited player behind.
+            instance.resultsPersisted = true;
+        }
+        finally {
+            instance.resultsPersistInFlight = false;
+        }
+    }
+    // Point lookup for a single world's live race state, so a freshly-arrived client can render the
+    // HUD immediately instead of waiting for the next coalesced broadcast.
+    function getLandfillRaceStateForWorld(worldName) {
+        if (!isLandfillWorldName(worldName))
+            return null;
+        const instance = getInstance(worldName);
+        if (!instance)
+            return null;
+        return buildSessionStatePayload(instance);
+    }
+    // Single source of truth for the tunables, so the client and the check script read the same
+    // numbers this module actually runs on rather than duplicating literals.
+    function getSessionConfig() {
+        return {
+            min_players_to_start: minPlayersToStart,
+            max_players_per_instance: maxPlayersPerInstance,
+            countdown_ms: countdownMs,
+            race_duration_ms: raceDurationMs,
+            results_display_ms: resultsDisplayMs,
+            placement_bonus_kilograms: Array.isArray(placementBonusKilograms) ? placementBonusKilograms.slice() : [],
+            participation_bonus_kilograms: participationBonusKilograms,
+        };
     }
     function startInstancePolling() {
         if (pollTimer)
@@ -338,7 +864,11 @@ function createLandfillEventSystem(deps) {
             catch (error) {
                 logger.warn("[landfill] instance poll failed:", getErrorMessage ? getErrorMessage(error) : error);
             }
-        }, Math.max(1000, Number(instancePollIntervalMs) || 5000));
+            // The tick now drives race phase transitions, not just occupancy sweeping, so it runs at
+            // sessionTickIntervalMs (default 250ms) rather than the original 5s. A 5s tick could
+            // overshoot a 10s countdown by half its length. instancePollIntervalMs is retained as an
+            // upper bound only so an operator who deliberately set a slower poll still gets it honored.
+        }, Math.max(50, Math.min(Number(sessionTickIntervalMs) || 250, Number(instancePollIntervalMs) || 5000)));
         if (typeof pollTimer.unref === "function")
             pollTimer.unref();
     }
@@ -354,6 +884,12 @@ function createLandfillEventSystem(deps) {
     // Additive hook for the world_block_update break path: if `worldName` is a Landfill instance
     // and `blockType` is a registered trash block, credits the season score. No-ops (awards
     // nothing) for any other world or unregistered block type -- safe to call unconditionally.
+    // Called from the validated block-break path (server_phase8_world_action_routes.ts). Progress is
+    // credited to the in-memory session ONLY -- this used to open a Postgres transaction on every
+    // single break, which put the database on the hot path of the most frequent action in the game.
+    // The lifetime total is now written once per player at race completion (persistSessionResults).
+    //
+    // Still async, and still awaited nowhere, so the call site's `void` is unchanged.
     async function awardKilogramsForBlockBreak(worldName, username, blockType) {
         if (!isLandfillWorldName(worldName))
             return;
@@ -363,12 +899,21 @@ function createLandfillEventSystem(deps) {
         const cleanUsername = cleanAccountName(username || "");
         if (cleanUsername === "")
             return;
-        try {
-            await postgresStore.incrementLandfillKilograms(cleanUsername, getCurrentSeasonKey(), weight);
-        }
-        catch (error) {
-            logger.warn("[landfill] failed to award kilograms:", getErrorMessage ? getErrorMessage(error) : error);
-        }
+        const instance = getInstance(worldName);
+        if (!instance)
+            return;
+        // THE authoritative progress gate. Breaks before GO (entry pen / countdown) and after the
+        // finish score nothing, so a player cannot bank work during the countdown or sneak a break in
+        // after the clock expires. Progress is never taken from the client -- it is derived here, from
+        // an action the server already validated for permission, reach, cooldown and block identity.
+        if (!isScoringState(instance.state))
+            return;
+        const participant = instance.participants.get(cleanUsername);
+        if (!participant)
+            return;
+        participant.kilograms += weight;
+        participant.lastProgressAtMs = Date.now();
+        instance.broadcastDirty = true;
     }
     async function handleLandfillStatusRequest(socket, player, data) {
         const eventActive = typeof isEventWindowOpen === "function" ? isEventWindowOpen() : false;
@@ -382,7 +927,9 @@ function createLandfillEventSystem(deps) {
         });
     }
     async function handleLandfillJoinRequest(socket, player, data) {
-        const result = await requestJoinLandfillRace();
+        // Pass the requester so requestJoinLandfillRace can enforce one-live-session-per-player and
+        // return an existing session rather than enrolling the same account twice.
+        const result = await requestJoinLandfillRace(player?.account_username || player?.name || "");
         sendJson(socket, {
             type: "landfill_join_result",
             request_id: data?.request_id || "",
@@ -489,6 +1036,11 @@ function createLandfillEventSystem(deps) {
         // waiting on the ~5s interval timer. Nothing in the server calls this directly -- production
         // reaches it only through startInstancePolling.
         pollInstancesOnce,
+        // Race-session surface. getLandfillRaceStateForWorld lets server.ts answer a client's
+        // "what's the current state?" request (e.g. right after world entry, before the next
+        // broadcast tick) without waiting up to broadcastMinIntervalMs for the next push.
+        getLandfillRaceStateForWorld,
+        getSessionConfig,
         resetInstancesForNewWindow,
         awardKilogramsForBlockBreak,
         handleLandfillStatusRequest,

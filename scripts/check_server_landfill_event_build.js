@@ -138,7 +138,11 @@ async function main() {
   // that regression.
   const first = await system.requestJoinLandfillRace();
   assert.equal(first.ok, true);
-  assert.equal(first.world_name, "LANDFILL_1");
+  const FIRST_WORLD = String(first.world_name);
+  // Names are minted randomly per session now (see mintSessionWorldName): terrain is a pure
+  // function of the world name, so a reused name means a reused map. Assert the SHAPE and the
+  // round-trip property rather than a fixed literal.
+  assert.match(FIRST_WORLD, /^LANDFILL_\d+$/, "instance names must be canonical LANDFILL_<n>");
 
   // --- Round-trip regression guard (the actual production failure) ---------------------------
   // The Join Race button's whole contract is: requestJoinLandfillRace hands a world name to the
@@ -153,7 +157,7 @@ async function main() {
   // server_identity_helpers.ts.
   const simulateCleanWorld = (/** @type {string} */ value) =>
     String(value || "START").trim().toUpperCase().replace(/\s+/g, "_").replace(/[^A-Z0-9_-]/g, "").slice(0, 32) || "START";
-  const roundTripped = simulateCleanWorld(String(first.world_name));
+  const roundTripped = simulateCleanWorld(FIRST_WORLD);
   assert.equal(
     system.canPlayerJoinLandfillInstance(roundTripped, "round_tripper").ok,
     true,
@@ -162,72 +166,99 @@ async function main() {
 
   // The registry must be case-insensitive at the boundary, so no future caller can reintroduce
   // the mismatch by normalizing differently on its way in.
-  for (const variant of ["landfill_1", "Landfill_1", "  LANDFILL_1  "]) {
+  for (const variant of [FIRST_WORLD.toLowerCase(), ` ${FIRST_WORLD} `]) {
     assert.equal(
       system.canPlayerJoinLandfillInstance(variant, "case_prober").ok,
       true,
-      `instance lookup must be canonical, but "${variant}" did not resolve to LANDFILL_1`,
+      `instance lookup must be canonical, but "${variant}" did not resolve`,
     );
   }
 
   // While that instance still has room, more joiners go to the same instance.
-  populationByWorld["LANDFILL_1"] = 3;
+  populationByWorld[FIRST_WORLD] = 3;
   const second = await system.requestJoinLandfillRace();
-  assert.equal(second.world_name, "LANDFILL_1");
+  assert.equal(second.world_name, FIRST_WORLD);
 
-  // Once an instance is full (>= maxPlayersPerInstance), new joiners are routed elsewhere.
-  populationByWorld["LANDFILL_1"] = 5;
+  // Once an instance is full (>= maxPlayersPerInstance), new joiners are routed elsewhere -- and
+  // critically to a DIFFERENT world name, because terrain is a pure function of the name.
+  populationByWorld[FIRST_WORLD] = 5;
   const third = await system.requestJoinLandfillRace();
-  assert.equal(third.world_name, "LANDFILL_2", "a full instance should overflow joiners to a new instance");
+  const SECOND_WORLD = String(third.world_name);
+  assert.notEqual(SECOND_WORLD, FIRST_WORLD, "a full instance should overflow joiners to a NEW world");
+  assert.match(SECOND_WORLD, /^LANDFILL_\d+$/);
 
-  // Kilograms are only awarded inside a Landfill world for a registered trash block.
-  await system.awardKilogramsForBlockBreak("LANDFILL_1", "alice", "banana_peel");
-  await system.awardKilogramsForBlockBreak("LANDFILL_1", "alice", "not_a_trash_block");
-  await system.awardKilogramsForBlockBreak("START", "alice", "banana_peel");
+  // --- Progress is session-scoped and only counts while RACING ---------------------------------
+  // Progress no longer touches the database at all (it used to open a transaction per block
+  // break). It accrues in memory on the session and is persisted once at completion.
   const seasonKey = system.getCurrentSeasonKey();
-  assert.equal(postgresStore.scores.get(`alice:${seasonKey}`), 3, "only the Landfill-world, registered-trash-block break should have scored");
+  const firstSession = system.listInstances().find((/** @type {any} */ i) => i.worldName === FIRST_WORLD);
+  assert.ok(firstSession, "the first session should be discoverable via listInstances()");
 
-  // --- Phase 2: join_world-layer eligibility guard (canPlayerJoinLandfillInstance /
-  // recordLandfillInstanceJoin), exercised against LANDFILL_2 (created above by the overflow
-  // test, still empty/"entry" at this point), and called with the SAME post-cleanWorld uppercase
-  // form handleJoinWorld actually passes in -- this is the exact call shape the case-mismatch
-  // bug broke. ---
+  // Before GO nothing scores, even for a real participant breaking a real trash block.
+  firstSession.participants.set("alice", {
+    username: "alice", displayName: "alice", kilograms: 0, joinOrder: 1,
+    lastProgressAtMs: Date.now(), connected: true,
+  });
+  assert.equal(firstSession.state, "waiting_for_players");
+  await system.awardKilogramsForBlockBreak(FIRST_WORLD, "alice", "banana_peel");
+  assert.equal(firstSession.participants.get("alice").kilograms, 0, "progress must not count before the race starts");
+
+  // Once racing, only registered trash in a Landfill world scores.
+  firstSession.state = "racing";
+  await system.awardKilogramsForBlockBreak(FIRST_WORLD, "alice", "banana_peel");
+  await system.awardKilogramsForBlockBreak(FIRST_WORLD, "alice", "not_a_trash_block");
+  await system.awardKilogramsForBlockBreak("START", "alice", "banana_peel");
+  assert.equal(firstSession.participants.get("alice").kilograms, 3, "only the Landfill-world, registered-trash-block break should have scored");
+
+  // And nothing reached the database on the hot path.
+  assert.equal(postgresStore.scores.get(`alice:${seasonKey}`), undefined, "live progress must never write to Postgres");
+
+  // After the finish, a late break must not alter a ranked result.
+  firstSession.state = "finishing";
+  await system.awardKilogramsForBlockBreak(FIRST_WORLD, "alice", "banana_peel");
+  assert.equal(firstSession.participants.get("alice").kilograms, 3, "progress must not count after the race ends");
+  firstSession.state = "racing";
+
+  // --- join_world-layer eligibility guard -----------------------------------------------------
 
   // A no-op for any world that isn't a Landfill instance -- must never block a normal join.
   assert.equal(system.canPlayerJoinLandfillInstance("START", "bob").ok, true);
 
-  // A world name nobody ever routed a player to (never created via requestJoinLandfillRace, and
-  // not garbage-collected either -- just never existed) fails closed rather than silently
-  // admitting into an untracked instance.
-  const unknown = system.canPlayerJoinLandfillInstance("LANDFILL_99", "bob");
+  // A world name nobody ever routed a player to fails closed.
+  const unknown = system.canPlayerJoinLandfillInstance("LANDFILL_999999", "bob");
   assert.equal(unknown.ok, false);
   assert.equal(unknown.reason, "instance_not_found");
 
-  // Fill LANDFILL_2 to maxPlayersPerInstance (5) via the same eligibility-check-then-record
-  // sequence handleJoinWorld performs; the 6th distinct player must be refused *before* the
-  // ~5s population poll would ever see the instance as full.
+  // Fill the second instance to maxPlayersPerInstance via the same check-then-record sequence
+  // handleJoinWorld performs; the 6th distinct player must be refused.
   for (let i = 1; i <= 5; i += 1) {
     const username = `p${i}`;
-    const check = system.canPlayerJoinLandfillInstance("LANDFILL_2", username);
+    const check = system.canPlayerJoinLandfillInstance(SECOND_WORLD, username);
     assert.equal(check.ok, true, `p${i} should be admitted (slot ${i} of 5)`);
-    system.recordLandfillInstanceJoin("LANDFILL_2", username);
+    system.recordLandfillInstanceJoin(SECOND_WORLD, username);
   }
-  const overflowJoiner = system.canPlayerJoinLandfillInstance("LANDFILL_2", "p6");
+  const overflowJoiner = system.canPlayerJoinLandfillInstance(SECOND_WORLD, "p6");
   assert.equal(overflowJoiner.ok, false);
   assert.equal(overflowJoiner.reason, "instance_full");
 
-  // Once the instance locks (state flips "entry" -> "active", normally done by the population
-  // poll once minPlayersToStart is reached), a brand-new player must be rejected, but any
-  // already-recorded participant must still be able to rejoin their own instance (e.g. after a
-  // disconnect) even though it is locked and nominally full.
-  const landfill2 = system.listInstances().find((instance) => instance.worldName === "LANDFILL_2");
-  assert.ok(landfill2, "LANDFILL_2 should be discoverable via listInstances()");
-  landfill2.state = "active";
-  const lateStranger = system.canPlayerJoinLandfillInstance("LANDFILL_2", "p7");
+  // Late-entry lock: once RACING, a brand-new player is refused, but an already-recorded
+  // participant may still rejoin their own session (reconnect).
+  const secondSession = system.listInstances().find((/** @type {any} */ i) => i.worldName === SECOND_WORLD);
+  assert.ok(secondSession, "the second session should be discoverable via listInstances()");
+  secondSession.state = "racing";
+  const lateStranger = system.canPlayerJoinLandfillInstance(SECOND_WORLD, "p7");
   assert.equal(lateStranger.ok, false);
   assert.equal(lateStranger.reason, "instance_locked");
-  const reconnectingParticipant = system.canPlayerJoinLandfillInstance("LANDFILL_2", "p1");
+  const reconnectingParticipant = system.canPlayerJoinLandfillInstance(SECOND_WORLD, "p1");
   assert.equal(reconnectingParticipant.ok, true, "an already-recorded participant must be able to rejoin their own locked instance");
+
+  // The entry pen is released exactly at GO and never re-arms.
+  assert.equal(system.getLandfillEntryPenBounds(SECOND_WORLD), null, "the entry pen must be off once RACING");
+
+  // One live session per player: pressing Join Race again must return the session they are
+  // already in, never enrol them in a second one (which would persist two results for one race).
+  const duplicateJoin = await system.requestJoinLandfillRace("p1");
+  assert.equal(duplicateJoin.world_name, SECOND_WORLD, "a player already in a session must be returned to it");
 
   // --- Abandoned-entry slot reconciliation ----------------------------------------------------
   // recordLandfillInstanceJoin runs in handleJoinWorld BEFORE the world-route check that can still
@@ -296,6 +327,133 @@ async function main() {
     true,
     "a participant must never be released while the world still reports population",
   );
+
+
+  // --- Full session lifecycle: countdown -> cancel -> restart -> race -> results ---------------
+  // Drives the real state machine through pollInstancesOnce with an injected roster, which is the
+  // same path production runs on a 250ms timer. Nothing here pokes state directly.
+  /** @type {Array<{username: string, displayName: string}>} */
+  let roster = [];
+  /** @type {Array<Record<string, any>>} */
+  const broadcasts = [];
+  /** @type {Array<Record<string, any>>} */
+  const persisted = [];
+  const lifecycleSystem = LandfillEventModule.createLandfillEventSystem({
+    /** @param {any} value */
+    cleanAccountName: (value) => String(value || "").trim().toLowerCase(),
+    ensureWritablePlayerState: () => null,
+    canAddItemToState: () => true,
+    addItemToState: () => true,
+    /** @param {any} value */
+    cloneJson: (value) => JSON.parse(JSON.stringify(value)),
+    commitPlayerInventoryState: async () => ({ ok: true }),
+    postgresStore: {
+      /** @param {Record<string, any>} entry */
+      async recordLandfillRaceResult(entry) {
+        // Mirrors the real UNIQUE(session_id, player_id) guarantee: a repeat is a no-op.
+        const key = `${entry.sessionId}:${entry.username}`;
+        if (persisted.some((row) => `${row.sessionId}:${row.username}` === key)) {
+          return { ok: true, recorded: false, duplicate: true, awarded_kilograms: 0 };
+        }
+        persisted.push(entry);
+        return { ok: true, recorded: true, duplicate: false, awarded_kilograms: entry.awardedKilograms };
+      },
+    },
+    getWorldPopulationCount: () => roster.length,
+    /** @param {string} _worldName */
+    getWorldPlayerIdentities: (_worldName) => roster,
+    /** @param {string} _worldName @param {Record<string, any>} payload */
+    broadcastToWorld: (_worldName, payload) => { broadcasts.push(payload); },
+    sendJson: () => {},
+    makeRequestId: () => "req_test",
+    /** @param {any} error */
+    getErrorMessage: (error) => String(error && error.message ? error.message : error),
+    minPlayersToStart: 2,
+    maxPlayersPerInstance: 5,
+    isEventWindowOpen: () => true,
+    countdownMs: 0,
+    raceDurationMs: 0,
+    resultsDisplayMs: 0,
+    broadcastMinIntervalMs: -1,
+    placementBonusKilograms: [100, 75, 50],
+    participationBonusKilograms: 20,
+    resetLandfillWorldState: async () => {},
+  });
+
+  const lifecycleJoin = await lifecycleSystem.requestJoinLandfillRace("haris");
+  const LIFECYCLE_WORLD = String(lifecycleJoin.world_name);
+  const lifecycleSession = lifecycleSystem.listInstances()[0];
+
+  // One player: stays waiting, no countdown.
+  roster = [{ username: "haris", displayName: "Haris" }];
+  lifecycleSystem.pollInstancesOnce();
+  assert.equal(lifecycleSession.state, "waiting_for_players", "one player must not start a countdown");
+
+  // Second player arrives -> countdown.
+  roster = [{ username: "haris", displayName: "Haris" }, { username: "playertwo", displayName: "PlayerTwo" }];
+  lifecycleSystem.pollInstancesOnce();
+  assert.equal(lifecycleSession.state, "countdown", "reaching the minimum must start the countdown");
+
+  // One leaves mid-countdown -> cancel back to waiting (must NOT start a one-player race).
+  roster = [{ username: "haris", displayName: "Haris" }];
+  lifecycleSystem.pollInstancesOnce();
+  assert.equal(lifecycleSession.state, "waiting_for_players", "dropping below the minimum must cancel the countdown");
+  assert.equal(lifecycleSession.countdownEndsAtMs, 0, "a cancelled countdown must clear its deadline, not resume a stale one");
+
+  // They come back -> countdown restarts, then (countdownMs=0) the race begins.
+  roster = [{ username: "haris", displayName: "Haris" }, { username: "playertwo", displayName: "PlayerTwo" }];
+  lifecycleSystem.pollInstancesOnce();
+  assert.equal(lifecycleSession.state, "countdown");
+  lifecycleSystem.pollInstancesOnce();
+  assert.equal(lifecycleSession.state, "racing", "the countdown must hand off to the race");
+
+  // Score during the race, then let the clock expire (raceDurationMs=0).
+  lifecycleSystem.registerTrashBlockWeight("banana_peel", 3);
+  await lifecycleSystem.awardKilogramsForBlockBreak(LIFECYCLE_WORLD, "haris", "banana_peel");
+  await lifecycleSystem.awardKilogramsForBlockBreak(LIFECYCLE_WORLD, "haris", "banana_peel");
+  await lifecycleSystem.awardKilogramsForBlockBreak(LIFECYCLE_WORLD, "playertwo", "banana_peel");
+  lifecycleSystem.pollInstancesOnce();
+  assert.equal(lifecycleSession.state, "finishing", "an expired race clock must end the race");
+  assert.equal(lifecycleSession.finalRankings[0].username, "haris", "the higher score must rank first");
+  assert.equal(lifecycleSession.finalRankings[0].kilograms, 6);
+  assert.equal(lifecycleSession.finalRankings[1].username, "playertwo");
+
+  // Let the async persist settle, then confirm exactly-once crediting.
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(persisted.length, 2, "every participant must get exactly one result row");
+  // Throwing rather than assert.ok() so the lookup narrows for `// @ts-check` without depending on
+  // assert's `asserts` overload being visible.
+  const awardedFor = (/** @type {string} */ name) => {
+    const row = persisted.find((entry) => entry.username === name);
+    if (!row) throw new Error(`expected exactly one persisted result row for ${name}`);
+    return Number(row.awardedKilograms);
+  };
+  assert.equal(awardedFor("haris"), 6 + 100, "awarded KG = collected + placement bonus");
+  assert.equal(awardedFor("playertwo"), 3 + 75);
+
+  // Re-running the completion handler must NOT double-award.
+  lifecycleSession.resultsPersisted = false;
+  lifecycleSession.resultsPersistInFlight = false;
+  lifecycleSession.state = "finishing";
+  lifecycleSystem.pollInstancesOnce();
+  await new Promise((resolve) => setTimeout(resolve, 10));
+  assert.equal(persisted.length, 2, "a repeated completion must not create a second result row");
+
+  // Finished -> cleanup -> the session and its world are retired.
+  lifecycleSystem.pollInstancesOnce();
+  lifecycleSystem.pollInstancesOnce();
+  assert.equal(
+    lifecycleSystem.listInstances().some((/** @type {any} */ i) => i.worldName === LIFECYCLE_WORLD),
+    false,
+    "a completed session must be destroyed, never reused as the next race's world",
+  );
+
+  // A brand-new race must get a brand-new world name (terrain is a pure function of the name).
+  const nextJoin = await lifecycleSystem.requestJoinLandfillRace("haris");
+  assert.notEqual(String(nextJoin.world_name), LIFECYCLE_WORLD, "the next race must not reuse the finished world");
+
+  assert.ok(broadcasts.some((p) => p.type === "landfill_race_state"), "race state must be broadcast");
+  assert.ok(broadcasts.some((p) => p.type === "landfill_race_results"), "results must be broadcast");
 
   console.log("[check_server_landfill_event_build] all assertions passed.");
 }

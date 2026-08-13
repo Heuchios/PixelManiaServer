@@ -154,6 +154,21 @@ const productionEnv = {
   // instance is still in its "entry" state (see server_phase11d_standard_movement.ts's
   // acceptPlayerMovement and getLandfillEntryPenBounds in server_landfill_event.ts).
   LANDFILL_ENTRY_PEN_RADIUS_TILES: env("LANDFILL_ENTRY_PEN_RADIUS_TILES", "4"),
+  // Race session timing. Passed through explicitly for the same reason as everything above: a
+  // value that exists in code but is missing here is a value PM2 never sets, which is exactly how
+  // the Snow Storm event silently never fired in any deployed environment.
+  LANDFILL_COUNTDOWN_SECONDS: env("LANDFILL_COUNTDOWN_SECONDS", "10"),
+  LANDFILL_RACE_SECONDS: env("LANDFILL_RACE_SECONDS", "120"),
+  LANDFILL_RESULTS_DISPLAY_SECONDS: env("LANDFILL_RESULTS_DISPLAY_SECONDS", "12"),
+  // Session state machine tick. Must stay well under LANDFILL_COUNTDOWN_SECONDS or the countdown
+  // will visibly overshoot.
+  LANDFILL_SESSION_TICK_MS: env("LANDFILL_SESSION_TICK_MS", "250"),
+  // Floor between two live race-state pushes for one session; progress is coalesced between them.
+  LANDFILL_RACE_BROADCAST_MIN_INTERVAL_MS: env("LANDFILL_RACE_BROADCAST_MIN_INTERVAL_MS", "250"),
+  // Bonus Kilograms by placement, comma separated, 1st first. In this event "points" ARE
+  // Kilograms, so these are added to what the player collected and credited to their season total.
+  LANDFILL_PLACEMENT_BONUS_KILOGRAMS: env("LANDFILL_PLACEMENT_BONUS_KILOGRAMS", "100,75,50"),
+  LANDFILL_PARTICIPATION_BONUS_KILOGRAMS: env("LANDFILL_PARTICIPATION_BONUS_KILOGRAMS", "20"),
 };
 
 module.exports = {

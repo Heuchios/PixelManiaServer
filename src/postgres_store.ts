@@ -1511,8 +1511,88 @@ class PostgresStore {
         claimed_at timestamptz NOT NULL DEFAULT now(),
         PRIMARY KEY (player_id, season_key)
       );
+
+      -- One row per player per race. The composite PRIMARY KEY is the anti-duplication mechanism
+      -- for race rewards: recordLandfillRaceResult inserts here and increments the player's
+      -- lifetime KG in the SAME transaction, so a completion handler that fires twice hits the
+      -- key, inserts nothing, and skips the increment. Modelled on world_honor_visits, which uses
+      -- the same "PRIMARY KEY (entity, player, period) + INSERT ... ON CONFLICT DO NOTHING
+      -- RETURNING" shape for exactly this reason.
+      CREATE TABLE IF NOT EXISTS ${this.table("landfill_race_results")} (
+        session_id text NOT NULL,
+        player_id uuid NOT NULL REFERENCES ${this.table("players")}(player_id) ON DELETE CASCADE,
+        season_key text NOT NULL,
+        world_name text NOT NULL DEFAULT '',
+        kilograms bigint NOT NULL DEFAULT 0 CHECK (kilograms >= 0),
+        placement integer NOT NULL CHECK (placement >= 1),
+        awarded_kilograms bigint NOT NULL DEFAULT 0 CHECK (awarded_kilograms >= 0),
+        finished boolean NOT NULL DEFAULT true,
+        completed_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (session_id, player_id)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_landfill_race_results_player_time
+      ON ${this.table("landfill_race_results")}(player_id, completed_at DESC);
     `);
     this.landfillReady = true;
+  }
+
+  /**
+   * Persist one player's race result AND credit their lifetime season KG, atomically and exactly
+   * once. Both statements share a transaction: either the player has a result row and the matching
+   * credit, or neither exists. Idempotency is enforced by the table's PRIMARY KEY rather than by a
+   * pre-check, so two concurrent callers cannot both pass a check and both award -- the second
+   * INSERT simply returns no row, and the increment is skipped with it.
+   */
+  async recordLandfillRaceResult(entry: unknown) {
+    if (!this.isReady()) return { ok: false, reason: "postgres_unavailable" };
+    const record = (entry || {}) as Record<string, unknown>;
+    const sessionId = cleanName(record.sessionId);
+    const cleanUsername = cleanName(record.username);
+    const cleanSeasonKey = cleanName(record.seasonKey);
+    const worldName = cleanName(record.worldName);
+    const kilograms = Math.max(0, toInt(record.kilograms, 0));
+    const placement = Math.max(1, toInt(record.placement, 1));
+    const awardedKilograms = Math.max(0, toInt(record.awardedKilograms, 0));
+    const finished = record.finished !== false;
+    if (sessionId === "" || cleanUsername === "" || cleanSeasonKey === "") {
+      return { ok: false, reason: "invalid_input" };
+    }
+
+    const result = await this.withTransaction(async (client: any) => {
+      const playerId = await this.ensurePlayerIdentityForExistingAccount(client, cleanUsername);
+      if (!playerId) return { ok: false, reason: "identity_missing" };
+
+      const inserted = await client.query(
+        `INSERT INTO ${this.table("landfill_race_results")}
+           (session_id, player_id, season_key, world_name, kilograms, placement, awarded_kilograms, finished, completed_at)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
+         ON CONFLICT (session_id, player_id) DO NOTHING
+         RETURNING player_id`,
+        [sessionId, playerId, cleanSeasonKey, worldName, kilograms, placement, awardedKilograms, finished],
+      );
+
+      // No row means this (session, player) was already recorded. Returning early here is the
+      // whole anti-duplication guarantee -- the increment below must never run twice.
+      if (inserted.rowCount === 0) {
+        return { ok: true, recorded: false, duplicate: true, awarded_kilograms: 0 };
+      }
+
+      if (awardedKilograms > 0) {
+        await client.query(
+          `INSERT INTO ${this.table("landfill_season_scores")} (player_id, season_key, kilograms, updated_at)
+           VALUES ($1, $2, $3, now())
+           ON CONFLICT (player_id, season_key) DO UPDATE
+             SET kilograms = ${this.table("landfill_season_scores")}.kilograms + EXCLUDED.kilograms,
+                 updated_at = now()`,
+          [playerId, cleanSeasonKey, awardedKilograms],
+        );
+      }
+
+      return { ok: true, recorded: true, duplicate: false, awarded_kilograms: awardedKilograms };
+    }, "landfill race result");
+
+    return result || { ok: false, reason: "postgres_unavailable" };
   }
 
   async incrementLandfillKilograms(username: unknown, seasonKey: unknown, amount: unknown) {

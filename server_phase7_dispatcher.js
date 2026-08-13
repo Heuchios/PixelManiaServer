@@ -44,6 +44,7 @@ const POST_ACTION_HANDLER_ROUTE_TYPES = Object.freeze([
     "iap_create_stripe_checkout_request",
     "iap_submit_google_play_purchase_request",
     "landfill_status_request",
+    "landfill_race_state_request",
     "landfill_join_request",
     "landfill_leaderboard_request",
     "landfill_claim_prize_request",
