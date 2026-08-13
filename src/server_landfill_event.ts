@@ -349,6 +349,10 @@ function createLandfillEventSystem(deps: LandfillDeps) {
     getWorldPlayerIdentities,
     // (worldName, payload) => void. Pushes a message to exactly the players in one world.
     broadcastToWorld,
+    // (worldName, bounds, place) => void|Promise. Builds the visible shifty-block starting pen
+    // when `place` is true and tears it down when false, mutating world state and broadcasting the
+    // tile changes. Implemented in server.ts because only it owns world-state mutation.
+    setLandfillEntryPenBlocks,
   } = deps;
 
   // Keyed by canonicalInstanceKey(worldName), never by a raw caller-supplied string. Every read
@@ -380,6 +384,21 @@ function createLandfillEventSystem(deps: LandfillDeps) {
   function isScoringState(state: LandfillSessionState): boolean {
     // The single gate that stops progress counting before GO and after the finish.
     return state === "racing";
+  }
+
+  // Are block edits frozen in this world right now?
+  //
+  // Called from the validated block-update path (server_phase8_world_action_routes.ts). During
+  // WAITING_FOR_PLAYERS and COUNTDOWN nobody may place or break anything: the race has not begun,
+  // so digging early would both bank a head start on terrain and let a player tunnel out of the
+  // shifty-block starting pen before it opens. Returns false -- never locked -- for every
+  // non-Landfill world and for any world this module does not track, so it is safe to call on
+  // every single block update in the game.
+  function isLandfillBuildLocked(worldName: unknown): boolean {
+    if (!isLandfillWorldName(worldName)) return false;
+    const instance = getInstance(worldName);
+    if (!instance) return false;
+    return isPreRaceState(instance.state);
   }
 
   function getInstance(worldName: unknown): LandfillInstance | undefined {
@@ -521,6 +540,20 @@ function createLandfillEventSystem(deps: LandfillDeps) {
       await resetLandfillWorldState(worldName);
     }
     instance.entryPenBounds = computeEntryPenBounds(worldName);
+    // Build the VISIBLE starting pen out of shifty blocks. The invisible movement clamp
+    // (getLandfillEntryPenBounds) still backs it up, but players should be able to SEE why they
+    // cannot walk off yet rather than bumping an invisible wall. Placed at creation, before
+    // anyone joins, so the first player's world snapshot already contains it -- no catch-up
+    // broadcast needed for arrivals.
+    if (typeof setLandfillEntryPenBlocks === "function" && instance.entryPenBounds) {
+      try {
+        await setLandfillEntryPenBlocks(worldName, instance.entryPenBounds, true);
+      } catch (error) {
+        // A pen that failed to build must not stop the race from happening -- the invisible clamp
+        // still confines players, so this degrades to the old behavior rather than failing.
+        logger.warn("[landfill] failed to build the entry pen:", getErrorMessage ? getErrorMessage(error) : error);
+      }
+    }
     return instance;
   }
 
@@ -901,6 +934,17 @@ function createLandfillEventSystem(deps: LandfillDeps) {
         instance.raceStartedAtMs = nowMs;
         instance.raceEndsAtMs = nowMs + raceDurationMs;
         instance.broadcastDirty = true;
+        // GO. Tear the shifty-block pen down so the world visibly opens up at the exact moment
+        // the clock starts. The invisible movement clamp releases on this same state change
+        // (getLandfillEntryPenBounds returns null once the state is no longer pre-race), so the
+        // wall the player sees and the wall they can feel disappear together -- one transition,
+        // not two mechanisms that could drift apart.
+        if (typeof setLandfillEntryPenBlocks === "function" && instance.entryPenBounds) {
+          void Promise.resolve(setLandfillEntryPenBlocks(instance.worldName, instance.entryPenBounds, false))
+            .catch((error: unknown) => {
+              logger.warn("[landfill] failed to clear the entry pen:", getErrorMessage ? getErrorMessage(error) : error);
+            });
+        }
         logger.log("[landfill] race started", {
           world: instance.worldName,
           session_id: instance.sessionId,
@@ -1334,6 +1378,8 @@ function createLandfillEventSystem(deps: LandfillDeps) {
     // broadcast tick) without waiting up to broadcastMinIntervalMs for the next push.
     getLandfillRaceStateForWorld,
     getSessionConfig,
+    // Freezes block edits until the race actually starts -- see its doc comment.
+    isLandfillBuildLocked,
     resetInstancesForNewWindow,
     awardKilogramsForBlockBreak,
     handleLandfillStatusRequest,

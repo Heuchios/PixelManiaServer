@@ -518,6 +518,9 @@ const LANDFILL_MAX_PLAYERS_PER_INSTANCE = Math.max(LANDFILL_MIN_PLAYERS_TO_START
 // Enforced server-side in server_phase11d_standard_movement.ts's acceptPlayerMovement -- see
 // getLandfillEntryPenBounds in server_landfill_event.ts for how the box itself is computed.
 const LANDFILL_ENTRY_PEN_RADIUS_TILES = Math.max(0, Math.min(20, Math.trunc(Number(process.env.LANDFILL_ENTRY_PEN_RADIUS_TILES) || 4)));
+// The block the visible starting pen is built from. Colour-cycling and fully collidable (atlas 57),
+// so it reads unmistakably as "temporary event scenery" rather than terrain.
+const LANDFILL_ENTRY_PEN_BLOCK = "shifty_block";
 // Race session timing. Every one of these is mirrored into ecosystem.config.js -- the Snow Storm
 // incident documented in that file was a flag that existed in code but was never passed through
 // PM2, so it silently never fired in any deployed environment. Clamped so a bad env value degrades
@@ -1205,6 +1208,8 @@ function getServerLandfillEventSystem() {
             // World-scoped push for live race state. Deliberately broadcastToWorld and not
             // broadcastSystemToWorld (which is chat) or a global fan-out.
             broadcastToWorld,
+            // Builds/tears down the visible shifty-block starting pen.
+            setLandfillEntryPenBlocks,
         });
     }
     return serverLandfillEventSystem;
@@ -1529,6 +1534,8 @@ function getServerPhase8WorldActionRoutes() {
             isFishMongerBreakAttempt,
             isGridInWorld,
             isLandfillWorldName: ServerLandfillEventModule.isLandfillWorldName,
+            // True while a Landfill race is still pre-race, freezing all block edits in that world.
+            isLandfillBuildLocked: (worldName) => getServerLandfillEventSystem().isLandfillBuildLocked(worldName),
             isPlayerNearGrid,
             isPostgresAuthoritativeReady,
             isSafeBlockType,
@@ -16476,22 +16483,6 @@ async function handleDoorEnterRequest(socket, player, data) {
     const worldOnlyDestination = targetDoorId === "";
     if (await rejectIfWorldBanned(socket, player, targetWorld, "door_enter"))
         return false;
-    // Landfill instances are enterable ONLY through the lobby's Join Race ("Go Green!") flow, which
-    // is the sole grantor of admission -- see admittedUsernames in server_landfill_event.ts.
-    // handleJoinWorld already enforces this, which covers the lobby JOIN field and the friends-list
-    // warp (both issue join_world). A door is the remaining way to cross into another world, so it
-    // needs the same check or it becomes the loophole that reopens the other two: build a door
-    // pointing at a live instance name and anyone can walk in.
-    //
-    // A no-op returning ok for every non-Landfill world, so this is safe on every door.
-    const doorLandfillEligibility = getServerLandfillEventSystem().canPlayerJoinLandfillInstance(targetWorld, cleanAccountName(player?.account_username || player?.name || ""));
-    if (!doorLandfillEligibility || doorLandfillEligibility.ok !== true) {
-        rejectDoorEnter(socket, "Join the Landfill Race from the lobby to enter this world.", {
-            reason: doorLandfillEligibility?.reason || "landfill_join_rejected",
-            world: targetWorld,
-        });
-        return false;
-    }
     const oldWorld = sourceWorld;
     const changedWorld = oldWorld !== targetWorld;
     if (changedWorld) {
@@ -28618,6 +28609,75 @@ function serverPickLandfillJunkBlock(generationSeed, x, y) {
 // (and can override) their output too, matching the design spec ("trash related blocks appear
 // randomly, gets replaced by regular dirt/stone/sand/cave background/grass/flowers"). Confined to
 // everywhere except the bottom lava/stone band and bedrock -- see the constants above for why.
+// Builds (place=true) or tears down (place=false) the VISIBLE shifty-block starting pen that
+// confines racers before GO.
+//
+// The invisible movement clamp (getLandfillEntryPenBounds -> applyLandfillEntryPenClamp) still
+// backs this up; this exists so players can SEE the boundary instead of walking into nothing. Both
+// are driven by the SAME state transition -- the pen is torn down at COUNTDOWN -> RACING, which is
+// the same moment getLandfillEntryPenBounds starts returning null -- so the wall you can see and
+// the wall you can feel can never disagree.
+//
+// Only the perimeter is filled, leaving the interior walkable, and only AIR cells are used:
+// overwriting real terrain would leave holes in it when the pen came down, permanently scarring
+// the map the race is about to run on. Teardown likewise removes only cells still holding a pen
+// block, so nothing else can be destroyed by it.
+function setLandfillEntryPenBlocks(worldName, bounds, place) {
+    const clean = cleanWorld(worldName);
+    const box = (bounds || {});
+    const minTileX = Math.max(0, Math.floor(Number(box.minX) / TILE_SIZE));
+    const maxTileX = Math.min(WORLD_WIDTH - 1, Math.floor(Number(box.maxX) / TILE_SIZE));
+    const minTileY = Math.max(0, Math.floor(Number(box.minY) / TILE_SIZE));
+    const maxTileY = Math.min(WORLD_HEIGHT - 1, Math.floor(Number(box.maxY) / TILE_SIZE));
+    if (!Number.isFinite(minTileX) || !Number.isFinite(maxTileX))
+        return;
+    if (!Number.isFinite(minTileY) || !Number.isFinite(maxTileY))
+        return;
+    if (minTileX > maxTileX || minTileY > maxTileY)
+        return;
+    const shouldPlace = place === true;
+    const state = ensureWorldState(clean);
+    const foreground = getWorldLayerMap(state, "foreground");
+    const updates = [];
+    for (let x = minTileX; x <= maxTileX; x += 1) {
+        for (let y = minTileY; y <= maxTileY; y += 1) {
+            if (x !== minTileX && x !== maxTileX && y !== minTileY && y !== maxTileY)
+                continue;
+            const existingType = String(foreground.get(gridKey(x, y))?.block_type || "");
+            if (shouldPlace ? existingType !== "" : existingType !== LANDFILL_ENTRY_PEN_BLOCK)
+                continue;
+            const update = {
+                action: shouldPlace ? "place" : "break",
+                layer: "foreground",
+                x,
+                y,
+                block_type: LANDFILL_ENTRY_PEN_BLOCK,
+                world: clean,
+            };
+            // The canonical mutation path -- it assigns the block revision, keeps the removed-layer map
+            // consistent and invalidates the movement collision cache, none of which a raw map.set would.
+            applyBlockUpdateToWorldState(clean, update);
+            update.type = "world_block_update";
+            updates.push(update);
+        }
+    }
+    if (updates.length === 0)
+        return;
+    queueWorldSave(clean);
+    // Reuses the bulk-tile channel the Snow Storm event already uses and the client already renders
+    // (handle_world_event_tile_updates), rather than emitting one packet per cell. That handler does
+    // not filter on event_type, so a Landfill-specific type is safe here.
+    broadcastToWorld(clean, {
+        type: "event_tile_updates",
+        world: clean,
+        event_type: "landfill_entry_pen",
+        event_id: clean,
+        phase: shouldPlace ? "start" : "end",
+        batch_index: 0,
+        batch_count: 1,
+        updates,
+    });
+}
 function serverApplyLandfillTrashOverlay(worldName, foreground, background, surface, generationSeed) {
     if (!ServerLandfillEventModule.isLandfillWorldName(worldName))
         return;
