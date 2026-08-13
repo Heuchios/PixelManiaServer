@@ -753,6 +753,21 @@ function createLandfillEventSystem(deps: LandfillDeps) {
     }
     if (!Array.isArray(roster)) return;
 
+    // A roster with entries in it, none of which yield a usable username, means the identity
+    // adapter in server.ts is reading the wrong field off whatever getWorldPlayerRecords returns.
+    // That failed silently once already -- it presented as "Waiting for players... 0 / 2" with
+    // players plainly standing in the world, and nothing anywhere said why. Fail loudly instead.
+    if (roster.length > 0) {
+      const usable = roster.filter((entry) => cleanAccountName((entry as any)?.username || "") !== "").length;
+      if (usable === 0) {
+        logger.warn("[landfill] roster returned entries but no usable usernames -- check the getWorldPlayerIdentities adapter", {
+          world: instance.worldName,
+          roster_size: roster.length,
+          sample_keys: Object.keys((roster[0] as any) || {}),
+        });
+      }
+    }
+
     const presentNow = new Set<string>();
     for (const entry of roster) {
       const cleanUsername = cleanAccountName((entry as any)?.username || "");
