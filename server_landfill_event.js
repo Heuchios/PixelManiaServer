@@ -39,15 +39,63 @@ function getCurrentSeasonKey() {
 function isLandfillWorldName(worldName) {
     return String(worldName || "").toLowerCase().startsWith(LANDFILL_WORLD_PREFIX);
 }
+// THE single normalization used for every `instances` Map key in this module -- see the Map
+// access helpers (getInstance/hasInstance/deleteInstance) inside createLandfillEventSystem.
+//
+// This exists because of a real, fully-diagnosed production failure. The instance registry is a
+// plain Map, so `.get()` is byte-exact, but the world name makes a round trip through two
+// different normalizations before it comes back here:
+//
+//   1. createNewInstance() mints a name and hands it to the client in landfill_join_result.
+//   2. The Godot client re-normalizes it (lobby_menu.gd's _normalize_world_name -> to_upper()).
+//   3. The client sends join_world, and handleJoinWorld's very first line runs it through
+//      cleanWorld() (server_identity_helpers.ts), which uppercases and strips to [A-Z0-9_-].
+//   4. Only THEN does canPlayerJoinLandfillInstance() look the name up in this Map.
+//
+// If step 1 minted "landfill_1" while steps 2-3 produced "LANDFILL_1", the lookup missed on every
+// single real join and returned instance_not_found -- deterministically, for every player, on
+// every retry, forever. isLandfillWorldName() is case-insensitive, so the guard still *fired*; it
+// just never *found* the instance, which is why the failure surfaced as a silent stall rather
+// than an obvious error.
+//
+// Matching cleanWorld()'s transformation here means it no longer matters what case any caller
+// uses: mint, store, look up, and evict all collapse to the same key. Do not "optimize" any Map
+// access in this module back to a raw string -- that is precisely the bug this prevents.
+function canonicalInstanceKey(worldName) {
+    return String(worldName || "")
+        .trim()
+        .toUpperCase()
+        .replace(/\s+/g, "_")
+        .replace(/[^A-Z0-9_-]/g, "");
+}
 function createLandfillEventSystem(deps) {
     const { cleanAccountName, ensureWritablePlayerState, canAddItemToState, addItemToState, commitPlayerInventoryState, cloneJson, postgresStore, getWorldPopulationCount, sendJson, makeRequestId, getErrorMessage, logger = console, minPlayersToStart = 2, maxPlayersPerInstance = 5, isEventWindowOpen, instancePollIntervalMs = 5000, instanceIdleCleanupMs = 30 * 60 * 1000, 
+    // How long an "entry" instance must sit provably empty, with an unchanged participant set,
+    // before those recorded slots are treated as abandoned and released -- see the reconciliation
+    // in pollInstancesOnce. Comfortably longer than the client's whole join budget (its retry
+    // watchdog gives up after roughly 1-2 minutes, see world_loading_ui_manager.gd), so a player
+    // who is genuinely still loading can never have their reserved slot pulled out from under
+    // them mid-join.
+    abandonedEntryReleaseMs = 3 * 60 * 1000, 
     // Phase 2.5: used ONLY at instance-creation time to compute+cache entryPenBounds (see
     // createNewInstance) -- never called from the per-movement-tick hot path.
     getJoinWorldSpawnForWorld, entryPenRadiusPixels = 128, 
     // Task: guarantees every Landfill instance is a fresh regeneration -- see createNewInstance.
     resetLandfillWorldState, } = deps;
+    // Keyed by canonicalInstanceKey(worldName), never by a raw caller-supplied string. Every read
+    // and write goes through the three helpers directly below -- see canonicalInstanceKey's comment
+    // for the production failure that made this non-negotiable.
     const instances = new Map();
     let pollTimer = null;
+    function getInstance(worldName) {
+        return instances.get(canonicalInstanceKey(worldName));
+    }
+    function hasInstance(worldName) {
+        return instances.has(canonicalInstanceKey(worldName));
+    }
+    function deleteInstance(worldName) {
+        return instances.delete(canonicalInstanceKey(worldName));
+    }
     function listInstances() {
         return Array.from(instances.values());
     }
@@ -76,11 +124,16 @@ function createLandfillEventSystem(deps) {
         };
     }
     async function createNewInstance() {
+        // canonicalInstanceKey() is what makes the name minted here survive the client round trip
+        // intact -- see its comment. The generated name is stored in instance.worldName in exactly
+        // the form it is keyed by, so the value handed to the client in landfill_join_result, the
+        // value passed to getWorldPopulationCount/resetLandfillWorldState, and the Map key are all
+        // one and the same string.
         let index = instances.size + 1;
-        let worldName = `${LANDFILL_WORLD_PREFIX}${index}`;
-        while (instances.has(worldName)) {
+        let worldName = canonicalInstanceKey(`${LANDFILL_WORLD_PREFIX}${index}`);
+        while (hasInstance(worldName)) {
             index += 1;
-            worldName = `${LANDFILL_WORLD_PREFIX}${index}`;
+            worldName = canonicalInstanceKey(`${LANDFILL_WORLD_PREFIX}${index}`);
         }
         // Reserve this instance's slot synchronously -- no await between the has()/set() calls
         // bracketing this object -- so a second, concurrent createNewInstance() call can't pick the
@@ -92,9 +145,17 @@ function createLandfillEventSystem(deps) {
             createdAtMs: Date.now(),
             seasonKey: getCurrentSeasonKey(),
             participantUsernames: new Set(),
+            lastParticipantChangeMs: Date.now(),
             entryPenBounds: null,
         };
-        instances.set(worldName, instance);
+        instances.set(canonicalInstanceKey(worldName), instance);
+        logger.log("[WORLD_JOIN] landfill instance created", {
+            world: worldName,
+            instance_key: canonicalInstanceKey(worldName),
+            index,
+            season_key: instance.seasonKey,
+            registry_size: instances.size,
+        });
         // Task: every Landfill world instance must start as a fresh regeneration, never carrying
         // over a previous race's block edits -- even when this instance name (e.g. landfill_1) was
         // used before and has since been garbage-collected from `instances` (the has() loop above
@@ -120,7 +181,7 @@ function createLandfillEventSystem(deps) {
     function getLandfillEntryPenBounds(worldName) {
         if (!isLandfillWorldName(worldName))
             return null;
-        const instance = instances.get(String(worldName || ""));
+        const instance = getInstance(worldName);
         if (!instance || instance.state !== "entry")
             return null;
         return instance.entryPenBounds;
@@ -141,11 +202,21 @@ function createLandfillEventSystem(deps) {
     function canPlayerJoinLandfillInstance(worldName, username) {
         if (!isLandfillWorldName(worldName))
             return { ok: true };
-        const instance = instances.get(String(worldName || ""));
+        const instance = getInstance(worldName);
         if (!instance) {
             // Unknown to this module: either garbage-collected while idle, or a world name that was
             // never handed out by requestJoinLandfillRace (typed/guessed directly). Fail closed rather
             // than let a normal join_world flow enter an untracked Landfill instance.
+            //
+            // Logged with the full registry because this is the exact rejection the case-mismatch bug
+            // produced (see canonicalInstanceKey). If it ever fires again, this line answers "was the
+            // instance missing, or was it there under a key we failed to match?" without needing a
+            // repro -- the previous silent `return` cost an entire debugging session to characterize.
+            logger.warn("[WORLD_JOIN] landfill join rejected: instance_not_found", {
+                requested_world: String(worldName || ""),
+                lookup_key: canonicalInstanceKey(worldName),
+                known_instance_keys: Array.from(instances.keys()),
+            });
             return { ok: false, reason: "instance_not_found" };
         }
         const cleanUsername = cleanAccountName(username || "");
@@ -175,13 +246,14 @@ function createLandfillEventSystem(deps) {
     function recordLandfillInstanceJoin(worldName, username) {
         if (!isLandfillWorldName(worldName))
             return;
-        const instance = instances.get(String(worldName || ""));
+        const instance = getInstance(worldName);
         if (!instance)
             return;
         const cleanUsername = cleanAccountName(username || "");
         if (cleanUsername === "")
             return;
         instance.participantUsernames.add(cleanUsername);
+        instance.lastParticipantChangeMs = Date.now();
     }
     function findOpenInstance() {
         for (const instance of instances.values()) {
@@ -200,6 +272,17 @@ function createLandfillEventSystem(deps) {
         }
         const existing = findOpenInstance();
         const instance = existing || await createNewInstance();
+        // This is the name the client is about to echo back in a join_world request, so log it in the
+        // same canonical form canPlayerJoinLandfillInstance will key on. A mismatch between this line
+        // and the lookup_key on a subsequent instance_not_found warning localizes the whole failure to
+        // the round trip in one glance.
+        logger.log("[WORLD_JOIN] landfill race instance assigned", {
+            world: instance.worldName,
+            instance_key: canonicalInstanceKey(instance.worldName),
+            reused_existing: existing !== null,
+            state: instance.state,
+            participants: instance.participantUsernames.size,
+        });
         return { ok: true, world_name: instance.worldName };
     }
     // Purely additive, read-only polling of already-existing world population data -- see the
@@ -216,8 +299,32 @@ function createLandfillEventSystem(deps) {
                 logger.log(`[landfill] instance ${instance.worldName} gate opened with ${population} players.`);
                 continue;
             }
+            // Abandoned-entry reconciliation. recordLandfillInstanceJoin runs in handleJoinWorld before
+            // the world-route check that can still fail the join, so a join that dies after that point
+            // leaves a username occupying a slot in participantUsernames while that player is not, and
+            // never was, actually in the world. Left alone those slots accumulate until the instance
+            // reports instance_full with nobody standing in it -- permanently un-joinable, and a
+            // guaranteed repeat of the "silently un-enterable Landfill world" class of bug.
+            //
+            // Releasing is only safe when we are certain nobody is mid-join: the instance must still be
+            // in "entry" (never gated open), the world must be provably empty, and the participant set
+            // must have been untouched for longer than a client could plausibly still be loading. The
+            // reconnect guarantee is unaffected -- an instance with zero players present has no session
+            // left to reconnect into, and the freed instance stays joinable by anyone including them.
+            if (instance.state === "entry"
+                && population === 0
+                && instance.participantUsernames.size > 0
+                && now - instance.lastParticipantChangeMs > abandonedEntryReleaseMs) {
+                logger.warn("[WORLD_JOIN] releasing abandoned landfill entry slots", {
+                    world: instance.worldName,
+                    released: Array.from(instance.participantUsernames),
+                    idle_ms: now - instance.lastParticipantChangeMs,
+                });
+                instance.participantUsernames.clear();
+                instance.lastParticipantChangeMs = now;
+            }
             if (population === 0 && now - instance.createdAtMs > instanceIdleCleanupMs) {
-                instances.delete(instance.worldName);
+                deleteInstance(instance.worldName);
             }
         }
     }
@@ -377,6 +484,11 @@ function createLandfillEventSystem(deps) {
         getLandfillEntryPenBounds,
         startInstancePolling,
         stopInstancePolling,
+        // Exported for check_server_landfill_event_build.js so the gate-open transition and the
+        // abandoned-entry slot reconciliation can be driven deterministically in a test instead of
+        // waiting on the ~5s interval timer. Nothing in the server calls this directly -- production
+        // reaches it only through startInstancePolling.
+        pollInstancesOnce,
         resetInstancesForNewWindow,
         awardKilogramsForBlockBreak,
         handleLandfillStatusRequest,
