@@ -200,7 +200,10 @@ function Commit-Repo($repo, $files, $message, $label) {
     # Nothing staged is a normal outcome when re-running after a partial failure, not an error.
     git -C $repo diff --cached --quiet -- $existing
     if ($LASTEXITCODE -eq 0) {
-        Write-Host "  $label: no changes staged, skipping commit." -ForegroundColor DarkGray
+        # ${label} not $label -- PowerShell treats "$label:" as a SCOPE-qualified variable
+        # reference (the same syntax as $global:x / $env:PATH), so the colon has to be pushed
+        # outside the name with braces or the file fails to parse at all.
+        Write-Host "  ${label}: no changes staged, skipping commit." -ForegroundColor DarkGray
         return
     }
 

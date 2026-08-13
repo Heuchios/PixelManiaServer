@@ -581,23 +581,31 @@ function createLandfillEventSystem(deps: LandfillDeps) {
       return { ok: false, reason: "instance_not_found" };
     }
     const cleanUsername = cleanAccountName(username || "");
-    if (cleanUsername !== "" && instance.participantUsernames.has(cleanUsername)) {
-      // Already-recorded participant (e.g. reconnecting after a disconnect) may always rejoin
-      // their own instance, even if it has since locked or filled up to other players, and even
-      // if the event window has since closed -- this only gates brand-new entries below.
-      return { ok: true };
-    }
 
-    // THE DOOR POLICY. Landfill worlds are enterable only by players the Join Race flow routed
-    // here (see admittedUsernames). Everything below this line is about WHICH admitted player may
-    // enter; this decides whether they were invited at all.
+    // THE DOOR POLICY, and it MUST be evaluated before the participant check below.
     //
-    // Instance names are not secret -- the client shows the name in its own world field as soon as
-    // you are routed there -- so without this, typing that name into the lobby JOIN field, or
-    // warping to a friend mid-race, drops an uninvited player into a live session. Both of those
-    // reach exactly this function via handleJoinWorld, so refusing here closes both at once.
+    // Landfill worlds are enterable only by players the Join Race flow routed here (see
+    // admittedUsernames). Instance names are not secret -- the client shows the name in its own
+    // world field as soon as you are routed there -- so without this, typing that name into the
+    // lobby JOIN field, or warping to a friend mid-race, drops an uninvited player into a live
+    // session. Both reach exactly this function via handleJoinWorld, so refusing here closes both.
+    //
+    // This check originally sat AFTER the participantUsernames check, which made it toothless for
+    // anyone who had ever legitimately raced. reconcileParticipants adds every present player to
+    // participantUsernames and nothing ever removes them -- that set is the reconnect record -- so
+    // a returning player matched there and was waved straight through before admission was ever
+    // consulted. Because testing naturally reuses the same accounts, that was the first case hit
+    // in practice: race once via Go Green, leave, type the world name, walk back in.
     if (cleanUsername === "" || !instance.admittedUsernames.has(cleanUsername)) {
       return { ok: false, reason: "join_race_required" };
+    }
+
+    if (instance.participantUsernames.has(cleanUsername)) {
+      // An ADMITTED player who is already a recorded participant -- i.e. reconnecting. They may
+      // return to their own instance even once it has locked, filled, or the calendar window has
+      // closed, all of which would otherwise refuse them below. Admission was proven immediately
+      // above, so this relaxes only the state gates, never the door itself.
+      return { ok: true };
     }
     if (isPreRaceState(instance.state) && typeof isEventWindowOpen === "function" && !isEventWindowOpen()) {
       // The calendar window closed while this instance was still sitting open in the entry pen
@@ -655,6 +663,14 @@ function createLandfillEventSystem(deps: LandfillDeps) {
     if (cleanRequester !== "") {
       const existingSession = findSessionForParticipant(cleanRequester);
       if (existingSession) {
+        // Re-grant admission on the way out. Now that canPlayerJoinLandfillInstance checks
+        // admission BEFORE the participant short-circuit, a returning player whose admission was
+        // dropped (the abandoned-entry reconciliation clears them) would otherwise be handed a
+        // world name their own join is about to refuse. Pressing Go Green is the sanctioned way
+        // back in, so granting here is exactly right -- and typing the name, which never reaches
+        // this function, stays refused.
+        existingSession.admittedUsernames.add(cleanRequester);
+        existingSession.lastParticipantChangeMs = Date.now();
         logger.log("[WORLD_JOIN] landfill join returning player to their existing session", {
           world: existingSession.worldName,
           session_id: existingSession.sessionId,

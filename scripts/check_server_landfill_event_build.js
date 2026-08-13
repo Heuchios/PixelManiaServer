@@ -286,6 +286,30 @@ async function main() {
   const reconnectingParticipant = system.canPlayerJoinLandfillInstance(FILLED_WORLD, "p1");
   assert.equal(reconnectingParticipant.ok, true, "an already-recorded participant must be able to rejoin their own locked instance");
 
+  // --- A FORMER racer must not type their way back in ------------------------------------------
+  // This is what made the door policy toothless in practice. reconcileParticipants adds every
+  // present player to participantUsernames and nothing removes them (it is the reconnect record),
+  // so while that check ran BEFORE the admission check, anyone who had raced here once was waved
+  // through forever. Testing reuses the same accounts, so this was the first case to show up:
+  // race via Go Green, leave, type the world name, walk straight back in.
+  //
+  // Simulate a returning player whose admission has since been dropped, which is what coming back
+  // later looks like once the abandoned-entry reconciliation has run.
+  filledSession.admittedUsernames.delete("p1");
+  const typedNameReturn = system.canPlayerJoinLandfillInstance(FILLED_WORLD, "p1");
+  assert.equal(typedNameReturn.ok, false, "a former racer must not re-enter by typing the world name");
+  assert.equal(typedNameReturn.reason, "join_race_required");
+
+  // ...but Go Green must still bring them back to that same session, re-granting admission on the
+  // way, so the sanctioned route keeps working for reconnects.
+  const goGreenReturn = await system.requestJoinLandfillRace("p1");
+  assert.equal(String(goGreenReturn.world_name), FILLED_WORLD, "Go Green must return a former racer to their session");
+  assert.equal(
+    system.canPlayerJoinLandfillInstance(FILLED_WORLD, "p1").ok,
+    true,
+    "Go Green must re-grant admission so the join it just authorized actually succeeds",
+  );
+
   // The entry pen is released exactly at GO and never re-arms.
   assert.equal(system.getLandfillEntryPenBounds(FILLED_WORLD), null, "the entry pen must be off once RACING");
 
