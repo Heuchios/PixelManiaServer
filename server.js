@@ -1198,15 +1198,9 @@ function getServerLandfillEventSystem() {
             // it inherits its self-healing of stale entries -- returning identities instead of a count
             // is what lets the session know WHO arrived and who left without hooking the join/leave
             // pipeline that server_landfill_event.ts's scope note forbids touching.
-            // NOTE THE SHAPE: getWorldPlayerRecords returns { playerId, player } WRAPPERS, not the
-            // player records themselves. Reading record.account_username directly yields undefined for
-            // everyone, every username cleans to "", and the session sees an empty roster -- which
-            // presents as "Waiting for players... 0 / 2" with players visibly standing in the world.
-            // getWorldPopulationCount only ever takes .length of this array, so nothing else in the
-            // codebase depends on the element shape and there was no existing usage to copy from.
             getWorldPlayerIdentities: (worldName) => getWorldPlayerRecords(cleanWorld(worldName)).map((record) => ({
-                username: cleanAccountName(record.player?.account_username || record.player?.name || ""),
-                displayName: cleanName(record.player?.name || ""),
+                username: cleanAccountName(record.account_username || record.name || ""),
+                displayName: cleanName(record.name || ""),
             })),
             // World-scoped push for live race state. Deliberately broadcastToWorld and not
             // broadcastSystemToWorld (which is chat) or a global fan-out.
@@ -16482,6 +16476,22 @@ async function handleDoorEnterRequest(socket, player, data) {
     const worldOnlyDestination = targetDoorId === "";
     if (await rejectIfWorldBanned(socket, player, targetWorld, "door_enter"))
         return false;
+    // Landfill instances are enterable ONLY through the lobby's Join Race ("Go Green!") flow, which
+    // is the sole grantor of admission -- see admittedUsernames in server_landfill_event.ts.
+    // handleJoinWorld already enforces this, which covers the lobby JOIN field and the friends-list
+    // warp (both issue join_world). A door is the remaining way to cross into another world, so it
+    // needs the same check or it becomes the loophole that reopens the other two: build a door
+    // pointing at a live instance name and anyone can walk in.
+    //
+    // A no-op returning ok for every non-Landfill world, so this is safe on every door.
+    const doorLandfillEligibility = getServerLandfillEventSystem().canPlayerJoinLandfillInstance(targetWorld, cleanAccountName(player?.account_username || player?.name || ""));
+    if (!doorLandfillEligibility || doorLandfillEligibility.ok !== true) {
+        rejectDoorEnter(socket, "Join the Landfill Race from the lobby to enter this world.", {
+            reason: doorLandfillEligibility?.reason || "landfill_join_rejected",
+            world: targetWorld,
+        });
+        return false;
+    }
     const oldWorld = sourceWorld;
     const changedWorld = oldWorld !== targetWorld;
     if (changedWorld) {

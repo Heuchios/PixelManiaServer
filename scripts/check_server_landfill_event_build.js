@@ -158,6 +158,10 @@ async function main() {
   const simulateCleanWorld = (/** @type {string} */ value) =>
     String(value || "START").trim().toUpperCase().replace(/\s+/g, "_").replace(/[^A-Z0-9_-]/g, "").slice(0, 32) || "START";
   const roundTripped = simulateCleanWorld(FIRST_WORLD);
+  // requestJoinLandfillRace was called with no username above, so grant this prober admission the
+  // same way the Join Race flow would -- the round trip being tested here is the NAME surviving
+  // cleanWorld(), not the door policy (which has its own block further down).
+  await system.requestJoinLandfillRace("round_tripper");
   assert.equal(
     system.canPlayerJoinLandfillInstance(roundTripped, "round_tripper").ok,
     true,
@@ -168,7 +172,7 @@ async function main() {
   // the mismatch by normalizing differently on its way in.
   for (const variant of [FIRST_WORLD.toLowerCase(), ` ${FIRST_WORLD} `]) {
     assert.equal(
-      system.canPlayerJoinLandfillInstance(variant, "case_prober").ok,
+      system.canPlayerJoinLandfillInstance(variant, "round_tripper").ok,
       true,
       `instance lookup must be canonical, but "${variant}" did not resolve`,
     );
@@ -229,36 +233,66 @@ async function main() {
   assert.equal(unknown.ok, false);
   assert.equal(unknown.reason, "instance_not_found");
 
-  // Fill the second instance to maxPlayersPerInstance via the same check-then-record sequence
-  // handleJoinWorld performs; the 6th distinct player must be refused.
+  // --- The door policy: Join Race is the ONLY way in ------------------------------------------
+  // Instance names are visible to players (the client puts the name in its own world field the
+  // moment you are routed there), so "knows the name" must never equal "may enter". A player who
+  // types LANDFILL_xxxxxx into the lobby JOIN field, or warps to a friend who is racing, reaches
+  // canPlayerJoinLandfillInstance exactly like a legitimate joiner does -- the only thing telling
+  // them apart is whether requestJoinLandfillRace granted them admission.
+  const gatecrasher = system.canPlayerJoinLandfillInstance(SECOND_WORLD, "gatecrasher");
+  assert.equal(gatecrasher.ok, false, "a player never routed here by Join Race must not get in");
+  assert.equal(gatecrasher.reason, "join_race_required");
+
+  // An empty/anonymous identity must not slip through the same door.
+  assert.equal(system.canPlayerJoinLandfillInstance(SECOND_WORLD, "").ok, false);
+
+  // Fill an instance the way players actually do: press Go Green, get routed, then join. Everyone
+  // under the cap must land in the SAME session -- that is what makes it a race rather than a set
+  // of solo worlds.
+  /** @type {string[]} */
+  const filledWorlds = [];
   for (let i = 1; i <= 5; i += 1) {
     const username = `p${i}`;
-    const check = system.canPlayerJoinLandfillInstance(SECOND_WORLD, username);
-    assert.equal(check.ok, true, `p${i} should be admitted (slot ${i} of 5)`);
-    system.recordLandfillInstanceJoin(SECOND_WORLD, username);
+    const routed = await system.requestJoinLandfillRace(username);
+    assert.equal(routed.ok, true, `p${i} should be routed to a session`);
+    const routedWorld = String(routed.world_name);
+    filledWorlds.push(routedWorld);
+    const check = system.canPlayerJoinLandfillInstance(routedWorld, username);
+    assert.equal(check.ok, true, `p${i} should be admitted to the session Join Race sent them to`);
+    system.recordLandfillInstanceJoin(routedWorld, username);
   }
-  const overflowJoiner = system.canPlayerJoinLandfillInstance(SECOND_WORLD, "p6");
+  assert.equal(new Set(filledWorlds).size, 1, "joiners under the cap must share one instance");
+  const FILLED_WORLD = filledWorlds[0];
+
+  // The 6th player overflows to a different session rather than exceeding the cap...
+  const overflowRouted = await system.requestJoinLandfillRace("p6");
+  assert.notEqual(String(overflowRouted.world_name), FILLED_WORLD, "a full instance must overflow");
+  // ...and cannot force their way into the full one by naming it.
+  const overflowJoiner = system.canPlayerJoinLandfillInstance(FILLED_WORLD, "p6");
   assert.equal(overflowJoiner.ok, false);
-  assert.equal(overflowJoiner.reason, "instance_full");
+  assert.equal(overflowJoiner.reason, "join_race_required");
 
   // Late-entry lock: once RACING, a brand-new player is refused, but an already-recorded
   // participant may still rejoin their own session (reconnect).
-  const secondSession = system.listInstances().find((/** @type {any} */ i) => i.worldName === SECOND_WORLD);
-  assert.ok(secondSession, "the second session should be discoverable via listInstances()");
-  secondSession.state = "racing";
-  const lateStranger = system.canPlayerJoinLandfillInstance(SECOND_WORLD, "p7");
+  const filledSession = system.listInstances().find((/** @type {any} */ i) => i.worldName === FILLED_WORLD);
+  assert.ok(filledSession, "the filled session should be discoverable via listInstances()");
+  filledSession.state = "racing";
+  // Admit p7 directly so this asserts the LATE-ENTRY lock specifically, rather than tripping the
+  // admission gate first and masking it -- an admitted player must still be refused once racing.
+  filledSession.admittedUsernames.add("p7");
+  const lateStranger = system.canPlayerJoinLandfillInstance(FILLED_WORLD, "p7");
   assert.equal(lateStranger.ok, false);
   assert.equal(lateStranger.reason, "instance_locked");
-  const reconnectingParticipant = system.canPlayerJoinLandfillInstance(SECOND_WORLD, "p1");
+  const reconnectingParticipant = system.canPlayerJoinLandfillInstance(FILLED_WORLD, "p1");
   assert.equal(reconnectingParticipant.ok, true, "an already-recorded participant must be able to rejoin their own locked instance");
 
   // The entry pen is released exactly at GO and never re-arms.
-  assert.equal(system.getLandfillEntryPenBounds(SECOND_WORLD), null, "the entry pen must be off once RACING");
+  assert.equal(system.getLandfillEntryPenBounds(FILLED_WORLD), null, "the entry pen must be off once RACING");
 
   // One live session per player: pressing Join Race again must return the session they are
   // already in, never enrol them in a second one (which would persist two results for one race).
   const duplicateJoin = await system.requestJoinLandfillRace("p1");
-  assert.equal(duplicateJoin.world_name, SECOND_WORLD, "a player already in a session must be returned to it");
+  assert.equal(duplicateJoin.world_name, FILLED_WORLD, "a player already in a session must be returned to it");
 
   // --- Abandoned-entry slot reconciliation ----------------------------------------------------
   // recordLandfillInstanceJoin runs in handleJoinWorld BEFORE the world-route check that can still
@@ -299,19 +333,25 @@ async function main() {
   // becomes visible to getWorldPopulationCount -- the instance is now "full" of nobody.
   abandonedSystem.recordLandfillInstanceJoin(abandonedWorld, "ghost_a");
   abandonedSystem.recordLandfillInstanceJoin(abandonedWorld, "ghost_b");
-  assert.equal(
-    abandonedSystem.canPlayerJoinLandfillInstance(abandonedWorld, "real_player").reason,
-    "instance_full",
+  // Asserted through ROUTING rather than a direct eligibility call: with the Join Race door policy
+  // in place an unadmitted probe is refused for that reason before capacity is ever consulted, so
+  // routing is what actually reveals whether the instance is considered full.
+  const beforeRelease = await abandonedSystem.requestJoinLandfillRace("real_player");
+  assert.notEqual(
+    String(beforeRelease.world_name),
+    abandonedWorld,
     "precondition: two recorded-but-absent players should saturate a maxPlayersPerInstance=2 instance",
   );
 
-  // The poll must notice the instance is provably empty and release the stale slots.
+  // The poll must notice the instance is provably empty and release the stale slots -- both the
+  // recorded participants AND the admissions, since each reserves capacity.
   abandonedSystem.pollInstancesOnce();
-  assert.equal(
-    abandonedSystem.canPlayerJoinLandfillInstance(abandonedWorld, "real_player").ok,
-    true,
-    "an 'entry' instance with zero players present must release abandoned slots rather than stay full forever",
-  );
+  const releasedSession = abandonedSystem
+    .listInstances()
+    .find((/** @type {any} */ instance) => instance.worldName === abandonedWorld);
+  assert.ok(releasedSession, "the abandoned session must still exist after releasing its slots");
+  assert.equal(releasedSession.participantUsernames.size, 0, "abandoned participant slots must be released");
+  assert.equal(releasedSession.admittedUsernames.size, 0, "abandoned admissions must be released too");
 
   // ...but it must NOT release slots while players are actually present, or it would hand out
   // capacity an occupied instance does not have.

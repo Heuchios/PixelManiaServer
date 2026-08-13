@@ -391,7 +391,13 @@ function createServerPhase8PlayerSessionRoutes(deps) {
             recordWorldEntryServerStage(worldEntryProfile, "rejected", {
                 reason: landfillEligibility?.reason || "landfill_join_rejected",
             });
-            deps.sendActionRejected(socket, "join_world", "This Landfill instance is no longer available to join.", {
+            // "join_race_required" means the player was never routed here by the Join Race flow -- they
+            // typed the instance name, warped to a racer, or walked a door. Telling them the instance is
+            // "no longer available" would be a lie that reads like a bug; point them at the real door.
+            const landfillRejectMessage = landfillEligibility?.reason === "join_race_required"
+                ? "Join the Landfill Race from the lobby to enter this world."
+                : "This Landfill instance is no longer available to join.";
+            deps.sendActionRejected(socket, "join_world", landfillRejectMessage, {
                 reason: landfillEligibility?.reason || "landfill_join_rejected",
                 world: newWorld,
                 join_request_id: joinRequestId,

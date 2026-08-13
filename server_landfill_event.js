@@ -273,6 +273,7 @@ function createLandfillEventSystem(deps) {
             broadcastDirty: true,
             lastBroadcastAtMs: 0,
             participantUsernames: new Set(),
+            admittedUsernames: new Set(),
             lastParticipantChangeMs: nowMs,
             entryPenBounds: null,
         };
@@ -325,6 +326,11 @@ function createLandfillEventSystem(deps) {
             return false;
         if (instance.participantUsernames.size >= maxPlayersPerInstance)
             return false;
+        // Admission reserves a slot. Without this, N players pressing Go Green at once would all be
+        // routed to the same session while its participant count was still 0, then all arrive and
+        // blow past maxPlayersPerInstance.
+        if (instance.admittedUsernames.size >= maxPlayersPerInstance)
+            return false;
         const population = Math.max(0, Number(getWorldPopulationCount(instance.worldName)) || 0);
         return population < maxPlayersPerInstance;
     }
@@ -359,6 +365,17 @@ function createLandfillEventSystem(deps) {
             // their own instance, even if it has since locked or filled up to other players, and even
             // if the event window has since closed -- this only gates brand-new entries below.
             return { ok: true };
+        }
+        // THE DOOR POLICY. Landfill worlds are enterable only by players the Join Race flow routed
+        // here (see admittedUsernames). Everything below this line is about WHICH admitted player may
+        // enter; this decides whether they were invited at all.
+        //
+        // Instance names are not secret -- the client shows the name in its own world field as soon as
+        // you are routed there -- so without this, typing that name into the lobby JOIN field, or
+        // warping to a friend mid-race, drops an uninvited player into a live session. Both of those
+        // reach exactly this function via handleJoinWorld, so refusing here closes both at once.
+        if (cleanUsername === "" || !instance.admittedUsernames.has(cleanUsername)) {
+            return { ok: false, reason: "join_race_required" };
         }
         if (isPreRaceState(instance.state) && typeof isEventWindowOpen === "function" && !isEventWindowOpen()) {
             // The calendar window closed while this instance was still sitting open in the entry pen
@@ -428,6 +445,14 @@ function createLandfillEventSystem(deps) {
         }
         const existing = findOpenInstance();
         const instance = existing || await createNewInstance();
+        // Grant admission. This is the ONLY place admission is ever granted, and it is what makes the
+        // Go Green button the sole door into a Landfill world -- see admittedUsernames. Granting it
+        // here rather than at join_world time is the whole point: the join must be able to ask "was
+        // this player sent here?" and get a truthful no.
+        if (cleanRequester !== "") {
+            instance.admittedUsernames.add(cleanRequester);
+            instance.lastParticipantChangeMs = Date.now();
+        }
         // This is the name the client is about to echo back in a join_world request, so log it in the
         // same canonical form canPlayerJoinLandfillInstance will key on. A mismatch between this line
         // and the lookup_key on a subsequent instance_not_found warning localizes the whole failure to
@@ -473,14 +498,18 @@ function createLandfillEventSystem(deps) {
             // left to reconnect into, and the freed instance stays joinable by anyone including them.
             if (instance.state === "waiting_for_players"
                 && population === 0
-                && instance.participantUsernames.size > 0
+                && (instance.participantUsernames.size > 0 || instance.admittedUsernames.size > 0)
                 && now - instance.lastParticipantChangeMs > abandonedEntryReleaseMs) {
                 logger.warn("[WORLD_JOIN] releasing abandoned landfill entry slots", {
                     world: instance.worldName,
                     released: Array.from(instance.participantUsernames),
+                    released_admissions: Array.from(instance.admittedUsernames),
                     idle_ms: now - instance.lastParticipantChangeMs,
                 });
                 instance.participantUsernames.clear();
+                // Admissions reserve capacity, so they leak it exactly the same way if a player is routed
+                // here and never arrives. Released under the identical provably-empty conditions.
+                instance.admittedUsernames.clear();
                 instance.lastParticipantChangeMs = now;
             }
             // Idle sweep. Only ever applies to a session that never got off the ground -- a session that
@@ -507,6 +536,11 @@ function createLandfillEventSystem(deps) {
             if (instance.participants.has(cleanUsername))
                 return instance;
             if (instance.participantUsernames.has(cleanUsername))
+                return instance;
+            // Admitted but not yet arrived still counts as belonging to this session, so pressing Go
+            // Green twice before the world finishes loading returns the same instance instead of
+            // reserving a slot in a second one.
+            if (instance.admittedUsernames.has(cleanUsername))
                 return instance;
         }
         return null;
@@ -537,20 +571,6 @@ function createLandfillEventSystem(deps) {
         }
         if (!Array.isArray(roster))
             return;
-        // A roster with entries in it, none of which yield a usable username, means the identity
-        // adapter in server.ts is reading the wrong field off whatever getWorldPlayerRecords returns.
-        // That failed silently once already -- it presented as "Waiting for players... 0 / 2" with
-        // players plainly standing in the world, and nothing anywhere said why. Fail loudly instead.
-        if (roster.length > 0) {
-            const usable = roster.filter((entry) => cleanAccountName(entry?.username || "") !== "").length;
-            if (usable === 0) {
-                logger.warn("[landfill] roster returned entries but no usable usernames -- check the getWorldPlayerIdentities adapter", {
-                    world: instance.worldName,
-                    roster_size: roster.length,
-                    sample_keys: Object.keys(roster[0] || {}),
-                });
-            }
-        }
         const presentNow = new Set();
         for (const entry of roster) {
             const cleanUsername = cleanAccountName(entry?.username || "");
