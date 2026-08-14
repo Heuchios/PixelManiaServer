@@ -160,7 +160,7 @@ const productionEnv = {
   // value that exists in code but is missing here is a value PM2 never sets, which is exactly how
   // the Snow Storm event silently never fired in any deployed environment.
   LANDFILL_COUNTDOWN_SECONDS: env("LANDFILL_COUNTDOWN_SECONDS", "10"),
-  LANDFILL_RACE_SECONDS: env("LANDFILL_RACE_SECONDS", "120"),
+  LANDFILL_RACE_SECONDS: env("LANDFILL_RACE_SECONDS", "300"),
   LANDFILL_RESULTS_DISPLAY_SECONDS: env("LANDFILL_RESULTS_DISPLAY_SECONDS", "12"),
   // Session state machine tick. Must stay well under LANDFILL_COUNTDOWN_SECONDS or the countdown
   // will visibly overshoot.

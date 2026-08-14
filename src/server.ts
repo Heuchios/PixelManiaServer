@@ -773,7 +773,7 @@ const LANDFILL_ENTRY_PEN_HEIGHT_TILES = Math.max(2, Math.min(40, Math.trunc(Numb
 // PM2, so it silently never fired in any deployed environment. Clamped so a bad env value degrades
 // to something playable instead of producing a zero-length countdown or an endless race.
 const LANDFILL_COUNTDOWN_SECONDS = Math.max(3, Math.min(60, Math.trunc(Number(process.env.LANDFILL_COUNTDOWN_SECONDS) || 10)));
-const LANDFILL_RACE_SECONDS = Math.max(30, Math.min(1800, Math.trunc(Number(process.env.LANDFILL_RACE_SECONDS) || 120)));
+const LANDFILL_RACE_SECONDS = Math.max(30, Math.min(1800, Math.trunc(Number(process.env.LANDFILL_RACE_SECONDS) || 300)));
 const LANDFILL_RESULTS_DISPLAY_SECONDS = Math.max(3, Math.min(120, Math.trunc(Number(process.env.LANDFILL_RESULTS_DISPLAY_SECONDS) || 12)));
 const LANDFILL_SESSION_TICK_MS = Math.max(50, Math.min(2000, Math.trunc(Number(process.env.LANDFILL_SESSION_TICK_MS) || 250)));
 const LANDFILL_RACE_BROADCAST_MIN_INTERVAL_MS = Math.max(50, Math.min(5000, Math.trunc(Number(process.env.LANDFILL_RACE_BROADCAST_MIN_INTERVAL_MS) || 250)));
@@ -850,6 +850,26 @@ const LANDFILL_TRASH_JUNK_BLOCKS = Object.freeze([
   { type: "garbage_box", weight: 15 },
   { type: "broken_vending_machine", weight: 10 },
 ]);
+// Landfill terrain SHAPE (as opposed to the trash-block reskin above, which just substitutes what
+// a normal hill is made of). First pass per Hassan: "a lot taller, full ... hill like terrain but
+// not as aggressive. no water, no trees, no tree trunks, no grass/flowers." Mirrors the generic
+// SERVER_TERRAIN_*/wave constants in buildServerTerrainSurface, but offset much further negative
+// (taller peaks, smaller Y = higher up) with a much bigger range (taller hills overall), and lower
+// wave FREQUENCY with similar-or-larger amplitude (broad, sweeping mounds instead of frequent small
+// bumps) -- "taller" and "less aggressive" are different axes: overall height range vs. how often
+// the terrain changes direction. Tune freely; every value here is a no-op for non-Landfill worlds.
+const LANDFILL_TERRAIN_SURFACE_VERTICAL_OFFSET = -30;
+const LANDFILL_TERRAIN_EXTRA_HILL_RANGE = 12;
+const LANDFILL_TERRAIN_WAVE1_FREQUENCY = 0.035;
+const LANDFILL_TERRAIN_WAVE1_AMPLITUDE = 6.0;
+const LANDFILL_TERRAIN_WAVE2_FREQUENCY = 0.0725;
+const LANDFILL_TERRAIN_WAVE2_AMPLITUDE = 3.0;
+const LANDFILL_TERRAIN_WAVE3_FREQUENCY = 0.155;
+const LANDFILL_TERRAIN_WAVE3_AMPLITUDE = 1.0;
+// Per-column jitter range (see the "drift" line in buildServerTerrainSurface) -- halved vs. the
+// generic ±2 tiles, since this is the main source of small-scale "aggressive" jaggedness between
+// adjacent columns; the smoothing passes already cap slope at 1 tile/column regardless.
+const LANDFILL_TERRAIN_DRIFT_RANGE = 2;
 const SEED_MUTATION_REWARD_TABLE = Object.freeze([
   { item_id: "glowing_dirt", item_category: "block", min_amount: 1, max_amount: 5, y_offset: -16, weight: 80 },
   { item_id: "sakura_sword", item_category: "tool", min_amount: 1, max_amount: 1, y_offset: -16, weight: 10 },
@@ -30732,16 +30752,32 @@ function serverCellNoise(generationSeed: any, x: any, y: any, salt: any = 0) {
   return value - Math.floor(value);
 }
 
-function serverGenerationMinSurfaceY() {
-  return Math.max(3, (BEDROCK_START_Y - 15) + SERVER_TERRAIN_SURFACE_VERTICAL_OFFSET - SERVER_TERRAIN_EXTRA_HILL_RANGE);
+// worldName is optional -- omitted, these reproduce the exact generic (non-Landfill) numbers every
+// other world already used, so the few call sites that can't easily thread a worldName through
+// (e.g. serverSurfaceBlockType's flatness heuristic) are unaffected. Passed, they switch to the
+// LANDFILL_TERRAIN_* shape for any world isLandfillWorldName recognizes.
+function serverGenerationMinSurfaceY(worldName: unknown = null) {
+  const isLandfill = ServerLandfillEventModule.isLandfillWorldName(worldName);
+  const offset = isLandfill ? LANDFILL_TERRAIN_SURFACE_VERTICAL_OFFSET : SERVER_TERRAIN_SURFACE_VERTICAL_OFFSET;
+  const range = isLandfill ? LANDFILL_TERRAIN_EXTRA_HILL_RANGE : SERVER_TERRAIN_EXTRA_HILL_RANGE;
+  return Math.max(3, (BEDROCK_START_Y - 15) + offset - range);
 }
 
-function serverGenerationMaxSurfaceY() {
-  return Math.max(serverGenerationMinSurfaceY(), (BEDROCK_START_Y - 8) + SERVER_TERRAIN_SURFACE_VERTICAL_OFFSET + SERVER_TERRAIN_EXTRA_HILL_RANGE);
+function serverGenerationMaxSurfaceY(worldName: unknown = null) {
+  const isLandfill = ServerLandfillEventModule.isLandfillWorldName(worldName);
+  const offset = isLandfill ? LANDFILL_TERRAIN_SURFACE_VERTICAL_OFFSET : SERVER_TERRAIN_SURFACE_VERTICAL_OFFSET;
+  const range = isLandfill ? LANDFILL_TERRAIN_EXTRA_HILL_RANGE : SERVER_TERRAIN_EXTRA_HILL_RANGE;
+  return Math.max(serverGenerationMinSurfaceY(worldName), (BEDROCK_START_Y - 8) + offset + range);
 }
 
-function serverGenerationSurfaceBaseY() {
-  return clampInteger((BEDROCK_START_Y - 9) + SERVER_TERRAIN_SURFACE_VERTICAL_OFFSET, serverGenerationMinSurfaceY(), serverGenerationMaxSurfaceY());
+function serverGenerationSurfaceBaseY(worldName: unknown = null) {
+  const isLandfill = ServerLandfillEventModule.isLandfillWorldName(worldName);
+  const offset = isLandfill ? LANDFILL_TERRAIN_SURFACE_VERTICAL_OFFSET : SERVER_TERRAIN_SURFACE_VERTICAL_OFFSET;
+  return clampInteger(
+    (BEDROCK_START_Y - 9) + offset,
+    serverGenerationMinSurfaceY(worldName),
+    serverGenerationMaxSurfaceY(worldName)
+  );
 }
 
 function isServerSpawnSafeColumn(x: any) {
@@ -30750,12 +30786,23 @@ function isServerSpawnSafeColumn(x: any) {
 
 function buildServerTerrainSurface(worldName: any) {
   const generationSeed = serverWorldGenerationSeed(worldName);
-  const baseSurfaceY = serverGenerationSurfaceBaseY();
-  const minSurfaceY = serverGenerationMinSurfaceY();
-  const maxSurfaceY = serverGenerationMaxSurfaceY();
+  const isLandfill = ServerLandfillEventModule.isLandfillWorldName(worldName);
+  const baseSurfaceY = serverGenerationSurfaceBaseY(worldName);
+  const minSurfaceY = serverGenerationMinSurfaceY(worldName);
+  const maxSurfaceY = serverGenerationMaxSurfaceY(worldName);
   const phaseA = serverCellNoise(generationSeed, 1, 1, 5001) * Math.PI * 2;
   const phaseB = serverCellNoise(generationSeed, 2, 1, 5002) * Math.PI * 2;
   const phaseC = serverCellNoise(generationSeed, 3, 1, 5003) * Math.PI * 2;
+  // Landfill uses a lower-frequency, similar-or-larger-amplitude wave (broad sweeping mounds) and a
+  // smaller per-column jitter range (less small-scale jaggedness) -- see the LANDFILL_TERRAIN_*
+  // constants for why. Every non-Landfill world keeps the exact original numbers.
+  const wave1Frequency = isLandfill ? LANDFILL_TERRAIN_WAVE1_FREQUENCY : 0.070;
+  const wave1Amplitude = isLandfill ? LANDFILL_TERRAIN_WAVE1_AMPLITUDE : 4.8;
+  const wave2Frequency = isLandfill ? LANDFILL_TERRAIN_WAVE2_FREQUENCY : 0.145;
+  const wave2Amplitude = isLandfill ? LANDFILL_TERRAIN_WAVE2_AMPLITUDE : 2.4;
+  const wave3Frequency = isLandfill ? LANDFILL_TERRAIN_WAVE3_FREQUENCY : 0.310;
+  const wave3Amplitude = isLandfill ? LANDFILL_TERRAIN_WAVE3_AMPLITUDE : 1.2;
+  const driftRange = isLandfill ? LANDFILL_TERRAIN_DRIFT_RANGE : 4;
   const surface: any = new Map();
 
   for (let x: any = 0; x < WORLD_WIDTH; x += 1) {
@@ -30764,10 +30811,10 @@ function buildServerTerrainSurface(worldName: any) {
       continue;
     }
 
-    const drift = Math.round((serverCellNoise(generationSeed, Math.floor(x / 6), 0, 5004) - 0.5) * 4);
-    const wave1 = Math.sin(x * 0.070 + phaseA) * 4.8;
-    const wave2 = Math.sin(x * 0.145 + phaseB) * 2.4;
-    const wave3 = Math.sin(x * 0.310 + phaseC) * 1.2;
+    const drift = Math.round((serverCellNoise(generationSeed, Math.floor(x / 6), 0, 5004) - 0.5) * driftRange);
+    const wave1 = Math.sin(x * wave1Frequency + phaseA) * wave1Amplitude;
+    const wave2 = Math.sin(x * wave2Frequency + phaseB) * wave2Amplitude;
+    const wave3 = Math.sin(x * wave3Frequency + phaseC) * wave3Amplitude;
     surface.set(x, clampInteger(Math.round(baseSurfaceY + wave1 + wave2 + wave3 + drift), minSurfaceY, maxSurfaceY));
   }
 
@@ -30829,10 +30876,11 @@ function getEffectiveGeneratedBottomForegroundBlockAt(worldName: any, state: any
 
   const generationSeed = serverWorldGenerationSeed(worldName);
   const blockType = serverGeneratedBlockType(
+    worldName,
     generationSeed,
     gridX,
     gridY,
-    serverGenerationSurfaceBaseY()
+    serverGenerationSurfaceBaseY(worldName)
   );
   if (blockType === "") return null;
 
@@ -30852,7 +30900,9 @@ function serverDeepCaveAxis(generationSeed: any, x: any, surfaceY: any) {
   return surfaceY + 23 + Math.round((serverCellNoise(generationSeed, x, surfaceY, 803) - 0.5) * 7.6 + (serverCellNoise(generationSeed, surfaceY, x, 804) - 0.5) * 3.6);
 }
 
-function shouldServerGenerateCavePocket(generationSeed: any, x: any, y: any, surfaceY: any) {
+function shouldServerGenerateCavePocket(worldName: unknown, generationSeed: any, x: any, y: any, surfaceY: any) {
+  // Landfill: "full" terrain per Hassan -- no hollow cave pockets underground at all.
+  if (ServerLandfillEventModule.isLandfillWorldName(worldName)) return false;
   const depth = y - surfaceY;
   if (depth < SERVER_CAVE_MIN_DEPTH) return false;
   if (isServerSpawnSafeColumn(x)) return false;
@@ -30944,7 +30994,7 @@ function serverNormalUndergroundBlockType(generationSeed: any, x: any, y: any, d
   ]);
 }
 
-function serverGeneratedBlockType(generationSeed: any, x: any, y: any, surfaceY: any) {
+function serverGeneratedBlockType(worldName: unknown, generationSeed: any, x: any, y: any, surfaceY: any) {
   if (y >= BEDROCK_START_Y) return "bedrock";
   if (y < surfaceY) return "";
   if (y === surfaceY) return serverSurfaceBlockType(generationSeed, x, y, surfaceY);
@@ -30969,7 +31019,7 @@ function serverGeneratedBlockType(generationSeed: any, x: any, y: any, surfaceY:
         { type: "sand", weight: 5 },
       ]);
   }
-  if (shouldServerGenerateCavePocket(generationSeed, x, y, surfaceY)) return "";
+  if (shouldServerGenerateCavePocket(worldName, generationSeed, x, y, surfaceY)) return "";
   return serverNormalUndergroundBlockType(generationSeed, x, y, depth);
 }
 
@@ -30994,12 +31044,12 @@ function serverMapClear(map: any, x: any, y: any) {
   map.delete(gridKey(x, y));
 }
 
-function shouldServerPlaceCaveBackground(generationSeed: any, blockType: any, x: any, y: any, surfaceY: any) {
+function shouldServerPlaceCaveBackground(worldName: unknown, generationSeed: any, blockType: any, x: any, y: any, surfaceY: any) {
   if (y <= surfaceY) return false;
   if (y >= BEDROCK_START_Y) return false;
   if (blockType === "water") return false;
   if (["dirt", "sand", "stone", "lava"].includes(blockType)) return true;
-  return blockType === "" && shouldServerGenerateCavePocket(generationSeed, x, y, surfaceY);
+  return blockType === "" && shouldServerGenerateCavePocket(worldName, generationSeed, x, y, surfaceY);
 }
 
 function serverCanGenerateNaturalPond(map: any, surface: any, centerX: any, width: any) {
@@ -31365,22 +31415,28 @@ function getServerGeneratedBaseTerrain(worldName: unknown) {
 
   const foreground = new Map();
   const background = new Map();
+  const isLandfill = ServerLandfillEventModule.isLandfillWorldName(clean);
   const { generationSeed, surface } = buildServerTerrainSurface(clean);
   for (let x: any = 0; x < WORLD_WIDTH; x += 1) {
     const surfaceY = serverSurfaceYAt(surface, x);
     for (let y: any = surfaceY; y < WORLD_HEIGHT; y += 1) {
-      const blockType = serverGeneratedBlockType(generationSeed, x, y, surfaceY);
+      const blockType = serverGeneratedBlockType(clean, generationSeed, x, y, surfaceY);
       if (blockType !== "") serverMapSet(foreground, x, y, blockType);
-      if (shouldServerPlaceCaveBackground(generationSeed, blockType, x, y, surfaceY)) {
+      if (shouldServerPlaceCaveBackground(clean, generationSeed, blockType, x, y, surfaceY)) {
         serverMapSet(background, x, y, "cave_background");
       }
     }
   }
 
   const rng = makeDeterministicRng(`generated:${clean}:${generationSeed}`);
-  serverGenerateNaturalPonds(foreground, surface, rng, background);
-  serverGenerateSurfaceDecorations(foreground, surface, generationSeed, background);
-  serverGenerateTrees(foreground, surface, generationSeed, rng, background);
+  // Landfill: no water, no trees/trunks, no grass/flowers -- per Hassan's first-pass spec. These
+  // three are purely additive passes on top of the base terrain loop above, so skipping them for
+  // Landfill worlds leaves nothing else to special-case; every non-Landfill world is unaffected.
+  if (!isLandfill) {
+    serverGenerateNaturalPonds(foreground, surface, rng, background);
+    serverGenerateSurfaceDecorations(foreground, surface, generationSeed, background);
+    serverGenerateTrees(foreground, surface, generationSeed, rng, background);
+  }
   serverApplyLandfillTrashOverlay(clean, foreground, background, surface, generationSeed);
 
   const entry = { foreground, background, surface };
