@@ -521,6 +521,10 @@ const LANDFILL_ENTRY_PEN_RADIUS_TILES = Math.max(0, Math.min(20, Math.trunc(Numb
 // The block the visible starting pen is built from. Colour-cycling and fully collidable (atlas 57),
 // so it reads unmistakably as "temporary event scenery" rather than terrain.
 const LANDFILL_ENTRY_PEN_BLOCK = "shifty_block";
+// TOTAL height of the starting pen, in tiles, counting the spawn row and the single floor row
+// beneath it. 6 keeps the walls tall enough that a player cannot simply jump out, without burying
+// rows of wall underground where they are invisible and do nothing.
+const LANDFILL_ENTRY_PEN_HEIGHT_TILES = Math.max(2, Math.min(40, Math.trunc(Number(process.env.LANDFILL_ENTRY_PEN_HEIGHT_TILES) || 6)));
 // Race session timing. Every one of these is mirrored into ecosystem.config.js -- the Snow Storm
 // incident documented in that file was a flag that existed in code but was never passed through
 // PM2, so it silently never fired in any deployed environment. Clamped so a bad env value degrades
@@ -1186,6 +1190,11 @@ function getServerLandfillEventSystem() {
             // movement path.
             getJoinWorldSpawnForWorld,
             entryPenRadiusPixels: LANDFILL_ENTRY_PEN_RADIUS_TILES * TILE_SIZE,
+            // Vertical extent is split from the horizontal radius: a square box put four rows of wall
+            // underground where they were invisible. height = above + spawn row + below, so above is
+            // height - 2 and below is the single floor row.
+            entryPenAbovePixels: Math.max(0, LANDFILL_ENTRY_PEN_HEIGHT_TILES - 2) * TILE_SIZE,
+            entryPenBelowPixels: TILE_SIZE,
             // Task: Landfill worlds must get a fresh seed/regeneration every time -- see
             // resetWorldStateForFreshInstance and createNewInstance in server_landfill_event.ts.
             resetLandfillWorldState: resetWorldStateForFreshInstance,

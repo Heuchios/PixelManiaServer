@@ -120,7 +120,13 @@ function createLandfillEventSystem(deps) {
     abandonedEntryReleaseMs = 3 * 60 * 1000, 
     // Phase 2.5: used ONLY at instance-creation time to compute+cache entryPenBounds (see
     // createNewInstance) -- never called from the per-movement-tick hot path.
-    getJoinWorldSpawnForWorld, entryPenRadiusPixels = 128, 
+    getJoinWorldSpawnForWorld, 
+    // Horizontal half-width of the starting pen, in pixels.
+    entryPenRadiusPixels = 128, 
+    // Vertical extent, split above/below the spawn rather than reusing the horizontal radius.
+    // A square box put four rows of wall UNDERGROUND, where they are invisible and useless, and
+    // made the pen taller than it needed to be. Total height = above + spawn row + below.
+    entryPenAbovePixels = 128, entryPenBelowPixels = 32, 
     // Task: guarantees every Landfill instance is a fresh regeneration -- see createNewInstance.
     resetLandfillWorldState, 
     // Read-only roster reader: (worldName) => [{ username, displayName }] for the players actually
@@ -208,11 +214,15 @@ function createLandfillEventSystem(deps) {
         const radius = Math.max(0, Number(entryPenRadiusPixels) || 0);
         if (radius <= 0)
             return null;
+        const above = Math.max(0, Number(entryPenAbovePixels) || 0);
+        const below = Math.max(0, Number(entryPenBelowPixels) || 0);
         return {
             minX: spawnX - radius,
             maxX: spawnX + radius,
-            minY: spawnY - radius,
-            maxY: spawnY + radius,
+            // Only one row below the spawn -- just the floor the player stands on. Anything further down
+            // is solid terrain the pen would never be visible in anyway.
+            minY: spawnY - above,
+            maxY: spawnY + below,
         };
     }
     // Mint a world name no live session holds and no recent race used.
