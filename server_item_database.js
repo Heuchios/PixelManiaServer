@@ -2475,6 +2475,32 @@ const ITEM_DEFINITIONS = {
         collidable: false,
         splice_only: true,
     }),
+    // Walk-through interactable that opens the event leaderboard UI client-side. The server
+    // needs this definition so the block id validates for placement/drops; the panel itself is
+    // client-only (it fetches data via the existing landfill_leaderboard_request).
+    //
+    // no_collision/collidable MUST match Scripts/item_database.gd's "leaderboard" entry.
+    // isSolidMovementCollisionBlock defaults collision_type to "full", so omitting these makes
+    // the block solid server-side while the client walks through it -- the player then gets
+    // hard-snapped back every frame and reads as physically trapped. check_item_database_sync.js
+    // asserts this parity.
+    leaderboard: block({
+        display_name: "Leaderboard",
+        rarity: "epic",
+        block_health: 4,
+        seed: "",
+        leaderboard_block: true,
+        interact_rules: { can_interact: true, interaction_message: "View the event leaderboard." },
+        no_collision: true,
+        collidable: false,
+        solid: false,
+        collision_type: "none",
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: [{ item_id: "leaderboard", item_category: "block", amount: 1 }],
+        },
+    }),
     wooden_treasure_chest: block({
         display_name: "Wooden Treasure Chest",
         rarity: "uncommon",
