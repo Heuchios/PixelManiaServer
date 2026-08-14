@@ -600,8 +600,8 @@ const LANDFILL_TRASH_JUNK_BLOCKS = Object.freeze([
 // wave FREQUENCY with similar-or-larger amplitude (broad, sweeping mounds instead of frequent small
 // bumps) -- "taller" and "less aggressive" are different axes: overall height range vs. how often
 // the terrain changes direction. Tune freely; every value here is a no-op for non-Landfill worlds.
-const LANDFILL_TERRAIN_SURFACE_VERTICAL_OFFSET = -30;
-const LANDFILL_TERRAIN_EXTRA_HILL_RANGE = 12;
+const LANDFILL_TERRAIN_SURFACE_VERTICAL_OFFSET = -42;
+const LANDFILL_TERRAIN_EXTRA_HILL_RANGE = 15;
 const LANDFILL_TERRAIN_WAVE1_FREQUENCY = 0.035;
 const LANDFILL_TERRAIN_WAVE1_AMPLITUDE = 6.0;
 const LANDFILL_TERRAIN_WAVE2_FREQUENCY = 0.0725;
