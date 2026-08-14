@@ -840,7 +840,7 @@ const SERVER_SURFACE_DECORATION_NOISE_SCALE_Y = 2.9;
 // read as "top most layer of the world" per the design spec, i.e. everywhere dirt/stone/sand/
 // cave-background naturally generate, but not the deepest sliver where lava spawns.
 const LANDFILL_TRASH_SURFACE_CHANCE = 0.18;
-const LANDFILL_TRASH_JUNK_CHANCE = 0.04;
+const LANDFILL_TRASH_JUNK_CHANCE = 0.15;
 const LANDFILL_TRASH_UNDERGROUND_CHANCE = 0.15;
 const LANDFILL_TRASH_WALLPAPER_CHANCE = 0.20;
 const LANDFILL_TRASH_JUNK_BLOCKS = Object.freeze([
@@ -31396,7 +31396,12 @@ function serverApplyLandfillTrashOverlay(
           }
         }
       } else if (["dirt", "sand", "stone"].includes(foregroundType)) {
-        if (serverCellNoise(generationSeed, x, y, 8404) < LANDFILL_TRASH_UNDERGROUND_CHANCE) {
+        // Same junk items as the surface (broken bottle/jar/flask, garbage box, vending machine),
+        // now buried underground too -- distinct noise salt (8406) so this roll is independent of
+        // the surface junk roll (8401) rather than mirroring it column-by-column.
+        if (serverCellNoise(generationSeed, x, y, 8406) < LANDFILL_TRASH_JUNK_CHANCE) {
+          serverMapSet(foreground, x, y, serverPickLandfillJunkBlock(generationSeed, x, y));
+        } else if (serverCellNoise(generationSeed, x, y, 8404) < LANDFILL_TRASH_UNDERGROUND_CHANCE) {
           serverMapSet(foreground, x, y, "trash_dirt_below");
         }
       }
