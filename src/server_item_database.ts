@@ -4073,6 +4073,17 @@ const ITEM_DEFINITIONS = {
     punch_animation: "punch_sword",
     shop_price: 0,
   }),
+  wizards_staff: item("tool", {
+    display_name: "Wizard's Staff",
+    rarity: "legendary",
+    texture: "wizards_staff_1",
+    inventory_icon: "wizards_staff_icon",
+    equipment_slot: "hand",
+    equipable: true,
+    hand_item: true,
+    punch_animation: "punch_sword",
+    shop_price: 0,
+  }),
   neptune_trident: item("tool", {
     display_name: "Neptune Trident",
     rarity: "legendary",
