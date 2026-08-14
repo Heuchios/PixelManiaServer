@@ -4062,6 +4062,17 @@ const ITEM_DEFINITIONS = {
     punch_animation: "punch_sword",
     shop_price: 0,
   }),
+  fire_staff: item("tool", {
+    display_name: "Fire Staff",
+    rarity: "legendary",
+    texture: "fire_staff_1",
+    inventory_icon: "fire_staff_icon",
+    equipment_slot: "hand",
+    equipable: true,
+    hand_item: true,
+    punch_animation: "punch_sword",
+    shop_price: 0,
+  }),
   neptune_trident: item("tool", {
     display_name: "Neptune Trident",
     rarity: "legendary",
