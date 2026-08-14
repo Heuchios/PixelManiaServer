@@ -777,10 +777,13 @@ const LANDFILL_RACE_SECONDS = Math.max(30, Math.min(1800, Math.trunc(Number(proc
 const LANDFILL_RESULTS_DISPLAY_SECONDS = Math.max(3, Math.min(120, Math.trunc(Number(process.env.LANDFILL_RESULTS_DISPLAY_SECONDS) || 12)));
 const LANDFILL_SESSION_TICK_MS = Math.max(50, Math.min(2000, Math.trunc(Number(process.env.LANDFILL_SESSION_TICK_MS) || 250)));
 const LANDFILL_RACE_BROADCAST_MIN_INTERVAL_MS = Math.max(50, Math.min(5000, Math.trunc(Number(process.env.LANDFILL_RACE_BROADCAST_MIN_INTERVAL_MS) || 250)));
-// Bonus Kilograms by finishing placement (index 0 = 1st). "Points" in this event ARE Kilograms --
-// there is no second currency -- so a placement bonus is added to what the player collected and the
-// sum is credited to their lifetime season total.
-const LANDFILL_PLACEMENT_BONUS_KILOGRAMS = String(process.env.LANDFILL_PLACEMENT_BONUS_KILOGRAMS || "100,75,50")
+// Bonus Kilograms by finishing placement (index 0 = 1st). Empty by default -- a tiered top-3 bonus
+// was too easy to farm (the race only needs 2 players, so a low-effort race against a weak/complicit
+// second account guaranteed the bonus regardless of actual collection). server_landfill_event.ts's
+// getPlacementBonus no longer reads this list at all; every finisher gets the flat
+// LANDFILL_PARTICIPATION_BONUS_KILOGRAMS instead. Left wired through in case a placement bonus is
+// ever reintroduced with anti-farming safeguards (e.g. a higher min-player floor).
+const LANDFILL_PLACEMENT_BONUS_KILOGRAMS = String(process.env.LANDFILL_PLACEMENT_BONUS_KILOGRAMS || "")
   .split(",")
   .map((part) => Math.max(0, Math.trunc(Number(part.trim()) || 0)))
   .filter((value) => value > 0);

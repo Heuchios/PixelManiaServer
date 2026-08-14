@@ -167,9 +167,11 @@ const productionEnv = {
   LANDFILL_SESSION_TICK_MS: env("LANDFILL_SESSION_TICK_MS", "250"),
   // Floor between two live race-state pushes for one session; progress is coalesced between them.
   LANDFILL_RACE_BROADCAST_MIN_INTERVAL_MS: env("LANDFILL_RACE_BROADCAST_MIN_INTERVAL_MS", "250"),
-  // Bonus Kilograms by placement, comma separated, 1st first. In this event "points" ARE
-  // Kilograms, so these are added to what the player collected and credited to their season total.
-  LANDFILL_PLACEMENT_BONUS_KILOGRAMS: env("LANDFILL_PLACEMENT_BONUS_KILOGRAMS", "100,75,50"),
+  // Bonus Kilograms by placement, comma separated, 1st first. Removed and left empty by default --
+  // it was too easy to farm (min 2 players to start a race, so a low-effort race against a
+  // weak/complicit second account guaranteed the top-3 bonus). Every finisher now gets the flat
+  // LANDFILL_PARTICIPATION_BONUS_KILOGRAMS below instead.
+  LANDFILL_PLACEMENT_BONUS_KILOGRAMS: env("LANDFILL_PLACEMENT_BONUS_KILOGRAMS", ""),
   LANDFILL_PARTICIPATION_BONUS_KILOGRAMS: env("LANDFILL_PARTICIPATION_BONUS_KILOGRAMS", "20"),
 };
 

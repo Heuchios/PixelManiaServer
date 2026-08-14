@@ -439,6 +439,9 @@ async function main() {
     raceDurationMs: 0,
     resultsDisplayMs: 0,
     broadcastMinIntervalMs: -1,
+    // Placement bonuses were removed (too easy to farm with only a 2-player minimum) -- passing a
+    // non-empty table here anyway proves getPlacementBonus truly ignores it now, not just that it
+    // was never wired up.
     placementBonusKilograms: [100, 75, 50],
     participationBonusKilograms: 20,
     resetLandfillWorldState: async () => {},
@@ -492,8 +495,10 @@ async function main() {
     if (!row) throw new Error(`expected exactly one persisted result row for ${name}`);
     return Number(row.awardedKilograms);
   };
-  assert.equal(awardedFor("haris"), 6 + 100, "awarded KG = collected + placement bonus");
-  assert.equal(awardedFor("playertwo"), 3 + 75);
+  // Both get the SAME flat participation bonus despite different placements (1st vs 2nd) and a
+  // non-empty placementBonusKilograms table above -- proves placement no longer affects the award.
+  assert.equal(awardedFor("haris"), 6 + 20, "awarded KG = collected + flat participation bonus, no placement tier");
+  assert.equal(awardedFor("playertwo"), 3 + 20, "2nd place must get the same flat bonus as 1st, not a smaller tier");
 
   // Re-running the completion handler must NOT double-award.
   lifecycleSession.resultsPersisted = false;

@@ -104,10 +104,14 @@ function createLandfillEventSystem(deps) {
     // flag and flushed at most this often, following queueWorldUpdateBroadcast's discipline in
     // server.ts -- a break-heavy race must not turn into a per-break fan-out.
     broadcastMinIntervalMs = 250, 
-    // Kilograms awarded on top of what a player collected, by finishing placement. Index 0 = 1st.
-    // Anyone who finishes outside this list, or who collected nothing, still gets the
-    // participation award. Centralized here so tuning never means touching several files.
-    placementBonusKilograms = [100, 75, 50], participationBonusKilograms = 20, 
+    // Formerly: kilograms awarded on top of what a player collected, by finishing placement
+    // (index 0 = 1st). Removed -- getPlacementBonus no longer reads this, every finisher gets the
+    // same flat participationBonusKilograms instead. A tiered top-3 bonus was too easy to farm: the
+    // race only needs 2 players to start, so a low-effort race against a weak or complicit second
+    // account guaranteed 1st place (and its bonus) regardless of how much trash was actually
+    // collected. Left here (unused, empty by default) rather than deleted outright so re-enabling a
+    // placement bonus later is a one-line change instead of re-threading the config end to end.
+    placementBonusKilograms = [], participationBonusKilograms = 20, 
     // Injectable purely so the build check can mint deterministic world names; production leaves
     // it undefined and gets Math.random.
     randomUnit, instanceIdleCleanupMs = 30 * 60 * 1000, 
@@ -834,10 +838,11 @@ function createLandfillEventSystem(deps) {
             connected: participant.connected,
         }));
     }
-    function getPlacementBonus(placement) {
-        const table = Array.isArray(placementBonusKilograms) ? placementBonusKilograms : [];
-        const bonus = Number(table[placement - 1]);
-        return Number.isFinite(bonus) && bonus > 0 ? Math.trunc(bonus) : Math.max(0, Math.trunc(Number(participationBonusKilograms) || 0));
+    // No longer placement-dependent -- see the comment on placementBonusKilograms above for why.
+    // Every finisher gets the same flat completion bonus regardless of where they placed, so the
+    // only way to earn more is to collect more kilograms, not to win a nearly-empty race.
+    function getPlacementBonus(_placement) {
+        return Math.max(0, Math.trunc(Number(participationBonusKilograms) || 0));
     }
     function retireSession(instance) {
         rememberRetiredWorldName(instance.worldName);
