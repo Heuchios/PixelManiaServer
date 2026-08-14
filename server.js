@@ -1210,9 +1210,15 @@ function getServerLandfillEventSystem() {
             // it inherits its self-healing of stale entries -- returning identities instead of a count
             // is what lets the session know WHO arrived and who left without hooking the join/leave
             // pipeline that server_landfill_event.ts's scope note forbids touching.
-            getWorldPlayerIdentities: (worldName) => getWorldPlayerRecords(cleanWorld(worldName)).map((record) => ({
-                username: cleanAccountName(record.account_username || record.name || ""),
-                displayName: cleanName(record.name || ""),
+            getWorldPlayerIdentities: (worldName) => 
+            // getWorldPlayerRecords returns {playerId, player} WRAPPER objects, not flat player
+            // records -- reading account_username/name directly off `record` (rather than
+            // record.player) silently resolves every username to "" and the race never sees anyone.
+            // This exact bug shipped once already this event; if player counts go to 0 again, check
+            // here first.
+            getWorldPlayerRecords(cleanWorld(worldName)).map((record) => ({
+                username: cleanAccountName(record.player?.account_username || record.player?.name || ""),
+                displayName: cleanName(record.player?.name || ""),
             })),
             // World-scoped push for live race state. Deliberately broadcastToWorld and not
             // broadcastSystemToWorld (which is chat) or a global fan-out.
