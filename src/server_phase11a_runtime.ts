@@ -90,6 +90,7 @@ function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
     NETFOX_MOVEMENT_ROUTE_TTL_MS,
     NETFOX_SPAWN_TICKET_TTL_MS,
     NETFOX_TRUSTED_PLAYER_STATE_ENABLED,
+    NEWS_DATA_PATH,
     PACKET_SIZE_TELEMETRY_ENABLED,
     PACKET_TYPE_SIZE_SAMPLE_LIMIT,
     PLAYER_ACTION_INTEREST_MANAGEMENT_ENABLED,
@@ -874,6 +875,35 @@ function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
           world_route: getWorldRouteStatsSnapshot(),
         },
       });
+      return;
+    }
+
+    if (request.method === "GET" && url.pathname === "/news") {
+      // Read fresh on every request (not cached) so editing NEWS_DATA_PATH on disk takes
+      // effect immediately -- no server restart, no client rebuild.
+      let rawEntries: any[] = [];
+      try {
+        if (fileSystem.existsSync(NEWS_DATA_PATH)) {
+          const parsed = JSON.parse(fileSystem.readFileSync(NEWS_DATA_PATH, "utf8"));
+          if (parsed && Array.isArray(parsed.entries)) rawEntries = parsed.entries;
+        }
+      } catch (error) {
+        logger.warn("[news] failed to read news data:", getErrorMessage(error));
+      }
+
+      const entries = rawEntries
+        .filter((entry: any) => entry && typeof entry === "object")
+        .map((entry: any) => ({
+          id: String(entry.id || ""),
+          date: String(entry.date || ""),
+          title: String(entry.title || ""),
+          body: String(entry.body || ""),
+        }))
+        .filter((entry: any) => entry.title !== "" || entry.body !== "")
+        .sort((a: any, b: any) => (a.date < b.date ? 1 : a.date > b.date ? -1 : 0))
+        .slice(0, 20);
+
+      sendHttpJson(response, 200, { ok: true, entries });
       return;
     }
 
