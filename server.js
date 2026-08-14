@@ -28080,7 +28080,9 @@ function getActiveWorldNamesForEvents() {
 }
 async function tryStartRandomSnowStormEvent() {
     const activeWorlds = getActiveWorldNamesForEvents()
-        .filter((worldName) => !hasActiveSnowStormEvent(ensureWorldState(worldName)) && !hasSnowRepellentBlock(worldName));
+        .filter((worldName) => !hasActiveSnowStormEvent(ensureWorldState(worldName)) &&
+        !hasSnowRepellentBlock(worldName) &&
+        !ServerLandfillEventModule.isLandfillWorldName(worldName));
     if (activeWorlds.length === 0)
         return { ok: false, reason: "no_active_world" };
     if (!randomChance(SNOW_STORM_RANDOM_CHANCE))
@@ -28957,6 +28959,12 @@ function makeSnowStormWorldChange(worldName, tile, action, sourceId, reason) {
 }
 async function startSnowStormEvent(worldName, options = {}) {
     const clean = cleanWorld(worldName);
+    // Landfill worlds never get Snow Storm -- neither the random picker (filtered out above in
+    // tryStartRandomSnowStormEvent) nor a developer's /forceevent or /event command should be able to
+    // start it there. Checked here, at the single function every start path funnels through, rather
+    // than only at the random picker, so a manual dev command can't bypass it.
+    if (ServerLandfillEventModule.isLandfillWorldName(clean))
+        return { ok: false, reason: "landfill_world_excluded" };
     const lockKey = `${clean}:${SNOW_STORM_EVENT_TYPE}`;
     if (worldEventActionLocks.has(lockKey))
         return { ok: false, reason: "locked" };
