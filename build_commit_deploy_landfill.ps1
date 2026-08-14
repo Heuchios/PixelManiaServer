@@ -67,6 +67,7 @@ $ServerSources = @(
     "src/postgres_store.ts",
     "src/server_phase7_dispatcher.ts",
     "src/server_phase8_player_session_routes.ts",
+    "src/server_phase8_world_action_routes.ts",
     "ecosystem.config.js",
     "scripts/check_server_landfill_event_build.js",
     "build_commit_deploy_landfill.ps1"
@@ -77,7 +78,8 @@ $ServerArtifacts = @(
     "server.js",
     "postgres_store.js",
     "server_phase7_dispatcher.js",
-    "server_phase8_player_session_routes.js"
+    "server_phase8_player_session_routes.js",
+    "server_phase8_world_action_routes.js"
 )
 $ClientFiles = @(
     "project.godot",

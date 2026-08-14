@@ -115,6 +115,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
     isFishMongerBreakAttempt,
     isGridInWorld,
     isLandfillWorldName,
+    isLandfillBuildLocked,
     isPlayerNearGrid,
     isPostgresAuthoritativeReady,
     isSafeBlockType,
@@ -320,6 +321,18 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
               y: update.y,
               block_type: update.block_type,
             });
+          }
+          // Landfill races freeze the world until GO. Placing or breaking anything during
+          // WAITING_FOR_PLAYERS/COUNTDOWN would let a player bank a head start on terrain, and
+          // would let them tunnel out of the shifty-block starting pen before it opens. A no-op
+          // for every non-Landfill world and for any Landfill world already racing, so it is safe
+          // on the hot path of the most frequent action in the game.
+          if (typeof isLandfillBuildLocked === "function" && isLandfillBuildLocked(worldName)) {
+            sendActionRejected(socket, "world_block_update", "The race hasn't started yet.", {
+              reason: "landfill_race_not_started",
+              block_type: update.block_type,
+            });
+            return;
           }
           if (
             !canPlayerBuildAtGrid(player, worldName, update.x, update.y) &&
