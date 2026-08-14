@@ -750,6 +750,16 @@ function createLandfillEventSystem(deps: LandfillDeps) {
       // Roster reconciliation first: every transition below depends on knowing who is actually
       // standing in the world right now, not on who once passed the join guard.
       reconcileParticipants(instance, now);
+      // Re-assert the visible starting pen while the session is still pre-race.
+      //
+      // Placing it once at creation is not enough: the world state is deleted and regenerated
+      // around that moment (resetLandfillWorldState), and the join path can refresh a world from
+      // Postgres afterwards, either of which can drop freshly-placed blocks before any player ever
+      // sees them. Re-asserting makes the pen converge instead of depending on winning that race.
+      //
+      // Cheap and quiet in the steady state: it only inspects the perimeter (~32 cells), only
+      // fills cells that are air, and returns without broadcasting anything when nothing changed.
+      ensureEntryPenForInstance(instance);
       advanceSessionState(instance, now);
       maybeBroadcastSessionState(instance, now);
 
@@ -892,6 +902,33 @@ function createLandfillEventSystem(deps: LandfillDeps) {
         participant.connected = false;
         instance.broadcastDirty = true;
       }
+    }
+  }
+
+  // Idempotent: builds the pen if it is missing, does nothing if it is already there. Also
+  // recovers entryPenBounds when it could not be resolved at creation time (e.g. the world's
+  // terrain was not loaded yet), which previously meant that instance simply never got a pen --
+  // visible OR invisible, since both read the same bounds.
+  function ensureEntryPenForInstance(instance: LandfillInstance): void {
+    if (!isPreRaceState(instance.state)) return;
+    if (!instance.entryPenBounds) {
+      instance.entryPenBounds = computeEntryPenBounds(instance.worldName);
+      if (instance.entryPenBounds) {
+        logger.log("[landfill] entry pen bounds resolved late", {
+          world: instance.worldName,
+          bounds: instance.entryPenBounds,
+        });
+      }
+    }
+    if (!instance.entryPenBounds) return;
+    if (typeof setLandfillEntryPenBlocks !== "function") return;
+    try {
+      void Promise.resolve(setLandfillEntryPenBlocks(instance.worldName, instance.entryPenBounds, true))
+        .catch((error: unknown) => {
+          logger.warn("[landfill] entry pen re-assert failed:", getErrorMessage ? getErrorMessage(error) : error);
+        });
+    } catch (error) {
+      logger.warn("[landfill] entry pen re-assert threw:", getErrorMessage ? getErrorMessage(error) : error);
     }
   }
 

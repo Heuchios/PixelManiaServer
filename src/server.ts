@@ -31285,6 +31285,11 @@ function setLandfillEntryPenBlocks(worldName: unknown, bounds: unknown, place: u
   }
 
   if (updates.length === 0) return;
+  console.log("[landfill] entry pen " + (shouldPlace ? "built" : "cleared"), {
+    world: clean,
+    cells: updates.length,
+    tile_box: `${minTileX},${minTileY} -> ${maxTileX},${maxTileY}`,
+  });
   queueWorldSave(clean);
   // Reuses the bulk-tile channel the Snow Storm event already uses and the client already renders
   // (handle_world_event_tile_updates), rather than emitting one packet per cell. That handler does
