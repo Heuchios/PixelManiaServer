@@ -47,6 +47,21 @@ const WORLD_OBJECT_CHANGE_COLUMN_COUNT = 15;
 // keeps the batched statement far inside that limit while still collapsing the common
 // "hundreds of changes in one save" case into a handful of round trips.
 const WORLD_CHANGE_INSERT_BATCH_MAX_ROWS = 100;
+// Write-ordering scopes. See PostgresStore.enqueueWrite.
+//
+// Writes sharing a scope string stay strictly ordered relative to each other, exactly as the
+// old single global queue ordered everything. Writes in different scopes may now run
+// concurrently (bounded by the pg pool). Anything that does not pass an explicit scope keeps
+// using the shared global chain, so this is opt-in per call site.
+const POSTGRES_GLOBAL_WRITE_SCOPE = "global";
+function postgresWorldWriteScope(worldName) {
+    const clean = cleanName(worldName || "");
+    return clean === "" ? POSTGRES_GLOBAL_WRITE_SCOPE : `world:${clean.toLowerCase()}`;
+}
+function postgresPlayerWriteScope(username) {
+    const clean = cleanName(username || "");
+    return clean === "" ? POSTGRES_GLOBAL_WRITE_SCOPE : `player:${clean.toLowerCase()}`;
+}
 const POSTGRES_TRANSACTION_MAX_ATTEMPTS = 5;
 const POSTGRES_TRANSACTION_RETRY_BASE_DELAY_MS = 75;
 const POSTGRES_INIT_MAX_ATTEMPTS = 5;
@@ -451,6 +466,7 @@ class PostgresStore {
         this.bootstrapSqlPath = cleanName(options.bootstrapSqlPath || "");
         this.autoBootstrap = Boolean(options.autoBootstrap);
         this.writeQueue = Promise.resolve();
+        this.scopedWriteQueues = new Map();
         this.writeQueueDepth = 0;
         this.maxWriteQueueDepth = Math.max(100, toInt(options.maxWriteQueueDepth, 1000));
         // Diagnostic only: logs when a write's total time (queue wait + exec) crosses this, so we
@@ -1328,15 +1344,66 @@ class PostgresStore {
             // Ignore shutdown errors.
         }
     }
+    // Waits for ALL in-flight writes across every scope, preserving this method's original
+    // "everything queued so far has landed" contract now that writes are ordered per scope
+    // rather than through one global chain. Used by shutdown and by explicit full-drain callers.
     async flushWriteQueue() {
         try {
-            await this.writeQueue;
+            await Promise.allSettled([this.writeQueue, ...Array.from(this.scopedWriteQueues.values())]);
         }
         catch {
             // The queue keeps itself alive after failures; callers handle individual errors.
         }
     }
-    enqueueWrite(label, work) {
+    // Per-scope write ordering.
+    //
+    // Previously every write on the entire server went through ONE serial promise chain
+    // (this.writeQueue). That guaranteed global write ordering, but it also meant a world join --
+    // which must wait for that world's or that player's pending save to land before reading them
+    // back -- transitively waited for EVERY unrelated write queued ahead of it. Two independent
+    // client captures measured 2378ms and 1831ms between sending join_world and the first server
+    // byte, with every measured server stage in single-digit milliseconds; a third measured 258ms.
+    // That spread is the signature of queueing behind unrelated work, and it is why joins were
+    // inconsistent rather than uniformly slow: it depended on where in the 30s periodic-save
+    // cycle (PERIODIC_SAVE_MS -> flushPendingSaves, which enqueues N world saves + M player saves
+    // in a single tick) the join happened to land.
+    //
+    // Writes are now ordered per SCOPE instead of globally. What matters for correctness is that
+    // writes to the SAME key stay in order -- two saves of world "TEST", or two saves of player
+    // "bob", must not reorder or interleave. Writes to DIFFERENT keys were never ordered against
+    // each other in any meaningful sense; they were only serialized as an implementation detail.
+    //
+    // Safety notes:
+    //  - Default scope is still the shared global chain, so every existing call site is unchanged
+    //    unless it explicitly opts in. Only world saves and player saves are scoped today.
+    //  - Same-scope ordering is identical to before (still one serial chain per scope).
+    //  - Concurrency is bounded by the pg pool (max 10), and withTransactionNow already retries
+    //    serialization/deadlock failures (40001/40P01) with backoff.
+    //  - Different worlds touch different `worlds` rows, so the SELECT ... FOR UPDATE in
+    //    upsertWorldState cannot contend across scopes. Paths using pg_advisory_xact_lock stay on
+    //    the default global scope and are therefore still fully serialized.
+    getWriteQueueTail(scope) {
+        if (scope === POSTGRES_GLOBAL_WRITE_SCOPE)
+            return this.writeQueue;
+        return this.scopedWriteQueues.get(scope) || Promise.resolve();
+    }
+    setWriteQueueTail(scope, tail) {
+        if (scope === POSTGRES_GLOBAL_WRITE_SCOPE) {
+            this.writeQueue = tail;
+            return;
+        }
+        this.scopedWriteQueues.set(scope, tail);
+        // Drop the entry once this tail settles and nothing newer replaced it, so the map does not
+        // grow without bound across every world/player the process ever touches.
+        tail.then(() => {
+            if (this.scopedWriteQueues.get(scope) === tail)
+                this.scopedWriteQueues.delete(scope);
+        }, () => {
+            if (this.scopedWriteQueues.get(scope) === tail)
+                this.scopedWriteQueues.delete(scope);
+        });
+    }
+    enqueueWrite(label, work, scope = POSTGRES_GLOBAL_WRITE_SCOPE) {
         if (!this.isReady())
             return Promise.resolve(null);
         const cleanLabel = cleanName(label || "transaction") || "transaction";
@@ -1345,10 +1412,11 @@ class PostgresStore {
             error.code = "POSTGRES_WRITE_QUEUE_FULL";
             return Promise.reject(error);
         }
+        const cleanScope = cleanName(scope || POSTGRES_GLOBAL_WRITE_SCOPE) || POSTGRES_GLOBAL_WRITE_SCOPE;
         const queuedAt = Date.now();
         const queueDepthAtEnqueue = this.writeQueueDepth;
         this.writeQueueDepth += 1;
-        const run = this.writeQueue
+        const run = this.getWriteQueueTail(cleanScope)
             .catch(() => null)
             .then(async () => {
             const startedAt = Date.now();
@@ -1361,17 +1429,17 @@ class PostgresStore {
                 const queueWaitMs = startedAt - queuedAt;
                 const execMs = finishedAt - startedAt;
                 if (this.slowWriteLogThresholdMs > 0 && queueWaitMs + execMs >= this.slowWriteLogThresholdMs) {
-                    this.logger(`[postgres] slow write: label=${cleanLabel} queue_wait_ms=${queueWaitMs} exec_ms=${execMs} queue_depth_at_enqueue=${queueDepthAtEnqueue}`);
+                    this.logger(`[postgres] slow write: label=${cleanLabel} scope=${cleanScope} queue_wait_ms=${queueWaitMs} exec_ms=${execMs} queue_depth_at_enqueue=${queueDepthAtEnqueue}`);
                 }
             }
         });
-        this.writeQueue = run.then(() => null, () => null);
+        this.setWriteQueueTail(cleanScope, run.then(() => null, () => null));
         return run;
     }
-    async withTransaction(work, label = "transaction") {
+    async withTransaction(work, label = "transaction", scope = POSTGRES_GLOBAL_WRITE_SCOPE) {
         if (!this.isReady())
             return null;
-        return this.enqueueWrite(label, () => this.withTransactionNow(work));
+        return this.enqueueWrite(label, () => this.withTransactionNow(work), scope);
     }
     async withTransactionNow(work) {
         if (!this.isReady())
@@ -4194,7 +4262,7 @@ class PostgresStore {
                     allow_create_missing: false,
                     allow_retire_extra: false,
                 });
-            });
+            }, "save player state", postgresPlayerWriteScope(cleanUsername));
             return true;
         }
         catch (error) {
@@ -5499,7 +5567,7 @@ class PostgresStore {
                 await this.mirrorWorldLockState(client, persisted.world_id, state);
                 await this.mirrorWorldAreaLocksState(client, persisted.world_id, state);
                 return persisted;
-            });
+            }, "save world state", postgresWorldWriteScope(cleanWorldName));
             return Boolean(result?.ok);
         }
         catch (error) {
