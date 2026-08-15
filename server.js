@@ -30106,7 +30106,17 @@ async function claimWorldRouteForCurrentInstance(worldName) {
             ownership_epoch: fallbackOwnership.ownership_epoch,
         };
     }
+    const claimTimingStartMs = Date.now();
     let route = await redisStore.claimWorldRoute(clean, SERVER_INSTANCE_ID, SERVER_INSTANCE_WS_URL, WORLD_ROUTE_TTL_MS, SERVER_PROCESS_OWNERSHIP_ID);
+    // Timing breakdown added 2026-08-15 to find where route_lookup_complete's multi-second
+    // stage_ms actually goes -- a LANDFILL_522519 join measured 1967.854ms in this whole
+    // function with ZERO fencing/reseed involved (brand new world, no rejection at all), so
+    // the delay is somewhere in here, not in the reseed path fixed earlier today.
+    const initialRedisClaimMs = Date.now() - claimTimingStartMs;
+    let postgresClaimMs = -1;
+    let reseedReleaseMs = -1;
+    let reseedRedisClaimMs = -1;
+    let reseedPostgresClaimMs = -1;
     if (route.ok) {
         let ownership = {
             require_owner: POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE && WORLD_ROUTE_ENFORCEMENT_ENABLED,
@@ -30131,7 +30141,9 @@ async function claimWorldRouteForCurrentInstance(worldName) {
                 invalidateWorldEntrySnapshotCache(clean, "ownership_fence_changed");
                 worldLoadedAuthorities.delete(clean);
                 worldUnpersistedRevisions.delete(clean);
+                const postgresClaimStartMs = Date.now();
                 let claimed = await postgresStore.claimWorldPersistenceOwnership(clean, ownership);
+                postgresClaimMs = Date.now() - postgresClaimStartMs;
                 if (!claimed?.ok && claimed?.reason === "world_ownership_fence_rejected") {
                     // PostgreSQL's world_owner_epoch high-water mark is never cleared, but the
                     // Redis counter that mints epochs CAN be lost (TTL expiry, flush, replica
@@ -30151,8 +30163,12 @@ async function claimWorldRouteForCurrentInstance(worldName) {
                     // silently never fires. Releasing first makes the reseed take the "not
                     // current_owner" INCR branch, which actually mints an epoch past the floor.
                     const fenceEpoch = await postgresStore.getWorldOwnerEpoch(clean);
+                    const reseedReleaseStartMs = Date.now();
                     await redisStore.releaseWorldRoute(clean, SERVER_INSTANCE_ID, ownership.ownership_token);
+                    reseedReleaseMs = Date.now() - reseedReleaseStartMs;
+                    const reseedClaimStartMs = Date.now();
                     const reseeded = await redisStore.claimWorldRoute(clean, SERVER_INSTANCE_ID, SERVER_INSTANCE_WS_URL, WORLD_ROUTE_TTL_MS, SERVER_PROCESS_OWNERSHIP_ID, fenceEpoch);
+                    reseedRedisClaimMs = Date.now() - reseedClaimStartMs;
                     const reseededEpoch = Math.max(0, Math.trunc(Number(reseeded.ownership_epoch) || 0));
                     if (reseeded.ok && reseededEpoch > fenceEpoch) {
                         route = reseeded;
@@ -30163,13 +30179,25 @@ async function claimWorldRouteForCurrentInstance(worldName) {
                             fallback: reseeded.fallback === true,
                             verified: reseeded.fallback !== true,
                         };
+                        const reseedPostgresClaimStartMs = Date.now();
                         claimed = await postgresStore.claimWorldPersistenceOwnership(clean, ownership);
+                        reseedPostgresClaimMs = Date.now() - reseedPostgresClaimStartMs;
                     }
                     else {
                         console.error(`[world-route] ownership epoch reseed FAILED world=${clean} fenceEpoch=${fenceEpoch} reseededEpoch=${reseededEpoch} reseededOk=${reseeded.ok}`);
                     }
                 }
                 if (!claimed?.ok) {
+                    console.log("[world-route] claim timing breakdown " + JSON.stringify({
+                        world: clean,
+                        outcome: "failed",
+                        total_ms: Date.now() - claimTimingStartMs,
+                        initial_redis_claim_ms: initialRedisClaimMs,
+                        postgres_claim_ms: postgresClaimMs,
+                        reseed_release_ms: reseedReleaseMs,
+                        reseed_redis_claim_ms: reseedRedisClaimMs,
+                        reseed_postgres_claim_ms: reseedPostgresClaimMs,
+                    }));
                     await redisStore.releaseWorldRoute(clean, SERVER_INSTANCE_ID, ownership.ownership_token);
                     ownedWorldRoutes.delete(clean);
                     worldPersistenceOwnership.delete(clean);
@@ -30183,6 +30211,16 @@ async function claimWorldRouteForCurrentInstance(worldName) {
                 worldPersistedRevisions.set(clean, PersistenceHelpers.normalizeWorldRevision(claimed.persisted_revision ?? claimed.loaded_revision));
             }
         }
+        console.log("[world-route] claim timing breakdown " + JSON.stringify({
+            world: clean,
+            outcome: "ok",
+            total_ms: Date.now() - claimTimingStartMs,
+            initial_redis_claim_ms: initialRedisClaimMs,
+            postgres_claim_ms: postgresClaimMs,
+            reseed_release_ms: reseedReleaseMs,
+            reseed_redis_claim_ms: reseedRedisClaimMs,
+            reseed_postgres_claim_ms: reseedPostgresClaimMs,
+        }));
         ownedWorldRoutes.add(clean);
         worldPersistenceOwnership.set(clean, ownership);
         return route;
