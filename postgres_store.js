@@ -4805,7 +4805,17 @@ class PostgresStore {
                     affected_rows: affectedRows,
                     idempotent: sameOwner,
                 };
-            });
+            }, "claim world ownership", postgresWorldWriteScope(cleanWorldName));
+            // Found 2026-08-15: this withTransaction call had no label/scope args, so it silently
+            // defaulted to label="transaction" scope="global" -- the SAME shared write chain every
+            // other unscoped write goes through. That's the exact "[postgres] slow write:
+            // label=transaction scope=global" signature seen constantly in staging logs (exec_ms
+            // 2000-5700ms), and it's what claim timing breakdown measured directly: a LANDFILL_849768
+            // join's postgres_claim_ms was 2093ms while its Redis claim was 1ms. World SAVES were
+            // already scoped per-world (see "save world state" a few hundred lines below) after the
+            // original global-write-queue join-latency bug ([[world_join_pipeline]], fixed 2026-08-04)
+            // -- this ownership CLAIM call was simply missed in that migration and stayed on the
+            // global chain ever since, still queueing behind every unrelated write on the server.
             const claimResult = result || {
                 ok: false,
                 reason: "world_ownership_claim_failed",
