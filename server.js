@@ -30140,7 +30140,18 @@ async function claimWorldRouteForCurrentInstance(worldName) {
                     // this took TEST offline on 2026-08-05 (epoch 322 in PostgreSQL, 3 in
                     // Redis). Recover by reading the PostgreSQL floor and re-minting the Redis
                     // epoch above it, then retrying the claim exactly once.
+                    //
+                    // Self-lease deadlock (found 2026-08-15): the claim a few lines above this
+                    // already SET the Redis owner/token keys for US, for this same worldName, under
+                    // the too-low epoch. If we reseed by calling claimWorldRoute() again without
+                    // releasing that lease first, claimWorldRoute's Lua script sees current_owner
+                    // === our own instance id and skips every INCR branch entirely -- it floors the
+                    // shared epoch counter to fenceEpoch but returns our OLD token/epoch unchanged,
+                    // so reseededEpoch ends up == fenceEpoch, never > fenceEpoch, and this recovery
+                    // silently never fires. Releasing first makes the reseed take the "not
+                    // current_owner" INCR branch, which actually mints an epoch past the floor.
                     const fenceEpoch = await postgresStore.getWorldOwnerEpoch(clean);
+                    await redisStore.releaseWorldRoute(clean, SERVER_INSTANCE_ID, ownership.ownership_token);
                     const reseeded = await redisStore.claimWorldRoute(clean, SERVER_INSTANCE_ID, SERVER_INSTANCE_WS_URL, WORLD_ROUTE_TTL_MS, SERVER_PROCESS_OWNERSHIP_ID, fenceEpoch);
                     const reseededEpoch = Math.max(0, Math.trunc(Number(reseeded.ownership_epoch) || 0));
                     if (reseeded.ok && reseededEpoch > fenceEpoch) {
@@ -30153,6 +30164,9 @@ async function claimWorldRouteForCurrentInstance(worldName) {
                             verified: reseeded.fallback !== true,
                         };
                         claimed = await postgresStore.claimWorldPersistenceOwnership(clean, ownership);
+                    }
+                    else {
+                        console.error(`[world-route] ownership epoch reseed FAILED world=${clean} fenceEpoch=${fenceEpoch} reseededEpoch=${reseededEpoch} reseededOk=${reseeded.ok}`);
                     }
                 }
                 if (!claimed?.ok) {
