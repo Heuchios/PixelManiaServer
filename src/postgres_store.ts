@@ -6576,10 +6576,10 @@ class PostgresStore {
         };
       }
 
-      if (activeDrops?.ok && !activeDrops.skipped) {
+      if (activeDrops?.ok) {
         state.drops = activeDrops.drops || [];
         state.item_drops = state.drops;
-      } else if (!activeDrops?.ok) {
+      } else {
         this.logger("[postgres] active world drops load failed during world state load:", activeDrops?.reason || "unknown");
       }
 
