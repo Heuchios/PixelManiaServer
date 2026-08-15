@@ -620,7 +620,7 @@ const LANDFILL_TERRAIN_DRIFT_RANGE = 2;
 const SEED_MUTATION_REWARD_TABLE = Object.freeze([
     { item_id: "glowing_dirt", item_category: "block", min_amount: 1, max_amount: 5, y_offset: -16, weight: 80 },
     { item_id: "sakura_sword", item_category: "tool", min_amount: 1, max_amount: 1, y_offset: -16, weight: 10 },
-    { item_id: "pulu_pulu", item_category: "tool", min_amount: 1, max_amount: 1, y_offset: -16, weight: 10 },
+    { item_id: "serpent_staff", item_category: "tool", min_amount: 1, max_amount: 1, y_offset: -16, weight: 10 },
 ]);
 const FISHING_SESSION_TTL_MS = Math.max(10000, Math.trunc(Number(process.env.FISHING_SESSION_TTL_MS) || 90000));
 const MIN_BLOCK_BREAK_INTERVAL_MS = Math.max(50, Math.trunc(Number(process.env.MIN_BLOCK_BREAK_INTERVAL_MS) || 75));

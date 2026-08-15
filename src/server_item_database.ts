@@ -4019,6 +4019,8 @@ const ITEM_DEFINITIONS = {
   neptune_rod: item("tool", {
     display_name: "Neptune Rod",
     rarity: "legendary",
+    texture: "neptune_rod_1",
+    inventory_icon: "neptune_rod_icon",
     equipment_slot: "hand",
     equipable: true,
     fishing_rod: true,
@@ -4034,8 +4036,11 @@ const ITEM_DEFINITIONS = {
     hand_item: true,
     shop_price: 0,
   }),
-  pulu_pulu: item("tool", {
+  serpent_staff: item("tool", {
+    display_name: "Serpent Staff",
     rarity: "legendary",
+    texture: "serpent_staff_1",
+    inventory_icon: "serpent_staff_icon",
     equipment_slot: "hand",
     equipable: true,
     shop_price: 0,
