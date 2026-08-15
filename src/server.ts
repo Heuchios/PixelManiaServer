@@ -18240,8 +18240,10 @@ async function handleDoorEnterRequest(socket: any, player: any, data: any) {
   const changedWorld = oldWorld !== targetWorld;
   // Hoisted out of the `if (changedWorld)` block below so the drops-refetch skip further
   // down (see the refreshWorldDropsFromPostgres call near the end of this function) can
-  // read worldRefresh.source without a second, separate refresh call.
-  let worldRefresh: any = null;
+  // read worldRefresh.source without a second, separate refresh call. Typed off the real
+  // function instead of `any` -- this codebase's check:security build gate fails on any
+  // increase in explicit `any` usage in server.ts.
+  let worldRefresh: Awaited<ReturnType<typeof refreshWorldStateFromPostgres>> | null = null;
   if (changedWorld) {
     const routeCheck = await ensureWorldRouteForAction(socket, player, targetWorld, "door_enter");
     if (!routeCheck.ok) return false;
@@ -18403,7 +18405,7 @@ async function handleDoorEnterRequest(socket: any, player: any, data: any) {
       // memory/memory_warm sources, where this instance's in-memory drops could in theory
       // need a defensive re-sync; only the provably-redundant case is removed. See
       // world-join latency investigation, item #7 (duplicate work).
-      if (worldRefresh.source !== "database") {
+      if (!worldRefresh || worldRefresh.source !== "database") {
         await refreshWorldDropsFromPostgres(targetWorld, "door_enter");
       }
       sendWorldStateToSocket(socket, player, targetWorld, {
