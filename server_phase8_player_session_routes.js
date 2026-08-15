@@ -631,6 +631,21 @@ function createServerPhase8PlayerSessionRoutes(deps) {
                 world_ownership_verify_ms: Number(worldTimings.ownership_verify_ms || 0) + Number(worldTimings.post_load_ownership_verify_ms || 0),
                 player_db_load_ms: Number(playerTimings.postgres_query_ms || 0),
                 serialize_ms: Number(worldStateDelivery.payload_build_ms || 0) + Number(worldStateDelivery.stream_build_ms || 0) + Number(worldStateDelivery.serialization_ms || 0),
+                // The persistence-flush stages below were MISSING from this list, which made this
+                // profile actively misleading: a join that spent seconds blocked in
+                // flushPendingSessionPersistence -> drainScopedSessionPersistence ->
+                // postgresStore.flushWriteQueue() would report a large TOTAL_JOIN_SERVER_ms while
+                // naming a slowest_stage of only a few milliseconds, because the actual wait was
+                // never one of the measured stages. A real client-side capture showed 2378ms between
+                // the join request being sent and the first server byte arriving, with every named
+                // stage here in the single-digit-ms range -- the whole delay was hiding in exactly
+                // these unmeasured flush/wait fields.
+                world_persistence_flush_ms: Number(worldTimings.persistence_flush_ms || 0),
+                world_persistence_wait_ms: Number(worldTimings.persistence_wait_ms || 0),
+                world_coalesced_wait_ms: Number(worldTimings.coalesced_wait_ms || 0),
+                world_warm_memory_check_ms: Number(worldTimings.warm_memory_check_ms || 0),
+                player_persistence_flush_ms: Number(playerTimings.persistence_flush_ms || 0),
+                player_coalesced_wait_ms: Number(playerTimings.coalesced_wait_ms || 0),
             };
             const totalJoinMs = worldEntryElapsedMs(joinProfileStartedAt);
             let slowestStage = "";
