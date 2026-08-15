@@ -79,6 +79,11 @@ const DATA_FOLDER = process.env.PIXELMANIA_DATA_DIR ? path.resolve(process.env.P
 const WORLD_SAVE_FOLDER = process.env.WORLD_SAVE_FOLDER ? path.resolve(process.env.WORLD_SAVE_FOLDER) : path.join(DATA_FOLDER, "worlds");
 const PLAYER_SAVE_FOLDER = process.env.PLAYER_SAVE_FOLDER ? path.resolve(process.env.PLAYER_SAVE_FOLDER) : path.join(DATA_FOLDER, "players");
 const ACCOUNTS_SAVE_PATH = process.env.ACCOUNTS_SAVE_PATH ? path.resolve(process.env.ACCOUNTS_SAVE_PATH) : path.join(DATA_FOLDER, "accounts.json");
+// News shown on the login screen's News panel. Read fresh on every GET /news request (see
+// server_phase11a_runtime.ts) rather than cached, so editing this file on the server takes
+// effect immediately -- no server restart or client rebuild needed. Format:
+// { "entries": [ { "id": "...", "date": "YYYY-MM-DD", "title": "...", "body": "..." }, ... ] }
+const NEWS_DATA_PATH = process.env.NEWS_DATA_PATH ? path.resolve(process.env.NEWS_DATA_PATH) : path.join(DATA_FOLDER, "news.json");
 const ADMIN_LOG_PATH = process.env.ADMIN_LOG_PATH ? path.resolve(process.env.ADMIN_LOG_PATH) : path.join(DATA_FOLDER, "admin_actions.log");
 const CRASH_REPORT_PATH = process.env.CRASH_REPORT_PATH ? path.resolve(process.env.CRASH_REPORT_PATH) : path.join(DATA_FOLDER, "crash_reports.log");
 const INTEGRITY_LOG_FOLDER = process.env.INTEGRITY_LOG_FOLDER ? path.resolve(process.env.INTEGRITY_LOG_FOLDER) : path.join(DATA_FOLDER, "integrity_logs");
@@ -2426,6 +2431,7 @@ const ServerPhase11aRuntime = ServerPhase11aRuntimeModule.createServerPhase11aRu
     NETFOX_MOVEMENT_ROUTE_TTL_MS,
     NETFOX_SPAWN_TICKET_TTL_MS,
     NETFOX_TRUSTED_PLAYER_STATE_ENABLED,
+    NEWS_DATA_PATH,
     PACKET_SIZE_TELEMETRY_ENABLED,
     PACKET_TYPE_SIZE_SAMPLE_LIMIT,
     PLAYER_ACTION_INTEREST_MANAGEMENT_ENABLED,
