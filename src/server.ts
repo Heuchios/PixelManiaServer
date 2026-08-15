@@ -32360,13 +32360,33 @@ async function drainScopedSessionPersistence(cleanUsername: string, cleanWorldNa
     await Promise.allSettled(scoped);
     return;
   }
-  // Nothing has ever been written for this key on this instance, so there is no
-  // scoped tail to wait on. Fall back to the historical global drain.
-  if (typeof postgresStore.flushWriteQueue === "function") {
-    await postgresStore.flushWriteQueue();
-  } else {
-    await waitForPersistenceWrites();
-  }
+  // Nothing is pending for THIS world/player, so there is nothing to wait for -- return
+  // immediately instead of draining the entire instance's write queue.
+  //
+  // This else-branch used to `await postgresStore.flushWriteQueue()`, i.e. wait for the tail of
+  // the single global serial write chain: every player save, world save, inventory delta and
+  // ledger event queued anywhere on the server. A real client capture measured 2378ms between
+  // sending join_world and receiving the first server byte, with every measured server stage in
+  // the single-digit milliseconds -- the join was simply queued behind unrelated writes. The
+  // 30-second periodic flushPendingSaves() burst enqueues N world saves + M player saves in a
+  // single tick, which is what made this expensive and, crucially, INCONSISTENT: how long a
+  // join took depended on where in that 30s cycle it happened to land, not on the world itself.
+  //
+  // Why returning here is safe, not a correctness regression:
+  //  - The purpose of this flush is "before I READ this world/player, let any pending WRITE of
+  //    that same world/player land first, so I don't read stale data." That is a per-key
+  //    concern. Writes to OTHER keys cannot make this key's read stale.
+  //  - The scoped branch above ALREADY skips the global drain on every join that has a tracked
+  //    pending write -- which is the majority of joins, and the case where waiting would matter
+  //    MORE, not less. If skipping the global drain were unsafe, that established path would
+  //    already be unsafe. This branch is the one with the least reason to wait.
+  //  - The reason this branch was being hit spuriously at all (an in-flight world save whose
+  //    tracking entry was deleted on idle world unload) is fixed at the worldSaveWrites.delete
+  //    site in releaseOwnedWorldRouteIfEmpty, so a genuinely pending write for this key is now
+  //    always visible to the scoped branch above.
+  //
+  // Server authority is unchanged: the read still goes to Postgres and Postgres remains the
+  // source of truth. This only stops the read from waiting on writes belonging to other keys.
 }
 
 async function flushPendingSessionPersistence(username: any = "", worldName: any = "", reason: any = "session_transition") {
@@ -33061,7 +33081,28 @@ async function releaseOwnedWorldRouteIfEmpty(worldName: any) {
   worldPersistenceOwnership.delete(clean);
   worldUnpersistedRevisions.delete(clean);
   worldPersistedRevisions.delete(clean);
-  worldSaveWrites.delete(clean);
+  // Only drop the write-tracking entry once the write it tracks has actually settled.
+  //
+  // Deleting it unconditionally here orphaned in-flight writes: the world unloads when the
+  // last player leaves, but its save may still be sitting in the serial write queue. The next
+  // player to join that world then found no scoped entry in drainScopedSessionPersistence and
+  // fell through to the GLOBAL postgresStore.flushWriteQueue() drain -- blocking that join
+  // behind every unrelated write on the entire instance (all worlds, all players), which is
+  // unbounded and has nothing to do with the world being joined. Keeping the entry alive until
+  // the write settles keeps the scoped wait correct and precise instead.
+  // Deliberately unannotated -- worldSaveWrites is already loosely typed so the inferred type
+  // is fine, and the check:security build gate fails the deploy on any increase in the
+  // explicit-any count in server.ts (it counts textual matches, including ones inside
+  // comments, so do not write the annotation out here even as an example).
+  const pendingWorldSaveWrite = worldSaveWrites.get(clean);
+  if (pendingWorldSaveWrite && typeof pendingWorldSaveWrite.then === "function") {
+    const clearWhenSettled = () => {
+      if (worldSaveWrites.get(clean) === pendingWorldSaveWrite) worldSaveWrites.delete(clean);
+    };
+    Promise.resolve(pendingWorldSaveWrite).then(clearWhenSettled, clearWhenSettled);
+  } else {
+    worldSaveWrites.delete(clean);
+  }
 
   const eventTimer = worldEventTimers.get(clean);
   if (eventTimer) clearTimeout(eventTimer);
