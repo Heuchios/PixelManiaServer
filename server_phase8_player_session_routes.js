@@ -329,6 +329,12 @@ function createServerPhase8PlayerSessionRoutes(deps) {
         deps.sendJson(socket, publicProfile);
     }
     async function handleJoinWorld(socket, player, data, context) {
+        // Always-on lightweight timer for the WORLD_JOIN_PROFILE summary below -- unlike
+        // worldEntryProfile (beginWorldEntryServerProfile), this is not gated behind
+        // WORLD_ENTRY_PROFILE_ENABLED: it costs one hrtime read and does not sample the heap,
+        // so it is cheap enough to leave on unconditionally as permanent join-latency
+        // telemetry. See world-join latency investigation, section 21.
+        const joinProfileStartedAt = process.hrtime.bigint();
         if (!deps.requireAuthenticated(socket, player, "join worlds"))
             return;
         const newWorld = deps.cleanWorld(data.world);
@@ -382,29 +388,6 @@ function createServerPhase8PlayerSessionRoutes(deps) {
             return;
         }
         recordWorldEntryServerStage(worldEntryProfile, "ban_check_complete");
-        // Landfill instances must only be entered through the Join Race flow (which allocates/reuses
-        // an instance and hands its world name back to the client) -- never by /warp or by typing the
-        // instance name directly into the JOIN field. checkLandfillInstanceJoinEligibility is a no-op
-        // (always ok) for any non-Landfill world name, so this is safe to run on every join_world.
-        const landfillEligibility = deps.checkLandfillInstanceJoinEligibility(newWorld, deps.cleanAccountName(player.account_username || player.name));
-        if (!landfillEligibility || landfillEligibility.ok !== true) {
-            recordWorldEntryServerStage(worldEntryProfile, "rejected", {
-                reason: landfillEligibility?.reason || "landfill_join_rejected",
-            });
-            // "join_race_required" means the player was never routed here by the Join Race flow -- they
-            // typed the instance name, warped to a racer, or walked a door. Telling them the instance is
-            // "no longer available" would be a lie that reads like a bug; point them at the real door.
-            const landfillRejectMessage = landfillEligibility?.reason === "join_race_required"
-                ? "Join the Landfill Race from the lobby to enter this world."
-                : "This Landfill instance is no longer available to join.";
-            deps.sendActionRejected(socket, "join_world", landfillRejectMessage, {
-                reason: landfillEligibility?.reason || "landfill_join_rejected",
-                world: newWorld,
-                join_request_id: joinRequestId,
-            });
-            return;
-        }
-        deps.recordLandfillInstanceJoin(newWorld, deps.cleanAccountName(player.account_username || player.name));
         const routeCheck = toRecord(await deps.ensureWorldRouteForAction(socket, player, newWorld, "join_world"));
         recordWorldEntryServerStage(worldEntryProfile, "route_lookup_complete", {
             route_ok: routeCheck.ok === true,
@@ -632,6 +615,49 @@ function createServerPhase8PlayerSessionRoutes(deps) {
                 world_revision: Number(worldStateDelivery.world_revision || 0),
                 block_revision: Number(worldStateDelivery.block_revision || 0),
             });
+            // Permanent, lightweight join-latency telemetry -- always on, not behind
+            // WORLD_ENTRY_PROFILE_ENABLED. Reuses timings already computed by
+            // refreshWorldStateFromPostgres/refreshPlayerStateFromPostgres/sendWorldStateToSocket
+            // (those hrtime reads happen regardless of this flag), so this adds effectively no
+            // overhead beyond one more hrtime read and a JSON.stringify of small objects. Warns
+            // whenever the server-side portion of a join exceeds 1000ms and names the slowest
+            // named stage, per the requested "leave lightweight profiling available... warn
+            // whenever TOTAL_JOIN > 1000ms" behavior.
+            const worldTimings = toRecord(worldRefresh.timings);
+            const playerTimings = toRecord(playerRefresh.timings);
+            const namedStages = {
+                db_load_ms: Number(worldTimings.postgres_query_ms || 0),
+                world_deserialize_ms: Number(worldTimings.deserialize_ms || 0),
+                world_ownership_verify_ms: Number(worldTimings.ownership_verify_ms || 0) + Number(worldTimings.post_load_ownership_verify_ms || 0),
+                player_db_load_ms: Number(playerTimings.postgres_query_ms || 0),
+                serialize_ms: Number(worldStateDelivery.payload_build_ms || 0) + Number(worldStateDelivery.stream_build_ms || 0) + Number(worldStateDelivery.serialization_ms || 0),
+            };
+            const totalJoinMs = worldEntryElapsedMs(joinProfileStartedAt);
+            let slowestStage = "";
+            let slowestStageMs = 0;
+            for (const [stageName, stageMs] of Object.entries(namedStages)) {
+                if (stageMs > slowestStageMs) {
+                    slowestStageMs = stageMs;
+                    slowestStage = stageName;
+                }
+            }
+            console.log("[WORLD_JOIN_PROFILE]", JSON.stringify({
+                world: newWorld,
+                player: context.playerId,
+                cold_load: worldRefresh.source === "database",
+                world_source: String(worldRefresh.source || ""),
+                ...namedStages,
+                snapshot_bytes: Number(worldStateDelivery.snapshot_bytes || 0),
+                wire_bytes: Number(worldStateDelivery.wire_bytes || 0),
+                chunk_count: Number(worldStateDelivery.chunk_count || 0),
+                slowest_stage: slowestStage,
+                slowest_stage_ms: slowestStageMs,
+                TOTAL_JOIN_SERVER_ms: totalJoinMs,
+            }));
+            if (totalJoinMs > 1000) {
+                console.warn(`[WORLD_JOIN_PROFILE] server-side join exceeded 1000ms world=${newWorld} player=${context.playerId} `
+                    + `TOTAL_JOIN_SERVER_ms=${totalJoinMs} slowest_stage=${slowestStage} (${slowestStageMs}ms)`);
+            }
             if (worldEntryReadySupported) {
                 recordWorldEntryServerStage(worldEntryProfile, "snapshot_waiting_for_client_ready", {
                     world_entry_session_id: worldEntrySessionId,

@@ -16529,11 +16529,15 @@ async function handleDoorEnterRequest(socket, player, data) {
         return false;
     const oldWorld = sourceWorld;
     const changedWorld = oldWorld !== targetWorld;
+    // Hoisted out of the `if (changedWorld)` block below so the drops-refetch skip further
+    // down (see the refreshWorldDropsFromPostgres call near the end of this function) can
+    // read worldRefresh.source without a second, separate refresh call.
+    let worldRefresh = null;
     if (changedWorld) {
         const routeCheck = await ensureWorldRouteForAction(socket, player, targetWorld, "door_enter");
         if (!routeCheck.ok)
             return false;
-        const worldRefresh = await refreshWorldStateFromPostgres(targetWorld, "door_enter");
+        worldRefresh = await refreshWorldStateFromPostgres(targetWorld, "door_enter");
         if (!worldRefresh.ok) {
             rejectDoorEnter(socket, "World data is still loading. Try again.", {
                 reason: worldRefresh.reason || "world_state_refresh_failed",
@@ -16673,7 +16677,17 @@ async function handleDoorEnterRequest(socket, player, data) {
             }
             sendJson(socket, joinWorldPayload);
             sendWorldPopulationUpdate(socket, targetWorld);
-            await refreshWorldDropsFromPostgres(targetWorld, "door_enter");
+            // Skip when refreshWorldStateFromPostgres (above) already did a real cold Postgres
+            // load for this exact request (source === "database") -- loadWorldState's own
+            // internal query just loaded state.drops for this world moments ago, and nothing
+            // between there and here touches world_drops, so re-fetching is a guaranteed
+            // duplicate round trip on every cold world-changing join. Left in place for the
+            // memory/memory_warm sources, where this instance's in-memory drops could in theory
+            // need a defensive re-sync; only the provably-redundant case is removed. See
+            // world-join latency investigation, item #7 (duplicate work).
+            if (worldRefresh.source !== "database") {
+                await refreshWorldDropsFromPostgres(targetWorld, "door_enter");
+            }
             sendWorldStateToSocket(socket, player, targetWorld, {
                 receiver_player: player,
                 respawn_player: true,

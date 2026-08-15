@@ -447,7 +447,6 @@ class PostgresStore {
         this.degraded = false;
         this.initialized = false;
         this.progressionReady = false;
-        this.landfillReady = false;
         this.pool = null;
         this.bootstrapSqlPath = cleanName(options.bootstrapSqlPath || "");
         this.autoBootstrap = Boolean(options.autoBootstrap);
@@ -568,16 +567,6 @@ class PostgresStore {
                     }
                     this.progressionReady = false;
                     this.logger("[postgres] progression schema upgrade failed. Level mirrors are disabled.", getErrorMessage(error));
-                }
-                try {
-                    await this.ensureLandfillSchema();
-                }
-                catch (error) {
-                    if (isRetryablePostgresError(error) && attempt < POSTGRES_INIT_MAX_ATTEMPTS) {
-                        throw error;
-                    }
-                    this.landfillReady = false;
-                    this.logger("[postgres] landfill schema upgrade failed. Landfill event scoring is disabled.", getErrorMessage(error));
                 }
                 this.ready = true;
                 this.degraded = false;
@@ -1018,8 +1007,7 @@ class PostgresStore {
             'fish_monger',
             'admin',
             'rollback',
-            'system',
-            'iap'
+            'system'
           )
         );
 
@@ -1328,254 +1316,6 @@ class PostgresStore {
       ON ${this.table("player_progression_events")}(player_id, created_at DESC);
     `);
         this.progressionReady = true;
-    }
-    // "Landfill" seasonal race event: per-player Kilogram (point) totals for a season (calendar
-    // month, "YYYY-MM"), and which top-10 prize ranks a player has already claimed for a season.
-    // See src/server_landfill_event.ts and project memory landfill_seasonal_event_design.md for
-    // the full feature design.
-    async ensureLandfillSchema() {
-        await this.db.query(`
-      CREATE TABLE IF NOT EXISTS ${this.table("landfill_season_scores")} (
-        player_id uuid NOT NULL REFERENCES ${this.table("players")}(player_id) ON DELETE CASCADE,
-        season_key text NOT NULL,
-        kilograms bigint NOT NULL DEFAULT 0 CHECK (kilograms >= 0),
-        updated_at timestamptz NOT NULL DEFAULT now(),
-        PRIMARY KEY (player_id, season_key)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_landfill_season_scores_leaderboard
-      ON ${this.table("landfill_season_scores")}(season_key, kilograms DESC);
-
-      CREATE TABLE IF NOT EXISTS ${this.table("landfill_prize_claims")} (
-        player_id uuid NOT NULL REFERENCES ${this.table("players")}(player_id) ON DELETE CASCADE,
-        season_key text NOT NULL,
-        rank integer NOT NULL CHECK (rank BETWEEN 1 AND 10),
-        claimed_at timestamptz NOT NULL DEFAULT now(),
-        PRIMARY KEY (player_id, season_key)
-      );
-
-      -- One row per player per race. The composite PRIMARY KEY is the anti-duplication mechanism
-      -- for race rewards: recordLandfillRaceResult inserts here and increments the player's
-      -- lifetime KG in the SAME transaction, so a completion handler that fires twice hits the
-      -- key, inserts nothing, and skips the increment. Modelled on world_honor_visits, which uses
-      -- the same "PRIMARY KEY (entity, player, period) + INSERT ... ON CONFLICT DO NOTHING
-      -- RETURNING" shape for exactly this reason.
-      CREATE TABLE IF NOT EXISTS ${this.table("landfill_race_results")} (
-        session_id text NOT NULL,
-        player_id uuid NOT NULL REFERENCES ${this.table("players")}(player_id) ON DELETE CASCADE,
-        season_key text NOT NULL,
-        world_name text NOT NULL DEFAULT '',
-        kilograms bigint NOT NULL DEFAULT 0 CHECK (kilograms >= 0),
-        placement integer NOT NULL CHECK (placement >= 1),
-        awarded_kilograms bigint NOT NULL DEFAULT 0 CHECK (awarded_kilograms >= 0),
-        finished boolean NOT NULL DEFAULT true,
-        completed_at timestamptz NOT NULL DEFAULT now(),
-        PRIMARY KEY (session_id, player_id)
-      );
-
-      CREATE INDEX IF NOT EXISTS idx_landfill_race_results_player_time
-      ON ${this.table("landfill_race_results")}(player_id, completed_at DESC);
-    `);
-        this.landfillReady = true;
-    }
-    /**
-     * Persist one player's race result AND credit their lifetime season KG, atomically and exactly
-     * once. Both statements share a transaction: either the player has a result row and the matching
-     * credit, or neither exists. Idempotency is enforced by the table's PRIMARY KEY rather than by a
-     * pre-check, so two concurrent callers cannot both pass a check and both award -- the second
-     * INSERT simply returns no row, and the increment is skipped with it.
-     */
-    async recordLandfillRaceResult(entry) {
-        if (!this.isReady())
-            return { ok: false, reason: "postgres_unavailable" };
-        const record = (entry || {});
-        const sessionId = cleanName(record.sessionId);
-        const cleanUsername = cleanName(record.username);
-        const cleanSeasonKey = cleanName(record.seasonKey);
-        const worldName = cleanName(record.worldName);
-        const kilograms = Math.max(0, toInt(record.kilograms, 0));
-        const placement = Math.max(1, toInt(record.placement, 1));
-        const awardedKilograms = Math.max(0, toInt(record.awardedKilograms, 0));
-        const finished = record.finished !== false;
-        if (sessionId === "" || cleanUsername === "" || cleanSeasonKey === "") {
-            return { ok: false, reason: "invalid_input" };
-        }
-        const result = await this.withTransaction(async (client) => {
-            const playerId = await this.ensurePlayerIdentityForExistingAccount(client, cleanUsername);
-            if (!playerId)
-                return { ok: false, reason: "identity_missing" };
-            const inserted = await client.query(`INSERT INTO ${this.table("landfill_race_results")}
-           (session_id, player_id, season_key, world_name, kilograms, placement, awarded_kilograms, finished, completed_at)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, now())
-         ON CONFLICT (session_id, player_id) DO NOTHING
-         RETURNING player_id`, [sessionId, playerId, cleanSeasonKey, worldName, kilograms, placement, awardedKilograms, finished]);
-            // No row means this (session, player) was already recorded. Returning early here is the
-            // whole anti-duplication guarantee -- the increment below must never run twice.
-            if (inserted.rowCount === 0) {
-                return { ok: true, recorded: false, duplicate: true, awarded_kilograms: 0 };
-            }
-            if (awardedKilograms > 0) {
-                await client.query(`INSERT INTO ${this.table("landfill_season_scores")} (player_id, season_key, kilograms, updated_at)
-           VALUES ($1, $2, $3, now())
-           ON CONFLICT (player_id, season_key) DO UPDATE
-             SET kilograms = ${this.table("landfill_season_scores")}.kilograms + EXCLUDED.kilograms,
-                 updated_at = now()`, [playerId, cleanSeasonKey, awardedKilograms]);
-            }
-            return { ok: true, recorded: true, duplicate: false, awarded_kilograms: awardedKilograms };
-        }, "landfill race result");
-        return result || { ok: false, reason: "postgres_unavailable" };
-    }
-    async incrementLandfillKilograms(username, seasonKey, amount) {
-        if (!this.isReady())
-            return { ok: false, reason: "postgres_unavailable" };
-        const cleanUsername = cleanName(username);
-        const cleanSeasonKey = cleanName(seasonKey);
-        const delta = Math.max(0, toInt(amount, 0));
-        if (cleanUsername === "" || cleanSeasonKey === "" || delta <= 0) {
-            return { ok: false, reason: "invalid_input" };
-        }
-        try {
-            const result = await this.withTransaction(async (client) => {
-                const playerId = await this.ensurePlayerIdentityForExistingAccount(client, cleanUsername);
-                if (!playerId)
-                    return { ok: false, reason: "identity_missing" };
-                const upsertResult = await client.query(`
-          INSERT INTO ${this.table("landfill_season_scores")} (player_id, season_key, kilograms, updated_at)
-          VALUES ($1, $2, $3, now())
-          ON CONFLICT (player_id, season_key) DO UPDATE
-            SET kilograms = ${this.table("landfill_season_scores")}.kilograms + EXCLUDED.kilograms,
-                updated_at = now()
-          RETURNING kilograms
-          `, [playerId, cleanSeasonKey, delta]);
-                return { ok: true, kilograms: toInt(upsertResult.rows[0]?.kilograms, 0) };
-            });
-            return result || { ok: false, reason: "postgres_unavailable" };
-        }
-        catch (error) {
-            this.logger("[postgres] landfill kilogram increment failed:", getErrorMessage(error));
-            return { ok: false, reason: "database_error" };
-        }
-    }
-    async getLandfillLeaderboard(seasonKey, limit = 10) {
-        if (!this.isReady())
-            return { ok: false, entries: [], reason: "postgres_unavailable" };
-        const cleanSeasonKey = cleanName(seasonKey);
-        const cleanLimit = Math.max(1, Math.min(50, toInt(limit, 10)));
-        if (cleanSeasonKey === "")
-            return { ok: false, entries: [], reason: "invalid_input" };
-        try {
-            const result = await this.queryReadWithRetry("landfill leaderboard", `
-        SELECT a.username::text AS username,
-               s.kilograms::bigint AS kilograms,
-               ROW_NUMBER() OVER (ORDER BY s.kilograms DESC, s.updated_at ASC) AS rank
-          FROM ${this.table("landfill_season_scores")} s
-          JOIN ${this.table("players")} p ON p.player_id = s.player_id
-          JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
-         WHERE s.season_key = $1
-         ORDER BY s.kilograms DESC, s.updated_at ASC
-         LIMIT $2
-        `, [cleanSeasonKey, cleanLimit]);
-            const entries = result.rows.map((row) => ({
-                username: cleanName(row.username || ""),
-                kilograms: toInt(row.kilograms, 0),
-                rank: toInt(row.rank, 0),
-            }));
-            return { ok: true, entries };
-        }
-        catch (error) {
-            this.logger("[postgres] landfill leaderboard query failed:", getErrorMessage(error));
-            return { ok: false, entries: [], reason: "database_error" };
-        }
-    }
-    async getLandfillPlayerScore(username, seasonKey) {
-        if (!this.isReady())
-            return null;
-        const cleanUsername = cleanName(username);
-        const cleanSeasonKey = cleanName(seasonKey);
-        if (cleanUsername === "" || cleanSeasonKey === "")
-            return null;
-        try {
-            const result = await this.queryReadWithRetry("landfill player score", `
-        WITH ranked AS (
-          SELECT a.username::text AS username,
-                 s.kilograms::bigint AS kilograms,
-                 ROW_NUMBER() OVER (ORDER BY s.kilograms DESC, s.updated_at ASC) AS rank
-            FROM ${this.table("landfill_season_scores")} s
-            JOIN ${this.table("players")} p ON p.player_id = s.player_id
-            JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
-           WHERE s.season_key = $1
-        )
-        SELECT kilograms, rank FROM ranked WHERE lower(username) = lower($2) LIMIT 1
-        `, [cleanSeasonKey, cleanUsername]);
-            if (!result.rows[0])
-                return { kilograms: 0, rank: 0 };
-            return { kilograms: toInt(result.rows[0].kilograms, 0), rank: toInt(result.rows[0].rank, 0) };
-        }
-        catch (error) {
-            this.logger("[postgres] landfill player score query failed:", getErrorMessage(error));
-            return null;
-        }
-    }
-    // Idempotent: returns { ok: true, inserted: false } (not an error) if this player already
-    // claimed this season's prize -- callers use `inserted` to distinguish "you already claimed
-    // this" from a real failure.
-    async insertLandfillPrizeClaim(username, seasonKey, rank) {
-        if (!this.isReady())
-            return { ok: false, inserted: false, reason: "postgres_unavailable" };
-        const cleanUsername = cleanName(username);
-        const cleanSeasonKey = cleanName(seasonKey);
-        const cleanRank = Math.max(1, Math.min(10, toInt(rank, 0)));
-        if (cleanUsername === "" || cleanSeasonKey === "" || cleanRank < 1) {
-            return { ok: false, inserted: false, reason: "invalid_input" };
-        }
-        try {
-            const result = await this.withTransaction(async (client) => {
-                const playerId = await this.ensurePlayerIdentityForExistingAccount(client, cleanUsername);
-                if (!playerId)
-                    return { ok: false, inserted: false, reason: "identity_missing" };
-                const insertResult = await client.query(`
-          INSERT INTO ${this.table("landfill_prize_claims")} (player_id, season_key, rank, claimed_at)
-          VALUES ($1, $2, $3, now())
-          ON CONFLICT (player_id, season_key) DO NOTHING
-          RETURNING player_id
-          `, [playerId, cleanSeasonKey, cleanRank]);
-                return { ok: true, inserted: Boolean(insertResult.rows[0]) };
-            });
-            return result || { ok: false, inserted: false, reason: "postgres_unavailable" };
-        }
-        catch (error) {
-            this.logger("[postgres] landfill prize claim insert failed:", getErrorMessage(error));
-            return { ok: false, inserted: false, reason: "database_error" };
-        }
-    }
-    // Compensating rollback for insertLandfillPrizeClaim: used when the claim row was recorded
-    // but granting the actual prize items failed afterward (e.g. inventory filled up in the
-    // narrow window between the space check and the grant), so the player can retry the claim.
-    async deleteLandfillPrizeClaim(username, seasonKey) {
-        if (!this.isReady())
-            return { ok: false };
-        const cleanUsername = cleanName(username);
-        const cleanSeasonKey = cleanName(seasonKey);
-        if (cleanUsername === "" || cleanSeasonKey === "")
-            return { ok: false };
-        try {
-            await this.db.query(`
-        DELETE FROM ${this.table("landfill_prize_claims")}
-         WHERE season_key = $1
-           AND player_id = (
-             SELECT p.player_id
-               FROM ${this.table("players")} p
-               JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
-              WHERE lower(a.username) = lower($2)
-              LIMIT 1
-           )
-        `, [cleanSeasonKey, cleanUsername]);
-            return { ok: true };
-        }
-        catch (error) {
-            this.logger("[postgres] landfill prize claim delete (compensating rollback) failed:", getErrorMessage(error));
-            return { ok: false };
-        }
     }
     async close() {
         await this.flushWriteQueue();
@@ -6197,25 +5937,36 @@ class PostgresStore {
                 world_name: cleanName(rawWorldState.world_name || row.world_name || cleanWorldName) || cleanWorldName,
                 world_revision: Math.max(normalizeWorldRevision(rawWorldState.world_revision), normalizeWorldRevision(row.world_revision)),
             };
-            const worldLockResult = await this.db.query(`
-        SELECT w.world_name::text AS world_name,
-               wl.lock_type,
-               wl.is_locked,
-               wl.lock_x,
-               wl.lock_y,
-               wl.metadata,
-               p.player_id::text AS owner_player_id,
-               a.account_id::text AS owner_account_id,
-               a.username::text AS owner_username
-          FROM ${this.table("world_locks")} wl
-          JOIN ${this.table("worlds")} w ON w.world_id = wl.world_id
-          LEFT JOIN ${this.table("players")} p ON p.player_id = wl.owner_player_id
-          LEFT JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
-         WHERE w.world_name = $1
-           AND wl.is_locked = true
-         ORDER BY wl.updated_at DESC NULLS LAST
-         LIMIT 1
-        `, [cleanWorldName]);
+            // The world-lock row and the active-drops rows are independent reads on different
+            // tables, both only keyed on world_name -- neither depends on the other's result, so
+            // they run concurrently instead of back to back. This is the second of the two
+            // always-sequential round trips flagged in the world-join latency investigation
+            // (item #4): loadWorldState previously issued the main row, then the lock row, then
+            // (inside loadActiveWorldDrops) the drops row, one after another. Combined with the
+            // EXISTS-check removal above, a cold world load now costs 2 sequential round trips
+            // (main row, then this parallel pair) instead of 4.
+            const [worldLockResult, activeDrops] = await Promise.all([
+                this.db.query(`
+          SELECT w.world_name::text AS world_name,
+                 wl.lock_type,
+                 wl.is_locked,
+                 wl.lock_x,
+                 wl.lock_y,
+                 wl.metadata,
+                 p.player_id::text AS owner_player_id,
+                 a.account_id::text AS owner_account_id,
+                 a.username::text AS owner_username
+            FROM ${this.table("world_locks")} wl
+            JOIN ${this.table("worlds")} w ON w.world_id = wl.world_id
+            LEFT JOIN ${this.table("players")} p ON p.player_id = wl.owner_player_id
+            LEFT JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
+           WHERE w.world_name = $1
+             AND wl.is_locked = true
+           ORDER BY wl.updated_at DESC NULLS LAST
+           LIMIT 1
+          `, [cleanWorldName]),
+                this.loadActiveWorldDrops(cleanWorldName),
+            ]);
             const normalizedWorldLock = worldLockResult.rows[0] ? worldLockRowToPayload(worldLockResult.rows[0]) : {};
             const savedWorldLock = toObject(state.world_lock);
             if (Object.keys(normalizedWorldLock).length > 0 && (!savedWorldLock.is_locked || cleanName(savedWorldLock.owner_name || "") === "")) {
@@ -6236,12 +5987,11 @@ class PostgresStore {
                     trade_key_holder_profile_id: cleanName(savedWorldLock.trade_key_holder_profile_id || savedWorldLock.trade_key_holder_player_id || normalizedWorldLock.trade_key_holder_profile_id || normalizedWorldLock.trade_key_holder_player_id || ""),
                 };
             }
-            const activeDrops = await this.loadActiveWorldDrops(cleanWorldName);
-            if (activeDrops?.ok && !activeDrops.skipped) {
+            if (activeDrops?.ok) {
                 state.drops = activeDrops.drops || [];
                 state.item_drops = state.drops;
             }
-            else if (!activeDrops?.ok) {
+            else {
                 this.logger("[postgres] active world drops load failed during world state load:", activeDrops?.reason || "unknown");
             }
             const loadedRevision = normalizeWorldRevision(state.world_revision);
@@ -6278,54 +6028,6 @@ class PostgresStore {
             });
             this.logger("[postgres] single world state load failed:", getErrorMessage(error));
             return { ok: false, found: false, reason: "database_error", message: getErrorMessage(error) };
-        }
-    }
-    /**
-     * Permanently deletes a world's row from `worlds` (and, via ON DELETE CASCADE, every child row
-     * that references its world_id -- world_area_locks, world_drops, world_block_changes,
-     * world_object_changes, world_honor_visits, etc.). A later loadWorldState/saveWorldState for
-     * the same world_name then behaves exactly like a brand-new, never-visited world: no leftover
-     * block edits, locks, or drops. Used by the Landfill event system (see
-     * server_landfill_event.ts's createNewInstance) so a reused instance name (landfill_1,
-     * landfill_2, ...) always starts pristine, even if a previous race left the world edited.
-     * @param {unknown} worldName
-     * @returns {Promise<boolean>}
-     */
-    async deleteWorldState(worldName) {
-        const cleanWorldName = cleanName(worldName || "");
-        if (cleanWorldName === "")
-            return false;
-        if (!this.isReady()) {
-            this.logWorldPersistence("delete", {
-                world_id: cleanWorldName,
-                loaded_revision: 0,
-                persisted_revision: 0,
-                affected_row_count: 0,
-                save_result: "postgres_unavailable",
-            });
-            return false;
-        }
-        try {
-            const result = await this.db.query(`DELETE FROM ${this.table("worlds")} WHERE world_name = $1`, [cleanWorldName]);
-            this.logWorldPersistence("delete", {
-                world_id: cleanWorldName,
-                loaded_revision: 0,
-                persisted_revision: 0,
-                affected_row_count: result.rowCount ?? 0,
-                save_result: "deleted",
-            });
-            return true;
-        }
-        catch (error) {
-            this.logWorldPersistence("delete", {
-                world_id: cleanWorldName,
-                loaded_revision: 0,
-                persisted_revision: 0,
-                affected_row_count: 0,
-                save_result: "database_error",
-            });
-            this.logger("[postgres] world state delete failed:", getErrorMessage(error));
-            return false;
         }
     }
     buildWorldObjectChangesFromStateDiff(beforeState = {}, afterState = {}, context = {}) {
@@ -6635,18 +6337,14 @@ class PostgresStore {
         if (cleanWorldName === "")
             return { ok: false, reason: "invalid_world", drops: [] };
         try {
-            const historyResult = await this.db.query(`
-        SELECT EXISTS (
-          SELECT 1
-            FROM ${this.table("world_drops")} wd
-            JOIN ${this.table("worlds")} w ON w.world_id = wd.world_id
-           WHERE w.world_name = $1
-        ) AS has_drop_rows
-        `, [cleanWorldName]);
-            const hasDropRows = Boolean(historyResult.rows[0]?.has_drop_rows);
-            if (!hasDropRows) {
-                return { ok: true, world_name: cleanWorldName, skipped: true, reason: "no_world_drop_rows", drops: [] };
-            }
+            // Previously did a separate `SELECT EXISTS(...)` round trip before this query to
+            // decide whether it was worth running at all -- but world_drops is indexed on
+            // (world_id, status, updated_at DESC) (idx_world_drops_world_active), so the SELECT
+            // below is already cheap on a world with zero drops, and paying a guaranteed extra
+            // Postgres round trip on every single world load (the vast majority of which do have
+            // to run this query anyway) cost more than the rare all-empty case ever saved. See
+            // world-join latency investigation, item #4/#7: this was one of two always-sequential
+            // round trips inside loadWorldState.
             const result = await this.db.query(`
         SELECT wd.drop_id,
                wd.item_type,
