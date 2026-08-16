@@ -6785,14 +6785,20 @@ class PostgresStore {
 
     try {
       const result = await this.withTransaction(async (client) => {
-        const previousWorldState = await this.loadWorldStateForUpdate(client, cleanWorldName);
+        // See the matching comment in applyInventoryDeltaTransaction: hasExplicitObjectChanges only
+        // needs the in-memory worldChanges array, so skip the full previous-world-state fetch when
+        // the caller already told us what changed (buildWorldObjectChangesFromStateDiff, the only
+        // consumer of previousWorldState, doesn't run in that case). Persistence itself is unchanged.
+        const hasExplicitObjectChanges = worldChanges.some((change) => this.isWorldObjectChangeEntry(change));
+        const previousWorldState = hasExplicitObjectChanges
+          ? {}
+          : await this.loadWorldStateForUpdate(client, cleanWorldName);
         const persisted = await this.upsertWorldState(client, cleanWorldName, state, ownership);
         if (!persisted.ok || !persisted.world_id) return persisted;
         const worldId = persisted.world_id;
         await this.mirrorWorldLockState(client, worldId, state);
         await this.mirrorWorldAreaLocksState(client, worldId, state);
 
-        const hasExplicitObjectChanges = worldChanges.some((change) => this.isWorldObjectChangeEntry(change));
         const inferredObjectChanges = hasExplicitObjectChanges
           ? []
           : this.buildWorldObjectChangesFromStateDiff(previousWorldState, state, {
@@ -9769,9 +9775,20 @@ class PostgresStore {
           });
         }
 
+        // hasExplicitObjectChanges only needs the already in-memory worldChanges array, so it is
+        // computed before deciding whether to load the previous world state. When the caller has
+        // told us exactly what object changed (e.g. a single display/safe slot), previousWorldState
+        // is never read below (buildWorldObjectChangesFromStateDiff only runs in the !hasExplicit
+        // branch), so fetching the entire previously-persisted world blob back out of Postgres
+        // here would be a wasted "SELECT ... FOR UPDATE" of the whole world purely to feed a diff
+        // that never runs. Skipping it does not change what gets persisted -- upsertWorldState
+        // below still writes the full authoritative world_state exactly as before.
+        const hasExplicitObjectChanges = worldChanges.some((change) => this.isWorldObjectChangeEntry(change));
         let previousWorldState = {};
         if (Object.keys(worldState).length > 0) {
-          previousWorldState = await this.loadWorldStateForUpdate(client, worldName);
+          if (!hasExplicitObjectChanges) {
+            previousWorldState = await this.loadWorldStateForUpdate(client, worldName);
+          }
           const persisted = await this.upsertWorldState(client, worldName, worldState, worldPersistence);
           if (!persisted.ok || !persisted.world_id) {
             const persistenceError = new Error(persisted.reason || "world_state_save_failed") as Error & {
@@ -9787,7 +9804,6 @@ class PostgresStore {
           await this.mirrorWorldAreaLocksState(client, worldId, worldState);
         }
 
-        const hasExplicitObjectChanges = worldChanges.some((change) => this.isWorldObjectChangeEntry(change));
         const inferredObjectChanges = Object.keys(worldState).length > 0 && !hasExplicitObjectChanges
           ? this.buildWorldObjectChangesFromStateDiff(previousWorldState, worldState, {
             actor_username: username,
@@ -10839,7 +10855,13 @@ class PostgresStore {
 
         let persistedWorld: WorldPersistenceResult | null = null;
         if (Object.keys(worldState).length > 0) {
-          const previousWorldState = await this.loadWorldStateForUpdate(client, worldName);
+          // See applyInventoryDeltaTransaction: only fetch the previous world state when we don't
+          // already know what changed -- buildWorldObjectChangesFromStateDiff (the only consumer
+          // of previousWorldState) doesn't run when hasExplicitObjectChanges is true.
+          const hasExplicitObjectChanges = worldChanges.some((change) => this.isWorldObjectChangeEntry(change));
+          const previousWorldState = hasExplicitObjectChanges
+            ? {}
+            : await this.loadWorldStateForUpdate(client, worldName);
           persistedWorld = await this.upsertWorldState(client, worldName, worldState, worldPersistence);
           if (!persistedWorld.ok || !persistedWorld.world_id) {
             const persistenceError = new Error(
@@ -10855,7 +10877,6 @@ class PostgresStore {
           await this.mirrorWorldLockState(client, persistedWorld.world_id, worldState);
           await this.mirrorWorldAreaLocksState(client, persistedWorld.world_id, worldState);
 
-          const hasExplicitObjectChanges = worldChanges.some((change) => this.isWorldObjectChangeEntry(change));
           const inferredObjectChanges = hasExplicitObjectChanges
             ? []
             : this.buildWorldObjectChangesFromStateDiff(previousWorldState, worldState, {
@@ -12420,7 +12441,13 @@ class PostgresStore {
 
         let persistedWorld: WorldPersistenceResult | null = null;
         if (Object.keys(worldState).length > 0) {
-          const previousWorldState = await this.loadWorldStateForUpdate(client, worldName);
+          // See applyInventoryDeltaTransaction: only fetch the previous world state when we don't
+          // already know what changed -- buildWorldObjectChangesFromStateDiff (the only consumer
+          // of previousWorldState) doesn't run when hasExplicitObjectChanges is true.
+          const hasExplicitObjectChanges = worldChanges.some((change) => this.isWorldObjectChangeEntry(change));
+          const previousWorldState = hasExplicitObjectChanges
+            ? {}
+            : await this.loadWorldStateForUpdate(client, worldName);
           persistedWorld = await this.upsertWorldState(client, worldName, worldState, worldPersistence);
           if (!persistedWorld.ok || !persistedWorld.world_id) {
             const persistenceError = new Error(
@@ -12436,7 +12463,6 @@ class PostgresStore {
           await this.mirrorWorldLockState(client, persistedWorld.world_id, worldState);
           await this.mirrorWorldAreaLocksState(client, persistedWorld.world_id, worldState);
 
-          const hasExplicitObjectChanges = worldChanges.some((change) => this.isWorldObjectChangeEntry(change));
           const inferredObjectChanges = hasExplicitObjectChanges
             ? []
             : this.buildWorldObjectChangesFromStateDiff(previousWorldState, worldState, {

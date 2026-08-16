@@ -9968,6 +9968,28 @@ async function handleDisplayDeposit(socket: any, player: any, data: any, worldNa
 
     const serializedWorld = serializeWorldState(worldName);
     logBlockActionProfile("DISPLAY_PROFILE", "persistence_queued", profileStartedAt, profileRequestId, { action: "display_deposit" });
+    // Describe exactly what changed (this display's slot) so the persistence layer can skip
+    // fetching the previously-persisted world blob back out of Postgres and diffing it against
+    // this snapshot just to figure out what to write to the world_object_changes audit log --
+    // a full extra "SELECT ... FOR UPDATE" of the whole world plus an O(world size) JS diff for
+    // what is, from the audit log's point of view, a single-object change. This does not affect
+    // what gets persisted as the authoritative world state (still the full upsert below); it only
+    // lets that audit-log step take the fast, already-known path instead of the inferred one
+    // (see postgres_store.ts applyInventoryDeltaTransaction / shouldTreatAsWorldObjectChange).
+    const displayDepositWorldChanges = [{
+      action: "display_deposit",
+      object_type: "display",
+      x: display.x,
+      y: display.y,
+      actor_username: player.account_username,
+      source_type: "display_transaction",
+      source_id: displayTransactionId,
+      request_id: makeRequestId(data),
+      reason: "display_storage",
+      old_data: originalDisplay,
+      new_data: savedDisplay,
+      at: new Date().toISOString(),
+    }];
     const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
       source: "display",
       action: "display_deposit",
@@ -9983,6 +10005,7 @@ async function handleDisplayDeposit(socket: any, player: any, data: any, worldNa
         item_category: itemCategory,
       },
       world_state: serializedWorld,
+      world_changes: displayDepositWorldChanges,
       failure_message: "Server inventory changed. Try again.",
     });
     logBlockActionProfile("DISPLAY_PROFILE", "database_completed", profileStartedAt, profileRequestId, { action: "display_deposit", ok: commit.ok });
@@ -10068,6 +10091,24 @@ async function handleDisplayWithdraw(socket: any, player: any, data: any, worldN
     const displayTransactionId = makeAuditId("display");
     const serializedWorld = serializeWorldState(worldName);
     logBlockActionProfile("DISPLAY_PROFILE", "persistence_queued", profileStartedAt, profileRequestId, { action: "display_withdraw" });
+    // Same reasoning as handleDisplayDeposit above: an explicit world_changes entry lets the
+    // persistence layer skip the extra full-world read + diff it would otherwise do to infer
+    // this same single-slot change for the audit log. Authoritative persistence (the full
+    // world_state upsert below) is unchanged.
+    const displayWithdrawWorldChanges = [{
+      action: "display_withdraw",
+      object_type: "display",
+      x: display.x,
+      y: display.y,
+      actor_username: player.account_username,
+      source_type: "display_transaction",
+      source_id: displayTransactionId,
+      request_id: makeRequestId(data),
+      reason: "display_withdraw",
+      old_data: originalDisplay,
+      new_data: savedDisplay,
+      at: new Date().toISOString(),
+    }];
     const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
       source: "display",
       action: "display_withdraw",
@@ -10083,6 +10124,7 @@ async function handleDisplayWithdraw(socket: any, player: any, data: any, worldN
         item_category: slot.item_category,
       },
       world_state: serializedWorld,
+      world_changes: displayWithdrawWorldChanges,
       failure_message: "Server inventory changed. Try again.",
     });
     logBlockActionProfile("DISPLAY_PROFILE", "database_completed", profileStartedAt, profileRequestId, { action: "display_withdraw", ok: commit.ok });
