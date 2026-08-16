@@ -20469,7 +20469,7 @@ function parseRemoveCommand(data: any, command: any) {
  * bypasses the normal lockOwnerMatchesPlayer ownership check that guards every other ownership
  * mutation path (world lock key trades, /pull, vending/safe/display permission checks, etc).
  */
-function parseTakeWorldCommand(data: any, command: any) {
+function parseTakeWorldCommand(data: Record<string, any>, command: string) {
   const parts = splitCommand(command);
   if (parts.length === 0 || String(parts[0] || "").toLowerCase() !== "takeworld") return null;
 
@@ -20484,7 +20484,7 @@ function parseTakeWorldCommand(data: any, command: any) {
  * an arbitrary target account. Developer-only (see ADMIN_USERNAMES gate at the call site); same
  * bypass rationale as parseTakeWorldCommand above.
  */
-function parseGiveWorldCommand(data: any, command: any) {
+function parseGiveWorldCommand(data: Record<string, any>, command: string) {
   const parts = splitCommand(command);
   if (parts.length === 0 || String(parts[0] || "").toLowerCase() !== "giveworld") return null;
 
@@ -22731,7 +22731,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
 
     const commandWorld = takeWorldCommand.targetWorld;
     const state = ensureWorldState(commandWorld);
-    const currentLock: any = getEffectiveWorldLockStateInState(state);
+    const currentLock = getEffectiveWorldLockStateInState(state) as any;
     if (!currentLock.is_locked) {
       deny(`${commandWorld} is not locked and has no owner to take.`, { target_world: commandWorld, reason: "world_not_locked" });
       return;
@@ -22757,7 +22757,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
     state.world_lock = nextLock;
 
     const lockBlock = getWorldLockBlockEntry(state) || {};
-    const update: any = {
+    const update = {
       action: "developer_take_world",
       source_type: "developer_command",
       source_id: requestId,
@@ -22766,7 +22766,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
       y: lockBlock.y,
       block_type: lockBlock.block_type || nextLock.lock_block_type,
       state: nextLock,
-    };
+    } as any;
     const worldChange = buildWorldObjectChangeEntry(socket, player, commandWorld, update, beforeLock, nextLock, requestId, {
       previous_owner: previousOwner,
       new_owner: nextLock.owner_name,
@@ -22826,7 +22826,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
     }
 
     const state = ensureWorldState(commandWorld);
-    const currentLock: any = getEffectiveWorldLockStateInState(state);
+    const currentLock = getEffectiveWorldLockStateInState(state) as any;
     if (!currentLock.is_locked) {
       deny(`${commandWorld} is not locked and has no owner to give away.`, { target_world: commandWorld, reason: "world_not_locked" });
       return;
@@ -22839,7 +22839,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
     }
 
     const targetOnline = findOnlinePlayerByUsername(targetUsername);
-    const targetAccountRecord: any = accounts.get(accountKey(targetUsername)) || {};
+    const targetAccountRecord = (accounts.get(accountKey(targetUsername)) || {}) as any;
     const targetIdentitySource = targetOnline
       ? targetOnline.player
       : {
@@ -22868,7 +22868,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
     state.world_lock = nextLock;
 
     const lockBlock = getWorldLockBlockEntry(state) || {};
-    const update: any = {
+    const update = {
       action: "developer_give_world",
       source_type: "developer_command",
       source_id: requestId,
@@ -22877,7 +22877,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
       y: lockBlock.y,
       block_type: lockBlock.block_type || nextLock.lock_block_type,
       state: nextLock,
-    };
+    } as any;
     const worldChange = buildWorldObjectChangeEntry(socket, player, commandWorld, update, beforeLock, nextLock, requestId, {
       previous_owner: previousOwner,
       new_owner: nextLock.owner_name,

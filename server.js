@@ -20685,7 +20685,7 @@ async function handleDeveloperCommandRequestUnsafe(socket, player, data) {
             return;
         }
         const targetOnline = findOnlinePlayerByUsername(targetUsername);
-        const targetAccountRecord = accounts.get(accountKey(targetUsername)) || {};
+        const targetAccountRecord = (accounts.get(accountKey(targetUsername)) || {});
         const targetIdentitySource = targetOnline
             ? targetOnline.player
             : {
