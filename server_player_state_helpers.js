@@ -42,6 +42,23 @@ const INVENTORY_FIELDS = Object.freeze([
 function isRecord(value) {
     return Boolean(value && typeof value === "object" && !Array.isArray(value));
 }
+// Temporary diagnostics for the "eyewear/hair/shoes silently unequip on world rejoin" report
+// (2026-08-16, see project memory equipment_unequip_on_world_rejoin.md). Off by default --
+// set EQUIPMENT_PERSIST_DEBUG_LOGS=1 in the environment to enable. doesStateOwnEquippedItem()
+// is the single choke point every server-side equip-ownership check funnels through
+// (sanitizePlayerState, mergeClientPlayerStateIntoServerState, sanitizeEquipmentSlots,
+// clearUnavailableEquipmentInState all call it), so instrumenting it here covers all of them
+// without touching each call site.
+const EQUIPMENT_PERSIST_DEBUG_LOGS = ["1", "true", "yes"].includes(String((typeof process !== "undefined" && process.env && process.env.EQUIPMENT_PERSIST_DEBUG_LOGS) || "")
+    .trim()
+    .toLowerCase());
+const EQUIPMENT_PERSIST_DEBUG_SLOTS = new Set(["hair", "eyewear", "shoes"]);
+function logEquipmentPersistDebug(message, extra = {}) {
+    if (!EQUIPMENT_PERSIST_DEBUG_LOGS)
+        return;
+    // eslint-disable-next-line no-console
+    console.log(`[EQUIPMENT_PERSIST_DEBUG] ${message}`, extra);
+}
 function createPlayerStateHelpers(config) {
     const itemDatabase = config.itemDatabase;
     const cleanAccountName = config.cleanAccountName;
@@ -482,12 +499,39 @@ function createPlayerStateHelpers(config) {
         const cleanItemId = clampString(itemId || "");
         if (cleanItemId === "")
             return true;
-        if (!isRecord(state))
+        const debugSlot = EQUIPMENT_PERSIST_DEBUG_SLOTS.has(String(slot || ""));
+        if (!isRecord(state)) {
+            if (debugSlot)
+                logEquipmentPersistDebug("state is not a record", { itemId: cleanItemId, slot });
             return false;
+        }
         const definition = itemDatabase.getItemDefinition(cleanItemId);
-        if (!definition)
+        if (!definition) {
+            if (debugSlot)
+                logEquipmentPersistDebug("no item definition found", { itemId: cleanItemId, slot });
             return false;
-        return getInventoryCount(state, cleanItemId, definition.category || "") > 0 && isItemAllowedInEquipmentSlot(cleanItemId, slot);
+        }
+        const inventoryField = getInventoryFieldForCategory(definition.category || "", cleanItemId);
+        const count = getInventoryCount(state, cleanItemId, definition.category || "");
+        const allowed = isItemAllowedInEquipmentSlot(cleanItemId, slot);
+        // Log EVERY call for the watched slots, not just failures. Logging only failures made
+        // "no output" ambiguous -- it could not distinguish "check passed" from "never called".
+        // rawDictEntry distinguishes "key absent" (undefined) from "key present but zero" (0),
+        // which matters because sanitizeCountDictionary() keeps zero-count keys.
+        if (debugSlot) {
+            const inventoryDict = state[inventoryField];
+            logEquipmentPersistDebug(count > 0 && allowed ? "ownership check PASSED" : "ownership check FAILED -- clearing equip field", {
+                itemId: cleanItemId,
+                slot,
+                category: definition.category || "",
+                inventoryField,
+                countFound: count,
+                slotAllowed: allowed,
+                rawDictEntry: isRecord(inventoryDict) ? inventoryDict[cleanItemId] : "not-a-record",
+                inventoryDictSize: isRecord(inventoryDict) ? Object.keys(inventoryDict).length : -1,
+            });
+        }
+        return count > 0 && allowed;
     }
     function sanitizeEquipmentSlots(rawSlots, state = null) {
         const safe = {};
