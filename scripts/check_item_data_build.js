@@ -167,7 +167,7 @@ const brickBlockCases = [
   { itemId: "stone_brick", atlasItemId: 41, cell: [18, 5], layer: "foreground", health: 5, rarity: "uncommon" },
   { itemId: "green_brick", atlasItemId: 42, cell: [19, 5], layer: "foreground", health: 5, rarity: "uncommon" },
   { itemId: "green_moss_brick", atlasItemId: 43, cell: [20, 5], layer: "foreground", health: 5, rarity: "uncommon" },
-  { itemId: "red_brick_wall", atlasItemId: 44, cell: [17, 6], layer: "background", health: 3, rarity: "uncommon" },
+  { itemId: "red_brick_wall", atlasItemId: 44, cell: [16, 23], layer: "background", health: 3, rarity: "uncommon" },
   { itemId: "stone_brick_wall", atlasItemId: 45, cell: [18, 6], layer: "background", health: 3, rarity: "uncommon" },
   { itemId: "green_brick_wall", atlasItemId: 46, cell: [19, 6], layer: "background", health: 3, rarity: "uncommon" },
   { itemId: "green_moss_brick_wall", atlasItemId: 47, cell: [20, 6], layer: "background", health: 3, rarity: "uncommon" },

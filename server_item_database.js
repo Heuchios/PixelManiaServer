@@ -2331,9 +2331,9 @@ const ITEM_DEFINITIONS = {
     }),
     red_brick_wall: block({
         atlas_item_id: 44,
-        atlas_coords: [17, 6],
-        texture: atlasImage([17, 6]),
-        inventory_icon: atlasImage([17, 6]),
+        atlas_coords: [16, 23],
+        texture: atlasImage([16, 23]),
+        inventory_icon: atlasImage([16, 23]),
         rarity: "uncommon",
         block_health: 3,
         seed: "red_brick_wall_seed",
@@ -2474,32 +2474,6 @@ const ITEM_DEFINITIONS = {
         no_collision: true,
         collidable: false,
         splice_only: true,
-    }),
-    // Walk-through interactable that opens the event leaderboard UI client-side. The server
-    // needs this definition so the block id validates for placement/drops; the panel itself is
-    // client-only (it fetches data via the existing landfill_leaderboard_request).
-    //
-    // no_collision/collidable MUST match Scripts/item_database.gd's "leaderboard" entry.
-    // isSolidMovementCollisionBlock defaults collision_type to "full", so omitting these makes
-    // the block solid server-side while the client walks through it -- the player then gets
-    // hard-snapped back every frame and reads as physically trapped. check_item_database_sync.js
-    // asserts this parity.
-    leaderboard: block({
-        display_name: "Leaderboard",
-        rarity: "epic",
-        block_health: 4,
-        seed: "",
-        leaderboard_block: true,
-        interact_rules: { can_interact: true, interaction_message: "View the event leaderboard." },
-        no_collision: true,
-        collidable: false,
-        solid: false,
-        collision_type: "none",
-        drop_rules: {
-            seed_chance: 0,
-            gem_range: [0, 0],
-            fixed_drops: [{ item_id: "leaderboard", item_category: "block", amount: 1 }],
-        },
     }),
     wooden_treasure_chest: block({
         display_name: "Wooden Treasure Chest",
@@ -3933,8 +3907,6 @@ const ITEM_DEFINITIONS = {
     neptune_rod: item("tool", {
         display_name: "Neptune Rod",
         rarity: "legendary",
-        texture: "neptune_rod_1",
-        inventory_icon: "neptune_rod_icon",
         equipment_slot: "hand",
         equipable: true,
         fishing_rod: true,
@@ -3950,11 +3922,8 @@ const ITEM_DEFINITIONS = {
         hand_item: true,
         shop_price: 0,
     }),
-    serpent_staff: item("tool", {
-        display_name: "Serpent Staff",
+    pulu_pulu: item("tool", {
         rarity: "legendary",
-        texture: "serpent_staff_1",
-        inventory_icon: "serpent_staff_icon",
         equipment_slot: "hand",
         equipable: true,
         shop_price: 0,
@@ -3975,28 +3944,6 @@ const ITEM_DEFINITIONS = {
         rarity: "legendary",
         texture: "phoenix_sword_1",
         inventory_icon: "phoenix_sword_icon",
-        equipment_slot: "hand",
-        equipable: true,
-        hand_item: true,
-        punch_animation: "punch_sword",
-        shop_price: 0,
-    }),
-    fire_staff: item("tool", {
-        display_name: "Fire Staff",
-        rarity: "legendary",
-        texture: "fire_staff_1",
-        inventory_icon: "fire_staff_icon",
-        equipment_slot: "hand",
-        equipable: true,
-        hand_item: true,
-        punch_animation: "punch_sword",
-        shop_price: 0,
-    }),
-    wizards_staff: item("tool", {
-        display_name: "Wizard's Staff",
-        rarity: "legendary",
-        texture: "wizards_staff_1",
-        inventory_icon: "wizards_staff_icon",
         equipment_slot: "hand",
         equipable: true,
         hand_item: true,
@@ -4396,6 +4343,329 @@ const ITEM_DEFINITIONS = {
     mermaid: fishCatch("Mermaid", "legendary", 300, { difficulty: 9 }),
     megalodon: fishCatch("Megalodon", "legendary", 450, { difficulty: 10 }),
     kraken: fishCatch("Kraken", "legendary", 500, { difficulty: 10 }),
+    // blue_couch / green_couch: deliberately NOT given an explicit block()
+    // entry here. Data/items/atlas_items.json (ids 69/70) already carries a
+    // full registration (rarity, seed, block_health via hardness, drop_rules,
+    // tree_drop_rules, connected_variant_atlas_coords) and getItemDefinition()
+    // falls through to getAtlasItemDefinition() for any item_id with no ITEMS
+    // entry, auto-synthesizing the definition (including atlas_item_id/
+    // atlas_coords, which an explicit entry here would otherwise have to
+    // duplicate and keep in sync by hand). Same pattern already used by
+    // purple_curtains/pink_curtains above.
+    side_table: block({
+        display_name: "Side Table",
+        rarity: "common",
+        block_health: 2,
+        seed: "",
+        no_collision: true,
+        collidable: false,
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "side_table", item_category: "block", amount: 1 }),
+            ]),
+        },
+    }),
+    toilet: block({
+        display_name: "Toilet",
+        rarity: "uncommon",
+        block_health: 2,
+        seed: "",
+        no_collision: true,
+        collidable: false,
+        punch_toggle_block: true,
+        toggle_active_block: "toilet_open",
+        toggle_inactive_block: "toilet",
+        toggle_drop_block: "toilet",
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "toilet", item_category: "block", amount: 1 }),
+            ]),
+        },
+    }),
+    toilet_open: block({
+        display_name: "Toilet",
+        rarity: "uncommon",
+        block_health: 2,
+        seed: "",
+        hidden: true,
+        placeable: false,
+        dropable: false,
+        tradeable: false,
+        admin_grantable: false,
+        no_collision: true,
+        collidable: false,
+        punch_toggle_block: true,
+        toggle_active_block: "toilet_open",
+        toggle_inactive_block: "toilet",
+        toggle_drop_block: "toilet",
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "toilet", item_category: "block", amount: 1 }),
+            ]),
+        },
+    }),
+    refrigerator: block({
+        display_name: "Refrigerator",
+        rarity: "uncommon",
+        block_health: 2,
+        seed: "",
+        no_collision: true,
+        collidable: false,
+        punch_toggle_block: true,
+        toggle_active_block: "refrigerator_open",
+        toggle_inactive_block: "refrigerator",
+        toggle_drop_block: "refrigerator",
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "refrigerator", item_category: "block", amount: 1 }),
+            ]),
+        },
+    }),
+    refrigerator_open: block({
+        display_name: "Refrigerator",
+        rarity: "uncommon",
+        block_health: 2,
+        seed: "",
+        hidden: true,
+        placeable: false,
+        dropable: false,
+        tradeable: false,
+        admin_grantable: false,
+        no_collision: true,
+        collidable: false,
+        punch_toggle_block: true,
+        toggle_active_block: "refrigerator_open",
+        toggle_inactive_block: "refrigerator",
+        toggle_drop_block: "refrigerator",
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "refrigerator", item_category: "block", amount: 1 }),
+            ]),
+        },
+    }),
+    fireplace: block({
+        display_name: "Fireplace",
+        rarity: "uncommon",
+        block_health: 2,
+        seed: "",
+        no_collision: true,
+        collidable: false,
+        punch_toggle_block: true,
+        toggle_active_block: "fireplace_on",
+        toggle_inactive_block: "fireplace",
+        toggle_drop_block: "fireplace",
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "fireplace", item_category: "block", amount: 1 }),
+            ]),
+        },
+    }),
+    fireplace_on: block({
+        display_name: "Fireplace",
+        rarity: "uncommon",
+        block_health: 2,
+        seed: "",
+        hidden: true,
+        placeable: false,
+        dropable: false,
+        tradeable: false,
+        admin_grantable: false,
+        no_collision: true,
+        collidable: false,
+        punch_toggle_block: true,
+        toggle_active_block: "fireplace_on",
+        toggle_inactive_block: "fireplace",
+        toggle_drop_block: "fireplace",
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "fireplace", item_category: "block", amount: 1 }),
+            ]),
+        },
+    }),
+    bathtub: block({
+        display_name: "Bathtub",
+        rarity: "uncommon",
+        block_health: 2,
+        seed: "",
+        no_collision: true,
+        collidable: false,
+        punch_toggle_block: true,
+        toggle_active_block: "bathtub_on",
+        toggle_inactive_block: "bathtub",
+        toggle_drop_block: "bathtub",
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "bathtub", item_category: "block", amount: 1 }),
+            ]),
+        },
+    }),
+    bathtub_on: block({
+        display_name: "Bathtub",
+        rarity: "uncommon",
+        block_health: 2,
+        seed: "",
+        hidden: true,
+        placeable: false,
+        dropable: false,
+        tradeable: false,
+        admin_grantable: false,
+        no_collision: true,
+        collidable: false,
+        punch_toggle_block: true,
+        toggle_active_block: "bathtub_on",
+        toggle_inactive_block: "bathtub",
+        toggle_drop_block: "bathtub",
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "bathtub", item_category: "block", amount: 1 }),
+            ]),
+        },
+    }),
+    sink: block({
+        display_name: "Sink",
+        rarity: "uncommon",
+        block_health: 2,
+        seed: "",
+        no_collision: true,
+        collidable: false,
+        punch_toggle_block: true,
+        toggle_active_block: "sink_on",
+        toggle_inactive_block: "sink",
+        toggle_drop_block: "sink",
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "sink", item_category: "block", amount: 1 }),
+            ]),
+        },
+    }),
+    sink_on: block({
+        display_name: "Sink",
+        rarity: "uncommon",
+        block_health: 2,
+        seed: "",
+        hidden: true,
+        placeable: false,
+        dropable: false,
+        tradeable: false,
+        admin_grantable: false,
+        no_collision: true,
+        collidable: false,
+        punch_toggle_block: true,
+        toggle_active_block: "sink_on",
+        toggle_inactive_block: "sink",
+        toggle_drop_block: "sink",
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "sink", item_category: "block", amount: 1 }),
+            ]),
+        },
+    }),
+    red_brick_platform: block({
+        display_name: "Red Brick Platform",
+        rarity: "common",
+        block_health: 2,
+        seed: "",
+        platform_collision: true,
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "red_brick_platform", item_category: "block", amount: 1 }),
+            ]),
+        },
+    }),
+    white_brick_block: block({
+        display_name: "White Brick Block",
+        rarity: "common",
+        block_health: 3,
+        seed: "",
+        collidable: true,
+        solid: true,
+        collision_type: "full",
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "white_brick_block", item_category: "block", amount: 1 }),
+            ]),
+        },
+    }),
+    white_brick_wall: backgroundBlock({
+        display_name: "White Brick Wall",
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "white_brick_wall", item_category: "block", amount: 1 }),
+            ]),
+        },
+    }),
+    white_brick_platform: block({
+        display_name: "White Brick Platform",
+        rarity: "common",
+        block_health: 2,
+        seed: "",
+        platform_collision: true,
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "white_brick_platform", item_category: "block", amount: 1 }),
+            ]),
+        },
+    }),
+    fan: block({
+        display_name: "Fan",
+        rarity: "common",
+        block_health: 2,
+        seed: "",
+        no_collision: true,
+        collidable: false,
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "fan", item_category: "block", amount: 1 }),
+            ]),
+        },
+    }),
+    bed: block({
+        display_name: "Bed",
+        rarity: "uncommon",
+        block_health: 2,
+        seed: "",
+        no_collision: true,
+        collidable: false,
+        drop_rules: {
+            seed_chance: 0,
+            gem_range: [0, 0],
+            fixed_drops: Object.freeze([
+                Object.freeze({ item_id: "bed", item_category: "block", amount: 1 }),
+            ]),
+        },
+    }),
 };
 applyTier1SpliceBalance(ITEM_DEFINITIONS);
 ensureSeedDefinitionsFromBlocks(ITEM_DEFINITIONS);
