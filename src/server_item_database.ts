@@ -4008,10 +4008,22 @@ const ITEM_DEFINITIONS = {
     hand_item: true,
     shop_price: 0,
   }),
-  pulu_pulu: item("tool", {
+  // serpent_staff: pre-existing drift, unrelated to the blocks-atlas migration.
+  // Per project memory fire_staff_hand_item.md, "pulu_pulu" was renamed to
+  // "Serpent Staff" client-side and src/server.ts's SEED_MUTATION_REWARD_TABLE
+  // was updated to reference "serpent_staff" -- but this item's own key was
+  // never actually renamed to match, and its fields were never fleshed out to
+  // the client's full definition (display_name/texture/inventory_icon/
+  // hand_item, matching angelic_sword/phoenix_sword's shape). Client's
+  // serpent_staff entry has no punch_animation field, so this doesn't either.
+  serpent_staff: item("tool", {
+    display_name: "Serpent Staff",
     rarity: "legendary",
+    texture: "serpent_staff_1",
+    inventory_icon: "serpent_staff_icon",
     equipment_slot: "hand",
     equipable: true,
+    hand_item: true,
     shop_price: 0,
   }),
   angelic_sword: item("tool", {
@@ -4030,6 +4042,33 @@ const ITEM_DEFINITIONS = {
     rarity: "legendary",
     texture: "phoenix_sword_1",
     inventory_icon: "phoenix_sword_icon",
+    equipment_slot: "hand",
+    equipable: true,
+    hand_item: true,
+    punch_animation: "punch_sword",
+    shop_price: 0,
+  }),
+  // fire_staff / wizards_staff: pre-existing drift, unrelated to the blocks-atlas
+  // migration -- client item_database.gd already had both (order 67/68), but
+  // neither ever got a server entry (scripts/check_item_database_sync.js
+  // flagged both as "Missing from server_item_database.js"). Added here
+  // matching angelic_sword/phoenix_sword's exact shape.
+  fire_staff: item("tool", {
+    display_name: "Fire Staff",
+    rarity: "legendary",
+    texture: "fire_staff_1",
+    inventory_icon: "fire_staff_icon",
+    equipment_slot: "hand",
+    equipable: true,
+    hand_item: true,
+    punch_animation: "punch_sword",
+    shop_price: 0,
+  }),
+  wizards_staff: item("tool", {
+    display_name: "Wizard's Staff",
+    rarity: "legendary",
+    texture: "wizards_staff_1",
+    inventory_icon: "wizards_staff_icon",
     equipment_slot: "hand",
     equipable: true,
     hand_item: true,
@@ -4431,6 +4470,31 @@ const ITEM_DEFINITIONS = {
   mermaid: fishCatch("Mermaid", "legendary", 300, { difficulty: 9 }),
   megalodon: fishCatch("Megalodon", "legendary", 450, { difficulty: 10 }),
   kraken: fishCatch("Kraken", "legendary", 500, { difficulty: 10 }),
+  // leaderboard: pre-existing drift, unrelated to the blocks-atlas migration.
+  // Client item_database.gd already had this block (order 416, leaderboard_block:
+  // true, interact_rules: true) but it had no server entry at all. Client-side
+  // interaction_manager.gd's is_leaderboard_block()/open_leaderboard_ui() opens a
+  // local UI panel entirely client-driven (no dedicated server round-trip for the
+  // interaction itself, unlike atm_machine/theme_machine) -- this entry only needs
+  // to exist so server-authoritative placement/break/inventory validation
+  // recognizes the block type, matching the client's fields.
+  leaderboard: block({
+    display_name: "Leaderboard",
+    rarity: "epic",
+    block_health: 4,
+    seed: "",
+    leaderboard_block: true,
+    interact_rules: true,
+    no_collision: true,
+    collidable: false,
+    drop_rules: {
+      seed_chance: 0,
+      gem_range: [0, 0],
+      fixed_drops: Object.freeze([
+        Object.freeze({ item_id: "leaderboard", item_category: "block", amount: 1 }),
+      ]),
+    },
+  }),
   // blue_couch / green_couch: unlike purple_curtains/pink_curtains (which
   // have no explicit ITEMS key and rely entirely on getAtlasItemDefinition()'s
   // atlas-passthrough fallback), these two DO need an explicit entry here:
