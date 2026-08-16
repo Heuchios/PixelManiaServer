@@ -20463,6 +20463,38 @@ function parseRemoveCommand(data: any, command: any) {
   };
 }
 
+/**
+ * /takeworld "world_name" -- forces world lock ownership of an already-locked world onto the
+ * acting developer account. Developer-only (see ADMIN_USERNAMES gate at the call site); this
+ * bypasses the normal lockOwnerMatchesPlayer ownership check that guards every other ownership
+ * mutation path (world lock key trades, /pull, vending/safe/display permission checks, etc).
+ */
+function parseTakeWorldCommand(data: any, command: any) {
+  const parts = splitCommand(command);
+  if (parts.length === 0 || String(parts[0] || "").toLowerCase() !== "takeworld") return null;
+
+  const targetWorld = cleanWorld(data.target_world || data.world_name || data.world || parts[1] || "");
+  if (targetWorld === "") return null;
+
+  return { targetWorld };
+}
+
+/**
+ * /giveworld "world_name" "user" -- forces world lock ownership of an already-locked world onto
+ * an arbitrary target account. Developer-only (see ADMIN_USERNAMES gate at the call site); same
+ * bypass rationale as parseTakeWorldCommand above.
+ */
+function parseGiveWorldCommand(data: any, command: any) {
+  const parts = splitCommand(command);
+  if (parts.length === 0 || String(parts[0] || "").toLowerCase() !== "giveworld") return null;
+
+  const targetWorld = cleanWorld(data.target_world || data.world_name || data.world || parts[1] || "");
+  const targetUsername = cleanAccountName(data.target_username || data.target || parts[2] || "");
+  if (targetWorld === "" || targetUsername === "") return null;
+
+  return { targetWorld, targetUsername };
+}
+
 function getSocketAuditContext(socket: any, player: any) {
   const username = cleanAccountName(player?.account_username || player?.name || "");
   const account = username !== "" ? accounts.get(accountKey(username)) : null;
@@ -22686,6 +22718,215 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
         delivery: target ? "online" : "offline_saved",
         player_data: commit.state,
       }
+    );
+    return;
+  }
+
+  const takeWorldCommand = parseTakeWorldCommand(data, command);
+  if (takeWorldCommand) {
+    if (!ADMIN_USERNAMES.has(accountKey(player.account_username))) {
+      deny("Only the developer account can take world ownership.", { target_world: takeWorldCommand.targetWorld, reason: "developer_only" });
+      return;
+    }
+
+    const commandWorld = takeWorldCommand.targetWorld;
+    const state = ensureWorldState(commandWorld);
+    const currentLock: any = getEffectiveWorldLockStateInState(state);
+    if (!currentLock.is_locked) {
+      deny(`${commandWorld} is not locked and has no owner to take.`, { target_world: commandWorld, reason: "world_not_locked" });
+      return;
+    }
+
+    const previousOwner = String(currentLock.owner_name || "");
+    if (accountKey(previousOwner) === accountKey(player.account_username)) {
+      deny(`You already own ${commandWorld}.`, { target_world: commandWorld, reason: "already_owner" });
+      return;
+    }
+
+    const beforeLock = cloneJson(currentLock);
+    const nextLock = sanitizeWorldLockState(applyPlayerLockIdentityToState({
+      ...currentLock,
+      trade_key_holder: "",
+      trade_key_holder_account_id: "",
+      trade_key_holder_player_id: "",
+      trade_key_holder_profile_id: "",
+      trade_key_issued_at: "",
+      trade_key_last_trade_id: requestId,
+      trade_key_public_item_instance_id: "",
+    }, player, {}));
+    state.world_lock = nextLock;
+
+    const lockBlock = getWorldLockBlockEntry(state) || {};
+    const update: any = {
+      action: "developer_take_world",
+      source_type: "developer_command",
+      source_id: requestId,
+      object_type: "world_lock",
+      x: lockBlock.x,
+      y: lockBlock.y,
+      block_type: lockBlock.block_type || nextLock.lock_block_type,
+      state: nextLock,
+    };
+    const worldChange = buildWorldObjectChangeEntry(socket, player, commandWorld, update, beforeLock, nextLock, requestId, {
+      previous_owner: previousOwner,
+      new_owner: nextLock.owner_name,
+    });
+    logWorldChange(socket, player, worldChange);
+
+    const serializedWorld = serializeWorldState(commandWorld);
+    const persisted = await persistAuthoritativeWorldState(commandWorld, serializedWorld, "developer_take_world");
+    if (!persisted.ok) {
+      state.world_lock = beforeLock;
+      deny(`Could not save the ownership change. No changes were applied to ${commandWorld}.`, {
+        target_world: commandWorld,
+        reason: persisted.reason || "world_persistence_failed",
+      });
+      return;
+    }
+
+    const statePayload = makeWorldLockStatePayload(commandWorld, nextLock);
+    const previousOwnerOnline = findOnlinePlayerByUsername(previousOwner);
+    if (previousOwnerOnline) {
+      sendJson(previousOwnerOnline.socket, statePayload);
+      sendJson(previousOwnerOnline.socket, {
+        type: "chat",
+        sender: "System",
+        message: `${player.account_username} has taken ownership of ${commandWorld}.`,
+      });
+    }
+    queueWorldUpdateBroadcast(commandWorld, statePayload);
+
+    approve(
+      `Took ownership of ${commandWorld} from ${previousOwner || "unknown"}.`,
+      {
+        target_world: commandWorld,
+        affected_world: commandWorld,
+        previous_owner: previousOwner,
+        new_owner: nextLock.owner_name,
+        reason: "developer_command",
+      },
+      { command_type: "take_world", target_world: commandWorld, previous_owner: previousOwner, new_owner: nextLock.owner_name }
+    );
+    return;
+  }
+
+  const giveWorldCommand = parseGiveWorldCommand(data, command);
+  if (giveWorldCommand) {
+    if (!ADMIN_USERNAMES.has(accountKey(player.account_username))) {
+      deny("Only the developer account can give away world ownership.", { target_world: giveWorldCommand.targetWorld, target_username: giveWorldCommand.targetUsername, reason: "developer_only" });
+      return;
+    }
+
+    const commandWorld = giveWorldCommand.targetWorld;
+    const targetUsername = giveWorldCommand.targetUsername;
+
+    if (!doesAccountExist(targetUsername)) {
+      deny("Target account does not exist.", { target_world: commandWorld, target_username: targetUsername, reason: "account_not_found" });
+      return;
+    }
+
+    const state = ensureWorldState(commandWorld);
+    const currentLock: any = getEffectiveWorldLockStateInState(state);
+    if (!currentLock.is_locked) {
+      deny(`${commandWorld} is not locked and has no owner to give away.`, { target_world: commandWorld, reason: "world_not_locked" });
+      return;
+    }
+
+    const previousOwner = String(currentLock.owner_name || "");
+    if (accountKey(previousOwner) === accountKey(targetUsername)) {
+      deny(`${targetUsername} already owns ${commandWorld}.`, { target_world: commandWorld, target_username: targetUsername, reason: "already_owner" });
+      return;
+    }
+
+    const targetOnline = findOnlinePlayerByUsername(targetUsername);
+    const targetAccountRecord: any = accounts.get(accountKey(targetUsername)) || {};
+    const targetIdentitySource = targetOnline
+      ? targetOnline.player
+      : {
+          account_username: targetUsername,
+          account_id: targetAccountRecord.account_id || "",
+          profile_id: targetAccountRecord.profile_id || targetAccountRecord.player_id || "",
+        };
+
+    const toOwnerKey = accountKey(targetUsername);
+    const allowedPlayers = Array.isArray(currentLock.allowed_players)
+      ? currentLock.allowed_players.filter((name: unknown) => accountKey(name as any) !== toOwnerKey)
+      : [];
+
+    const beforeLock = cloneJson(currentLock);
+    const nextLock = sanitizeWorldLockState(applyPlayerLockIdentityToState({
+      ...currentLock,
+      allowed_players: allowedPlayers,
+      trade_key_holder: "",
+      trade_key_holder_account_id: "",
+      trade_key_holder_player_id: "",
+      trade_key_holder_profile_id: "",
+      trade_key_issued_at: "",
+      trade_key_last_trade_id: requestId,
+      trade_key_public_item_instance_id: "",
+    }, targetIdentitySource, {}));
+    state.world_lock = nextLock;
+
+    const lockBlock = getWorldLockBlockEntry(state) || {};
+    const update: any = {
+      action: "developer_give_world",
+      source_type: "developer_command",
+      source_id: requestId,
+      object_type: "world_lock",
+      x: lockBlock.x,
+      y: lockBlock.y,
+      block_type: lockBlock.block_type || nextLock.lock_block_type,
+      state: nextLock,
+    };
+    const worldChange = buildWorldObjectChangeEntry(socket, player, commandWorld, update, beforeLock, nextLock, requestId, {
+      previous_owner: previousOwner,
+      new_owner: nextLock.owner_name,
+    });
+    logWorldChange(socket, player, worldChange);
+
+    const serializedWorld = serializeWorldState(commandWorld);
+    const persisted = await persistAuthoritativeWorldState(commandWorld, serializedWorld, "developer_give_world");
+    if (!persisted.ok) {
+      state.world_lock = beforeLock;
+      deny(`Could not save the ownership change. No changes were applied to ${commandWorld}.`, {
+        target_world: commandWorld,
+        target_username: targetUsername,
+        reason: persisted.reason || "world_persistence_failed",
+      });
+      return;
+    }
+
+    const statePayload = makeWorldLockStatePayload(commandWorld, nextLock);
+    if (targetOnline) {
+      sendJson(targetOnline.socket, statePayload);
+      sendJson(targetOnline.socket, {
+        type: "chat",
+        sender: "System",
+        message: `You now own ${commandWorld}.`,
+      });
+    }
+    const previousOwnerOnline = findOnlinePlayerByUsername(previousOwner);
+    if (previousOwnerOnline && (!targetOnline || previousOwnerOnline.socket !== targetOnline.socket)) {
+      sendJson(previousOwnerOnline.socket, statePayload);
+      sendJson(previousOwnerOnline.socket, {
+        type: "chat",
+        sender: "System",
+        message: `${commandWorld} ownership was transferred to ${targetUsername} by ${player.account_username}.`,
+      });
+    }
+    queueWorldUpdateBroadcast(commandWorld, statePayload);
+
+    approve(
+      `Gave ownership of ${commandWorld} to ${targetUsername}.`,
+      {
+        target_world: commandWorld,
+        affected_world: commandWorld,
+        target_username: targetUsername,
+        previous_owner: previousOwner,
+        new_owner: nextLock.owner_name,
+        reason: "developer_command",
+      },
+      { command_type: "give_world", target_world: commandWorld, target_username: targetUsername, previous_owner: previousOwner, new_owner: nextLock.owner_name }
     );
     return;
   }
