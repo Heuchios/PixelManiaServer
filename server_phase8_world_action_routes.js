@@ -5,6 +5,23 @@ const WORLD_BLOCK_PLACE_INVENTORY_LOCK_RETRY_MS = 25;
 function createServerPhase8WorldActionRoutes(deps) {
     const { acquirePlayerInventoryLocks, acquireLiveActionLock, applyAreaLockStateForBlockUpdate, applyBlockUpdateToWorldState, applyElectricalGenerationForBlockBreak, applyElectricalLayerUpdateToWorldState, applyPunchToggleInstantDeathPresence, applySeedUpdateToWorldState, applyWorldLockStateForBlockUpdate, awardLandfillKilogramsForBlockBreak, awardPlayerExperience, beginPhase7BlockActionContext, broadcastCctvWorldState, buildInventoryDeltaClientPayloads, buildProgressionPayload, buildPunchToggleInstantDeathTargets, buildWorldObjectChangeEntry, canPlayerBreakOwnVendingMachine, canPlayerBuildAtGrid, canPlayerControlWorldLock, canPlayerViewElectricalLayer, clampInteger, clampString, cleanAccountName, cleanWorld, clearPhase7BlockActionContext, cloneJson, commitPlayerInventoryState, commitWorldStateWithBlockChanges, createBreakDrops, createElectricalBreakDrops, debugActionPositionFlow, debugNetfoxAction, deserializeWorldState, ELECTRICAL_DEVICE_GENERATOR, ELECTRICAL_DEVICE_METAL_PAD, ELECTRICAL_DEVICE_POLE, ELECTRICAL_GENERATOR_ITEM, ELECTRICAL_GENERATOR_MAX_WATTS, ELECTRICAL_MAX_PADS_PER_GENERATOR, ELECTRICAL_MAX_POLE_LINKS_PER_POLE, ELECTRICAL_MAX_POLES_PER_GENERATOR, ELECTRICAL_MAX_TRANSFORMER_LINKS_PER_POLE, ELECTRICAL_POLE_ITEM, ensurePlayerState, ensureWorldState, errorToCrashDetails, findGeneratorLinkedToPad, getAreaLocksJournalData, getAuditActor, getBlockBreakXp, getCrashRuntimeState, getElectricPoleDeviceStateAt, getGeneratorDeviceStateAt, getGeneratorKeysLinkedToPole, getGeneratorLinkedPadKeys, getGeneratorLinkedPoleKeys, getMetalPadDeviceStateAt, getMutableElectricalDeviceStateAt, getPhase7InventoryCount, getPlayerCurrentWorldName, getPlayerValidationPosition, getPoleLinkedPoleKeys, getProgressionMessage, getProgressionXpMessage, getTrustedMovementModeLabel, getUniqueSpecialBlockPlacementLockResource, getWorldBlockActionLockResource, getWorldBlockTypeAt, getWorldObjectJournalData, gridKey, handleFrozenTreasureOpen, hasAntiGravityBlock, hasAntiPunchBlock, hasAntiTalkBlock, hasProgressionPayload, hasSnowRepellentBlock, initializeChickenOnPlace, initializeCowOnPlace, initializeDisplayOwnerOnPlace, initializeDonationBoxOwnerOnPlace, initializeDuckOnPlace, initializeSafeOwnerOnPlace, initializeTackleBoxOnPlace, initializeVendOwnerOnPlace, isAntiGravityBlockType, isAntiPunchBlockType, isAntiTalkBlockType, isAreaLockBlockType, isCctvBlockType, isChickenBlockType, isCowBlockType, isDisplayBlockType, isDonationBoxBlockType, isDuckBlockType, isElectricalDeviceBlockOnLayer, isFishMongerBreakAttempt, isGridInWorld, isLandfillWorldName, isLandfillBuildLocked, isPlayerNearGrid, isPostgresAuthoritativeReady, isSafeBlockType, isSnowRepellentBlockType, isAtmMachineBlockType, isTackleBoxBlockType, isVendBlockType, isWaterBucketScoopBreak, isWaterWellBlockType, isWorldLockBlockType, isWorldLocked, isWorldLockPlacementBlocked, ItemDatabase, logItemLedgerForState, logPhase7ActionResult, logPlayerProgressionAward, logVendingTransaction, logWorldChange, makeAuditId, makeChickenStatePayload, makeCowStatePayload, makeDuckStatePayload, makeElectricalTilePayload, makeGeneratorDataPayload, makeRequestId, makeTackleBoxStatePayload, markElectricalNetworksDirty, MAX_GRID_ACTION_DISTANCE_PIXELS, MAX_ITEM_ID_LENGTH, persistWorldStateAfterInventoryCommit, playerHasElectricToolEquipped, POSTGRES_AUTHORITATIVE, POSTGRES_ENABLED, queueWorldSave, refreshElectricalVisibilityForWorld, rejectIfWorldBanned, releaseLiveActionLock, releasePlayerInventoryLocks, requireAuthenticated, requireBuildPermission, requireSameWorld, sanitizeBlockUpdate, sanitizeElectricalLayerUpdate, sanitizeEquipmentSlots, sanitizeSeedUpdate, sendActionRejected, sendElectricalPayloadToVisiblePlayers, sendElectricalVisibilityRefresh, sendGeneratorPowerPayloadToWorld, sendInventoryTransactionResult, sendJson, sendWorldUpdateToRequesterAndWorld, serializeWorldState, setGeneratorLinkedPadKeys, setGeneratorLinkedPoleKeys, setPoleLinkedPoleKeys, shouldAllowPhase7DevJsonFallback, shouldApplyAreaLockStateForBlockUpdate, shouldApplyWorldLockStateForBlockUpdate, validateBlockUpdateAgainstServerState, validateElectricalLayerUpdateAgainstServerState, validateNetfoxActionCooldown, validateSeedUpdateAgainstServerState, worldBlockActionLocks, worldSpecialBlockActionLocks, worldStates, writeCrashReport, } = deps;
     const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+    // Temporary profiling for the block break/place latency investigation (2026-08-15). Off by
+    // default; set BLOCK_ACTION_PROFILE_LOGS=1 to see per-stage timings like:
+    //   [BLOCK_PLACE_PROFILE] { stage: 'database_completed', elapsed_ms: 812, ... }
+    // Stages: request_received, validation_complete, world_mutation_complete, broadcast_sent,
+    // persistence_queued, database_completed -- matching the breakdown requested for this
+    // investigation so the remaining multi-second delays can be pinpointed to a specific stage.
+    const BLOCK_ACTION_PROFILE_LOGS = String(process.env.BLOCK_ACTION_PROFILE_LOGS || "").trim() === "1";
+    function logBlockActionProfile(tag, stage, startedAt, requestId, extra = {}) {
+        if (!BLOCK_ACTION_PROFILE_LOGS)
+            return;
+        console.log(`[${tag}]`, {
+            stage,
+            request_id: String(requestId || ""),
+            elapsed_ms: Date.now() - startedAt,
+            ...extra,
+        });
+    }
     async function acquirePlayerInventoryLocksWithWait(usernames, owner, maxWaitMs = WORLD_BLOCK_PLACE_INVENTORY_LOCK_WAIT_MS, retryMs = WORLD_BLOCK_PLACE_INVENTORY_LOCK_RETRY_MS) {
         const deadline = Date.now() + Math.max(0, maxWaitMs);
         let lastLock = null;
@@ -40,6 +57,12 @@ function createServerPhase8WorldActionRoutes(deps) {
         return details;
     }
     async function handleWorldBlockUpdate(socket, player, data, context) {
+        const profileStartedAt = Date.now();
+        const profileTag = String(data?.action || "").trim().toLowerCase() === "place" ? "BLOCK_PLACE_PROFILE" : "BLOCK_BREAK_PROFILE";
+        logBlockActionProfile(profileTag, "request_received", profileStartedAt, makeRequestId(data), {
+            action: data?.action || "",
+            block_type: data?.block_type || "",
+        });
         let blockActionLock = null;
         let placementInventoryLock = null;
         let uniqueSpecialBlockPlacementLock = null;
@@ -285,6 +308,10 @@ function createServerPhase8WorldActionRoutes(deps) {
                 releaseUniqueSpecialBlockPlacementLock();
                 return;
             }
+            logBlockActionProfile(profileTag, "validation_complete", profileStartedAt, requestId, {
+                action: update.action,
+                block_type: update.block_type,
+            });
             if (validation.pendingHit) {
                 releaseUniqueSpecialBlockPlacementLock();
                 logPhase7ActionResult(socket, "ALLOW", "pending_hit", {
@@ -311,6 +338,10 @@ function createServerPhase8WorldActionRoutes(deps) {
             const areaLockStateBefore = shouldBroadcastAreaLockState ? getAreaLocksJournalData(worldName) : null;
             const electricalGeneration = applyElectricalGenerationForBlockBreak(worldName, update);
             applyBlockUpdateToWorldState(worldName, update);
+            logBlockActionProfile(profileTag, "world_mutation_complete", profileStartedAt, requestId, {
+                action: update.action,
+                block_type: update.block_type,
+            });
             const punchToggleKilledPlayers = buildPunchToggleInstantDeathTargets(worldName, update, validation);
             if (electricalGeneration && electricalGeneration.generator) {
                 const refreshedGenerator = getMutableElectricalDeviceStateAt(ensureWorldState(worldName), electricalGeneration.generator.x, electricalGeneration.generator.y);
@@ -529,6 +560,11 @@ function createServerPhase8WorldActionRoutes(deps) {
             const worldChanges = [worldChangeEntry, ...validationWorldChanges, ...placementInteractionChanges, ...electricalGenerationChanges, ...dropWorldChangeEntries];
             let worldCommit = null;
             let requesterInventoryDeltas = buildInventoryDeltaClientPayloads(validation.inventoryDeltas, requesterPlayerState);
+            logBlockActionProfile(profileTag, "persistence_queued", profileStartedAt, requestId, {
+                action: update.action,
+                block_type: update.block_type,
+                deferred_inventory_commit: Boolean(validation.deferred_inventory_commit),
+            });
             if (validation.deferred_inventory_commit) {
                 const deferred = validation.deferred_inventory_commit;
                 const serializedWorld = serializeWorldState(worldName);
@@ -576,6 +612,11 @@ function createServerPhase8WorldActionRoutes(deps) {
                     return;
                 }
             }
+            logBlockActionProfile(profileTag, "database_completed", profileStartedAt, requestId, {
+                action: update.action,
+                block_type: update.block_type,
+                postgres_committed: Boolean(worldCommit?.postgres_committed),
+            });
             releaseUniqueSpecialBlockPlacementLock();
             applyPunchToggleInstantDeathPresence(punchToggleKilledPlayers, worldName);
             sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
@@ -600,6 +641,10 @@ function createServerPhase8WorldActionRoutes(deps) {
             if (isCctvBlockType(update.block_type)) {
                 broadcastCctvWorldState(worldName);
             }
+            logBlockActionProfile(profileTag, "broadcast_sent", profileStartedAt, requestId, {
+                action: update.action,
+                block_type: update.block_type,
+            });
             logWorldChange(socket, player, worldChangeEntry, { skipPostgres: worldCommit.postgres_committed });
             for (const validationWorldChange of validationWorldChanges) {
                 logWorldChange(socket, player, validationWorldChange, { skipPostgres: worldCommit.postgres_committed });

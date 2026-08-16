@@ -187,6 +187,24 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
 
   const sleep = (ms: number): Promise<void> => new Promise((resolve) => setTimeout(resolve, ms));
 
+  // Temporary profiling for the block break/place latency investigation (2026-08-15). Off by
+  // default; set BLOCK_ACTION_PROFILE_LOGS=1 to see per-stage timings like:
+  //   [BLOCK_PLACE_PROFILE] { stage: 'database_completed', elapsed_ms: 812, ... }
+  // Stages: request_received, validation_complete, world_mutation_complete, broadcast_sent,
+  // persistence_queued, database_completed -- matching the breakdown requested for this
+  // investigation so the remaining multi-second delays can be pinpointed to a specific stage.
+  const BLOCK_ACTION_PROFILE_LOGS = String(process.env.BLOCK_ACTION_PROFILE_LOGS || "").trim() === "1";
+
+  function logBlockActionProfile(tag: string, stage: string, startedAt: number, requestId: unknown, extra: Record<string, unknown> = {}): void {
+    if (!BLOCK_ACTION_PROFILE_LOGS) return;
+    console.log(`[${tag}]`, {
+      stage,
+      request_id: String(requestId || ""),
+      elapsed_ms: Date.now() - startedAt,
+      ...extra,
+    });
+  }
+
   async function acquirePlayerInventoryLocksWithWait(
     usernames: string[],
     owner: string,
@@ -226,6 +244,12 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
   }
 
   async function handleWorldBlockUpdate(socket: any, player: any, data: PacketRecord, context: RouteContext): Promise<void> {
+    const profileStartedAt = Date.now();
+    const profileTag = String(data?.action || "").trim().toLowerCase() === "place" ? "BLOCK_PLACE_PROFILE" : "BLOCK_BREAK_PROFILE";
+    logBlockActionProfile(profileTag, "request_received", profileStartedAt, makeRequestId(data), {
+      action: data?.action || "",
+      block_type: data?.block_type || "",
+    });
     let blockActionLock: any = null;
           let placementInventoryLock: any = null;
           let uniqueSpecialBlockPlacementLock: any = null;
@@ -480,6 +504,10 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
             releaseUniqueSpecialBlockPlacementLock();
             return;
           }
+          logBlockActionProfile(profileTag, "validation_complete", profileStartedAt, requestId, {
+            action: update.action,
+            block_type: update.block_type,
+          });
           if (validation.pendingHit) {
             releaseUniqueSpecialBlockPlacementLock();
             logPhase7ActionResult(socket, "ALLOW", "pending_hit", {
@@ -507,6 +535,10 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
           const areaLockStateBefore = shouldBroadcastAreaLockState ? getAreaLocksJournalData(worldName) : null;
           const electricalGeneration = applyElectricalGenerationForBlockBreak(worldName, update);
           applyBlockUpdateToWorldState(worldName, update);
+          logBlockActionProfile(profileTag, "world_mutation_complete", profileStartedAt, requestId, {
+            action: update.action,
+            block_type: update.block_type,
+          });
           const punchToggleKilledPlayers = buildPunchToggleInstantDeathTargets(worldName, update, validation);
           if (electricalGeneration && electricalGeneration.generator) {
             const refreshedGenerator = getMutableElectricalDeviceStateAt(
@@ -784,6 +816,11 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
           let worldCommit = null;
           let requesterInventoryDeltas = buildInventoryDeltaClientPayloads(validation.inventoryDeltas, requesterPlayerState);
 
+          logBlockActionProfile(profileTag, "persistence_queued", profileStartedAt, requestId, {
+            action: update.action,
+            block_type: update.block_type,
+            deferred_inventory_commit: Boolean(validation.deferred_inventory_commit),
+          });
           if (validation.deferred_inventory_commit) {
             const deferred = validation.deferred_inventory_commit;
             const serializedWorld = serializeWorldState(worldName);
@@ -839,6 +876,11 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
               return;
             }
           }
+          logBlockActionProfile(profileTag, "database_completed", profileStartedAt, requestId, {
+            action: update.action,
+            block_type: update.block_type,
+            postgres_committed: Boolean(worldCommit?.postgres_committed),
+          });
           releaseUniqueSpecialBlockPlacementLock();
 
           applyPunchToggleInstantDeathPresence(punchToggleKilledPlayers, worldName);
@@ -864,6 +906,10 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
           if (isCctvBlockType(update.block_type)) {
             broadcastCctvWorldState(worldName);
           }
+          logBlockActionProfile(profileTag, "broadcast_sent", profileStartedAt, requestId, {
+            action: update.action,
+            block_type: update.block_type,
+          });
           logWorldChange(socket, player, worldChangeEntry, { skipPostgres: worldCommit.postgres_committed });
           for (const validationWorldChange of validationWorldChanges) {
             logWorldChange(socket, player, validationWorldChange, { skipPostgres: worldCommit.postgres_committed });

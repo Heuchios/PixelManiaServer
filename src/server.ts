@@ -4217,25 +4217,80 @@ function sendDuplicateRequestNotice(
   });
 }
 
-async function enforceMessageIdempotency(socket: any, player: any, data: any) {
-  if (!postgresStore.isReady()) return true;
+// Scopes checked on the hottest, most latency-sensitive gameplay paths (block break/place/hit,
+// seed actions, world interactions, drop create/pickup/update). These previously routed through
+// postgresStore.claimIdempotency, which runs inside a Postgres transaction chained onto the SAME
+// globally-serialized write queue as every world save / inventory delta transaction (see
+// server_write_path.md: drain rate 10-40 tx/sec, individual transactions can hold 100-600
+// statements). That meant a block placement's own duplicate-request check could sit in a FIFO
+// line behind an unrelated heavy transaction before the placement even began processing -- a
+// synchronous DB round trip in the critical path of literally every block/seed/interaction/drop
+// message. Measured 2026-08-15 while investigating block-place/break latency.
+const HOT_PATH_IDEMPOTENCY_SCOPE_PREFIXES = Object.freeze([
+  "world_block_update:",
+  "world_seed_update:",
+  "world_interaction_update:",
+  "world_item_drop_",
+  "world_drop_",
+]);
 
+function isHotPathIdempotencyScope(scope: string): boolean {
+  return HOT_PATH_IDEMPOTENCY_SCOPE_PREFIXES.some((prefix) => scope.startsWith(prefix));
+}
+
+// In-memory idempotency claim table for the hot-path scopes above. This deployment runs a single
+// process (ecosystem.config.js instances: 1), so an in-memory Map gives the exact same
+// single-writer correctness guarantee as the Postgres-backed claim for these scopes, with zero DB
+// round trip. It does not survive a process restart -- a replayed duplicate arriving within the
+// TTL window immediately after a restart would not be caught -- which is an acceptable, low-risk
+// trade for removing a per-action DB write from the hottest path in the game. Lower-frequency,
+// higher-stakes scopes (trades, purchases) are untouched and keep the Postgres-backed claim for
+// cross-restart durability.
+const hotPathIdempotencyClaims: Map<string, number> = new Map();
+let hotPathIdempotencyLastSweepAt = 0;
+const HOT_PATH_IDEMPOTENCY_SWEEP_INTERVAL_MS = 60_000;
+
+function sweepHotPathIdempotencyClaimsIfDue(now: number) {
+  if (now - hotPathIdempotencyLastSweepAt < HOT_PATH_IDEMPOTENCY_SWEEP_INTERVAL_MS) return;
+  hotPathIdempotencyLastSweepAt = now;
+  for (const [key, expiresAt] of hotPathIdempotencyClaims) {
+    if (expiresAt <= now) hotPathIdempotencyClaims.delete(key);
+  }
+}
+
+function claimIdempotencyInMemory(key: string, ttlMs: number): { ok: true; duplicate: boolean } {
+  const now = Date.now();
+  sweepHotPathIdempotencyClaimsIfDue(now);
+  const existingExpiry = hotPathIdempotencyClaims.get(key);
+  if (existingExpiry !== undefined && existingExpiry > now) {
+    return { ok: true, duplicate: true };
+  }
+  hotPathIdempotencyClaims.set(key, now + Math.max(1_000, Math.trunc(Number(ttlMs)) || 1_000));
+  return { ok: true, duplicate: false };
+}
+
+async function enforceMessageIdempotency(socket: any, player: any, data: any) {
   const scope = makeMessageIdempotencyScope(data);
   if (scope === "") return true;
 
   const key = makeMessageIdempotencyKey(player, data, scope);
   if (key === "") return true;
   const idempotencyTTLMs = getMessageIdempotencyTTLMs(data);
+  const useInMemoryClaim = isHotPathIdempotencyScope(scope);
 
-  const claim = await postgresStore.claimIdempotency(
-    scope,
-    key,
-    cleanAccountName(player?.account_username || data?.username || data?.account_username || ""),
-    ServerMessageRouterHelpers.buildIdempotencyClaimMetadata(data, player),
-    {
-      ttl_ms: idempotencyTTLMs,
-    }
-  );
+  if (!useInMemoryClaim && !postgresStore.isReady()) return true;
+
+  const claim = useInMemoryClaim
+    ? claimIdempotencyInMemory(key, idempotencyTTLMs)
+    : await postgresStore.claimIdempotency(
+      scope,
+      key,
+      cleanAccountName(player?.account_username || data?.username || data?.account_username || ""),
+      ServerMessageRouterHelpers.buildIdempotencyClaimMetadata(data, player),
+      {
+        ttl_ms: idempotencyTTLMs,
+      }
+    );
 
   if (!claim.ok) {
     playerNetworkStats.idempotency_db_failures += 1;
@@ -9721,6 +9776,21 @@ function sendDisplayStateUpdateToWorld(worldName: any, display: any) {
   });
 }
 
+// Temporary profiling for the display-box latency investigation (2026-08-15). Off by default;
+// set BLOCK_ACTION_PROFILE_LOGS=1 to see per-stage timings like:
+//   [DISPLAY_PROFILE] { stage: 'world_mutation_complete', elapsed_ms: 1, ... }
+const BLOCK_ACTION_PROFILE_LOGS = String(process.env.BLOCK_ACTION_PROFILE_LOGS || "").trim() === "1";
+
+function logBlockActionProfile(tag: string, stage: string, startedAt: number, requestId: unknown, extra: Record<string, unknown> = {}) {
+  if (!BLOCK_ACTION_PROFILE_LOGS) return;
+  console.log(`[${tag}]`, {
+    stage,
+    request_id: String(requestId || ""),
+    elapsed_ms: Date.now() - startedAt,
+    ...extra,
+  });
+}
+
 function validateDisplayAccess(socket: any, player: any, data: any, worldName: any, grid: any) {
   if (!grid) {
     sendInventoryTransactionRejected(socket, data, "Display position is missing.");
@@ -9827,6 +9897,9 @@ async function acquireDisplayMutationLock(socket: any, player: any, data: any, w
 }
 
 async function handleDisplayDeposit(socket: any, player: any, data: any, worldName: any, display: any) {
+  const profileStartedAt = Date.now();
+  const profileRequestId = makeRequestId(data);
+  logBlockActionProfile("DISPLAY_PROFILE", "request_received", profileStartedAt, profileRequestId, { action: "display_deposit" });
   const itemId = clampString(data.item_id || data.item_type || "");
   const itemCategory = resolveInventoryCategory(itemId, data.item_category || data.category || "");
   const displayBlockType = getWorldBlockTypeAt(worldName, display.x, display.y);
@@ -9867,6 +9940,7 @@ async function handleDisplayDeposit(socket: any, player: any, data: any, worldNa
       rejectDisplayTransaction(socket, data, "Server inventory changed. Try again.");
       return;
     }
+    logBlockActionProfile("DISPLAY_PROFILE", "validation_complete", profileStartedAt, profileRequestId, { action: "display_deposit" });
 
     const displayTransactionId = makeAuditId("display");
     const originalDisplay = cloneJson(display);
@@ -9880,8 +9954,20 @@ async function handleDisplayDeposit(socket: any, player: any, data: any, worldNa
       source_inventory_occupied_slots: getInventoryOccupiedSlotCount(state),
     };
 
+    // Authoritative in-memory mutation is complete and fully validated at this point -- the
+    // remaining work is persistence. Broadcast the new display state to the world (and this
+    // player) NOW instead of after the Postgres round trip below: the visible "item appears in
+    // the display" effect should not wait on a database write that can be sitting behind other
+    // transactions in the server's single globally-serialized write queue (see
+    // server_write_path.md). If the persistence below ultimately fails, a corrective broadcast
+    // restores the original (empty) display for everyone who saw the optimistic update.
     const savedDisplay = setDisplayStateAt(worldName, display);
+    logBlockActionProfile("DISPLAY_PROFILE", "world_mutation_complete", profileStartedAt, profileRequestId, { action: "display_deposit" });
+    sendDisplayStateUpdateToWorld(worldName, savedDisplay);
+    logBlockActionProfile("DISPLAY_PROFILE", "broadcast_sent", profileStartedAt, profileRequestId, { action: "display_deposit" });
+
     const serializedWorld = serializeWorldState(worldName);
+    logBlockActionProfile("DISPLAY_PROFILE", "persistence_queued", profileStartedAt, profileRequestId, { action: "display_deposit" });
     const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
       source: "display",
       action: "display_deposit",
@@ -9899,8 +9985,10 @@ async function handleDisplayDeposit(socket: any, player: any, data: any, worldNa
       world_state: serializedWorld,
       failure_message: "Server inventory changed. Try again.",
     });
+    logBlockActionProfile("DISPLAY_PROFILE", "database_completed", profileStartedAt, profileRequestId, { action: "display_deposit", ok: commit.ok });
     if (!commit.ok) {
-      setDisplayStateAt(worldName, originalDisplay);
+      const revertedDisplay = setDisplayStateAt(worldName, originalDisplay);
+      sendDisplayStateUpdateToWorld(worldName, revertedDisplay);
       rejectDisplayTransaction(socket, data, commit.message);
       return;
     }
@@ -9920,7 +10008,6 @@ async function handleDisplayDeposit(socket: any, player: any, data: any, worldNa
       x: display.x,
       y: display.y,
     }, { skipPostgres: commit.postgres_committed });
-    sendDisplayStateUpdateToWorld(worldName, savedDisplay);
     sendDisplayTransactionResult(socket, data, player, savedDisplay, true, `Displayed ${itemId}.`, {
       inventory_deltas: buildInventoryDeltaClientPayloads(commit.deltas, committedState),
     });
@@ -9930,6 +10017,9 @@ async function handleDisplayDeposit(socket: any, player: any, data: any, worldNa
 }
 
 async function handleDisplayWithdraw(socket: any, player: any, data: any, worldName: any, display: any) {
+  const profileStartedAt = Date.now();
+  const profileRequestId = makeRequestId(data);
+  logBlockActionProfile("DISPLAY_PROFILE", "request_received", profileStartedAt, profileRequestId, { action: "display_withdraw" });
   const displayLock = await acquireDisplayMutationLock(socket, player, data, worldName, display);
   if (!displayLock) return;
 
@@ -9962,13 +10052,22 @@ async function handleDisplayWithdraw(socket: any, player: any, data: any, worldN
       rejectDisplayTransaction(socket, data, "Your inventory cannot hold that item.");
       return;
     }
+    logBlockActionProfile("DISPLAY_PROFILE", "validation_complete", profileStartedAt, profileRequestId, { action: "display_withdraw" });
 
     const originalDisplay = cloneJson(display);
     display.slot = null;
 
+    // Same reasoning as handleDisplayDeposit: broadcast the now-empty display immediately after
+    // the authoritative in-memory mutation, before the Postgres round trip, and correct with a
+    // second broadcast if persistence ultimately fails.
     const savedDisplay = setDisplayStateAt(worldName, display);
+    logBlockActionProfile("DISPLAY_PROFILE", "world_mutation_complete", profileStartedAt, profileRequestId, { action: "display_withdraw" });
+    sendDisplayStateUpdateToWorld(worldName, savedDisplay);
+    logBlockActionProfile("DISPLAY_PROFILE", "broadcast_sent", profileStartedAt, profileRequestId, { action: "display_withdraw" });
+
     const displayTransactionId = makeAuditId("display");
     const serializedWorld = serializeWorldState(worldName);
+    logBlockActionProfile("DISPLAY_PROFILE", "persistence_queued", profileStartedAt, profileRequestId, { action: "display_withdraw" });
     const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
       source: "display",
       action: "display_withdraw",
@@ -9986,8 +10085,10 @@ async function handleDisplayWithdraw(socket: any, player: any, data: any, worldN
       world_state: serializedWorld,
       failure_message: "Server inventory changed. Try again.",
     });
+    logBlockActionProfile("DISPLAY_PROFILE", "database_completed", profileStartedAt, profileRequestId, { action: "display_withdraw", ok: commit.ok });
     if (!commit.ok) {
-      setDisplayStateAt(worldName, originalDisplay);
+      const revertedDisplay = setDisplayStateAt(worldName, originalDisplay);
+      sendDisplayStateUpdateToWorld(worldName, revertedDisplay);
       rejectDisplayTransaction(socket, data, commit.message);
       return;
     }
@@ -10007,7 +10108,6 @@ async function handleDisplayWithdraw(socket: any, player: any, data: any, worldN
       x: display.x,
       y: display.y,
     }, { skipPostgres: commit.postgres_committed });
-    sendDisplayStateUpdateToWorld(worldName, savedDisplay);
     sendDisplayTransactionResult(socket, data, player, savedDisplay, true, `Took ${slot.item_id}.`, {
       inventory_deltas: buildInventoryDeltaClientPayloads(commit.deltas, committedState),
     });
