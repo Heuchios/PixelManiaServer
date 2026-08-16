@@ -4431,15 +4431,87 @@ const ITEM_DEFINITIONS = {
   mermaid: fishCatch("Mermaid", "legendary", 300, { difficulty: 9 }),
   megalodon: fishCatch("Megalodon", "legendary", 450, { difficulty: 10 }),
   kraken: fishCatch("Kraken", "legendary", 500, { difficulty: 10 }),
-  // blue_couch / green_couch: deliberately NOT given an explicit block()
-  // entry here. Data/items/atlas_items.json (ids 69/70) already carries a
-  // full registration (rarity, seed, block_health via hardness, drop_rules,
-  // tree_drop_rules, connected_variant_atlas_coords) and getItemDefinition()
-  // falls through to getAtlasItemDefinition() for any item_id with no ITEMS
-  // entry, auto-synthesizing the definition (including atlas_item_id/
-  // atlas_coords, which an explicit entry here would otherwise have to
-  // duplicate and keep in sync by hand). Same pattern already used by
-  // purple_curtains/pink_curtains above.
+  // blue_couch / green_couch: unlike purple_curtains/pink_curtains (which
+  // have no explicit ITEMS key and rely entirely on getAtlasItemDefinition()'s
+  // atlas-passthrough fallback), these two DO need an explicit entry here:
+  // scripts/check_item_database_sync.js compares the client item_database.gd
+  // ITEMS dict's literal keys against Object.keys(ITEMS) on this side -- it
+  // does NOT go through getItemDefinition()'s atlas fallback, so an
+  // atlas-only item that's also a literal key in the client's ITEMS dict
+  // (as blue_couch/green_couch are) reads as "missing from server" even
+  // though it resolves fine at runtime. atlas_item_id/atlas_coords/
+  // connected_variant_atlas_coords are duplicated from
+  // Data/items/atlas_items.json (ids 69/70) by hand for that reason.
+  blue_couch: block({
+    display_name: "Blue Couch",
+    rarity: "uncommon",
+    block_health: 3,
+    seed: "blue_couch_seed",
+    atlas_item_id: 69,
+    atlas_coords: [19, 21],
+    connected_variant_atlas_coords: {
+      single: [19, 21],
+      left: [16, 21],
+      horizontal_middle: [17, 21],
+      middle: [17, 21],
+      right: [18, 21],
+    },
+    no_collision: true,
+    collidable: false,
+    drop_rules: {
+      seed_chance: 0,
+      gem_range: [0, 0],
+      fixed_drops: Object.freeze([
+        Object.freeze({ item_id: "blue_couch", item_category: "block", amount: 1 }),
+        Object.freeze({ item_id: "blue_couch_seed", item_category: "seed", amount_range: Object.freeze([0, 2]) }),
+        Object.freeze({ item_id: "gem", item_category: "currency", amount_range: Object.freeze([0, 5]) }),
+      ]),
+    },
+    tree_drop_rules: {
+      seed_chance: 0,
+      gem_range: [0, 0],
+      fixed_drops: Object.freeze([
+        Object.freeze({ item_id: "blue_couch", item_category: "block", amount_range: Object.freeze([1, 3]) }),
+        Object.freeze({ item_id: "blue_couch_seed", item_category: "seed", amount_range: Object.freeze([0, 3]) }),
+        Object.freeze({ item_id: "gem", item_category: "currency", amount_range: Object.freeze([0, 5]) }),
+      ]),
+    },
+  }),
+  green_couch: block({
+    display_name: "Green Couch",
+    rarity: "uncommon",
+    block_health: 3,
+    seed: "green_couch_seed",
+    atlas_item_id: 70,
+    atlas_coords: [23, 21],
+    connected_variant_atlas_coords: {
+      single: [23, 21],
+      left: [20, 21],
+      horizontal_middle: [21, 21],
+      middle: [21, 21],
+      right: [22, 21],
+    },
+    no_collision: true,
+    collidable: false,
+    drop_rules: {
+      seed_chance: 0,
+      gem_range: [0, 0],
+      fixed_drops: Object.freeze([
+        Object.freeze({ item_id: "green_couch", item_category: "block", amount: 1 }),
+        Object.freeze({ item_id: "green_couch_seed", item_category: "seed", amount_range: Object.freeze([0, 2]) }),
+        Object.freeze({ item_id: "gem", item_category: "currency", amount_range: Object.freeze([0, 5]) }),
+      ]),
+    },
+    tree_drop_rules: {
+      seed_chance: 0,
+      gem_range: [0, 0],
+      fixed_drops: Object.freeze([
+        Object.freeze({ item_id: "green_couch", item_category: "block", amount_range: Object.freeze([1, 3]) }),
+        Object.freeze({ item_id: "green_couch_seed", item_category: "seed", amount_range: Object.freeze([0, 3]) }),
+        Object.freeze({ item_id: "gem", item_category: "currency", amount_range: Object.freeze([0, 5]) }),
+      ]),
+    },
+  }),
   side_table: block({
     display_name: "Side Table",
     rarity: "common",
