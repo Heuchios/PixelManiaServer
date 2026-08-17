@@ -21,6 +21,8 @@ const DEFAULT_TRASH_BLOCK_WEIGHTS = {
     trash_dirt_below: 3,
     broken_vending_machine: 3,
     trash_wallpaper: 1,
+    broken_tv: 3,
+    tires: 2,
 };
 // Block key -> Kilograms. Seeded from the defaults above; registerTrashBlockWeight mutates it.
 const TRASH_BLOCK_WEIGHTS = { ...DEFAULT_TRASH_BLOCK_WEIGHTS };
