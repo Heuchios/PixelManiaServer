@@ -1,37 +1,55 @@
 <#
-    PixelManiaServer - build + commit + deploy the Landfill leaderboard/score/prize-claim
-    Postgres backend fix (2026-08-17).
+    PixelManiaServer - build + commit + deploy the CORRECTED Landfill leaderboard/score/
+    prize-claim Postgres backend fix (2026-08-17, round 2).
 
-    WHY THIS EXISTS
-    ---------------
-    src/server_landfill_event.ts has always called five postgresStore methods --
-    getLandfillLeaderboard, getLandfillPlayerScore, recordLandfillRaceResult,
-    insertLandfillPrizeClaim, deleteLandfillPrizeClaim -- that never existed in
-    src/postgres_store.ts. No tables, no methods. The visible symptom was the in-game "EVENT
-    LEADERBOARD" panel stuck on "Loading leaderboard..." forever, because the server threw a
-    TypeError with no try/catch around the packet dispatcher, so the client never got a response.
-    A quieter side effect: recordLandfillRaceResult already had its own silent fallback, so every
-    finished Landfill race up to now scored kilograms in memory for the results screen but never
-    persisted them -- those points are not recoverable.
+    WHY THIS EXISTS (updated -- supersedes the first version of this script)
+    --------------------------------------------------------------------------
+    The first version of this script (same filename, deployed as commit 95b2493) diagnosed the
+    "EVENT LEADERBOARD stuck on Loading forever" bug correctly but misdiagnosed its cause: it
+    assumed the Landfill Postgres persistence layer (ensureLandfillSchema + 5 methods) had never
+    been built, and added a brand-new username-text-keyed version from scratch.
 
-    This change is confined to ONE file: src/postgres_store.ts (three new tables --
-    landfill_race_results, landfill_season_scores, landfill_prize_claims -- a landfillReady
-    schema-ready flag, and the five missing methods). Nothing else was touched. See project
-    memory "Landfill seasonal event design" (2026-08-17, round 5) for the full writeup.
+    That was wrong. The layer HAD been built before (commits db3be58, 11c9139, player_id-keyed,
+    matching every other per-player table in this file), had been running in production, and had
+    already accumulated two real players' season scores (413kg, 270kg, dated 2026-08-14). It was
+    then accidentally deleted by commit fd0edc0 ("Optimize world-join DB path and add permanent
+    WORLD_JOIN_PROFILE telemetry") -- an unrelated world-join latency optimization pass that swept
+    up the entire Landfill backend (and the original deleteWorldState) as collateral damage.
+
+    Because the first fix's new tables used different column names (username text) than the
+    still-live original tables (player_id uuid) with the SAME NAMES, `CREATE TABLE IF NOT EXISTS`
+    was a silent no-op against the live tables, and every method then failed at runtime with
+    Postgres errors like `column "username" does not exist` -- caught by try/catch, silently
+    returning empty results. That's why the leaderboard started loading (no more unhandled
+    rejection) but showed no data even after playing a race: the fix "worked" against tables that
+    didn't match what was actually live.
+
+    THIS version of the fix restores the original player_id-based implementation (recovered via
+    `git show fd0edc0 -- src/postgres_store.ts`, whose removed lines are the complete final
+    pre-deletion source) so it is compatible with the tables already live on staging and does not
+    orphan the two existing players' scores. See project memory "Landfill seasonal event design"
+    for the full writeup once it's updated with this round's findings.
+
+    This change is confined to ONE file: src/postgres_store.ts (same table names as the first
+    fix, but player_id-keyed to match what's actually live; same 5 methods, restored to their
+    original logic, plus incrementLandfillKilograms which the original also had). Nothing else
+    was touched.
 
     Like build_commit_deploy_landfill.ps1, this script does not stop at a green build -- it
     re-reads the generated postgres_store.js afterward and asserts the new code actually landed
     there, so a build that silently didn't run (or a sync step that didn't fire) fails HERE,
-    loudly, instead of shipping a stale artifact.
+    loudly, instead of shipping a stale artifact. It also asserts the OLD (wrong) username-keyed
+    schema markers are gone, so this can't accidentally re-ship the first, incompatible fix.
 
     WHAT IT DOES
     ------------
       1. Sanity-checks the repo path.
-      2. Confirms the fix's source markers are present in src/postgres_store.ts.
+      2. Confirms the corrected fix's source markers are present in src/postgres_store.ts, AND
+         that the old incompatible (username-keyed) markers are gone.
       3. npm run check:postgres-store   -- builds postgres_store.js and runs the project's own
                                             build-output gate (scripts/check_postgres_store_build.js)
       4. Verifies the generated postgres_store.js actually contains the new code.
-      5. Commits ONLY src/postgres_store.ts + postgres_store.js (+ this script, once first added).
+      5. Commits ONLY src/postgres_store.ts + postgres_store.js + this script itself.
       6. Runs .\deploy_staging.ps1 (STAGING ONLY -- see SAFETY)
 
     SAFETY
@@ -40,9 +58,14 @@
         rule, an unqualified "deploy" defaults to STAGING; production is a separate, explicit
         step Hassan runs himself once staging is verified.
       * Only ever `git add`s an explicit list of files -- never sweeps in unrelated
-        work-in-progress.
+        work-in-progress. This list includes the script's OWN filename this time, so it can't
+        repeat the first version's bug (which left itself untracked and tripped the deploy
+        preflight's "repo must be completely clean" check).
       * Skips the commit step cleanly when nothing is staged, so re-running after a partial
         failure is safe.
+      * Does NOT touch the database directly. The corrected code targets the tables that are
+        already live on staging (landfill_season_scores, landfill_race_results,
+        landfill_prize_claims, all player_id-keyed) -- no migration needed, no data loss risk.
 
     USAGE
         cd G:\PixelMania\PixelManiaServer
@@ -53,7 +76,7 @@
 #>
 
 param(
-    [string]$CommitMessage = "fix(landfill): add missing Postgres leaderboard/score/prize-claim persistence layer",
+    [string]$CommitMessage = "fix(landfill): restore original player_id-keyed Postgres leaderboard/score/prize-claim persistence (fd0edc0 regression)",
     [switch]$SkipDeploy,
     [switch]$DryRun,
     [switch]$Fast
@@ -77,6 +100,14 @@ function Assert-Contains($path, $needle, $why) {
     }
 }
 
+function Assert-NotContains($path, $needle, $why) {
+    if (-not (Test-Path -LiteralPath $path)) { throw "Missing expected file: $path" }
+    $content = Get-Content -LiteralPath $path -Raw
+    if ($content.Contains($needle)) {
+        throw "$path still contains '$needle' -- $why"
+    }
+}
+
 # -------------------------------------------------------------------------------------------
 Write-Step "1/6  Checking repo path"
 if (-not (Test-Path (Join-Path $ServerRepo "package.json"))) {
@@ -88,8 +119,9 @@ if (-not (Test-Path (Join-Path $ServerRepo "deploy_staging.ps1"))) {
 Write-Host "  Server: $ServerRepo" -ForegroundColor DarkGray
 
 # -------------------------------------------------------------------------------------------
-Write-Step "2/6  Confirming the fix's source markers are present"
+Write-Step "2/6  Confirming the corrected fix's source markers are present (and the old, incompatible ones are gone)"
 $srcFile = Join-Path $ServerRepo "src/postgres_store.ts"
+
 Assert-Contains $srcFile "landfillReady" `
     "the schema-ready flag is missing"
 Assert-Contains $srcFile "ensureLandfillSchema" `
@@ -102,6 +134,8 @@ Assert-Contains $srcFile "landfill_prize_claims" `
     "the prize-claim receipts table is missing"
 Assert-Contains $srcFile "async recordLandfillRaceResult" `
     "recordLandfillRaceResult is missing"
+Assert-Contains $srcFile "async incrementLandfillKilograms" `
+    "incrementLandfillKilograms is missing"
 Assert-Contains $srcFile "async getLandfillLeaderboard" `
     "getLandfillLeaderboard is missing"
 Assert-Contains $srcFile "async getLandfillPlayerScore" `
@@ -110,7 +144,22 @@ Assert-Contains $srcFile "async insertLandfillPrizeClaim" `
     "insertLandfillPrizeClaim is missing"
 Assert-Contains $srcFile "async deleteLandfillPrizeClaim" `
     "deleteLandfillPrizeClaim is missing"
-Write-Host "  All source markers present." -ForegroundColor DarkGray
+
+# Positive marker that the schema is player_id-keyed (the live/correct shape), not username-keyed.
+Assert-Contains $srcFile "PRIMARY KEY (session_id, player_id)" `
+    "landfill_race_results does not look player_id-keyed -- did the old username-keyed fix get restored by mistake?"
+Assert-Contains $srcFile "ensurePlayerIdentityForExistingAccount(client, cleanUsername)" `
+    "the landfill methods don't look like they resolve username -> player_id -- did the old username-keyed fix get restored by mistake?"
+
+# Negative markers: these strings only exist in the FIRST (wrong, username-keyed) version of this
+# fix. If either is present, this is about to re-ship a schema that's incompatible with the tables
+# already live on staging.
+Assert-NotContains $srcFile "landfill_race_result_id bigserial PRIMARY KEY" `
+    "this is the OLD username-keyed landfill_race_results primary key -- the wrong fix is still here"
+Assert-NotContains $srcFile "UNIQUE (session_id, username)" `
+    "this is the OLD username-keyed uniqueness constraint -- the wrong fix is still here"
+
+Write-Host "  All source markers present, old incompatible markers absent." -ForegroundColor DarkGray
 
 # -------------------------------------------------------------------------------------------
 Write-Step "3/6  Building postgres_store.js + running its build-output gate"
@@ -137,6 +186,8 @@ if ($DryRun) {
         "STALE ARTIFACT: the build did not regenerate postgres_store.js. Run 'npm run build:postgres-store' and re-check."
     Assert-Contains $artifact "getLandfillLeaderboard" `
         "STALE ARTIFACT: getLandfillLeaderboard is not in the file the server actually runs."
+    Assert-NotContains $artifact "landfill_race_result_id" `
+        "STALE ARTIFACT: the compiled output still has the OLD username-keyed schema -- rebuild didn't pick up the fix."
     Write-Host "  Generated artifact is in sync with source." -ForegroundColor Green
 }
 
@@ -145,7 +196,8 @@ Write-Step "5/6  Committing (named files only)"
 
 $files = @(
     "src/postgres_store.ts",
-    "postgres_store.js"
+    "postgres_store.js",
+    "build_commit_deploy_landfill_leaderboard_backend.ps1"
 )
 
 $existing = @()
@@ -241,10 +293,11 @@ Write-Host ""
 Write-Host "Done." -ForegroundColor Green
 Write-Host ""
 Write-Host "Verify on staging in this order:" -ForegroundColor Yellow
-Write-Host "  1. Open the EVENT LEADERBOARD panel -> it now loads instead of spinning forever"
+Write-Host "  1. Open the EVENT LEADERBOARD panel -> the two existing players (413kg, 270kg from"
+Write-Host "     Aug 14) should now show up in the top 10 -- this is the key check that this fix"
+Write-Host "     is reading the SAME rows the old code wrote, not orphaning them"
 Write-Host "  2. Play one Landfill race to completion -> your name/points appear on the leaderboard"
-Write-Host "     and 'Your rank' / 'Your points' update (this is the first race whose points will"
-Write-Host "     actually persist -- anything played before this deploy did not)"
+Write-Host "     and 'Your rank' / 'Your points' update"
 Write-Host "  3. If you're in the season's top 10, press the rewards/claim button -> it either"
 Write-Host "     grants a prize or reports a clear reason (not configured / inventory full / etc.)"
 Write-Host ""
