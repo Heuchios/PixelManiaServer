@@ -2511,9 +2511,9 @@ const ITEM_DEFINITIONS = {
   }),
   red_brick_wall: block({
     atlas_item_id: 44,
-    atlas_coords: [17, 6],
-    texture: atlasImage([17, 6]),
-    inventory_icon: atlasImage([17, 6]),
+    atlas_coords: [16, 23],
+    texture: atlasImage([16, 23]),
+    inventory_icon: atlasImage([16, 23]),
     rarity: "uncommon",
     block_health: 3,
     seed: "red_brick_wall_seed",
