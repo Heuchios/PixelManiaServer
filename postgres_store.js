@@ -5967,6 +5967,39 @@ class PostgresStore {
             state.world_revision = Math.max(normalizeWorldRevision(state.world_revision), normalizeWorldRevision(row.world_revision));
         return state;
     }
+    // Permanently removes a world's row (and everything that cascades from it via ON DELETE
+    // CASCADE -- world_area_locks, world_drops, world_block_changes, world_object_changes,
+    // world_honor_visits) so a retired world leaves no trace behind. This method did not exist
+    // before, even though server.ts's resetWorldStateForFreshInstance already called
+    // `postgresStore.deleteWorldState(...)` -- every call threw "deleteWorldState is not a
+    // function", which is the exact runtime error seen in staging logs tied to a Landfill world's
+    // lifecycle (see project memory landfill_seasonal_event_design.md). That call is made from two
+    // places: server_landfill_event.ts's createNewInstance (awaited directly, no surrounding
+    // try/catch -- a throw here aborted instance creation entirely, after the instance had already
+    // been registered but before its entry pen was built) and retireSession (fire-and-forget with
+    // its own .catch(), so it only ever produced a silent warning and left the finished race's
+    // world row -- and therefore its edited terrain -- permanently in Postgres under a name that is
+    // never reused). Never throws: both call sites need that guarantee, so a database hiccup here
+    // degrades to a logged warning and a normal `{ ok: false }` return instead of an unhandled
+    // rejection.
+    async deleteWorldState(worldName) {
+        const cleanWorldName = cleanName(worldName || "");
+        if (cleanWorldName === "")
+            return { ok: false, reason: "invalid_world" };
+        if (!this.isReady())
+            return { ok: false, reason: "postgres_unavailable" };
+        try {
+            const result = await this.db.query(`
+        DELETE FROM ${this.table("worlds")}
+         WHERE world_name = $1
+        `, [cleanWorldName]);
+            return { ok: true, deleted: (result.rowCount || 0) > 0 };
+        }
+        catch (error) {
+            this.logger("[postgres] world state delete failed:", getErrorMessage(error));
+            return { ok: false, reason: "database_error" };
+        }
+    }
     async loadWorldState(worldName) {
         const cleanWorldName = cleanName(worldName || "");
         if (cleanWorldName === "")
