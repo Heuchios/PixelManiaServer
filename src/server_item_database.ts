@@ -2632,6 +2632,7 @@ const ITEM_DEFINITIONS = {
     },
   }),
   blue_couch: block({
+    atlas_item_id: 69,
     atlas_coords: [19, 21],
     texture: atlasImage([19, 21]),
     inventory_icon: atlasImage([19, 21]),
@@ -2669,6 +2670,7 @@ const ITEM_DEFINITIONS = {
     },
   }),
   green_couch: block({
+    atlas_item_id: 70,
     atlas_coords: [23, 21],
     texture: atlasImage([23, 21]),
     inventory_icon: atlasImage([23, 21]),
