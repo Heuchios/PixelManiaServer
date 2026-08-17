@@ -592,6 +592,7 @@ class PostgresStore {
   declare degraded: boolean;
   declare initialized: boolean;
   declare progressionReady: boolean;
+  declare landfillReady: boolean;
   declare pool: Pool | null;
   declare bootstrapSqlPath: string;
   declare autoBootstrap: boolean;
@@ -616,6 +617,7 @@ class PostgresStore {
     this.degraded = false;
     this.initialized = false;
     this.progressionReady = false;
+    this.landfillReady = false;
     this.pool = null;
     this.bootstrapSqlPath = cleanName(options.bootstrapSqlPath || "");
     this.autoBootstrap = Boolean(options.autoBootstrap);
@@ -741,6 +743,15 @@ class PostgresStore {
           }
           this.progressionReady = false;
           this.logger("[postgres] progression schema upgrade failed. Level mirrors are disabled.", getErrorMessage(error));
+        }
+        try {
+          await this.ensureLandfillSchema();
+        } catch (error) {
+          if (isRetryablePostgresError(error) && attempt < POSTGRES_INIT_MAX_ATTEMPTS) {
+            throw error;
+          }
+          this.landfillReady = false;
+          this.logger("[postgres] landfill schema upgrade failed. Landfill leaderboard/prizes are disabled.", getErrorMessage(error));
         }
         this.ready = true;
         this.degraded = false;
@@ -1495,6 +1506,273 @@ class PostgresStore {
       ON ${this.table("player_progression_events")}(player_id, created_at DESC);
     `);
     this.progressionReady = true;
+  }
+
+  // Backing store for the Landfill seasonal event's leaderboard/prize-claim system (see
+  // server_landfill_event.ts and project memory landfill_seasonal_event_design.md). Three
+  // tables, keyed by plain username text -- like account_login_attempts, this module only ever
+  // deals in username strings (cleanAccountName(player.account_username || player.name)), never
+  // a player_id, so there is no identity-resolution join to do here.
+  //
+  //   landfill_race_results  -- one row per (session_id, username): exactly-once idempotency
+  //                             guard for persistSessionResults (a duplicate call must insert
+  //                             nothing and skip the season-total increment).
+  //   landfill_season_scores -- one row per (username, season_key): the cumulative lifetime-per-
+  //                             season Kilogram total the leaderboard actually ranks on.
+  //   landfill_prize_claims  -- one row per (username, season_key): claim receipt so a top-10
+  //                             finisher can only claim their season's prize once.
+  async ensureLandfillSchema() {
+    await this.db.query(`
+      CREATE TABLE IF NOT EXISTS ${this.table("landfill_race_results")} (
+        landfill_race_result_id bigserial PRIMARY KEY,
+        session_id text NOT NULL,
+        username text NOT NULL,
+        season_key text NOT NULL,
+        world_name text NOT NULL DEFAULT '',
+        kilograms integer NOT NULL DEFAULT 0 CHECK (kilograms >= 0),
+        placement integer NOT NULL DEFAULT 0 CHECK (placement >= 0),
+        awarded_kilograms integer NOT NULL DEFAULT 0 CHECK (awarded_kilograms >= 0),
+        finished boolean NOT NULL DEFAULT true,
+        created_at timestamptz NOT NULL DEFAULT now(),
+        UNIQUE (session_id, username)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_landfill_race_results_username_season
+      ON ${this.table("landfill_race_results")}(username, season_key);
+
+      CREATE TABLE IF NOT EXISTS ${this.table("landfill_season_scores")} (
+        username text NOT NULL,
+        season_key text NOT NULL,
+        kilograms bigint NOT NULL DEFAULT 0 CHECK (kilograms >= 0),
+        races_completed integer NOT NULL DEFAULT 0 CHECK (races_completed >= 0),
+        updated_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (username, season_key)
+      );
+
+      CREATE INDEX IF NOT EXISTS idx_landfill_season_scores_season_rank
+      ON ${this.table("landfill_season_scores")}(season_key, kilograms DESC, updated_at ASC);
+
+      CREATE TABLE IF NOT EXISTS ${this.table("landfill_prize_claims")} (
+        username text NOT NULL,
+        season_key text NOT NULL,
+        rank integer NOT NULL CHECK (rank > 0),
+        claimed_at timestamptz NOT NULL DEFAULT now(),
+        PRIMARY KEY (username, season_key)
+      );
+    `);
+    this.landfillReady = true;
+  }
+
+  // Called exactly once per (session_id, username) by persistSessionResults at race end. The
+  // UNIQUE(session_id, username) constraint on landfill_race_results IS the idempotency check:
+  // a retried/duplicate call inserts nothing (ON CONFLICT DO NOTHING, no row RETURNING) and, per
+  // the comment at that call site, must then skip the season-total increment too -- otherwise a
+  // retry would double-credit the player. Both writes happen in one transaction so a crash
+  // mid-way can never leave a result row without the matching increment or vice versa. Never
+  // throws -- persistSessionResults awaits this directly with no surrounding try/catch.
+  async recordLandfillRaceResult(entry: RuntimeRecord = {}): Promise<{ ok: boolean; reason?: string; duplicate?: boolean }> {
+    if (!this.isReady() || !this.landfillReady) {
+      return { ok: false, reason: "postgres_unavailable" };
+    }
+
+    const sessionId = cleanName(entry.sessionId || entry.session_id || "");
+    const username = cleanName(entry.username || "");
+    const seasonKey = cleanName(entry.seasonKey || entry.season_key || "");
+    const worldName = cleanName(entry.worldName || entry.world_name || "");
+    const kilograms = Math.max(0, toInt(entry.kilograms, 0));
+    const placement = Math.max(0, toInt(entry.placement, 0));
+    const awardedKilograms = Math.max(0, toInt(entry.awardedKilograms ?? entry.awarded_kilograms, kilograms));
+    const finished = entry.finished !== false;
+
+    if (sessionId === "" || username === "" || seasonKey === "") {
+      return { ok: false, reason: "invalid_result" };
+    }
+
+    try {
+      const result = await this.withTransaction(async (client) => {
+        const insertResult = await client.query(
+          `
+          INSERT INTO ${this.table("landfill_race_results")} (
+            session_id, username, season_key, world_name, kilograms, placement, awarded_kilograms, finished
+          )
+          VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+          ON CONFLICT (session_id, username) DO NOTHING
+          RETURNING landfill_race_result_id
+          `,
+          [sessionId, username, seasonKey, worldName, kilograms, placement, awardedKilograms, finished]
+        );
+
+        if (!insertResult.rows[0]) {
+          return { ok: true, duplicate: true };
+        }
+
+        await client.query(
+          `
+          INSERT INTO ${this.table("landfill_season_scores")} (username, season_key, kilograms, races_completed, updated_at)
+          VALUES ($1, $2, $3, 1, now())
+          ON CONFLICT (username, season_key) DO UPDATE
+            SET kilograms = ${this.table("landfill_season_scores")}.kilograms + EXCLUDED.kilograms,
+                races_completed = ${this.table("landfill_season_scores")}.races_completed + 1,
+                updated_at = now()
+          `,
+          [username, seasonKey, awardedKilograms]
+        );
+
+        return { ok: true, duplicate: false };
+      }, "landfill race result");
+
+      return result || { ok: false, reason: "postgres_unavailable" };
+    } catch (error) {
+      this.logger("[postgres] landfill race result record failed:", getErrorMessage(error));
+      return { ok: false, reason: "database_error" };
+    }
+  }
+
+  // Top-N for the season, ranked by cumulative kilograms. Ties break on updated_at ASC (whoever
+  // reached that total first) then username ASC, so ranks stay deterministic and never shuffle
+  // between reads -- same tie-break discipline server_landfill_event.ts uses for in-race ranking.
+  async getLandfillLeaderboard(seasonKey: unknown, limit: unknown = 10): Promise<{ ok: boolean; entries: any[]; reason?: string }> {
+    if (!this.isReady() || !this.landfillReady) {
+      return { ok: false, entries: [], reason: "postgres_unavailable" };
+    }
+
+    const cleanSeasonKey = cleanName(seasonKey || "");
+    if (cleanSeasonKey === "") {
+      return { ok: false, entries: [], reason: "invalid_season" };
+    }
+    const safeLimit = Math.max(1, Math.min(100, toInt(limit, 10)));
+
+    try {
+      const result = await this.queryReadWithRetry(
+        "landfill leaderboard",
+        `
+        SELECT username, kilograms,
+               ROW_NUMBER() OVER (ORDER BY kilograms DESC, updated_at ASC, username ASC)::integer AS rank
+          FROM ${this.table("landfill_season_scores")}
+         WHERE season_key = $1
+         ORDER BY kilograms DESC, updated_at ASC, username ASC
+         LIMIT $2
+        `,
+        [cleanSeasonKey, safeLimit]
+      );
+
+      const entries = result.rows.map((row: any) => ({
+        username: cleanName(row.username || ""),
+        kilograms: toInt(row.kilograms, 0),
+        rank: toInt(row.rank, 0),
+      }));
+
+      return { ok: true, entries };
+    } catch (error) {
+      this.logger("[postgres] landfill leaderboard read failed:", getErrorMessage(error));
+      return { ok: false, entries: [], reason: "database_error" };
+    }
+  }
+
+  // A single player's standing for the season, even when they are well outside the top 10 --
+  // computed with the same RANK ordering as getLandfillLeaderboard so "your rank" always agrees
+  // with the visible table. Returns null only on a hard failure (not ready / bad args); a player
+  // who simply hasn't scored yet gets kilograms:0, rank:0, matching handleLandfillLeaderboardRequest's
+  // `standing?.kilograms || 0` / `standing?.rank || 0` fallback.
+  async getLandfillPlayerScore(username: unknown, seasonKey: unknown): Promise<{ kilograms: number; rank: number } | null> {
+    if (!this.isReady() || !this.landfillReady) {
+      return null;
+    }
+
+    const cleanUsername = cleanName(username || "");
+    const cleanSeasonKey = cleanName(seasonKey || "");
+    if (cleanUsername === "" || cleanSeasonKey === "") {
+      return null;
+    }
+
+    try {
+      const result = await this.queryReadWithRetry(
+        "landfill player score",
+        `
+        WITH ranked AS (
+          SELECT username, kilograms,
+                 ROW_NUMBER() OVER (ORDER BY kilograms DESC, updated_at ASC, username ASC)::integer AS rank
+            FROM ${this.table("landfill_season_scores")}
+           WHERE season_key = $1
+        )
+        SELECT kilograms, rank FROM ranked WHERE username = $2
+        `,
+        [cleanSeasonKey, cleanUsername]
+      );
+
+      const row = result.rows[0];
+      if (!row) return { kilograms: 0, rank: 0 };
+
+      return { kilograms: toInt(row.kilograms, 0), rank: toInt(row.rank, 0) };
+    } catch (error) {
+      this.logger("[postgres] landfill player score read failed:", getErrorMessage(error));
+      return null;
+    }
+  }
+
+  // Claim receipt for a season's top-10 prize. PRIMARY KEY(username, season_key) is the
+  // idempotency guard claimLandfillPrize relies on: `inserted: false` means the row already
+  // existed (already claimed this season), which the caller reports as "already_claimed" rather
+  // than granting the prize items a second time.
+  async insertLandfillPrizeClaim(username: unknown, seasonKey: unknown, rank: unknown): Promise<{ ok: boolean; inserted: boolean; reason?: string }> {
+    if (!this.isReady() || !this.landfillReady) {
+      return { ok: false, inserted: false, reason: "postgres_unavailable" };
+    }
+
+    const cleanUsername = cleanName(username || "");
+    const cleanSeasonKey = cleanName(seasonKey || "");
+    const safeRank = Math.max(0, toInt(rank, 0));
+    if (cleanUsername === "" || cleanSeasonKey === "" || safeRank <= 0) {
+      return { ok: false, inserted: false, reason: "invalid_claim" };
+    }
+
+    try {
+      const result = await this.db.query(
+        `
+        INSERT INTO ${this.table("landfill_prize_claims")} (username, season_key, rank, claimed_at)
+        VALUES ($1, $2, $3, now())
+        ON CONFLICT (username, season_key) DO NOTHING
+        RETURNING username
+        `,
+        [cleanUsername, cleanSeasonKey, safeRank]
+      );
+
+      return { ok: true, inserted: Boolean(result.rows[0]) };
+    } catch (error) {
+      this.logger("[postgres] landfill prize claim insert failed:", getErrorMessage(error));
+      return { ok: false, inserted: false, reason: "database_error" };
+    }
+  }
+
+  // Rollback for insertLandfillPrizeClaim when a later step in claimLandfillPrize fails (no
+  // inventory space, the state failed to load, the inventory commit itself failed) -- called
+  // from three different failure branches with no return-value check at any of them, so this
+  // must never throw and degrades to a logged warning on a database hiccup, same contract as
+  // deleteWorldState.
+  async deleteLandfillPrizeClaim(username: unknown, seasonKey: unknown): Promise<{ ok: boolean }> {
+    if (!this.isReady() || !this.landfillReady) {
+      return { ok: false };
+    }
+
+    const cleanUsername = cleanName(username || "");
+    const cleanSeasonKey = cleanName(seasonKey || "");
+    if (cleanUsername === "" || cleanSeasonKey === "") {
+      return { ok: false };
+    }
+
+    try {
+      await this.db.query(
+        `
+        DELETE FROM ${this.table("landfill_prize_claims")}
+         WHERE username = $1 AND season_key = $2
+        `,
+        [cleanUsername, cleanSeasonKey]
+      );
+      return { ok: true };
+    } catch (error) {
+      this.logger("[postgres] landfill prize claim delete failed:", getErrorMessage(error));
+      return { ok: false };
+    }
   }
 
   async close() {
