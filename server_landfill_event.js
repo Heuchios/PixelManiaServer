@@ -173,6 +173,13 @@ function createLandfillEventSystem(deps) {
         // The single gate that stops progress counting before GO and after the finish.
         return state === "racing";
     }
+    // Leaving is only a forfeitable event while the race genuinely has not concluded yet. Once the
+    // clock actually runs out (FINISHING onward), the race is over -- exiting the world at that
+    // point is just "the race ended, I'm going home", not someone abandoning a live spot, so it
+    // must not strip a legitimately-earned result out from under a player who is already ranked.
+    function isForfeitableState(state) {
+        return isPreRaceState(state) || state === "racing";
+    }
     // Are block edits frozen in this world right now?
     //
     // Called from the validated block-update path (server_phase8_world_action_routes.ts). During
@@ -589,9 +596,16 @@ function createLandfillEventSystem(deps) {
             // Idle sweep. Only ever applies to a session that never got off the ground -- a session that
             // actually raced retires through the FINISHED -> CLEANUP path above, which also destroys its
             // world. Kept as the backstop for a session nobody ever entered.
+            //
+            // Uses countConnectedParticipants rather than instance.participants.size: that Map never
+            // shrinks (entries persist for scoring even after someone forfeits or disconnects -- see
+            // reconcileParticipants), so a raw size check would stay permanently nonzero the moment
+            // anyone had ever joined, even if every one of them has since left for good. This is what
+            // actually lets a session where everyone forfeited pre-race (rather than nobody ever
+            // joining at all) still get swept instead of leaking forever.
             if (isPreRaceState(instance.state)
                 && population === 0
-                && instance.participants.size === 0
+                && countConnectedParticipants(instance) === 0
                 && now - instance.createdAtMs > instanceIdleCleanupMs) {
                 retireSession(instance);
             }
@@ -607,7 +621,12 @@ function createLandfillEventSystem(deps) {
             // A terminal session is not a membership that should block or redirect a new join.
             if (instance.state === "finished" || instance.state === "cleanup")
                 continue;
-            if (instance.participants.has(cleanUsername))
+            // A forfeited participant (see reconcileParticipants) must NOT be treated as still
+            // belonging here -- that is precisely the "leaving forfeits the spot" fix. Their entry
+            // stays in `participants` for scoring purposes only (see the interface doc comment on
+            // `forfeited`), so this check cannot be a bare `.has()` the way it used to be.
+            const existingParticipant = instance.participants.get(cleanUsername);
+            if (existingParticipant && !existingParticipant.forfeited)
                 return instance;
             if (instance.participantUsernames.has(cleanUsername))
                 return instance;
@@ -676,6 +695,7 @@ function createLandfillEventSystem(deps) {
                 joinOrder: instance.nextJoinOrder,
                 lastProgressAtMs: nowMs,
                 connected: true,
+                forfeited: false,
             });
             instance.nextJoinOrder += 1;
             instance.participantUsernames.add(cleanUsername);
@@ -689,6 +709,20 @@ function createLandfillEventSystem(deps) {
                 // and pre-race it simply stops counting toward the minimum.
                 participant.connected = false;
                 instance.broadcastDirty = true;
+                // Confirmed with Hassan 2026-08-17: leaving a race before it ends forfeits that spot, so
+                // a later Join Race press must always land on a fresh instance instead of reconnecting
+                // here. This module cannot distinguish "deliberately returned to the lobby" from "socket
+                // dropped" -- both look identical from a roster read (see the header scope note on why
+                // this module only polls the roster rather than hooking the leave/disconnect pipeline) --
+                // so both forfeit alike. Only while isForfeitableState: once the race has actually ended
+                // (FINISHING onward), leaving is just going home after a result that is already ranked,
+                // not abandoning a live spot, and must not un-admit someone who is legitimately waiting
+                // on their results/leaderboard placement.
+                if (isForfeitableState(instance.state)) {
+                    participant.forfeited = true;
+                    instance.participantUsernames.delete(participant.username);
+                    instance.admittedUsernames.delete(participant.username);
+                }
             }
         }
     }
