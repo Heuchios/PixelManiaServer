@@ -128,6 +128,7 @@ function createServerSocketDeliveryHelpers(config: SocketDeliveryConfig) {
   function disconnectBackpressuredSocket(socket: SocketLike | null | undefined): void {
     if (!socket || socket._backpressureDisconnected === true) return;
     socket._backpressureDisconnected = true;
+    config.playerNetworkStats.outbound_backpressure_disconnects += 1;
     try {
       if (typeof socket.terminate === "function") socket.terminate();
       else if (typeof socket.close === "function") socket.close(1013, "backpressure");
@@ -218,7 +219,6 @@ function createServerSocketDeliveryHelpers(config: SocketDeliveryConfig) {
       }
 
       if (bufferedAmount > criticalMaxBufferedAmount) {
-        config.playerNetworkStats.outbound_backpressure_disconnects += 1;
         config.warn("[socket_backpressure_disconnect]", {
           context,
           message_type: messageType,

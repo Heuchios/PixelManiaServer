@@ -23,6 +23,8 @@ const stats = {
   outbound_bytes_sent: 0,
   outbound_oversize_packets: 0,
   outbound_backpressure_skips: 0,
+  outbound_backpressure_forced: 0,
+  outbound_backpressure_disconnects: 0,
   outbound_send_failures: 0,
   batch_presence_packets_sent: 0,
   batch_player_items_sent: 0,
@@ -111,11 +113,44 @@ assert.equal(stats.outbound_oversize_packets, 1);
 assert.equal(lastWarning().label, "[socket_oversize_send]");
 assert.equal(lastWarning().payload.max_packet_bytes, 64);
 
-const bufferedSocket = makeSocket({ bufferedAmount: 64 });
-assert.equal(helpers.sendRawJsonToSocket(bufferedSocket, "small", "world_broadcast", { message_type: "world_update" }), false);
-assert.equal(bufferedSocket.sent.length, 0);
+// Backpressure, above the soft limit (32) but below the hard ceiling (4x = 128).
+// A presence batch may still be skipped: the next tick re-sends the current position, and
+// sendPlayerPositionBatch keeps its own coalescing retry queue for it.
+const droppableBufferedSocket = makeSocket({ bufferedAmount: 64 });
+assert.equal(helpers.sendRawJsonToSocket(droppableBufferedSocket, "small", "movement", { message_type: "player_position_batch" }), false);
+assert.equal(droppableBufferedSocket.sent.length, 0);
 assert.equal(stats.outbound_backpressure_skips, 1);
 assert.equal(lastWarning().label, "[socket_backpressure_skip]");
+
+// Anything else is handed to the socket to queue instead. Dropping a world_update here is
+// what let the server commit a block placement and charge the item while the client was
+// never told, leaving the player short an item with nothing placed.
+const bufferedSocket = makeSocket({ bufferedAmount: 64 });
+assert.equal(helpers.sendRawJsonToSocket(bufferedSocket, "small", "world_broadcast", { message_type: "world_update" }), true);
+assert.equal(bufferedSocket.sent.length, 1);
+assert.equal(stats.outbound_backpressure_skips, 1);
+assert.equal(stats.outbound_backpressure_forced, 1);
+assert.equal(lastWarning().label, "[socket_backpressure_queued]");
+
+// Past the hard ceiling the socket is dropped rather than queued without bound. The client
+// reconnects and resyncs from PostgreSQL, which is recoverable; a silent discard is not.
+let terminatedCount = 0;
+const wedgedSocket = makeSocket({
+  bufferedAmount: 4096,
+  terminate() {
+    terminatedCount += 1;
+  },
+});
+assert.equal(helpers.sendRawJsonToSocket(wedgedSocket, "small", "world_broadcast", { message_type: "world_update" }), false);
+assert.equal(wedgedSocket.sent.length, 0);
+assert.equal(terminatedCount, 1);
+assert.equal(stats.outbound_backpressure_disconnects, 1);
+assert.equal(lastWarning().label, "[socket_backpressure_disconnect]");
+
+// A second packet to the same wedged socket must not terminate it again.
+assert.equal(helpers.sendRawJsonToSocket(wedgedSocket, "small", "world_broadcast", { message_type: "world_update" }), false);
+assert.equal(terminatedCount, 1);
+assert.equal(stats.outbound_backpressure_disconnects, 1);
 
 const failingSocket = makeSocket({
   send() {
@@ -200,6 +235,9 @@ assert.deepEqual(buildConfig.include, ["src/server_socket_delivery_helpers.ts"])
 assert.match(helperSource, /function createServerSocketDeliveryHelpers/);
 assert.match(helperSource, /function sendRawJsonToSocket/);
 assert.match(helperSource, /function sendPlayerPositionBatch/);
+assert.match(helperSource, /DEFAULT_DROPPABLE_PACKET_TYPES/);
+assert.match(helperSource, /function isDroppablePacketType/);
+assert.match(helperSource, /function disconnectBackpressuredSocket/);
 assert.match(helperSource, /function mergeMovementBatch/);
 assert.match(generatedSource, /Generated from src\/server_socket_delivery_helpers\.ts/);
 assert.match(generatedSource, /module\.exports = \{/);
