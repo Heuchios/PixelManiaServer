@@ -409,6 +409,8 @@ function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
       outbound_oversize_packets: Number(playerNetworkStats.outbound_oversize_packets || 0),
       outbound_packet_type_stats: outboundPacketTypeStats,
       outbound_backpressure_skips: Number(playerNetworkStats.outbound_backpressure_skips || 0),
+      outbound_backpressure_forced: Number(playerNetworkStats.outbound_backpressure_forced || 0),
+      outbound_backpressure_disconnects: Number(playerNetworkStats.outbound_backpressure_disconnects || 0),
       outbound_send_failures: Number(playerNetworkStats.outbound_send_failures || 0),
       movement_backpressure_queued_batches: Number(
         playerNetworkStats.movement_backpressure_queued_batches || 0,

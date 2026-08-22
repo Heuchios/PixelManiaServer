@@ -1376,10 +1376,40 @@ function createServerPhase8WorldActionRoutes(deps) {
             return;
         const seedTransactionId = makeAuditId("seed");
         applySeedUpdateToWorldState(worldName, update);
-        queueWorldSave(worldName);
-        const requesterInventoryDeltas = validation.playerState
-            ? buildInventoryDeltaClientPayloads(validation.inventoryDeltas, validation.playerState)
+        let seedPlayerState = validation.playerState;
+        let seedPostgresCommitted = validation.postgres_committed;
+        let requesterInventoryDeltas = seedPlayerState
+            ? buildInventoryDeltaClientPayloads(validation.inventoryDeltas, seedPlayerState)
             : [];
+        if (validation.deferred_inventory_commit) {
+            // One commit for the seed cost and the planted seed. If it fails the seed is
+            // taken back out of world state, so the player is never charged for a seed
+            // that was not planted.
+            const deferred = validation.deferred_inventory_commit;
+            const serializedWorld = serializeWorldState(worldName);
+            const inventoryCommit = await commitPlayerInventoryState(socket, player, deferred.username, deferred.beforeState, deferred.afterState, {
+                ...(deferred.options || {}),
+                world: worldName,
+                world_state: serializedWorld,
+            });
+            if (!inventoryCommit.ok) {
+                ensureWorldState(worldName).seeds.delete(gridKey(update.x, update.y));
+                sendActionRejected(socket, "world_seed_update", inventoryCommit.message || "PostgreSQL rejected the seed placement.", {
+                    reason: inventoryCommit.reason || "inventory_commit_failed",
+                    seed_type: update.seed_type,
+                    x: update.x,
+                    y: update.y,
+                });
+                return;
+            }
+            seedPlayerState = inventoryCommit.state;
+            seedPostgresCommitted = inventoryCommit.postgres_committed;
+            requesterInventoryDeltas = buildInventoryDeltaClientPayloads(inventoryCommit.deltas, seedPlayerState);
+            persistWorldStateAfterInventoryCommit(worldName, inventoryCommit.postgres_committed, serializedWorld);
+        }
+        else {
+            queueWorldSave(worldName);
+        }
         sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
         logWorldChange(socket, player, {
             source_type: "world_seed_update",
@@ -1395,13 +1425,13 @@ function createServerPhase8WorldActionRoutes(deps) {
                 mutated: Boolean(update.mutated),
             },
         });
-        if (update.action === "place" && validation.playerState) {
-            logItemLedgerForState(socket, player, player.account_username, validation.playerState, update.seed_type, "seed", -1, "world_seed_place", seedTransactionId, "seed_plant_cost", worldName, {
+        if (update.action === "place" && seedPlayerState) {
+            logItemLedgerForState(socket, player, player.account_username, seedPlayerState, update.seed_type, "seed", -1, "world_seed_place", seedTransactionId, "seed_plant_cost", worldName, {
                 x: update.x,
                 y: update.y,
-            }, { skipPostgres: validation.postgres_committed });
+            }, { skipPostgres: seedPostgresCommitted });
         }
-        if (validation.playerState) {
+        if (seedPlayerState) {
             sendInventoryTransactionResult(socket, {
                 ok: true,
                 action: "world_seed_place",

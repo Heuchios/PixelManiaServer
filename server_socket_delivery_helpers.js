@@ -14,9 +14,51 @@ function getErrorMessage(error) {
         ? String(error.message || error)
         : String(error);
 }
+// Packet types that are safe to discard when a socket is backpressured, because the very
+// next tick re-sends the full current value. Presence batches also keep their own
+// coalescing retry queue (see flushPendingPlayerPositionBatch). Every other packet carries
+// state the client cannot rebuild on its own -- authoritative block/seed placements,
+// inventory deltas, action rejections -- so it must never be dropped silently.
+const DEFAULT_DROPPABLE_PACKET_TYPES = ["player_position_batch"];
 function createServerSocketDeliveryHelpers(config) {
+    const droppablePacketTypes = new Set((Array.isArray(config.droppablePacketTypes) && config.droppablePacketTypes.length > 0
+        ? config.droppablePacketTypes
+        : DEFAULT_DROPPABLE_PACKET_TYPES)
+        .map((value) => String(value || "").trim().toLowerCase())
+        .filter((value) => value !== ""));
+    // Always strictly above the soft limit: if the two collapsed together, the first
+    // authoritative packet past the soft limit would disconnect the client instead of being
+    // queued, turning a brief stall into a dropped connection.
+    const criticalMaxBufferedAmount = Math.max(config.maxBufferedAmount * 2, Math.trunc(Number(config.criticalMaxBufferedAmount) || 0) || config.maxBufferedAmount * 4);
+    function isDroppablePacketType(messageType) {
+        const key = String(messageType || "").trim().toLowerCase();
+        if (key === "")
+            return false;
+        return droppablePacketTypes.has(key);
+    }
     function isSocketOpen(socket) {
         return Boolean(socket && socket.readyState === config.websocketOpenState);
+    }
+    // A socket this far behind is not draining at all. Queueing more authoritative state
+    // would grow without bound, so drop the connection instead: the client reconnects and
+    // re-enters the world, which resyncs world state and inventory from PostgreSQL. That is
+    // recoverable; a silently discarded placement echo is not.
+    function disconnectBackpressuredSocket(socket) {
+        if (!socket || socket._backpressureDisconnected === true)
+            return;
+        socket._backpressureDisconnected = true;
+        try {
+            if (typeof socket.terminate === "function")
+                socket.terminate();
+            else if (typeof socket.close === "function")
+                socket.close(1013, "backpressure");
+        }
+        catch (error) {
+            config.warn("[socket_backpressure_close_error]", {
+                player_id: String(socket?.playerId || ""),
+                message: getErrorMessage(error),
+            });
+        }
     }
     function getSocketBufferedAmount(socket) {
         const amount = Number(socket?.bufferedAmount || 0);
@@ -67,17 +109,49 @@ function createServerSocketDeliveryHelpers(config) {
         }
         const bufferedAmount = getSocketBufferedAmount(socket);
         if (bufferedAmount > config.maxBufferedAmount) {
-            config.playerNetworkStats.outbound_backpressure_skips += 1;
-            if (shouldLogSocketBackpressure(socket)) {
-                config.warn("[socket_backpressure_skip]", {
+            const messageType = config.normalizePacketTypeName(detailsMessageType || context || "send");
+            if (isDroppablePacketType(messageType)) {
+                config.playerNetworkStats.outbound_backpressure_skips += 1;
+                if (shouldLogSocketBackpressure(socket)) {
+                    config.warn("[socket_backpressure_skip]", {
+                        context,
+                        message_type: messageType,
+                        player_id: String(socket?.playerId || ""),
+                        buffered_amount: bufferedAmount,
+                        limit: config.maxBufferedAmount,
+                        ...safeDetails,
+                    });
+                }
+                return false;
+            }
+            if (bufferedAmount > criticalMaxBufferedAmount) {
+                config.playerNetworkStats.outbound_backpressure_disconnects += 1;
+                config.warn("[socket_backpressure_disconnect]", {
                     context,
+                    message_type: messageType,
+                    player_id: String(socket?.playerId || ""),
+                    buffered_amount: bufferedAmount,
+                    limit: criticalMaxBufferedAmount,
+                    ...safeDetails,
+                });
+                disconnectBackpressuredSocket(socket);
+                return false;
+            }
+            // Hand it to the WebSocket layer anyway: it queues in order and delivers once the
+            // client drains. Dropping it here is what left clients charged for a block or seed
+            // that never appeared on their screen.
+            config.playerNetworkStats.outbound_backpressure_forced += 1;
+            if (shouldLogSocketBackpressure(socket)) {
+                config.warn("[socket_backpressure_queued]", {
+                    context,
+                    message_type: messageType,
                     player_id: String(socket?.playerId || ""),
                     buffered_amount: bufferedAmount,
                     limit: config.maxBufferedAmount,
+                    hard_limit: criticalMaxBufferedAmount,
                     ...safeDetails,
                 });
             }
-            return false;
         }
         try {
             socket?.send(raw);

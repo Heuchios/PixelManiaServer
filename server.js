@@ -551,6 +551,10 @@ const LANDFILL_PLACEMENT_BONUS_KILOGRAMS = String(process.env.LANDFILL_PLACEMENT
     .filter((value) => value > 0);
 const LANDFILL_PARTICIPATION_BONUS_KILOGRAMS = Math.max(0, Math.min(10000, Math.trunc(Number(process.env.LANDFILL_PARTICIPATION_BONUS_KILOGRAMS) || 20)));
 const SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT = Math.max(256 * 1024, Math.min(32 * 1024 * 1024, Math.trunc(Number(process.env.SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT) || (4 * 1024 * 1024))));
+// Only presence batches may be dropped on backpressure; authoritative packets are queued
+// instead (see server_socket_delivery_helpers.ts). This is the point at which a client that
+// is not draining at all gets disconnected so it reconnects and does a full resync.
+const SERVER_WEBSOCKET_CRITICAL_BUFFERED_AMOUNT = Math.max(SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT * 2, Math.min(128 * 1024 * 1024, Math.trunc(Number(process.env.SERVER_WEBSOCKET_CRITICAL_BUFFERED_AMOUNT) || (SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT * 4))));
 const PLAYER_POSITION_MAX_BUFFERED_AMOUNT = Math.max(64 * 1024, Math.min(SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT, Math.trunc(Number(process.env.PLAYER_POSITION_MAX_BUFFERED_AMOUNT) || (256 * 1024))));
 const PLAYER_POSITION_RESUME_BUFFERED_AMOUNT = Math.max(16 * 1024, Math.min(PLAYER_POSITION_MAX_BUFFERED_AMOUNT, Math.trunc(Number(process.env.PLAYER_POSITION_RESUME_BUFFERED_AMOUNT) || (64 * 1024))));
 const PLAYER_POSITION_DELIVERY_RETRY_MS = Math.max(5, Math.min(1000, Math.trunc(Number(process.env.PLAYER_POSITION_DELIVERY_RETRY_MS) || 25)));
@@ -2224,6 +2228,8 @@ const playerNetworkStats = {
     outbound_bytes_sent: 0,
     outbound_oversize_packets: 0,
     outbound_backpressure_skips: 0,
+    outbound_backpressure_forced: 0,
+    outbound_backpressure_disconnects: 0,
     outbound_send_failures: 0,
     movement_backpressure_queued_batches: 0,
     movement_backpressure_coalesced_batches: 0,
@@ -2246,6 +2252,8 @@ const ServerSocketDeliveryHelpers = ServerSocketDeliveryHelpersModule.createServ
     websocketOpenState: WebSocket.OPEN,
     maxPacketBytes: MAX_PACKET_BYTES,
     maxBufferedAmount: SERVER_WEBSOCKET_MAX_BUFFERED_AMOUNT,
+    criticalMaxBufferedAmount: SERVER_WEBSOCKET_CRITICAL_BUFFERED_AMOUNT,
+    droppablePacketTypes: ["player_position_batch"],
     movementMaxBufferedAmount: PLAYER_POSITION_MAX_BUFFERED_AMOUNT,
     movementResumeBufferedAmount: PLAYER_POSITION_RESUME_BUFFERED_AMOUNT,
     movementRetryMs: PLAYER_POSITION_DELIVERY_RETRY_MS,
@@ -16196,6 +16204,10 @@ async function validateSeedUpdateAgainstServerState(socket, player, worldName, u
         request_id: requestId,
         world: worldName,
         metadata: { x: update.x, y: update.y, seed_type: update.seed_type },
+        // Deferred so the seed cost and the planted seed land in one PostgreSQL commit, the
+        // same way world_block_update place does. Committing the cost here and saving the
+        // world separately can charge the seed without planting it.
+        defer_commit: isPostgresAuthoritativeReady(),
     });
     if (!spendResult.ok) {
         sendActionRejected(socket, "world_seed_update", spendResult.message);
@@ -16206,6 +16218,7 @@ async function validateSeedUpdateAgainstServerState(socket, player, worldName, u
         playerState: spendResult.state,
         postgres_committed: spendResult.postgres_committed,
         inventoryDeltas: Array.isArray(spendResult.deltas) ? spendResult.deltas : [],
+        deferred_inventory_commit: spendResult.deferred_inventory_commit || null,
     };
 }
 /**
@@ -27054,6 +27067,8 @@ function buildWorldBlockReconciliationPayload(player, data, options = {}) {
         authoritative_matches_request: false,
         block_revision: 0,
         cell_revision: 0,
+        authoritative_seed_present: false,
+        authoritative_seed: null,
         reason: clampString(options.reason || "authoritative_reconcile"),
     };
     if (requestedWorld !== currentWorld || !isGridInWorld(x, y)) {
@@ -27079,6 +27094,23 @@ function buildWorldBlockReconciliationPayload(player, data, options = {}) {
     payload.authoritative_matches_request = requestId !== "" && placementRequestId === requestId;
     payload.block_revision = getWorldBlockRevision(state);
     payload.cell_revision = Math.max(Math.max(0, Math.trunc(Number(explicitBlock?.block_revision || block?.block_revision) || 0)), Math.max(0, Math.trunc(Number(tombstone?.block_revision) || 0)));
+    // Seeds live on their own layer but share this cell-reconciliation channel, so a client
+    // whose seed-place echo never arrived can resolve the same way a block placement does.
+    const seedEntry = state.seeds.get(key) || null;
+    payload.authoritative_seed_present = Boolean(seedEntry);
+    payload.authoritative_seed = seedEntry
+        ? {
+            action: "place",
+            world: currentWorld,
+            x,
+            y,
+            seed_type: clampString(seedEntry.seed_type || ""),
+            grow_time: getSeedGrowthRemaining(seedEntry),
+            max_grow_time: Math.max(0, Number(seedEntry.max_grow_time) || 0),
+            mutated: Boolean(seedEntry.mutated),
+            mature: isSeedMature(seedEntry),
+        }
+        : null;
     const playerState = ensurePlayerState(player?.account_username || player?.name || "");
     if (playerState)
         payload.player_data = buildPlayerStateForClient(playerState);
