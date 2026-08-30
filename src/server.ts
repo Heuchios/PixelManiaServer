@@ -1520,6 +1520,7 @@ function getServerLandfillEventSystem() {
       minPlayersToStart: LANDFILL_MIN_PLAYERS_TO_START,
       maxPlayersPerInstance: LANDFILL_MAX_PLAYERS_PER_INSTANCE,
       isEventWindowOpen: () => getServerCalendarEventScheduler().isEventActive("landfill"),
+      getEventTiming: () => getServerCalendarEventScheduler().getEventTiming("landfill"),
       // Phase 2.5: used only once per instance, at creation time, to compute+cache the entry
       // holding-pen bounds around that world's real join spawn point -- see
       // computeEntryPenBounds in server_landfill_event.ts. Never called from the per-tick

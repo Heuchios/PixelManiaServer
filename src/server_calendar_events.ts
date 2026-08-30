@@ -128,6 +128,32 @@ function isDateInsideCronWindow(parsedStart: ParsedCron, parsedEnd: ParsedCron, 
   return false;
 }
 
+// Forward-scan counterpart to isDateInsideCronWindow above: finds the timestamp (ms, UTC) of the
+// next minute at or after `date` that matches `cron`. Same bound and cost profile as the backward
+// scan -- only called on-demand when a client asks "when does this window start/end", never on
+// the per-tick evaluation path, so the cost of stepping through it minute-by-minute is fine.
+const MAX_FORWARD_SCAN_MINUTES = 60 * 24 * 40;
+
+function findNextCronMatchMs(cron: ParsedCron, date: Date): number | null {
+  const cursor = new Date(date.getTime());
+  cursor.setUTCSeconds(0, 0);
+  for (let stepsForward = 0; stepsForward <= MAX_FORWARD_SCAN_MINUTES; stepsForward += 1) {
+    if (cronMatchesUtcDate(cron, cursor)) return cursor.getTime();
+    cursor.setUTCMinutes(cursor.getUTCMinutes() + 1);
+  }
+  return null;
+}
+
+// What a caller actually wants to know about a registered event "right now": is it active, and
+// when is the next boundary it will cross -- the moment it closes if active, or the moment it
+// next opens if it isn't. Never both: a window that is currently open has no meaningful "starts
+// at" (it already started), and a closed window has no "ends at" until it opens again.
+interface EventTiming {
+  active: boolean;
+  startsAtMs: number | null;
+  endsAtMs: number | null;
+}
+
 function createCalendarEventScheduler(deps: CalendarEventsDeps = {}) {
   const logger = deps.logger || console;
   const tickIntervalMs = Math.max(1000, Number(deps.tickIntervalMs) || 60000);
@@ -157,6 +183,23 @@ function createCalendarEventScheduler(deps: CalendarEventsDeps = {}) {
 
   function isEventActive(key: string): boolean {
     return events.get(key)?.active === true;
+  }
+
+  // Companion to isEventActive: same active flag, plus the next boundary timestamp so a client
+  // can render "starts in Xd" / "ends in Xd" instead of guessing at a schedule it can't see (e.g.
+  // the Landfill season used to assume the window always ran to end-of-month, which is wrong
+  // whenever the event is disabled or the cron window is customized -- see the countdown code in
+  // Scripts/ui/leaderboard_controller.gd for the client side of this).
+  function getEventTiming(key: string): EventTiming {
+    const state = events.get(key);
+    if (!state || !state.definition.enabled || !state.parsedStart || !state.parsedEnd) {
+      return { active: false, startsAtMs: null, endsAtMs: null };
+    }
+    const now = new Date();
+    if (state.active) {
+      return { active: true, startsAtMs: null, endsAtMs: findNextCronMatchMs(state.parsedEnd, now) };
+    }
+    return { active: false, startsAtMs: findNextCronMatchMs(state.parsedStart, now), endsAtMs: null };
   }
 
   function getRegisteredEventKeys(): string[] {
@@ -217,6 +260,7 @@ function createCalendarEventScheduler(deps: CalendarEventsDeps = {}) {
   return {
     registerEvent,
     isEventActive,
+    getEventTiming,
     getRegisteredEventKeys,
     start,
     stop,

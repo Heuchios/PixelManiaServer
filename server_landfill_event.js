@@ -92,7 +92,12 @@ function canonicalInstanceKey(worldName) {
         .replace(/[^A-Z0-9_-]/g, "");
 }
 function createLandfillEventSystem(deps) {
-    const { cleanAccountName, ensureWritablePlayerState, canAddItemToState, addItemToState, commitPlayerInventoryState, cloneJson, postgresStore, getWorldPopulationCount, sendJson, makeRequestId, getErrorMessage, logger = console, minPlayersToStart = 2, maxPlayersPerInstance = 5, isEventWindowOpen, instancePollIntervalMs = 5000, 
+    const { cleanAccountName, ensureWritablePlayerState, canAddItemToState, addItemToState, commitPlayerInventoryState, cloneJson, postgresStore, getWorldPopulationCount, sendJson, makeRequestId, getErrorMessage, logger = console, minPlayersToStart = 2, maxPlayersPerInstance = 5, isEventWindowOpen, 
+    // Optional: () => { active, startsAtMs, endsAtMs } from the calendar scheduler that owns
+    // isEventWindowOpen above (see getEventTiming in server_calendar_events.ts). Kept optional,
+    // same as isEventWindowOpen's own typeof guard below, so this module still loads standalone
+    // in tests that stub a bare isEventWindowOpen without the timing companion.
+    getEventTiming, instancePollIntervalMs = 5000, 
     // ----- Race session timing (all overridable from ecosystem.config.js; see LANDFILL_* env) --
     // The session tick. Must be comfortably finer than the countdown so a 10s countdown does not
     // visibly overshoot -- the original 5s population poll was far too coarse to drive a race.
@@ -1103,6 +1108,12 @@ function createLandfillEventSystem(deps) {
     }
     async function handleLandfillStatusRequest(socket, player, data) {
         const eventActive = typeof isEventWindowOpen === "function" ? isEventWindowOpen() : false;
+        // The client used to assume an active season always runs to end-of-month, which is wrong the
+        // moment the cron window is customized (or the event is off entirely, in which case there is
+        // no scheduled "next start" either -- getEventTiming already returns nulls for that). Real
+        // timing here so the lobby card and leaderboard countdown reflect the actual configured
+        // window instead of guessing.
+        const timing = typeof getEventTiming === "function" ? getEventTiming() : null;
         sendJson(socket, {
             type: "landfill_status",
             request_id: data?.request_id || "",
@@ -1110,6 +1121,8 @@ function createLandfillEventSystem(deps) {
             season_key: getCurrentSeasonKey(),
             min_players_to_start: minPlayersToStart,
             max_players_per_instance: maxPlayersPerInstance,
+            starts_at_ms: timing?.startsAtMs ?? null,
+            ends_at_ms: timing?.endsAtMs ?? null,
         });
     }
     async function handleLandfillJoinRequest(socket, player, data) {
