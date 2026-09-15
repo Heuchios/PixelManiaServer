@@ -5595,10 +5595,11 @@ class PostgresStore {
         });
         const allowedPlayers = Array.isArray(lock.allowed_players) ? lock.allowed_players : [];
         const roles = toObject(lock.player_roles);
-        const allowedAccountIdSet = new Set(Array.isArray(lock.allowed_account_ids) ? lock.allowed_account_ids.map((id) => cleanName(id)).filter(Boolean) : []);
-        const allowedPlayerIdSet = new Set(Array.isArray(lock.allowed_player_ids) ? lock.allowed_player_ids.map((id) => cleanName(id)).filter(Boolean) : []);
-        const rolesByAccountId = toObject(lock.player_roles_by_account_id);
-        const rolesByPlayerId = toObject(lock.player_roles_by_player_id);
+        // Rebuild identity access from the current member list.
+        const allowedAccountIdSet = new Set();
+        const allowedPlayerIdSet = new Set();
+        const rolesByAccountId = {};
+        const rolesByPlayerId = {};
         const resolvedAllowedIdentities = new Map();
         // ensurePlayerIdentity upserts accounts+players, i.e. it takes exclusive row locks on
         // arbitrary THIRD-PARTY players late in this transaction. Iterating in raw array order
@@ -5621,10 +5622,10 @@ class PostgresStore {
             const memberRole = rawRole === "admin" || rawRole === "builder" ? rawRole : "member";
             resolvedAllowedIdentities.set(memberName.toLowerCase(), { player_id: memberPlayerId, account_id: memberAccountId, role: memberRole });
             allowedPlayerIdSet.add(memberPlayerId);
-            rolesByPlayerId[memberPlayerId] = memberRole;
+            rolesByPlayerId[memberPlayerId] = memberRole === "member" ? "visitor" : memberRole;
             if (memberAccountId) {
                 allowedAccountIdSet.add(memberAccountId);
-                rolesByAccountId[memberAccountId] = memberRole;
+                rolesByAccountId[memberAccountId] = memberRole === "member" ? "visitor" : memberRole;
             }
         }
         lockMetadata.allowed_account_ids = Array.from(allowedAccountIdSet);
@@ -6382,10 +6383,10 @@ class PostgresStore {
                     owner_account_id: cleanName(savedWorldLock.owner_account_id || normalizedWorldLock.owner_account_id || ""),
                     owner_player_id: cleanName(savedWorldLock.owner_player_id || savedWorldLock.owner_profile_id || normalizedWorldLock.owner_player_id || ""),
                     owner_profile_id: cleanName(savedWorldLock.owner_profile_id || savedWorldLock.owner_player_id || normalizedWorldLock.owner_profile_id || normalizedWorldLock.owner_player_id || ""),
-                    allowed_account_ids: Array.isArray(savedWorldLock.allowed_account_ids) && savedWorldLock.allowed_account_ids.length > 0 ? savedWorldLock.allowed_account_ids : (normalizedWorldLock.allowed_account_ids || []),
-                    allowed_player_ids: Array.isArray(savedWorldLock.allowed_player_ids) && savedWorldLock.allowed_player_ids.length > 0 ? savedWorldLock.allowed_player_ids : (normalizedWorldLock.allowed_player_ids || []),
-                    player_roles_by_account_id: Object.keys(toObject(savedWorldLock.player_roles_by_account_id)).length > 0 ? savedWorldLock.player_roles_by_account_id : (normalizedWorldLock.player_roles_by_account_id || {}),
-                    player_roles_by_player_id: Object.keys(toObject(savedWorldLock.player_roles_by_player_id)).length > 0 ? savedWorldLock.player_roles_by_player_id : (normalizedWorldLock.player_roles_by_player_id || {}),
+                    allowed_account_ids: Array.isArray(normalizedWorldLock.allowed_account_ids) ? normalizedWorldLock.allowed_account_ids : (savedWorldLock.allowed_account_ids || []),
+                    allowed_player_ids: Array.isArray(normalizedWorldLock.allowed_player_ids) ? normalizedWorldLock.allowed_player_ids : (savedWorldLock.allowed_player_ids || []),
+                    player_roles_by_account_id: normalizedWorldLock.player_roles_by_account_id || savedWorldLock.player_roles_by_account_id || {},
+                    player_roles_by_player_id: normalizedWorldLock.player_roles_by_player_id || savedWorldLock.player_roles_by_player_id || {},
                     trade_key_holder_account_id: cleanName(savedWorldLock.trade_key_holder_account_id || normalizedWorldLock.trade_key_holder_account_id || ""),
                     trade_key_holder_player_id: cleanName(savedWorldLock.trade_key_holder_player_id || savedWorldLock.trade_key_holder_profile_id || normalizedWorldLock.trade_key_holder_player_id || ""),
                     trade_key_holder_profile_id: cleanName(savedWorldLock.trade_key_holder_profile_id || savedWorldLock.trade_key_holder_player_id || normalizedWorldLock.trade_key_holder_profile_id || normalizedWorldLock.trade_key_holder_player_id || ""),
@@ -6648,10 +6649,10 @@ class PostgresStore {
                         owner_account_id: cleanName(savedWorldLock.owner_account_id || normalizedWorldLock.owner_account_id || ""),
                         owner_player_id: cleanName(savedWorldLock.owner_player_id || savedWorldLock.owner_profile_id || normalizedWorldLock.owner_player_id || ""),
                         owner_profile_id: cleanName(savedWorldLock.owner_profile_id || savedWorldLock.owner_player_id || normalizedWorldLock.owner_profile_id || normalizedWorldLock.owner_player_id || ""),
-                        allowed_account_ids: Array.isArray(savedWorldLock.allowed_account_ids) && savedWorldLock.allowed_account_ids.length > 0 ? savedWorldLock.allowed_account_ids : (normalizedWorldLock.allowed_account_ids || []),
-                        allowed_player_ids: Array.isArray(savedWorldLock.allowed_player_ids) && savedWorldLock.allowed_player_ids.length > 0 ? savedWorldLock.allowed_player_ids : (normalizedWorldLock.allowed_player_ids || []),
-                        player_roles_by_account_id: Object.keys(toObject(savedWorldLock.player_roles_by_account_id)).length > 0 ? savedWorldLock.player_roles_by_account_id : (normalizedWorldLock.player_roles_by_account_id || {}),
-                        player_roles_by_player_id: Object.keys(toObject(savedWorldLock.player_roles_by_player_id)).length > 0 ? savedWorldLock.player_roles_by_player_id : (normalizedWorldLock.player_roles_by_player_id || {}),
+                        allowed_account_ids: Array.isArray(normalizedWorldLock.allowed_account_ids) ? normalizedWorldLock.allowed_account_ids : (savedWorldLock.allowed_account_ids || []),
+                        allowed_player_ids: Array.isArray(normalizedWorldLock.allowed_player_ids) ? normalizedWorldLock.allowed_player_ids : (savedWorldLock.allowed_player_ids || []),
+                        player_roles_by_account_id: normalizedWorldLock.player_roles_by_account_id || savedWorldLock.player_roles_by_account_id || {},
+                        player_roles_by_player_id: normalizedWorldLock.player_roles_by_player_id || savedWorldLock.player_roles_by_player_id || {},
                         trade_key_holder_account_id: cleanName(savedWorldLock.trade_key_holder_account_id || normalizedWorldLock.trade_key_holder_account_id || ""),
                         trade_key_holder_player_id: cleanName(savedWorldLock.trade_key_holder_player_id || savedWorldLock.trade_key_holder_profile_id || normalizedWorldLock.trade_key_holder_player_id || ""),
                         trade_key_holder_profile_id: cleanName(savedWorldLock.trade_key_holder_profile_id || savedWorldLock.trade_key_holder_player_id || normalizedWorldLock.trade_key_holder_profile_id || normalizedWorldLock.trade_key_holder_player_id || ""),

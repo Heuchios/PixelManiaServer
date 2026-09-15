@@ -18039,6 +18039,15 @@ function prepareWorldLockStateUpdate(socket: any, player: any, worldName: any, u
   }
 
   preserveWorldLockTradeKeyFields(currentLock, nextLock);
+  // The owner submits the complete username member list. Identity maps are
+  // derived caches: retaining the previous maps would keep removed/demoted
+  // players privileged until the next database reload.
+  if (Array.isArray(nextLock.allowed_players)) {
+    nextLock.allowed_account_ids = [];
+    nextLock.allowed_player_ids = [];
+    nextLock.player_roles_by_account_id = {};
+    nextLock.player_roles_by_player_id = {};
+  }
   update.state = nextLock;
   return true;
 }
@@ -18046,6 +18055,7 @@ function prepareWorldLockStateUpdate(socket: any, player: any, worldName: any, u
 function normalizeWorldLockAccessRole(value: any, fallback: any = "builder") {
   const role = String(value || "").trim().toLowerCase();
   if (role === "access") return "builder";
+  if (role === "member") return "visitor";
   if (WORLD_LOCK_ACCESS_ROLES.has(role)) return role;
   return fallback;
 }
