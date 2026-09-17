@@ -19470,7 +19470,7 @@ function shouldLogSecurityViolationMilestone(total: number) {
   return total > SECURITY_VIOLATION_LOG_INTERVAL && total % SECURITY_VIOLATION_LOG_INTERVAL === 0;
 }
 
-function recordSecurityViolation(subject: any, label: any, context: any = {}) {
+function recordSecurityViolation(subject: unknown, label: unknown, context: ServerPacketRecord = {}) {
   const entry = ServerRuntimeStats.recordSubjectViolation(playerNetworkStats, subject, label);
   if (!entry) return null;
   if (shouldLogSecurityViolationMilestone(entry.total)) {
