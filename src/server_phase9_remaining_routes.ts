@@ -15,6 +15,7 @@ interface Phase9RemainingRouteDeps extends Record<string, any> {}
 function createServerPhase9RemainingRoutes(deps: Phase9RemainingRouteDeps) {
   const {
     MAX_CHAT_LENGTH,
+    isAdmin,
     accountKey,
     broadcastToAuthenticatedPlayers,
     broadcastToWorld,
@@ -233,6 +234,20 @@ function createServerPhase9RemainingRoutes(deps: Phase9RemainingRouteDeps) {
       return;
     }
     if (await rejectIfMuted(socket, player, "chat")) return;
+
+    if (/^\/server(?:\s|$)/i.test(message)) {
+      if (!isAdmin(player)) {
+        sendJson(socket, { type: "chat", name: "System", player_id: "system", message: "Only developers can use /server." });
+        return;
+      }
+      const announcement = message.slice(7).trim();
+      if (!announcement) {
+        sendJson(socket, { type: "chat", name: "System", player_id: "system", message: "Usage: /server message" });
+        return;
+      }
+      broadcastToAuthenticatedPlayers({ type: "broadcast", name: "SERVER", player_id: "system", message: announcement, server_announcement: true });
+      return;
+    }
 
     if (lowerMessage.startsWith("/bc ")) {
       const broadcastMessage = message.slice(4).trim().slice(0, MAX_CHAT_LENGTH);

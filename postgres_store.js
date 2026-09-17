@@ -1981,7 +1981,7 @@ class PostgresStore {
           RETURNING idempotency_key_id
           `, [cleanScope, cleanKey, playerId, JSON.stringify(safeJson(metadata)), expiresAt]);
                 return (insert.rowCount ?? 0) > 0;
-            });
+            }, "claimIdempotency");
             return { ok: true, duplicate: !result };
         }
         catch (error) {
@@ -2093,7 +2093,7 @@ class PostgresStore {
         try {
             await this.withTransaction(async (client) => {
                 await this.upsertAccountState(client, account, options);
-            });
+            }, "saveAccountState");
             return true;
         }
         catch (error) {
@@ -2112,7 +2112,7 @@ class PostgresStore {
                 for (const account of states) {
                     await this.upsertAccountState(client, account);
                 }
-            });
+            }, "saveAccountStates");
             return true;
         }
         catch (error) {
@@ -2319,6 +2319,10 @@ class PostgresStore {
         const reconcileDetails = toObject(details);
         const allowCreateMissing = reconcileDetails.allow_create_missing !== false;
         const allowRetireExtra = reconcileDetails.allow_retire_extra !== false;
+        // Verification-only snapshots cannot change instances. Avoid fetching and
+        // locking every owned instance when neither reconciliation action is allowed.
+        if (!allowCreateMissing && !allowRetireExtra)
+            return;
         const desiredCounts = new Map();
         for (const [field, fallbackCategory] of INVENTORY_FIELD_CATEGORY) {
             const bucket = toObject(playerState[field]);
@@ -2752,7 +2756,7 @@ class PostgresStore {
                     inventory_after_hash: e.inventory_after_hash || inventoryHash || "",
                 });
                 return { ok: ids.length > 0, transaction_ledger_ids: ids };
-            });
+            }, "recordTransactionLedgerEvent");
         }
         catch (error) {
             this.logger("[postgres] transaction ledger event failed:", getErrorMessage(error));
@@ -2975,7 +2979,7 @@ class PostgresStore {
                     created_by_source: createdBySource,
                     current_location: currentLocation,
                 };
-            });
+            }, "createItemInstance");
         }
         catch (error) {
             this.logger("[postgres] item instance create failed:", getErrorMessage(error));
@@ -3084,7 +3088,7 @@ class PostgresStore {
                     state: cleanName(row.state || ""),
                     current_location: cleanName(row.current_location || ""),
                 };
-            });
+            }, "updateItemInstance");
         }
         catch (error) {
             this.logger("[postgres] item instance update failed:", getErrorMessage(error));
@@ -3736,7 +3740,7 @@ class PostgresStore {
                     },
                     inventory_effects: inventoryEffects,
                 };
-            });
+            }, "moderateItemInstance");
         }
         catch (error) {
             this.logger("[postgres] item instance moderation failed:", getErrorMessage(error));
@@ -4482,7 +4486,7 @@ class PostgresStore {
                     reconciled: true,
                     username: cleanName(row.username || cleanUsername),
                 };
-            });
+            }, "reconcileItemInstancesForUsername");
         }
         catch (error) {
             this.logger("[postgres] item instance username reconcile failed:", getErrorMessage(error));
@@ -4512,7 +4516,7 @@ class PostgresStore {
                     });
                     reconciled += 1;
                 }
-            });
+            }, "reconcileStoredItemInstancesFromPlayerStates");
             return { ok: true, player_count: reconciled };
         }
         catch (error) {
@@ -4813,7 +4817,7 @@ class PostgresStore {
                     honor_date: honorDate,
                     reason: insertResult.rows[0] ? "" : "already_counted_today",
                 };
-            });
+            }, "recordWorldHonorVisit");
             return result || { ok: false, recorded: false, reason: "postgres_unavailable" };
         }
         catch (error) {
@@ -5518,16 +5522,48 @@ class PostgresStore {
             ? state.drops
             : (Array.isArray(state.item_drops) ? state.item_drops : []);
         const activeDropIds = [];
-        for (const rawDrop of rawDrops) {
-            const upsert = await this.upsertWorldDropRow(client, worldId, rawDrop, {
-                source: "world_state_mirror",
-                action: "mirror",
-                mirrored_from_world_state: true,
+        let batch = [];
+        const batchIds = new Set();
+        const flush = async () => {
+            if (batch.length === 0)
+                return;
+            const values = [];
+            const tuples = batch.map((drop) => {
+                const offset = values.length;
+                values.push(worldId, drop.drop_id, drop.item_type, drop.item_category, drop.amount, drop.x, drop.y, drop.stack_grid_x, drop.stack_grid_y, drop.pickup_delay, JSON.stringify({ ...safeJson(drop.metadata),
+                    source: "world_state_mirror", action: "mirror", source_id: "",
+                    mirrored_from_world_state: true }));
+                return `(${Array.from({ length: 11 }, (_, i) => `$${offset + i + 1}${i === 10 ? "::jsonb" : ""}`).join(",")}, 'active', NULL, NULL, NULL, now(), now())`;
             });
-            if (upsert.ok && upsert.drop?.drop_id) {
-                activeDropIds.push(upsert.drop.drop_id);
-            }
+            await client.query(`INSERT INTO ${this.table("world_drops")} (
+        world_id, drop_id, item_type, item_category, amount, x, y,
+        stack_grid_x, stack_grid_y, pickup_delay, metadata, status,
+        picked_by_player_id, picked_at, removed_at, created_at, updated_at
+      ) VALUES ${tuples.join(",")}
+      ON CONFLICT (world_id, drop_id) DO UPDATE SET
+        item_type = EXCLUDED.item_type, item_category = EXCLUDED.item_category,
+        amount = EXCLUDED.amount, x = EXCLUDED.x, y = EXCLUDED.y,
+        stack_grid_x = EXCLUDED.stack_grid_x, stack_grid_y = EXCLUDED.stack_grid_y,
+        pickup_delay = EXCLUDED.pickup_delay, status = 'active',
+        picked_by_player_id = NULL, picked_at = NULL, removed_at = NULL,
+        metadata = ${this.table("world_drops")}.metadata || EXCLUDED.metadata,
+        updated_at = now()`, values);
+            batch = [];
+            batchIds.clear();
+        };
+        for (const rawDrop of rawDrops) {
+            const drop = normalizeWorldDropPayload(rawDrop, {});
+            if (!drop)
+                continue;
+            // PostgreSQL cannot update one conflict key twice in a statement. Flush
+            // duplicates in order, preserving the old last-write and metadata semantics.
+            if (batchIds.has(drop.drop_id) || batch.length >= 250)
+                await flush();
+            batch.push(drop);
+            batchIds.add(drop.drop_id);
+            activeDropIds.push(drop.drop_id);
         }
+        await flush();
         if (activeDropIds.length > 0) {
             await client.query(`
         UPDATE ${this.table("world_drops")}
@@ -5595,7 +5631,8 @@ class PostgresStore {
         });
         const allowedPlayers = Array.isArray(lock.allowed_players) ? lock.allowed_players : [];
         const roles = toObject(lock.player_roles);
-        // Rebuild identity access from the current member list.
+        // Rebuild identity access from the current member list so removed members
+        // cannot retain grants through a stale account/player-id map.
         const allowedAccountIdSet = new Set();
         const allowedPlayerIdSet = new Set();
         const rolesByAccountId = {};
@@ -6524,7 +6561,7 @@ class PostgresStore {
                     });
                 await this.recordWorldChangesAndTrackedDrops(client, worldId, [...worldChanges, ...inferredObjectChanges]);
                 return persisted;
-            });
+            }, "saveWorldStateWithWorldChanges", postgresWorldWriteScope(cleanWorldName));
             if (!result?.ok) {
                 return { ok: false, reason: result?.reason || "world_state_save_failed" };
             }
@@ -6864,7 +6901,7 @@ class PostgresStore {
                     affected_rows: Math.max(0, toInt(inserted.rowCount, 0)),
                     persisted_revision: normalizeWorldRevision(snapshotData.world_revision),
                 };
-            });
+            }, "saveWorldSnapshot", postgresWorldWriteScope(cleanWorldName));
             this.logWorldPersistence("snapshot", {
                 world_id: cleanWorldName,
                 server_instance: ownership.server_instance,
@@ -6948,7 +6985,7 @@ class PostgresStore {
                     JSON.stringify(safeJson(e)),
                     normalizeOptionalTimestamp(e.at || ""),
                 ]);
-            });
+            }, "mirrorAdminAction");
         });
     }
     mirrorAccount(account, options = {}) {
@@ -7052,7 +7089,7 @@ class PostgresStore {
                         email_verified_at: emailVerifiedAt,
                         last_seen_at: lastSeenAt,
                     })]);
-            });
+            }, "mirrorAccount");
         });
     }
     async saveSession(account, details = {}) {
@@ -7353,7 +7390,7 @@ class PostgresStore {
            WHERE account_id = $1
              AND revoked_at IS NULL
           `, [accountId, cleanName(reason || "revoked")]);
-            });
+            }, "revokeSessionsForUsername");
             return { ok: true };
         }
         catch (error) {
@@ -7387,7 +7424,7 @@ class PostgresStore {
              AND session_token_hash <> $2
              AND revoked_at IS NULL
           `, [accountId, keepHash, cleanName(reason || "one_active_session")]);
-            });
+            }, "revokeOtherSessionsForUsername");
             return { ok: true };
         }
         catch (error) {
@@ -7467,7 +7504,7 @@ class PostgresStore {
                     cleanName(e.request_id || e.requestId || ""),
                 ]);
                 return { ok: true };
-            });
+            }, "createAccountPasswordResetRequest");
         }
         catch (error) {
             this.logger("[postgres] password reset request write failed:", getErrorMessage(error));
@@ -7510,7 +7547,7 @@ class PostgresStore {
                     email: cleanName(row.account_email || row.email || ""),
                     account_id: cleanName(row.account_id || ""),
                 };
-            });
+            }, "consumeAccountPasswordResetRequest");
         }
         catch (error) {
             this.logger("[postgres] password reset request consume failed:", getErrorMessage(error));
@@ -7592,7 +7629,7 @@ class PostgresStore {
                     account_id: cleanName(row.account_id || ""),
                     email_verified_at: verifiedAt,
                 };
-            });
+            }, "consumeAccountEmailVerificationToken");
         }
         catch (error) {
             this.logger("[postgres] email verification token consume failed:", getErrorMessage(error));
@@ -7662,7 +7699,7 @@ class PostgresStore {
                     email: cleanName(row.account_email || row.email || ""),
                     account_id: cleanName(row.account_id || ""),
                 };
-            });
+            }, "resetAccountPasswordWithToken");
         }
         catch (error) {
             this.logger("[postgres] password reset transaction failed:", getErrorMessage(error));
@@ -7720,7 +7757,7 @@ class PostgresStore {
                     cleanName(e.request_id || e.requestId || ""),
                 ]);
                 return { ok: true };
-            });
+            }, "createAccountEmailChangeRequest");
         }
         catch (error) {
             this.logger("[postgres] email change request write failed:", getErrorMessage(error));
@@ -7764,7 +7801,7 @@ class PostgresStore {
                     new_email: cleanName(row.new_email || ""),
                     account_id: cleanName(row.account_id || ""),
                 };
-            });
+            }, "consumeAccountEmailChangeRequest");
         }
         catch (error) {
             this.logger("[postgres] email change request consume failed:", getErrorMessage(error));
@@ -7867,7 +7904,7 @@ class PostgresStore {
              SET current_world_name = NULLIF($2, '')
            WHERE player_id = $1
           `, [playerId, cleanWorld]);
-            });
+            }, "mirrorPlayerWorld");
         });
     }
     async updatePlayerProgression(client, playerId, state) {
@@ -7937,7 +7974,7 @@ class PostgresStore {
                     Math.max(0, toInt(progressionEvent.total_xp_after, playerState.player_total_xp || 0)),
                     JSON.stringify(safeJson(progressionEvent.details)),
                 ]);
-            });
+            }, "mirrorPlayerProgression");
         });
     }
     mirrorInventorySnapshot(username, state) {
@@ -7982,7 +8019,7 @@ class PostgresStore {
                     allow_create_missing: false,
                     allow_retire_extra: false,
                 });
-            });
+            }, "mirrorInventorySnapshot");
         });
     }
     getItemInstanceLedgerDestination(source, action, delta) {
@@ -9356,7 +9393,7 @@ class PostgresStore {
                     after_amount: Math.max(0, toInt(e.balance_after, 0)),
                     details: safeJson(e.details),
                 });
-            });
+            }, "mirrorItemLedger");
         });
     }
     mirrorGemLedger(entry) {
@@ -9402,7 +9439,7 @@ class PostgresStore {
                     JSON.stringify(safeJson(e.details)),
                     cleanName(e.at || ""),
                 ]);
-            });
+            }, "mirrorGemLedger");
         });
     }
     mirrorShopPurchase(entry) {
@@ -9457,7 +9494,7 @@ class PostgresStore {
                     JSON.stringify({ rewards }),
                     cleanName(e.at || ""),
                 ]);
-            });
+            }, "mirrorShopPurchase");
         });
     }
     mirrorTradeTransaction(entry) {
@@ -9558,7 +9595,7 @@ class PostgresStore {
             VALUES ($1, $2, $3, $4, $5, $6)
             `, [tradeId, targetId, slot, itemId, cleanName(item.item_category || "block"), Math.max(1, toInt(item.amount, 1))]);
                 }
-            });
+            }, "mirrorTradeTransaction");
         });
     }
     mirrorVendingTransaction(entry) {
@@ -9640,7 +9677,7 @@ class PostgresStore {
                     }),
                     cleanName(e.at || ""),
                 ]);
-            });
+            }, "mirrorVendingTransaction");
         });
     }
     /**
@@ -10198,7 +10235,7 @@ class PostgresStore {
                     item_instances: pickedUpItemInstances,
                     persisted_revision: normalizeWorldRevision(persistedWorld?.persisted_revision),
                 });
-            });
+            }, "applyDropPickupTransaction");
         }
         catch (error) {
             const persistenceResult = error?.world_persistence_result;
@@ -11062,7 +11099,7 @@ class PostgresStore {
                     item_instance_movements: trackedInstanceMovements,
                     timestamp: txTimestamp,
                 };
-            });
+            }, "applyTradeFinalizationTransaction");
         }
         catch (error) {
             const trackedErrorResult = resultForTrackedItemMovementError(error);
@@ -11652,7 +11689,7 @@ class PostgresStore {
                     world_id: worldId,
                     persisted_revision: normalizeWorldRevision(persistedWorld?.persisted_revision),
                 };
-            });
+            }, "applyVendBuyTransaction");
         }
         catch (error) {
             const persistenceResult = error?.world_persistence_result;
@@ -11750,7 +11787,7 @@ class PostgresStore {
                     world: worldName,
                     ends_at: endsAt,
                 };
-            });
+            }, "issuePunishment");
         }
         catch (error) {
             this.logger("[postgres] punishment issue failed:", getErrorMessage(error));
@@ -11819,7 +11856,7 @@ class PostgresStore {
                     cleanName(e.request_id || ""),
                     normalizeOptionalTimestamp(e.at || ""),
                 ]);
-            });
+            }, "recordLoginAttempt");
         });
     }
     async revokePunishment(entry = {}) {
@@ -11871,7 +11908,7 @@ class PostgresStore {
                     revoked_count: result.rowCount ?? 0,
                     punishment_ids: result.rows.map((row) => toInt(row.punishment_id, 0)).filter((id) => id > 0),
                 };
-            });
+            }, "revokePunishment");
         }
         catch (error) {
             this.logger("[postgres] punishment revoke failed:", getErrorMessage(error));
@@ -11957,7 +11994,7 @@ class PostgresStore {
                 if (!worldId)
                     return;
                 await this.recordWorldChangeEntry(client, worldId, e);
-            });
+            }, "mirrorWorldChange");
         });
     }
     mirrorSecurityEvent(entry) {
@@ -12020,7 +12057,7 @@ class PostgresStore {
                     JSON.stringify(safeJson(e.details)),
                     cleanName(e.at || ""),
                 ]);
-            });
+            }, "mirrorSecurityEvent");
         });
     }
 }

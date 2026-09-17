@@ -54,6 +54,10 @@ interface RateLimitHelperDeps {
     isWorldBlockUpdatePacket(packet: unknown): boolean;
   };
   playerNetworkStats: PacketRecord;
+  // Optional so this module still type-checks and runs for callers that do not
+  // wire the ledger (the build-gate harness constructs deps directly); the call
+  // site guards on typeof before invoking it.
+  recordSecurityViolation?: (subject: string, label: string, context?: PacketRecord) => unknown;
   redisStore: RedisStoreLike;
   sendDeveloperDenied(socket: PacketRecord, requestId: string, command: string, message: string, extra?: PacketRecord): void;
   sendJson(socket: PacketRecord, payload: PacketRecord): void;
@@ -348,7 +352,7 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
         return true;
       }
 
-      recordRateLimitRejection(cleanScope, cleanBucketKey, subjectKind);
+      recordRateLimitRejection(cleanScope, cleanBucketKey, subjectKind, subject);
       recordRateLimitRejectionDetails({
         now: Date.now(),
         scope: cleanScope,
@@ -423,7 +427,7 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
 
       rateLimits.set(localBucketKey, tokenBucket);
       const resetInMs = Math.max(1, Math.ceil((1 - availableTokens) / refillPerMs));
-      recordRateLimitRejection(cleanScope, cleanBucketKey, subjectKind);
+      recordRateLimitRejection(cleanScope, cleanBucketKey, subjectKind, subject);
       recordRateLimitRejectionDetails({
         now,
         scope: cleanScope,
@@ -487,7 +491,7 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
       return true;
     }
 
-    recordRateLimitRejection(cleanScope, cleanBucketKey, subjectKind);
+    recordRateLimitRejection(cleanScope, cleanBucketKey, subjectKind, subject);
     recordRateLimitRejectionDetails({
       now,
       scope: cleanScope,
@@ -513,11 +517,17 @@ function createServerBotRateLimitHelpers(deps: RateLimitHelperDeps) {
     return false;
   }
 
-  function recordRateLimitRejection(scope: string, bucketKey: string, subjectKind: string): void {
+  function recordRateLimitRejection(scope: string, bucketKey: string, subjectKind: string, subject: string = ""): void {
     const key = scope === "bot" ? "bot_rate_limit_rejections" : "message_rate_limit_rejections";
     deps.playerNetworkStats[key] = Number(deps.playerNetworkStats[key] || 0) + 1;
     incrementCounterRecord("rate_limit_rejections_by_bucket", `${scope}:${bucketKey}`);
     incrementCounterRecord("rate_limit_rejections_by_subject_kind", subjectKind);
+    // The counters above are server-wide, which cannot distinguish one determined
+    // bot from forty players on bad connections. The ledger keeps the same event
+    // against the subject that caused it.
+    if (typeof deps.recordSecurityViolation === "function" && subject !== "") {
+      deps.recordSecurityViolation(subject, `rate_limit:${scope}:${bucketKey}`);
+    }
   }
 
   async function checkMessageRateLimit(socket: PacketRecord, player: PacketRecord | null | undefined, messageType: unknown, data: unknown = null): Promise<boolean> {

@@ -2110,6 +2110,7 @@ function getServerPhase9RemainingRoutes() {
   if (!serverPhase9RemainingRoutes) {
     serverPhase9RemainingRoutes = ServerPhase9RemainingRoutesModule.createServerPhase9RemainingRoutes({
       MAX_CHAT_LENGTH,
+      isAdmin,
       accountKey,
       broadcastToAuthenticatedPlayers,
       broadcastToWorld,
@@ -2300,6 +2301,7 @@ function getServerBotRateLimitHelpers() {
       messageRouterHelpers: ServerMessageRouterHelpers,
       packetContracts: PacketContracts,
       playerNetworkStats,
+      recordSecurityViolation,
       redisStore,
       sendDeveloperDenied,
       sendJson,
@@ -2982,6 +2984,7 @@ const ServerPhase11dStandardMovement = ServerPhase11dStandardMovementModule.crea
   logger: console,
   nowMs: () => Date.now(),
   playerNetworkStats,
+  recordSecurityViolation,
   sendActionRejected,
 });
 
@@ -19451,6 +19454,38 @@ function getAuditActor(socket: any, player: any, usernameOverride: any = "") {
   };
 }
 
+// Violation attribution. The rate limiter and the movement validator both detect
+// abuse, but until now produced only server-wide totals, so one determined bot and
+// forty players on bad connections looked identical. recordSecurityViolation keeps a
+// bounded per-subject count (see server_runtime_stats) and, at escalating
+// milestones, writes the REAL identity to the security log. /health only ever
+// carries the opaque per-process ids, because it is reachable unauthenticated.
+const SECURITY_VIOLATION_LOG_MILESTONES = [25, 100, 250, 500];
+const SECURITY_VIOLATION_LOG_INTERVAL = 500;
+
+function shouldLogSecurityViolationMilestone(total: number) {
+  if (SECURITY_VIOLATION_LOG_MILESTONES.includes(total)) return true;
+  // Past the last milestone, one line per interval keeps a sustained attack
+  // visible without letting it flood the audit log.
+  return total > SECURITY_VIOLATION_LOG_INTERVAL && total % SECURITY_VIOLATION_LOG_INTERVAL === 0;
+}
+
+function recordSecurityViolation(subject: any, label: any, context: any = {}) {
+  const entry = ServerRuntimeStats.recordSubjectViolation(playerNetworkStats, subject, label);
+  if (!entry) return null;
+  if (shouldLogSecurityViolationMilestone(entry.total)) {
+    logSecurityEvent(context.socket || null, context.player || null, "violation_threshold_reached", {
+      violation_subject_id: entry.id,
+      violation_subject_kind: entry.subject_kind,
+      violation_label: String(label || "unknown"),
+      violation_total: entry.total,
+      violation_by_label: { ...entry.by_label },
+      violation_first_seen_ms_ago: Math.max(0, Date.now() - entry.first_at),
+    }, "warning");
+  }
+  return entry;
+}
+
 function logSecurityEvent(socket: any, player: any, event: any, details: any = {}, severity: any = "info") {
   const entry: any = {
     event_id: makeAuditId("security"),
@@ -25489,7 +25524,12 @@ async function handleOilRefineryRequest(socket: any, player: any, data: any = {}
     }
 
     const poleKey = gridKey(gridPoleX, gridPoleY);
-    oilState.linked_pole_key = poleKey;
+    // A stale disconnect must never remove a replacement connection.
+        if (data.disconnect === true && oilState.linked_pole_key !== poleKey) {
+            sendActionRejected(socket, "oil_refinery_request", "Connection changed. Select the current wire.", { reason: "link_changed" });
+            return;
+        }
+        oilState.linked_pole_key = data.disconnect === true ? "" : poleKey;
     oilState.direct_power = false;
     oilState.running = false;
     oilState.battery_powered = false;
@@ -25892,7 +25932,12 @@ async function handleBatteryChargerRequest(socket: any, player: any, data: any =
     }
 
     const poleKey = gridKey(gridPoleX, gridPoleY);
-    chargerState.linked_pole_key = poleKey;
+    // A stale disconnect must never remove a replacement connection.
+        if (data.disconnect === true && chargerState.linked_pole_key !== poleKey) {
+            sendActionRejected(socket, "battery_charger_request", "Connection changed. Select the current wire.", { reason: "link_changed" });
+            return;
+        }
+        chargerState.linked_pole_key = data.disconnect === true ? "" : poleKey;
     chargerState.direct_power = false;
     chargerState.running = false;
     chargerState.shutdown_reason = "";

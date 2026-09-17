@@ -107,7 +107,8 @@ const DYNAMIC_FALLBACKS = ["request"];
  * counted rather than evaluated. Pinning the count means a NEW dynamic site has to be
  * looked at by a human instead of quietly widening the blind spot.
  */
-const EXPECTED_LITERAL_SITES = 278;
+// Two stale-link rejection paths were added for refinery/charger disconnects.
+const EXPECTED_LITERAL_SITES = 280;
 // Re-pinned from 10 -> 9 after tracing every current dynamic call site (2026-08-09): all
 // nine pass an `action`-shaped variable through unchanged --
 // `cleanRouteType || "request"` / `type || "request"` (both already covered by

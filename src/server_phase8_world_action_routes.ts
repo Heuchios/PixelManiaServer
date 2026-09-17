@@ -1251,6 +1251,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
   }
 
   async function handleRequestLinkGeneratorPad(socket: any, player: any, data: PacketRecord, context: RouteContext): Promise<void> {
+        const disconnect = data.disconnect === true;
     if (!requireAuthenticated(socket, player, "link transformer circuits")) return;
 
           const worldName = cleanWorld(data.world || player.world || "START");
@@ -1314,7 +1315,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
           const generatorKey = gridKey(gridGeneratorX, gridGeneratorY);
           const padKey = gridKey(gridPadX, gridPadY);
           const existingGeneratorKey = findGeneratorLinkedToPad(state, padKey);
-          if (existingGeneratorKey !== "" && existingGeneratorKey !== generatorKey) {
+          if (!disconnect && existingGeneratorKey !== "" && existingGeneratorKey !== generatorKey) {
             sendActionRejected(socket, "request_link_generator_pad", "That metal pad is already linked to another transformer.", {
               reason: "metal_pad_already_linked",
             });
@@ -1322,10 +1323,10 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
           }
 
           let linkedPadKeys = getGeneratorLinkedPadKeys(generatorEntry);
-          if (linkedPadKeys.includes(padKey)) {
+          if (disconnect ? !linkedPadKeys.includes(padKey) : linkedPadKeys.includes(padKey)) {
             const alreadyPayload = makeGeneratorDataPayload(worldName, generatorEntry, {
-              opened: true,
-              linked: true,
+              opened: false,
+              linked: !disconnect,
               pad_x: gridPadX,
               pad_y: gridPadY,
             });
@@ -1333,7 +1334,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
             return;
           }
 
-          if (linkedPadKeys.length >= ELECTRICAL_MAX_PADS_PER_GENERATOR) {
+          if (!disconnect && linkedPadKeys.length >= ELECTRICAL_MAX_PADS_PER_GENERATOR) {
             sendActionRejected(socket, "request_link_generator_pad", "Transformer circuits are full.", {
               reason: "generator_circuits_full",
               linked_pad_count: linkedPadKeys.length,
@@ -1344,15 +1345,15 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
 
           const previousWorldState = serializeWorldState(worldName);
           const generatorBefore = cloneJson(generatorEntry);
-          linkedPadKeys = [...linkedPadKeys, padKey];
+          linkedPadKeys = disconnect ? linkedPadKeys.filter((key: string) => key !== padKey) : [...linkedPadKeys, padKey];
           setGeneratorLinkedPadKeys(generatorEntry, linkedPadKeys);
           markElectricalNetworksDirty(state);
 
           const generatorAfter = cloneJson(generatorEntry);
           const linkTransactionId = makeAuditId("electrical_link");
           const linkPayload = makeGeneratorDataPayload(worldName, generatorEntry, {
-            opened: true,
-            linked: true,
+            opened: false,
+            linked: !disconnect,
             pad_x: gridPadX,
             pad_y: gridPadY,
           });
@@ -1361,8 +1362,8 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
             player,
             worldName,
             {
-              action: "electrical_generator_link",
-              source_type: "electrical_generator_link",
+              action: disconnect ? "electrical_generator_link_remove" : "electrical_generator_link",
+              source_type: disconnect ? "electrical_generator_link_remove" : "electrical_generator_link",
               x: gridGeneratorX,
               y: gridGeneratorY,
               block_type: ELECTRICAL_GENERATOR_ITEM,
@@ -1394,6 +1395,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
   }
 
   async function handleRequestLinkGeneratorPole(socket: any, player: any, data: PacketRecord, context: RouteContext): Promise<void> {
+        const disconnect = data.disconnect === true;
     if (!requireAuthenticated(socket, player, "link transformer outputs")) return;
 
           const worldName = cleanWorld(data.world || player.world || "START");
@@ -1458,11 +1460,11 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
           const poleKey = gridKey(gridPoleX, gridPoleY);
 
           let linkedPoleKeys = getGeneratorLinkedPoleKeys(generatorEntry);
-          if (linkedPoleKeys.includes(poleKey)) {
+          if (disconnect ? !linkedPoleKeys.includes(poleKey) : linkedPoleKeys.includes(poleKey)) {
             const alreadyPayload = makeGeneratorDataPayload(worldName, generatorEntry, {
-              opened: true,
-              linked: true,
-              output_linked: true,
+              opened: false,
+              linked: !disconnect,
+              output_linked: !disconnect,
               pole_x: gridPoleX,
               pole_y: gridPoleY,
             });
@@ -1471,7 +1473,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
           }
 
           const linkedGeneratorKeys = getGeneratorKeysLinkedToPole(state, poleKey);
-          if (linkedGeneratorKeys.length >= ELECTRICAL_MAX_TRANSFORMER_LINKS_PER_POLE) {
+          if (!disconnect && linkedGeneratorKeys.length >= ELECTRICAL_MAX_TRANSFORMER_LINKS_PER_POLE) {
             sendActionRejected(socket, "request_link_generator_pole", "That electric pole has too many transformer links.", {
               reason: "electric_pole_transformer_links_full",
               linked_transformer_count: linkedGeneratorKeys.length,
@@ -1480,7 +1482,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
             return;
           }
 
-          if (linkedPoleKeys.length >= ELECTRICAL_MAX_POLES_PER_GENERATOR) {
+          if (!disconnect && linkedPoleKeys.length >= ELECTRICAL_MAX_POLES_PER_GENERATOR) {
             sendActionRejected(socket, "request_link_generator_pole", "Transformer outputs are full.", {
               reason: "generator_outputs_full",
               linked_pole_count: linkedPoleKeys.length,
@@ -1491,16 +1493,16 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
 
           const previousWorldState = serializeWorldState(worldName);
           const generatorBefore = cloneJson(generatorEntry);
-          linkedPoleKeys = [...linkedPoleKeys, poleKey];
+          linkedPoleKeys = disconnect ? linkedPoleKeys.filter((key: string) => key !== poleKey) : [...linkedPoleKeys, poleKey];
           setGeneratorLinkedPoleKeys(generatorEntry, linkedPoleKeys);
           markElectricalNetworksDirty(state);
 
           const generatorAfter = cloneJson(generatorEntry);
           const linkTransactionId = makeAuditId("electrical_output_link");
           const linkPayload = makeGeneratorDataPayload(worldName, generatorEntry, {
-            opened: true,
-            linked: true,
-            output_linked: true,
+            opened: false,
+            linked: !disconnect,
+            output_linked: !disconnect,
             pole_x: gridPoleX,
             pole_y: gridPoleY,
           });
@@ -1509,8 +1511,8 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
             player,
             worldName,
             {
-              action: "electrical_generator_output_link",
-              source_type: "electrical_generator_output_link",
+              action: disconnect ? "electrical_generator_output_link_remove" : "electrical_generator_output_link",
+              source_type: disconnect ? "electrical_generator_output_link_remove" : "electrical_generator_output_link",
               x: gridGeneratorX,
               y: gridGeneratorY,
               block_type: ELECTRICAL_GENERATOR_ITEM,
@@ -1542,6 +1544,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
   }
 
   async function handleRequestLinkElectricPoles(socket: any, player: any, data: PacketRecord, context: RouteContext): Promise<void> {
+        const disconnect = data.disconnect === true;
     if (!requireAuthenticated(socket, player, "link electric poles")) return;
 
           const worldName = cleanWorld(data.world || player.world || "START");
@@ -1607,11 +1610,11 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
 
           let poleALinks = getPoleLinkedPoleKeys(poleAEntry);
           let poleBLinks = getPoleLinkedPoleKeys(poleBEntry);
-          if (poleALinks.includes(poleBKey) || poleBLinks.includes(poleAKey)) {
+          if (disconnect ? (!poleALinks.includes(poleBKey) && !poleBLinks.includes(poleAKey)) : (poleALinks.includes(poleBKey) || poleBLinks.includes(poleAKey))) {
             sendElectricalVisibilityRefresh(socket, player, worldName, { force: true });
             return;
           }
-          if (poleALinks.length >= ELECTRICAL_MAX_POLE_LINKS_PER_POLE || poleBLinks.length >= ELECTRICAL_MAX_POLE_LINKS_PER_POLE) {
+          if (!disconnect && (poleALinks.length >= ELECTRICAL_MAX_POLE_LINKS_PER_POLE || poleBLinks.length >= ELECTRICAL_MAX_POLE_LINKS_PER_POLE)) {
             sendActionRejected(socket, "request_link_electric_poles", "That electric pole has too many couplings.", {
               reason: "electric_pole_links_full",
             });
@@ -1621,8 +1624,8 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
           const previousWorldState = serializeWorldState(worldName);
           const poleABefore = cloneJson(poleAEntry);
           const poleBBefore = cloneJson(poleBEntry);
-          poleALinks = [...poleALinks, poleBKey];
-          poleBLinks = [...poleBLinks, poleAKey];
+          poleALinks = disconnect ? poleALinks.filter((key: string) => key !== poleBKey) : [...poleALinks, poleBKey];
+          poleBLinks = disconnect ? poleBLinks.filter((key: string) => key !== poleAKey) : [...poleBLinks, poleAKey];
           setPoleLinkedPoleKeys(poleAEntry, poleALinks);
           setPoleLinkedPoleKeys(poleBEntry, poleBLinks);
           markElectricalNetworksDirty(state);
@@ -1636,8 +1639,8 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
               player,
               worldName,
               {
-                action: "electrical_pole_coupling_link",
-                source_type: "electrical_pole_coupling_link",
+                action: disconnect ? "electrical_pole_coupling_link_remove" : "electrical_pole_coupling_link",
+                source_type: disconnect ? "electrical_pole_coupling_link_remove" : "electrical_pole_coupling_link",
                 x: gridPoleAX,
                 y: gridPoleAY,
                 block_type: ELECTRICAL_POLE_ITEM,
@@ -1657,8 +1660,8 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
               player,
               worldName,
               {
-                action: "electrical_pole_coupling_link",
-                source_type: "electrical_pole_coupling_link",
+                action: disconnect ? "electrical_pole_coupling_link_remove" : "electrical_pole_coupling_link",
+                source_type: disconnect ? "electrical_pole_coupling_link_remove" : "electrical_pole_coupling_link",
                 x: gridPoleBX,
                 y: gridPoleBY,
                 block_type: ELECTRICAL_POLE_ITEM,

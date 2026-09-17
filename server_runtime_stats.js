@@ -180,6 +180,121 @@ function getPacketTypeSizeStatsSnapshot(source) {
     }
     return result;
 }
+const VIOLATION_MAX_TRACKED_SUBJECTS = 500;
+const VIOLATION_EVICT_LOW_WATER = 400;
+const VIOLATION_STALE_MS = 30 * 60 * 1000;
+const VIOLATION_MAX_LABELS_PER_SUBJECT = 24;
+const VIOLATION_SNAPSHOT_TOP_N = 20;
+// `Number(x) || Date.now()` would silently reject a caller-supplied timestamp of
+// 0, because 0 is falsy. Tests and replay tooling legitimately pass 0, so the
+// check has to be for finiteness rather than truthiness.
+function resolveViolationNow(value) {
+    const parsed = Number(value);
+    return Number.isFinite(parsed) ? Math.trunc(parsed) : Date.now();
+}
+function getViolationSubjectKind(subject) {
+    const clean = String(subject || "").trim().toLowerCase();
+    const separator = clean.indexOf(":");
+    if (separator <= 0)
+        return "unknown";
+    const kind = clean.slice(0, separator);
+    return kind === "account" || kind === "ip" || kind === "socket" ? kind : "unknown";
+}
+function ensureSubjectViolationLedger(target) {
+    const existing = target.violation_ledger;
+    if (existing && typeof existing === "object" && existing.subjects && typeof existing.subjects === "object") {
+        return existing;
+    }
+    const ledger = { next_id: 1, subjects: {} };
+    target.violation_ledger = ledger;
+    return ledger;
+}
+function pruneSubjectViolationLedger(ledger, now) {
+    const subjects = ledger.subjects;
+    for (const key of Object.keys(subjects)) {
+        if (now - subjects[key].last_at >= VIOLATION_STALE_MS)
+            delete subjects[key];
+    }
+    const keys = Object.keys(subjects);
+    if (keys.length <= VIOLATION_MAX_TRACKED_SUBJECTS)
+        return;
+    // Evict past the cap down to the low-water mark, oldest activity first, so a
+    // flood of one-off subjects cannot grow this without bound.
+    keys.sort((a, b) => subjects[a].last_at - subjects[b].last_at);
+    const removeCount = keys.length - VIOLATION_EVICT_LOW_WATER;
+    for (let i = 0; i < removeCount; i += 1)
+        delete subjects[keys[i]];
+}
+// Records one violation against `subject` (the rate limiter's "account:name" /
+// "ip:1.2.3.4" / "socket:id" form) and returns the updated entry, so the caller
+// can decide whether the running total is worth a security log line.
+function recordSubjectViolation(target, subject, label, options = {}) {
+    if (!target || typeof target !== "object")
+        return null;
+    const cleanSubject = String(subject || "").trim();
+    if (cleanSubject === "")
+        return null;
+    const cleanLabel = String(label || "unknown").trim().toLowerCase() || "unknown";
+    const now = resolveViolationNow(options.now);
+    const ledger = ensureSubjectViolationLedger(target);
+    let entry = ledger.subjects[cleanSubject];
+    if (!entry) {
+        pruneSubjectViolationLedger(ledger, now);
+        entry = {
+            id: `s${ledger.next_id}`,
+            subject_kind: getViolationSubjectKind(cleanSubject),
+            total: 0,
+            by_label: {},
+            first_at: now,
+            last_at: now,
+        };
+        ledger.next_id += 1;
+        ledger.subjects[cleanSubject] = entry;
+    }
+    entry.total += 1;
+    entry.last_at = now;
+    // A misbehaving client can invent bucket names, so cap the label fan-out per
+    // subject; the total still counts every violation.
+    if (entry.by_label[cleanLabel] !== undefined
+        || Object.keys(entry.by_label).length < VIOLATION_MAX_LABELS_PER_SUBJECT) {
+        entry.by_label[cleanLabel] = Number(entry.by_label[cleanLabel] || 0) + 1;
+    }
+    return entry;
+}
+function getSubjectViolationSnapshot(target, options = {}) {
+    const empty = { tracked_subjects: 0, total: 0, by_kind: {}, by_label: {}, top: [] };
+    if (!target || typeof target !== "object")
+        return empty;
+    const ledger = target.violation_ledger;
+    if (!ledger || typeof ledger !== "object" || !ledger.subjects)
+        return empty;
+    const now = resolveViolationNow(options.now);
+    pruneSubjectViolationLedger(ledger, now);
+    const topN = clampInteger(options.topN ?? VIOLATION_SNAPSHOT_TOP_N, 1, 100);
+    const subjects = ledger.subjects;
+    const entries = Object.values(subjects);
+    const byKind = {};
+    const byLabel = {};
+    let total = 0;
+    for (const entry of entries) {
+        total += entry.total;
+        byKind[entry.subject_kind] = Number(byKind[entry.subject_kind] || 0) + entry.total;
+        for (const [label, count] of Object.entries(entry.by_label)) {
+            byLabel[label] = Number(byLabel[label] || 0) + count;
+        }
+    }
+    entries.sort((a, b) => b.total - a.total);
+    const top = entries.slice(0, topN).map((entry) => ({
+        // Opaque and process-stable on purpose -- see the note above the types.
+        id: entry.id,
+        subject_kind: entry.subject_kind,
+        total: entry.total,
+        by_label: { ...entry.by_label },
+        first_seen_ms_ago: Math.max(0, now - entry.first_at),
+        last_seen_ms_ago: Math.max(0, now - entry.last_at),
+    }));
+    return { tracked_subjects: entries.length, total, by_kind: byKind, by_label: byLabel, top };
+}
 module.exports = {
     applyServerTickSample,
     clampPacketTypeByteSamples,
@@ -188,6 +303,9 @@ module.exports = {
     createServerTickStats,
     getPacketTypeSizeStatsSnapshot,
     getServerTickSnapshot,
+    getSubjectViolationSnapshot,
+    getViolationSubjectKind,
     normalizePacketTypeName,
     recordPacketTypeSize,
+    recordSubjectViolation,
 };

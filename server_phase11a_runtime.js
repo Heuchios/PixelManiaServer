@@ -239,8 +239,6 @@ function createServerPhase11aRuntime(deps) {
             outbound_oversize_packets: Number(playerNetworkStats.outbound_oversize_packets || 0),
             outbound_packet_type_stats: outboundPacketTypeStats,
             outbound_backpressure_skips: Number(playerNetworkStats.outbound_backpressure_skips || 0),
-            outbound_backpressure_forced: Number(playerNetworkStats.outbound_backpressure_forced || 0),
-            outbound_backpressure_disconnects: Number(playerNetworkStats.outbound_backpressure_disconnects || 0),
             outbound_send_failures: Number(playerNetworkStats.outbound_send_failures || 0),
             movement_backpressure_queued_batches: Number(playerNetworkStats.movement_backpressure_queued_batches || 0),
             movement_backpressure_coalesced_batches: Number(playerNetworkStats.movement_backpressure_coalesced_batches || 0),
@@ -257,6 +255,11 @@ function createServerPhase11aRuntime(deps) {
             rate_limit_last_rejection: playerNetworkStats.rate_limit_last_rejection
                 ? { ...playerNetworkStats.rate_limit_last_rejection }
                 : null,
+            // Per-subject violation attribution. Identities are deliberately absent:
+            // this snapshot feeds /health, which is reachable without authentication,
+            // so each subject appears as an opaque process-stable id. Real account
+            // names and IPs go to logSecurityEvent, which writes server-side only.
+            violations: serverRuntimeStats.getSubjectViolationSnapshot(playerNetworkStats),
             idempotency_duplicates: Number(playerNetworkStats.idempotency_duplicates || 0),
             idempotency_db_failures: Number(playerNetworkStats.idempotency_db_failures || 0),
             active_interest_receivers: playerInterestByReceiver.size,

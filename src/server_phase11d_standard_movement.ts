@@ -71,6 +71,17 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
     "world_entry_position_pending",
   ]);
 
+  // Must match the rate limiter's subject exactly, or the same player is counted
+  // as two different subjects. server.ts defines accountKey() as
+  // cleanAccountName(username).toLowerCase(), so this reproduces it rather than
+  // taking a new dependency just for the lowercase.
+  function getMovementViolationSubject(player: JsonRecord): string {
+    const username = String(cleanAccountName(player.account_username || player.name || "") || "").toLowerCase();
+    if (username !== "") return `account:${username}`;
+    const playerId = String(player.id || "");
+    return playerId !== "" ? `socket:${playerId}` : "";
+  }
+
   function reportMovementAnomaly(
     player: JsonRecord | null | undefined,
     label: string,
@@ -78,6 +89,13 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
   ): void {
     if (!player) return;
     const now = nowMs();
+    // Recorded BEFORE the log throttling below, so a sustained offender does not
+    // look quieter than a sporadic one just because most of its lines were
+    // suppressed. The ledger counts every anomaly; the log still rate limits.
+    if (typeof deps.recordSecurityViolation === "function") {
+      const violationSubject = getMovementViolationSubject(player);
+      if (violationSubject !== "") deps.recordSecurityViolation(violationSubject, label, { player });
+    }
     const lastAt = Math.max(0, Math.trunc(Number(player.movement_anomaly_logged_at) || 0));
     const suppressed = Math.max(0, Math.trunc(Number(player.movement_anomaly_suppressed) || 0));
     if (lastAt > 0 && now - lastAt < MOVEMENT_ANOMALY_LOG_INTERVAL_MS) {
