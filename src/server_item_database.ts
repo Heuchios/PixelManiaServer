@@ -5332,6 +5332,11 @@ for (const [itemId, update] of Object.entries(FURNITURE_ITEM_UPDATES)) {
   ITEM_DEFINITIONS[itemId] = block({ ...atlasDefinition, ...ITEM_DEFINITIONS[itemId], ...update });
   ATLAS_ITEM_UPDATES[itemId] = update;
 }
+// Spreadsheet recipes require seeds for these existing placeable items.
+for (const [id, update] of Object.entries({"slime":{"seed":"slime_seed","authored_drop_rules":true,"drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"slime","item_category":"block","amount":1},{"item_id":"gem","item_category":"currency","amount_range":[1,7]},{"item_id":"slime_seed","item_category":"seed","amount":1,"chance":0.2}]},"tree_drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"slime","item_category":"block","amount_range":[2,5]},{"item_id":"slime_seed","item_category":"seed","amount_range":[0,3]},{"item_id":"gem","item_category":"currency","amount_range":[0,5]}]}},"ceiling_lamp":{"seed":"ceiling_lamp_seed","authored_drop_rules":true,"drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"ceiling_lamp","item_category":"block","amount":1},{"item_id":"ceiling_lamp_seed","item_category":"seed","amount":1,"chance":0.2},{"item_id":"gem","item_category":"currency","amount_range":[0,3]}]},"tree_drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"ceiling_lamp","item_category":"block","amount_range":[2,5]},{"item_id":"ceiling_lamp_seed","item_category":"seed","amount_range":[0,3]},{"item_id":"gem","item_category":"currency","amount_range":[0,5]}]}},"pillar":{"seed":"pillar_seed","authored_drop_rules":true,"drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"pillar","item_category":"block","amount":1},{"item_id":"pillar_seed","item_category":"seed","amount":1,"chance":0.2},{"item_id":"gem","item_category":"currency","amount_range":[0,3]}]},"tree_drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"pillar","item_category":"block","amount_range":[2,5]},{"item_id":"pillar_seed","item_category":"seed","amount_range":[0,3]},{"item_id":"gem","item_category":"currency","amount_range":[0,5]}]}},"biohazard_barrel":{"seed":"biohazard_barrel_seed","authored_drop_rules":true,"drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"biohazard_barrel","item_category":"block","amount":1},{"item_id":"gem","item_category":"currency","amount_range":[1,7]},{"item_id":"biohazard_barrel_seed","item_category":"seed","amount":1,"chance":0.2}]},"tree_drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"biohazard_barrel","item_category":"block","amount_range":[2,5]},{"item_id":"biohazard_barrel_seed","item_category":"seed","amount_range":[0,3]},{"item_id":"gem","item_category":"currency","amount_range":[0,5]}]}},"star_block":{"seed":"star_block_seed","authored_drop_rules":true,"drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"star_block","item_category":"block","amount":1},{"item_id":"gem","item_category":"currency","amount_range":[1,7]},{"item_id":"star_block_seed","item_category":"seed","amount":1,"chance":0.2}]},"tree_drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"star_block","item_category":"block","amount_range":[2,5]},{"item_id":"star_block_seed","item_category":"seed","amount_range":[0,3]},{"item_id":"gem","item_category":"currency","amount_range":[0,5]}]}},"chicken":{"seed":"chicken_seed","authored_drop_rules":true,"drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"chicken","item_category":"block","amount":1},{"item_id":"chicken_seed","item_category":"seed","amount":1,"chance":0.2},{"item_id":"gem","item_category":"currency","amount_range":[0,3]}]},"tree_drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"chicken","item_category":"block","amount_range":[2,5]},{"item_id":"chicken_seed","item_category":"seed","amount_range":[0,3]},{"item_id":"gem","item_category":"currency","amount_range":[0,5]}]}},"checkpoint":{"seed":"checkpoint_seed","authored_drop_rules":true,"drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"checkpoint","item_category":"block","amount":1},{"item_id":"gem","item_category":"currency","amount_range":[1,7]},{"item_id":"checkpoint_seed","item_category":"seed","amount":1,"chance":0.2}]},"tree_drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"checkpoint","item_category":"block","amount_range":[2,5]},{"item_id":"checkpoint_seed","item_category":"seed","amount_range":[0,3]},{"item_id":"gem","item_category":"currency","amount_range":[0,5]}]}}})) {
+  if (!ITEM_DEFINITIONS[id]) ITEM_DEFINITIONS[id] = block({...buildAtlasItemDefinition(id, {block, cleanItemId, displayNameForItemId})});
+  Object.assign(ITEM_DEFINITIONS[id], update);
+}
 ensureSeedDefinitionsFromBlocks(ITEM_DEFINITIONS);
 for (const [itemId, update] of Object.entries(ATLAS_ITEM_UPDATES)) {
   const seedId = String(update.seed || "");
@@ -5343,6 +5348,13 @@ for (const [itemId, update] of Object.entries(ATLAS_ITEM_UPDATES)) {
 
 
 const RECIPE_TIERS: Readonly<Record<string, number>> = Object.freeze({
+"checkpoint_seed": 8,
+"chicken_seed": 7,
+"star_block_seed": 7,
+"biohazard_barrel_seed": 7,
+"pillar_seed": 6,
+"ceiling_lamp_seed": 6,
+"slime_seed": 5,
   "aqua_block": 5,
   "aqua_block_seed": 5,
   "aqua_wallpaper": 6,
@@ -5802,6 +5814,17 @@ const STATION_RECIPES: Readonly<Record<string, ReadonlyArray<StationRecipe>>> = 
 });
 
 const SPLICE_RECIPES: Readonly<Record<string, string>> = Object.freeze({
+"ceiling_lamp_seed+street_sign_seed": "street_lamp_seed",
+"biohazard_barrel_seed+steel_sign_seed": "hazard_sign_seed",
+"chicken_seed+slime_seed": "rubber_duck_seed",
+"dungeon_door_seed+lamp_seed": "checkpoint_seed",
+"building_brick_block_seed+ceiling_lamp_seed": "lamp_seed",
+"grass_seed+weathervane_seed": "chicken_seed",
+"gem_block_seed+star_wall_seed": "star_block_seed",
+"big_spike_seed+wooden_barrel_seed": "biohazard_barrel_seed",
+"white_brick_block_seed+wooden_barrel_seed": "pillar_seed",
+"campfire_seed+steel_block_seed": "ceiling_lamp_seed",
+"campfire_seed+green_brick_seed": "slime_seed",
   "aqua_block_seed+building_brick_wall_seed": "aqua_wallpaper_seed",
   "aqua_block_seed+sale_sign_seed": "street_sign_seed",
   "barn_door_seed+royal_door_seed": "screen_door_seed",
@@ -5818,7 +5841,8 @@ const SPLICE_RECIPES: Readonly<Record<string, string>> = Object.freeze({
   "black_wallpaper_seed+white_wallpaper_seed": "checkered_wall_seed",
   "blue_block_seed+green_brick_seed": "dark_blue_block_seed",
   "blue_block_seed+mail_box_seed": "blue_mail_box_seed",
-  "blue_block_seed+red_brick_wall_seed": "blue_wallpaper_seed",
+  "blue_block_seed+red_brick_wall_seed": "blue_stripe_wall_seed",
+"blue_block_seed+building_brick_wall_seed": "blue_wallpaper_seed",
   "blue_block_seed+red_pastel_block_seed": "purple_pastel_block_seed",
   "blue_block_seed+red_stripe_wall_seed": "aqua_block_seed",
   "blue_block_seed+side_table_seed": "bed_seed",
