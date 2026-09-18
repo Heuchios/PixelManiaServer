@@ -293,7 +293,7 @@ assert.deepEqual(Array.from(atlasDb.getItem(55)?.atlas_coords || []), [20, 29]);
 assert.equal(cityFenceDefinition?.category, "block");
 assert.equal(cityFenceDefinition?.rarity, "uncommon");
 assert.equal(cityFenceDefinition?.block_health, 3);
-assert.equal(cityFenceDefinition?.seed, "");
+assert.equal(cityFenceDefinition?.seed, "city_fence_seed");
 assert.equal(cityFenceDefinition?.atlas_item_id, 55);
 assert.deepEqual(Array.from(cityFenceDefinition?.atlas_coords || []), [20, 29]);
 assert.deepEqual(Array.from(cityFenceDefinition?.texture?.cell || []), [20, 29]);
@@ -399,11 +399,11 @@ assert.equal(atlasDb.getItemIdForKey("royal_entrance"), 60);
 assert.deepEqual(Array.from(atlasDb.getItem(60)?.atlas_coords || []), [18, 22]);
 assert.equal(royalEntranceDefinition?.category, "block");
 assert.equal(royalEntranceDefinition?.entrance_block, true);
-assert.equal(royalEntranceDefinition?.entrance_animation_frame_seconds, 0.08);
-assert.equal(royalEntranceDefinition?.no_collision, true);
-assert.equal(royalEntranceDefinition?.collidable, false);
+assert.equal(royalEntranceDefinition?.entrance_animation_frame_seconds, 0.15);
+assert.equal(royalEntranceDefinition?.no_collision, false);
+assert.equal(royalEntranceDefinition?.collidable, true);
 assert.deepEqual(
-  royalEntranceDefinition?.animation_frames?.map((/** @type {any} */ frame) => Array.from(frame || [])),
+  royalEntranceDefinition?.entrance_pass_atlas_frames?.map((/** @type {any} */ frame) => Array.from(frame || [])),
   [[18, 22], [19, 22], [20, 22]],
 );
 assert.deepEqual(Array.from(fixedDrop(royalEntranceDefinition, "royal_entrance_seed")?.amount_range || []), [0, 2]);

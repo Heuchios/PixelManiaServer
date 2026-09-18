@@ -16590,6 +16590,8 @@ function getPunchToggleNextBlockType(blockType: any) {
   const active = getPunchToggleActiveBlockType(clean);
   if (inactive === "" || active === "") return "";
   if (!ItemDatabase.hasItem(inactive) || !ItemDatabase.hasItem(active)) return "";
+  // Opening furniture stays open while subsequent punches damage it.
+  if (clean === active && getPunchToggleBlockDefinition(clean)?.punch_open_only === true) return "";
   return clean === active ? inactive : active;
 }
 

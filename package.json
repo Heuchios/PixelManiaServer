@@ -4,6 +4,7 @@
   "description": "",
   "main": "server.js",
   "scripts": {
+	"check:furniture-atlas": "node scripts/check_furniture_atlas.js",
 	"check:atlas-items": "node scripts/check_atlas_item_update.js",
 	"check:splicing": "node scripts/check_splicing_recipes.js",
 	"check:item-db": "node scripts/check_item_database_sync.js",
