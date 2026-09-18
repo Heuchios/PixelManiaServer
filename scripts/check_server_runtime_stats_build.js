@@ -19,6 +19,23 @@ const runtimeStatsBuildConfig = JSON.parse(fs.readFileSync(path.join(repoRoot, "
 const generatedSource = fs.readFileSync(path.join(repoRoot, "server_runtime_stats.js"), "utf8");
 const runtimeOwnerSource = `${serverSource}\n${phase11aRuntimeSource}`;
 
+const disabledProfiler = ServerRuntimeStats.createRuntimeProfiler(false);
+disabledProfiler.observe("ignored", 10);
+assert.deepEqual(disabledProfiler.snapshot(), {});
+const profiler = ServerRuntimeStats.createRuntimeProfiler(true);
+for (let i = 0; i < 1000; i++) profiler.observe("latency_ms", i);
+profiler.observe("invalid", NaN);
+/** @type {Record<string, { count: number, mean: number, max: number, p95_recent: number }>} */
+const sample = profiler.snapshot();
+assert.equal(sample.latency_ms.count, 1000);
+assert.equal(sample.latency_ms.mean, 499.5);
+assert.equal(sample.latency_ms.max, 999);
+assert.equal(sample.latency_ms.p95_recent, 974);
+assert.equal(sample.invalid, undefined);
+assert.deepEqual(profiler.snapshot(), {});
+for (let i = 0; i < 1000; i++) profiler.observe(`untrusted_type_${i}`, 1);
+assert.equal(Object.keys(profiler.snapshot()).length, 128);
+
 const tickStats = ServerRuntimeStats.createServerTickStats(1000);
 assert.deepEqual(ServerRuntimeStats.getServerTickSnapshot(tickStats, { intervalMs: 1000 }), {
   enabled: false,

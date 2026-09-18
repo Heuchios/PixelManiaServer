@@ -1,5 +1,7 @@
 "use strict";
 
+import { PerformanceObserver } from "node:perf_hooks";
+
 type PacketTypeStatsBucket = {
   count: number;
   sum_bytes: number;
@@ -400,7 +402,41 @@ function getSubjectViolationSnapshot(
   return { tracked_subjects: entries.length, total, by_kind: byKind, by_label: byLabel, top };
 }
 
+// Optional, bounded runtime histograms. Names are capped because packet types are untrusted.
+function createRuntimeProfiler(enabled: boolean) {
+  const buckets = new Map<string, { count: number; total: number; max: number; recent: number[] }>();
+  if (enabled) {
+    const gcObserver = new PerformanceObserver(list => {
+      for (const entry of list.getEntries()) observe("gc_ms", entry.duration);
+    });
+    gcObserver.observe({ entryTypes: ["gc"] });
+  }
+  function observe(name: string, value: number): void {
+    if (!enabled || !Number.isFinite(value)) return;
+    const key = name.slice(0, 96);
+    if (!buckets.has(key) && buckets.size >= 128) return;
+    const bucket = buckets.get(key) || { count: 0, total: 0, max: 0, recent: [] };
+    bucket.recent[bucket.count % 512] = value;
+    bucket.count += 1;
+    bucket.total += value;
+    bucket.max = Math.max(bucket.max, value);
+    buckets.set(key, bucket);
+  }
+  function snapshot() {
+    const result: Record<string, { count: number; mean: number; max: number; p95_recent: number }> = {};
+    for (const [key, bucket] of buckets) {
+      const sorted = bucket.recent.slice().sort((a, b) => a - b);
+      result[key] = { count: bucket.count, mean: bucket.total / bucket.count, max: bucket.max,
+        p95_recent: sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] || 0 };
+    }
+    buckets.clear();
+    return result;
+  }
+  return { enabled, observe, snapshot };
+}
+
 export = {
+  createRuntimeProfiler,
   applyServerTickSample,
   clampPacketTypeByteSamples,
   computePercentileFromSamples,

@@ -20,6 +20,24 @@ function getErrorMessage(error) {
 // state the client cannot rebuild on its own -- authoritative block/seed placements,
 // inventory deltas, action rejections -- so it must never be dropped silently.
 const DEFAULT_DROPPABLE_PACKET_TYPES = ["player_position_batch"];
+const EQUIPMENT_ALIASES = ["equipped_tool", "equipped_back_item", "equipped_back", "equipped_hat_item",
+    "equipped_hair_item", "equipped_eyewear_item", "equipped_beard_item", "equipped_body_accessory_item",
+    "equipped_shirt_item", "equipped_pants_item", "equipped_shoes_item", "equipped_ride_item"];
+// Batch-capable clients already read equipment_slots preferentially. Keep a full
+// snapshot on EVERY tick (including empty slots/unequips); remove only its legacy
+// duplicate aliases. This needs no receiver cache and survives backpressure.
+function compactMovementBatch(payload) {
+    if (!Array.isArray(payload.players))
+        return payload;
+    return { ...payload, players: payload.players.map((item) => {
+            if (!isRecord(item) || !isRecord(item.equipment_slots))
+                return item;
+            const compact = { ...item };
+            for (const key of EQUIPMENT_ALIASES)
+                delete compact[key];
+            return compact;
+        }) };
+}
 function createServerSocketDeliveryHelpers(config) {
     const droppablePacketTypes = new Set((Array.isArray(config.droppablePacketTypes) && config.droppablePacketTypes.length > 0
         ? config.droppablePacketTypes
@@ -323,6 +341,7 @@ function createServerSocketDeliveryHelpers(config) {
     function sendPlayerPositionBatch(socket, payload, rawMaxItems) {
         if (!socket || !isSocketOpen(socket))
             return false;
+        payload = compactMovementBatch(payload);
         const players = cleanPacketArray(payload.players);
         const left = cleanPacketArray(payload.left);
         if (players.length === 0 && left.length === 0)
@@ -360,5 +379,6 @@ function createServerSocketDeliveryHelpers(config) {
     };
 }
 module.exports = {
+    compactMovementBatch,
     createServerSocketDeliveryHelpers,
 };

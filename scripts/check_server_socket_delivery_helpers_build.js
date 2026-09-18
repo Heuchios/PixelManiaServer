@@ -18,6 +18,16 @@ const syncSource = fs.readFileSync(path.join(repoRoot, "scripts", "sync_server_s
 const buildConfig = JSON.parse(fs.readFileSync(path.join(repoRoot, "tsconfig.server-socket-delivery-helpers.json"), "utf8"));
 
 const OPEN = 1;
+const fullPresence = { type: "player_position", player_id: "other", x: 10, equipment_slots: { hand: "pickaxe", hair: "" },
+  equipped_tool: "pickaxe", equipped_hair_item: "", equipped_back: "", equipped_back_item: "" };
+const compactBatch = SocketDeliveryHelpersModule.compactMovementBatch({ type: "player_position_batch", players: [fullPresence] });
+assert.deepEqual(compactBatch.players[0].equipment_slots, fullPresence.equipment_slots);
+assert.equal(compactBatch.players[0].equipped_tool, undefined);
+assert.equal(fullPresence.equipped_tool, "pickaxe", "Compaction must not mutate the shared presence payload");
+assert.equal(compactBatch.players[0].x, 10);
+assert.deepEqual(SocketDeliveryHelpersModule.compactMovementBatch({ players: [{ player_id: "old", equipped_tool: "pickaxe" }] }).players,
+  [{ player_id: "old", equipped_tool: "pickaxe" }], "Alias-only legacy payload must survive");
+console.log("[movement-payload-bytes]", JSON.stringify({before:Buffer.byteLength(JSON.stringify(fullPresence)),after:Buffer.byteLength(JSON.stringify(compactBatch.players[0]))}));
 const stats = {
   outbound_packets_attempted: 0,
   outbound_bytes_sent: 0,

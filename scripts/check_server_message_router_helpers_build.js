@@ -95,6 +95,19 @@ assert.equal(helpers.coalesceQueuedPlayerPosition(queuedPosition, {
 assert.equal(queuedPosition.data.x, 2);
 assert.equal(queuedPosition.enqueuedAt, 20);
 assert.equal(queuedPosition.messageBytes, 42);
+for (const barrier of [
+  { position_reason: "respawn" }, { respawn_teleport: true }, { visual_sync: true },
+  { world: "OTHER" }, { allow_join: true },
+]) {
+  for (const barrierFirst of [true, false]) {
+    const pending = { data: { type: "player_position", x: 1, ...(barrierFirst ? barrier : {}) },
+      messageType: "player_position", enqueuedAt: 1, messageBytes: 50 };
+    const incoming = { data: { type: "player_position", x: 2, ...(!barrierFirst ? barrier : {}) },
+      messageType: "player_position", enqueuedAt: 2, messageBytes: 50 };
+    assert.equal(helpers.coalesceQueuedPlayerPosition(pending, incoming), false, JSON.stringify(barrier));
+    assert.equal(pending.data.x, 1, "Movement barrier was overwritten");
+  }
+}
 assert.equal(helpers.coalesceQueuedPlayerPosition({
   data: { type: "chat" },
   enqueuedAt: 30,

@@ -1,5 +1,6 @@
 // Generated from src/server_runtime_stats.ts. Do not edit by hand.
 "use strict";
+const node_perf_hooks_1 = require("node:perf_hooks");
 function clampInteger(value, min, max) {
     const parsed = Math.trunc(Number(value) || 0);
     if (!Number.isFinite(parsed))
@@ -295,7 +296,43 @@ function getSubjectViolationSnapshot(target, options = {}) {
     }));
     return { tracked_subjects: entries.length, total, by_kind: byKind, by_label: byLabel, top };
 }
+// Optional, bounded runtime histograms. Names are capped because packet types are untrusted.
+function createRuntimeProfiler(enabled) {
+    const buckets = new Map();
+    if (enabled) {
+        const gcObserver = new node_perf_hooks_1.PerformanceObserver(list => {
+            for (const entry of list.getEntries())
+                observe("gc_ms", entry.duration);
+        });
+        gcObserver.observe({ entryTypes: ["gc"] });
+    }
+    function observe(name, value) {
+        if (!enabled || !Number.isFinite(value))
+            return;
+        const key = name.slice(0, 96);
+        if (!buckets.has(key) && buckets.size >= 128)
+            return;
+        const bucket = buckets.get(key) || { count: 0, total: 0, max: 0, recent: [] };
+        bucket.recent[bucket.count % 512] = value;
+        bucket.count += 1;
+        bucket.total += value;
+        bucket.max = Math.max(bucket.max, value);
+        buckets.set(key, bucket);
+    }
+    function snapshot() {
+        const result = {};
+        for (const [key, bucket] of buckets) {
+            const sorted = bucket.recent.slice().sort((a, b) => a - b);
+            result[key] = { count: bucket.count, mean: bucket.total / bucket.count, max: bucket.max,
+                p95_recent: sorted[Math.min(sorted.length - 1, Math.floor(sorted.length * 0.95))] || 0 };
+        }
+        buckets.clear();
+        return result;
+    }
+    return { enabled, observe, snapshot };
+}
 module.exports = {
+    createRuntimeProfiler,
     applyServerTickSample,
     clampPacketTypeByteSamples,
     computePercentileFromSamples,

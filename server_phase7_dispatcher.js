@@ -50,6 +50,7 @@ const POST_ACTION_HANDLER_ROUTE_TYPES = Object.freeze([
     "landfill_claim_prize_request",
 ]);
 const DIRECT_HANDLER_ROUTE_TYPES = Object.freeze([
+    "client_ping",
     "world_entry_ready",
     "world_block_update",
     "world_block_reconcile_request",

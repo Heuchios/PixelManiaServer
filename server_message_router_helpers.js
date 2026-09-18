@@ -26,7 +26,14 @@ function createServerMessageRouterHelpers(config) {
     function coalesceQueuedPlayerPosition(pending, incoming) {
         if (incoming.messageType !== "player_position"
             || pending?.messageType !== "player_position"
-            || pending.started === true) {
+            || pending.started === true
+            // Respawns/teleports, world changes and appearance snapshots are ordering
+            // barriers. Replacing one with an ordinary position loses required state.
+            || String(pending.data.world || "") !== String(incoming.data.world || "")
+            || pending.data.allow_join !== incoming.data.allow_join
+            || Boolean(pending.data.position_reason) || Boolean(incoming.data.position_reason)
+            || pending.data.respawn_teleport === true || incoming.data.respawn_teleport === true
+            || pending.data.visual_sync === true || incoming.data.visual_sync === true) {
             return false;
         }
         pending.data = incoming.data;

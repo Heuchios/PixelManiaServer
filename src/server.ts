@@ -49,6 +49,7 @@ const PersistenceHelpers = require("./server_persistence_helpers");
 const PlayerStateHelpersModule = require("./server_player_state_helpers");
 const WorldStateHelpersModule = require("./server_world_state_helpers");
 const ServerRuntimeStats = require("./server_runtime_stats");
+const runtimeProfiler = ServerRuntimeStats.createRuntimeProfiler(process.env.PIXELMANIA_RUNTIME_PROFILE === "1");
 
 type ServerPacketRecord = Record<string, unknown>;
 
@@ -2353,6 +2354,10 @@ const ServerPhase7Dispatcher = ServerPhase7DispatcherModule.createServerPhase7Di
     developer_pin_unlock: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleDeveloperPinUnlockRoute(socket, player, data, context),
     developer_command_request: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleDeveloperCommandRequestRoute(socket, player, data, context),
     world_block_update: (socket, player, data, context) => getServerPhase8WorldActionRoutes().handleWorldBlockUpdate(socket, player, data, context),
+    client_ping: (socket, player, data) => {
+      if (!requireAuthenticated(socket, player, "measure connection latency")) return;
+      sendJson(socket, { type: "client_pong", request_id: clampString(data.request_id, 96) });
+    },
     world_block_reconcile_request: (socket, player, data) => handleWorldBlockReconcileRequest(
       socket as ServerWebSocket,
       player as ServerPacketRecord | null | undefined,
@@ -2534,6 +2539,23 @@ const worldRouteStats: any = {
 };
 let lastWorldRouteRedisUnhealthyWarnAt: any = 0;
 const serverTickStats = ServerRuntimeStats.createServerTickStats(SERVER_TICK_MONITOR_INTERVAL_MS);
+if (runtimeProfiler.enabled) {
+  const runtimeProfileTimer = setInterval(() => {
+    console.log("[RUNTIME_PROFILE]", JSON.stringify({
+      window_seconds: 5, connected_players: players.size,
+      memory: process.memoryUsage(), metrics: runtimeProfiler.snapshot(),
+      network_totals: {
+        rx_messages: playerNetworkStats.inbound_messages_received,
+        rx_bytes: playerNetworkStats.inbound_bytes_received,
+        tx_attempts: playerNetworkStats.outbound_packets_attempted,
+        tx_attempted_bytes: playerNetworkStats.outbound_bytes_sent,
+        queued: playerNetworkStats.inbound_message_queue_pending,
+        coalesced_movement: playerNetworkStats.coalesced_inbound_player_position_messages,
+      }, tick: serverTickStats,
+    }));
+  }, 5000);
+  runtimeProfileTimer.unref();
+}
 const playerNetworkStats: any = {
   started_at: new Date().toISOString(),
   inbound_messages_received: 0,
@@ -3223,12 +3245,14 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
     }
 
     let parsedData: unknown;
+    const parseStarted = runtimeProfiler.enabled ? performance.now() : 0;
     try {
       parsedData = JSON.parse(String(raw));
     } catch {
       return;
     }
     if (!parsedData || typeof parsedData !== "object" || Array.isArray(parsedData)) return;
+    if (runtimeProfiler.enabled) runtimeProfiler.observe("json_parse_ms", performance.now() - parseStarted);
 
     const data = parsedData as ServerPacketRecord;
     const incomingMessageType = ServerMessageRouterHelpers.getInboundMessageType(data);
@@ -3271,9 +3295,11 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
       envelope.started = true;
       if (socket.pendingInboundMessageTail === envelope) socket.pendingInboundMessageTail = null;
       const processingStartedAt = Date.now();
+      const handlerStarted = runtimeProfiler.enabled ? performance.now() : 0;
       const queueWaitMs = Math.max(0, processingStartedAt - envelope.enqueuedAt);
       const data = envelope.data;
       const incomingMessageType = envelope.messageType;
+      runtimeProfiler.observe(`queue_ms:${incomingMessageType}`, queueWaitMs);
       socket.inboundMessageQueueDepth = Math.max(
         0,
         Math.trunc(Number(socket.inboundMessageQueueDepth) || 0) - 1,
@@ -3342,6 +3368,8 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
       }
     } catch (error) {
       console.warn("[socket_message_error]", getErrorMessage(error));
+    } finally {
+      if (runtimeProfiler.enabled) runtimeProfiler.observe(`handler_ms:${incomingMessageType}`, performance.now() - handlerStarted);
     }
     };
     socket.inboundMessageQueue = Promise.resolve(socket.inboundMessageQueue).then(processMessage, processMessage);
@@ -4999,7 +5027,10 @@ function sendInventoryTransactionRejected(socket: any, data: any, message: any) 
 }
 
 function sendJson(socket: any, payload: any) {
-  return ServerSocketDeliveryHelpers.sendJson(socket, payload);
+  const started = runtimeProfiler.enabled ? performance.now() : 0;
+  const result = ServerSocketDeliveryHelpers.sendJson(socket, payload);
+  if (runtimeProfiler.enabled) runtimeProfiler.observe("serialize_and_send_ms", performance.now() - started);
+  return result;
 }
 
 function getSocketBufferedAmount(socket: any) {
@@ -17318,6 +17349,8 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
         reason: "already_broken",
         block_type: update.block_type,
       });
+      // Repair the stale cell without running the destruction/reward path again.
+      sendWorldBlockReconciliation(socket, player, { ...update, world: worldName, request_id: requestId }, { reason: "already_broken" });
       return { ok: false };
     }
 
@@ -29683,7 +29716,10 @@ function buildNetfoxWorldStateHttpPayload(worldName: any, reason: any = "netfox_
 }
 
 function serializeWorldState(worldName: any) {
-  return PersistenceHelpers.clonePersistenceSnapshot(WorldStateHelpers.serializeWorldState(worldName));
+  const started = runtimeProfiler.enabled ? performance.now() : 0;
+  const result = PersistenceHelpers.clonePersistenceSnapshot(WorldStateHelpers.serializeWorldState(worldName));
+  if (runtimeProfiler.enabled) runtimeProfiler.observe("world_snapshot_clone_ms", performance.now() - started);
+  return result;
 }
 
 function getWorldBlockTypeAt(worldName: any, x: any, y: any, layer: any = "foreground") {
@@ -29800,7 +29836,7 @@ function handleWorldBlockReconcileRequest(
 ) {
   if (!requireAuthenticated(socket, player, "reconcile block placement")) return;
   sendWorldBlockReconciliation(socket, player, data, {
-    authoritative_pending: false,
+    authoritative_pending: worldBlockActionLocks.has(getWorldBlockActionLockResource(getPlayerCurrentWorldName(player), { ...data, action: data.block_action || "break" })),
     reason: "client_reconcile_request",
   });
 }
