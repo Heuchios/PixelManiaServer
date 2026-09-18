@@ -451,7 +451,7 @@ const ITEM_DEFINITIONS = {
         ]),
         animation_frame_seconds: 0.24,
         tileset_animation: false,
-        seed: "",
+        seed: "hay_seed",
         no_collision: true,
         collidable: false,
         drop_rules: {
@@ -554,7 +554,7 @@ const ITEM_DEFINITIONS = {
         display_name: "Metal Pad",
         rarity: "uncommon",
         block_health: 2,
-        seed: "",
+        seed: "metal_pad_seed",
         place_layer: "background",
         background_block: true,
         electrical_device_type: "metal_pad",
@@ -578,7 +578,7 @@ const ITEM_DEFINITIONS = {
         block_health: 3,
         texture: "res://Assets/blocks/electric/electric_pole.png",
         inventory_icon: "res://Assets/blocks/electric/electric_pole.png",
-        seed: "",
+        seed: "electric_pole_seed",
         no_collision: true,
         collidable: false,
         electrical_device_type: "electric_pole",
@@ -907,18 +907,38 @@ const ITEM_DEFINITIONS = {
         admin_grantable: false,
         drop_rules: { seed_chance: 0, gem_range: [0, 0] },
     }),
-    white_wallpaper: backgroundBlock({ display_name: "White Wallpaper" }),
-    grey_wallpaper: backgroundBlock({ display_name: "Grey Wallpaper" }),
-    black_wallpaper: backgroundBlock({ display_name: "Black Wallpaper" }),
-    red_wallpaper: backgroundBlock({ display_name: "Red Wallpaper" }),
-    orange_wallpaper: backgroundBlock({ display_name: "Orange Wallpaper" }),
-    yellow_wallpaper: backgroundBlock({ display_name: "Yellow Wallpaper" }),
-    green_wallpaper: backgroundBlock({ display_name: "Green Wallpaper" }),
+    white_wallpaper: backgroundBlock({
+        seed: "white_wallpaper_seed", display_name: "White Wallpaper"
+    }),
+    grey_wallpaper: backgroundBlock({
+        seed: "grey_wallpaper_seed", display_name: "Grey Wallpaper"
+    }),
+    black_wallpaper: backgroundBlock({
+        seed: "black_wallpaper_seed", display_name: "Black Wallpaper"
+    }),
+    red_wallpaper: backgroundBlock({
+        seed: "red_wallpaper_seed", display_name: "Red Wallpaper"
+    }),
+    orange_wallpaper: backgroundBlock({
+        seed: "orange_wallpaper_seed", display_name: "Orange Wallpaper"
+    }),
+    yellow_wallpaper: backgroundBlock({
+        seed: "yellow_wallpaper_seed", display_name: "Yellow Wallpaper"
+    }),
+    green_wallpaper: backgroundBlock({
+        seed: "green_wallpaper_seed", display_name: "Green Wallpaper"
+    }),
     aqua_wallpaper: backgroundBlock({ display_name: "Aqua Wallpaper" }),
-    blue_wallpaper: backgroundBlock({ display_name: "Blue Wallpaper" }),
+    blue_wallpaper: backgroundBlock({
+        seed: "blue_wallpaper_seed", display_name: "Blue Wallpaper"
+    }),
     purple_wallpaper: backgroundBlock({ display_name: "Purple Wallpaper" }),
-    pink_wallpaper: backgroundBlock({ display_name: "Pink Wallpaper" }),
-    brown_wallpaper: backgroundBlock({ display_name: "Brown Wallpaper" }),
+    pink_wallpaper: backgroundBlock({
+        seed: "pink_wallpaper_seed", display_name: "Pink Wallpaper"
+    }),
+    brown_wallpaper: backgroundBlock({
+        seed: "brown_wallpaper_seed", display_name: "Brown Wallpaper"
+    }),
     glowing_dirt: block({
         rarity: "epic",
         block_health: 4,
@@ -1274,7 +1294,7 @@ const ITEM_DEFINITIONS = {
         inventory_icon: "res://Assets/blocks/tier_3/blue_mail_box_full.png",
         mailbox_empty_texture: "res://Assets/blocks/tier_3/blue_mail_box_empty.png",
         mailbox_full_texture: "res://Assets/blocks/tier_3/blue_mail_box_full.png",
-        seed: "",
+        seed: "blue_mail_box_seed",
         no_collision: true,
         collidable: false,
         mailbox_block: true,
@@ -1360,7 +1380,7 @@ const ITEM_DEFINITIONS = {
         inventory_icon: "res://Assets/blocks/tier_3/mail_box_full.png",
         mailbox_empty_texture: "res://Assets/blocks/tier_3/mail_box_empty.png",
         mailbox_full_texture: "res://Assets/blocks/tier_3/mail_box_full.png",
-        seed: "",
+        seed: "mail_box_seed",
         no_collision: true,
         collidable: false,
         mailbox_block: true,
@@ -1553,7 +1573,7 @@ const ITEM_DEFINITIONS = {
         inventory_icon: "res://image.png",
         atlas_item_id: 24,
         atlas_coords: [3, 22],
-        seed: "",
+        seed: "white_fence_seed",
         no_collision: true,
         collidable: false,
         foreground_over_player: true,
@@ -1780,7 +1800,7 @@ const ITEM_DEFINITIONS = {
         inventory_icon: Object.freeze({ atlas: "res://image.png", cell: Object.freeze([5, 21]), cell_size: Object.freeze([32, 32]) }),
         atlas_item_id: 27,
         atlas_coords: [5, 21],
-        seed: "",
+        seed: "barn_door_seed",
         no_collision: true,
         collidable: false,
         solid: false,
@@ -1800,7 +1820,7 @@ const ITEM_DEFINITIONS = {
         inventory_icon: Object.freeze({ atlas: "res://image.png", cell: Object.freeze([2, 22]), cell_size: Object.freeze([32, 32]) }),
         atlas_item_id: 28,
         atlas_coords: [2, 22],
-        seed: "",
+        seed: "barn_background_seed",
         no_collision: true,
         collidable: false,
         solid: false,
@@ -1818,7 +1838,7 @@ const ITEM_DEFINITIONS = {
         inventory_icon: Object.freeze({ atlas: "res://image.png", cell: Object.freeze([5, 20]), cell_size: Object.freeze([32, 32]) }),
         atlas_item_id: 29,
         atlas_coords: [5, 20],
-        seed: "",
+        seed: "barn_window_seed",
         no_collision: true,
         collidable: false,
         solid: false,
@@ -1838,7 +1858,7 @@ const ITEM_DEFINITIONS = {
         atlas_coords: [6, 20],
         water_well_producing_atlas_coords: [6, 20],
         water_well_ready_atlas_coords: [7, 20],
-        seed: "",
+        seed: "water_well_seed",
         no_collision: true,
         collidable: false,
         water_well_block: true,
@@ -2534,7 +2554,7 @@ const ITEM_DEFINITIONS = {
         inventory_icon: atlasImage([16, 24]),
         rarity: "common",
         block_health: 3,
-        seed: "",
+        seed: "white_brick_block_seed",
         collidable: true,
         solid: true,
         collision_type: "full",
@@ -2554,7 +2574,7 @@ const ITEM_DEFINITIONS = {
         inventory_icon: atlasImage([18, 24]),
         rarity: "common",
         block_health: 2,
-        seed: "",
+        seed: "white_brick_wall_seed",
         background_block: true,
         place_layer: "background",
         no_collision: true,
@@ -2571,7 +2591,7 @@ const ITEM_DEFINITIONS = {
         inventory_icon: atlasImage([19, 24]),
         rarity: "common",
         block_health: 2,
-        seed: "",
+        seed: "white_brick_platform_seed",
         platform_collision: true,
         platform_variant_atlas_coords: Object.freeze({
             left: Object.freeze([20, 24]),
@@ -2666,7 +2686,7 @@ const ITEM_DEFINITIONS = {
         inventory_icon: atlasImage([24, 21]),
         rarity: "common",
         block_health: 2,
-        seed: "",
+        seed: "side_table_seed",
         no_collision: true,
         collidable: false,
         solid: false,
@@ -2683,7 +2703,7 @@ const ITEM_DEFINITIONS = {
         inventory_icon: atlasImage([24, 22]),
         rarity: "uncommon",
         block_health: 2,
-        seed: "",
+        seed: "toilet_seed",
         no_collision: true,
         collidable: false,
         solid: false,
@@ -2777,7 +2797,7 @@ const ITEM_DEFINITIONS = {
         inventory_icon: atlasImage([17, 23]),
         rarity: "uncommon",
         block_health: 2,
-        seed: "",
+        seed: "fireplace_seed",
         no_collision: true,
         collidable: false,
         solid: false,
@@ -2893,7 +2913,7 @@ const ITEM_DEFINITIONS = {
         inventory_icon: atlasImage([24, 23]),
         rarity: "uncommon",
         block_health: 2,
-        seed: "",
+        seed: "sink_seed",
         no_collision: true,
         collidable: false,
         solid: false,
@@ -2967,7 +2987,7 @@ const ITEM_DEFINITIONS = {
         inventory_icon: atlasImage([25, 24]),
         rarity: "uncommon",
         block_health: 2,
-        seed: "",
+        seed: "bed_seed",
         no_collision: true,
         collidable: false,
         solid: false,
@@ -3127,7 +3147,7 @@ const ITEM_DEFINITIONS = {
     mechanical_entrance: block({
         rarity: "rare",
         block_health: 4,
-        seed: "",
+        seed: "mechanical_entrance_seed",
         no_collision: true,
         entrance_block: true,
         entrance_animation_frame_seconds: 0.08,
@@ -3149,7 +3169,7 @@ const ITEM_DEFINITIONS = {
     steel_door: block({
         rarity: "uncommon",
         block_health: 4,
-        seed: "",
+        seed: "steel_door_seed",
         no_collision: true,
         collidable: false,
         door_block: true,
@@ -3159,13 +3179,13 @@ const ITEM_DEFINITIONS = {
     steel_block: block({
         rarity: "uncommon",
         block_health: 5,
-        seed: "",
+        seed: "steel_block_seed",
         drop_rules: { seed_chance: 0, gem_range: [0, 0] },
     }),
     screen_door: block({
         rarity: "uncommon",
         block_health: 3,
-        seed: "",
+        seed: "screen_door_seed",
         no_collision: true,
         collidable: false,
         door_block: true,
@@ -3173,13 +3193,14 @@ const ITEM_DEFINITIONS = {
         drop_rules: { seed_chance: 0, gem_range: [0, 0] },
     }),
     steel_background: backgroundBlock({
+        seed: "steel_background_seed",
         rarity: "uncommon",
         block_health: 3,
     }),
     steel_sign: block({
         rarity: "uncommon",
         block_health: 3,
-        seed: "",
+        seed: "steel_sign_seed",
         sign_block: true,
         no_collision: true,
         collidable: false,
@@ -3194,14 +3215,14 @@ const ITEM_DEFINITIONS = {
         atlas_source_id: 0,
         atlas_coords: [6, 12],
         alternative_tile: 0,
-        seed: "",
+        seed: "steel_platform_seed",
         platform_collision: true,
         drop_rules: { seed_chance: 0, gem_range: [0, 0] },
     }),
     steel_ladder: block({
         rarity: "uncommon",
         block_health: 3,
-        seed: "",
+        seed: "steel_ladder_seed",
         platform_collision: true,
         drop_rules: { seed_chance: 0, gem_range: [0, 0] },
     }),
@@ -3255,7 +3276,7 @@ const ITEM_DEFINITIONS = {
     wooden_chair: block({
         rarity: "uncommon",
         block_health: 2,
-        seed: "",
+        seed: "wooden_chair_seed",
         no_collision: true,
         collidable: false,
         solid: false,
@@ -3266,7 +3287,7 @@ const ITEM_DEFINITIONS = {
     wooden_table: block({
         rarity: "uncommon",
         block_health: 2,
-        seed: "",
+        seed: "wooden_table_seed",
         platform_collision: true,
         drop_rules: { seed_chance: 0, gem_range: [0, 0], drops_self: true },
         drops_self: true,
@@ -3275,7 +3296,7 @@ const ITEM_DEFINITIONS = {
         display_name: "Wooden Crappy Sign",
         rarity: "uncommon",
         block_health: 2,
-        seed: "",
+        seed: "wooden_crappy_sign_seed",
         sign_block: true,
         no_collision: true,
         collidable: false,
@@ -4995,7 +5016,174 @@ const ITEM_DEFINITIONS = {
     kraken: fishCatch("Kraken", "legendary", 500, { difficulty: 10 }),
 };
 applyTier1SpliceBalance(ITEM_DEFINITIONS);
+// BEGIN SEPTEMBER ATLAS ITEM UPDATES
+// Saved item IDs stay stable when the atlas coordinate receives a new display name.
+const ATLAS_CONTENT_SPECS = [
+    ["saw_blade", "Spike", 0, 13, "solid", 1],
+    ["spike", "Hanging Spike", 1, 13, "solid", 1],
+    ["big_spike", "Dark Spike", 2, 13, "solid", 1],
+    ["recycle_bin", "Recycle Bin", 17, 14, "return", 2],
+    ["quest_board", "Quest Board", 18, 15, "wide", 1],
+    ["sashimi_table", "Sashimi Table", 20, 15, "decor", 1],
+    ["leaderboard", "Leaderboard", 21, 15, "return", 1],
+    ["oil_refinery", "Oil Refinery", -1, -1, "keep", 1],
+    ["gold_block", "Golden Block", 21, 5, "solid", 1],
+    ["emerald_block", "Emerald Block", 22, 5, "solid", 1],
+    ["diamond_block", "Diamond Block", 24, 5, "solid", 1],
+    ["amethyst_block", "Gem Block", 25, 5, "solid", 1],
+    ["copper_block", "Copper Block", 21, 6, "solid", 1],
+    ["rusty_copper_block", "Rusty Copper Block", 22, 6, "solid", 1],
+    ["hay_bales", "Hay Bales", 3, 23, "solid", 1],
+    ["seaweed_block", "Seaweed", 6, 23, "decor", 3],
+    ["coral_block", "Coral", 9, 23, "decor", 1],
+    ["pearl_clam", "Pearl Clam", 10, 23, "decor", 1],
+    ["pearl_clam_open", "Pearl Clam Open", 11, 23, "decor", 1],
+    ["green_moss_brick", "Green Moss Brick", 20, 5, "solid", 1],
+    ["green_moss_brick_wall", "Green Moss Wall", 20, 6, "wall", 1],
+    ["empty_jar", "Empty Jar", 1, 21, "decor", 1],
+    ["ruby_block", "Ruby Block", 23, 5, "solid", 1],
+    ["bush", "Bush", 6, 4, "decor", 1],
+    ["obsidian", "Obsidian", 2, 2, "solid", 1],
+    ["spring_leaf", "Leaf Block (Spring Event)", 4, 3, "decor", 1],
+    ["autumn_leaf", "Leaf Block (Autumn Event)", 5, 3, "decor", 1],
+    ["hanging_vine", "Small Vines", 6, 3, "decor", 1],
+    ["vines_2", "Big Vines", 7, 3, "decor", 1],
+    ["wooden_crappy_sign", "Mysterious Sign", 10, 6, "decor", 1],
+    ["sand_castle", "Sand Castle", 12, 6, "decor", 1],
+    ["pile_of_sand", "Pile of Sand", 13, 6, "decor", 1],
+    ["tiny_rock", "Tiny Rock", 2, 3, "decor", 1],
+    ["big_rock", "Big Rock", 3, 3, "decor", 1],
+    ["snow_tiny_rock", "Snow Tiny Rock", 14, 5, "decor", 1],
+    ["snow_big_rock", "Snow Big Rock", 15, 5, "decor", 1],
+    ["wooden_barrel", "Wooden Barrel", 16, 2, "solid", 1],
+    ["wooden_box", "Wooden Box", 17, 2, "solid", 1],
+    ["lantern", "Lantern", 18, 2, "decor", 3],
+    ["campfire", "Campfire", 16, 3, "decor", 3],
+    ["dungeon_door", "Dungeon Door", 19, 3, "decor", 1],
+    ["sturdy_box", "Sturdy Box", 20, 3, "solid", 1],
+    ["wagon_wheel", "Wagon Wheel", 16, 4, "solid", 1],
+    ["portcullis", "Portcullis", 17, 4, "decor", 3],
+    ["red_brick", "Red Brick", 17, 5, "solid", 1],
+    ["red_brick_wall", "Red Brick Wall", 17, 6, "wall", 1],
+    ["stone_brick", "Stone Brick", 18, 5, "solid", 1],
+    ["stone_brick_wall", "Stone Brick Wall", 18, 6, "wall", 1],
+    ["green_brick", "Grimstone", 19, 5, "solid", 1],
+    ["green_brick_wall", "Grimstone Wall", 19, 6, "wall", 1],
+    ["white_block", "White Block", 0, 7, "solid", 1],
+    ["red_block", "Red Block", 1, 7, "solid", 1],
+    ["green_block", "Green Block", 2, 7, "solid", 1],
+    ["brown_block", "Brown Block", 3, 7, "solid", 1],
+    ["grey_block", "Grey Block", 0, 8, "solid", 1],
+    ["orange_block", "Orange Block", 1, 8, "solid", 1],
+    ["aqua_block", "Aqua Block", 2, 8, "solid", 1],
+    ["purple_block", "Purple Block", 3, 8, "solid", 1],
+    ["black_block", "Black Block", 0, 9, "solid", 1],
+    ["yellow_block", "Yellow Block", 1, 9, "solid", 1],
+    ["blue_block", "Blue Block", 2, 9, "solid", 1],
+    ["pink_block", "Pink Block", 3, 9, "solid", 1],
+    ["maroon_block", "Dark Red Block", 4, 7, "solid", 1],
+    ["dark_green_block", "Dark Green Block", 5, 7, "solid", 1],
+    ["dark_brown_block", "Dark Brown Block", 6, 7, "solid", 1],
+    ["dark_orange_block", "Dark Orange Block", 4, 8, "solid", 1],
+    ["dark_aqua_block", "Dark Aqua Block", 5, 8, "solid", 1],
+    ["dark_purple_block", "Dark Purple Block", 6, 8, "solid", 1],
+    ["dark_yellow_block", "Dark Yellow Block", 4, 9, "solid", 1],
+    ["dark_blue_block", "Dark Blue Block", 5, 9, "solid", 1],
+    ["dark_pink_block", "Dark Pink Block", 6, 9, "solid", 1],
+    ["red_pastel_block", "Pastel Red Block", 7, 7, "solid", 1],
+    ["green_pastel_block", "Pastel Green Block", 8, 7, "solid", 1],
+    ["purple_pastel_block", "Pastel Purple Block", 9, 7, "solid", 1],
+    ["yellow_pastel_block", "Pastel Yellow Block", 7, 8, "solid", 1],
+    ["orange_pastel_block", "Pastel Orange Block", 8, 8, "solid", 1],
+    ["pink_pastel_block", "Pastel Pink Block", 7, 9, "solid", 1],
+    ["blue_pastel_block", "Pastel Blue Block", 8, 9, "solid", 1],
+    ["happy_block", "Pastel Bunny Block", 9, 8, "solid", 1],
+    ["pastel_flower_block", "Pastel Lily Block", 9, 9, "solid", 1],
+    ["shifty_block", "RGB Block", 10, 8, "solid", 1],
+    ["white_wallpaper", "White Wall", 0, 10, "wall", 1],
+    ["red_wallpaper", "Red Wall", 1, 10, "wall", 1],
+    ["green_wallpaper", "Green Wall", 2, 10, "wall", 1],
+    ["brown_wallpaper", "Brown Wall", 3, 10, "wall", 1],
+    ["grey_wallpaper", "Gray Wall", 0, 11, "wall", 1],
+    ["orange_wallpaper", "Orange Wall", 1, 11, "wall", 1],
+    ["aqua_wallpaper", "Aqua Wall", 2, 11, "wall", 1],
+    ["purple_wallpaper", "Purple Wall", 3, 11, "wall", 1],
+    ["black_wallpaper", "Black Wall", 0, 12, "wall", 1],
+    ["yellow_wallpaper", "Yellow Wall", 1, 12, "wall", 1],
+    ["blue_wallpaper", "Blue Wall", 2, 12, "wall", 1],
+    ["pink_wallpaper", "Pink Wall", 3, 12, "wall", 1],
+];
+function atlasContentDrops(existing, itemId, seedId, tree) {
+    const prior = existing && typeof existing === "object" ? existing : {};
+    const fixed = [...(prior.fixed_drops || [])];
+    const defaults = [
+        { item_id: itemId, item_category: "block", ...(tree ? { amount_range: [2, 5] } : { amount: 1 }) },
+        { item_id: seedId, item_category: "seed", ...(tree ? { amount_range: [0, 3] } : { amount: 1, chance: 0.2 }) },
+        { item_id: "gem", item_category: "currency", amount_range: tree ? [0, 5] : [0, 3] },
+    ];
+    for (const candidate of defaults) {
+        const present = fixed.some(entry => entry.item_category === candidate.item_category && (candidate.item_category === "currency" || entry.item_id === candidate.item_id));
+        const legacyGem = candidate.item_category === "currency" && Number(prior.gem_range?.[1]) > 0;
+        const legacySeed = candidate.item_category === "seed" && Number(prior.seed_chance) > 0;
+        if (!present && !legacyGem && !legacySeed)
+            fixed.push(candidate);
+    }
+    return { seed_chance: 0, gem_range: [0, 0], ...prior, fixed_drops: fixed };
+}
+const ATLAS_ITEM_UPDATES = {};
+for (const [itemId, displayName, x, y, mode, frameCount] of ATLAS_CONTENT_SPECS) {
+    const prior = ITEM_DEFINITIONS[itemId] || {};
+    const refund = mode === "return";
+    const seedId = refund ? "" : String(prior.seed || itemId + "_seed");
+    const solid = mode === "solid";
+    const wall = mode === "wall";
+    const emptyDrops = { seed_chance: 0, gem_range: [0, 0], fixed_drops: [] };
+    const update = {
+        display_name: displayName, seed: seedId, hidden: false,
+        placeable: true, tradeable: true, dropable: true, admin_grantable: true,
+        break_return_to_inventory: refund, authored_drop_rules: true,
+        drop_rules: refund ? emptyDrops : atlasContentDrops(prior.drop_rules, itemId, seedId, false),
+        tree_drop_rules: refund ? emptyDrops : atlasContentDrops(prior.tree_drop_rules, itemId, seedId, true),
+    };
+    if (mode !== "keep") {
+        const texture = mode === "wide"
+            ? { atlas: "res://image.png", region: [x * 32, y * 32, 64, 32] }
+            : { atlas: "res://image.png", cell: [x, y], cell_size: [32, 32] };
+        Object.assign(update, {
+            block_health: prior.block_health || 3, place_layer: wall ? "background" : "foreground",
+            background_block: wall, no_collision: !solid, collidable: solid, solid,
+            collision_type: solid ? "full" : "none", platform_collision: false,
+            texture, inventory_icon: texture, atlas_coords: [x, y], atlas_source_id: 0, source_id: 0,
+        });
+    }
+    if (mode === "wide")
+        Object.assign(update, { visual_size: [64, 32], visual_offset: [16, 0] });
+    if (itemId === "dungeon_door")
+        Object.assign(update, { door_block: true, interact_rules: true });
+    if (frameCount > 1) {
+        const frames = Array.from({ length: frameCount }, (_, index) => [x + index, y]);
+        Object.assign(update, {
+            animated: true, tileset_animation: false, animation_frame_seconds: 0.22,
+            animation_atlas_coords: frames,
+            animation_frames: frames.map(cell => ({ atlas: "res://image.png", cell, cell_size: [32, 32] })),
+        });
+        if (itemId === "recycle_bin")
+            Object.assign(update, { server_triggered_animation: true, animation_trigger: "on_recycle" });
+    }
+    if (refund)
+        update.break_return_item_id = itemId;
+    ATLAS_ITEM_UPDATES[itemId] = update;
+    ITEM_DEFINITIONS[itemId] = block({ ...prior, ...update });
+}
+// END SEPTEMBER ATLAS ITEM UPDATES
 ensureSeedDefinitionsFromBlocks(ITEM_DEFINITIONS);
+for (const [itemId, update] of Object.entries(ATLAS_ITEM_UPDATES)) {
+    const seedId = String(update.seed || "");
+    if (seedId && ITEM_DEFINITIONS[seedId]) {
+        ITEM_DEFINITIONS[seedId].display_name = `${update.display_name} Seed`;
+        ITEM_DEFINITIONS[seedId].grows_into = itemId;
+    }
+}
 const ITEMS = Object.freeze(ITEM_DEFINITIONS);
 const STATION_RECIPES = Object.freeze({
     crafting_station: Object.freeze([]),
@@ -5028,32 +5216,116 @@ const STATION_RECIPES = Object.freeze({
     ]),
 });
 const SPLICE_RECIPES = Object.freeze({
-    "sand_seed+stone_seed": "pile_of_sand_seed",
-    "lava_seed+sand_seed": "glass_seed",
-    "stone_seed+wood_seed": "wood_plank_seed",
-    "grass_seed+leaf_seed": "vines_seed",
-    "dirt_seed+leaf_seed": "rose_seed",
-    "leaf_seed+sand_seed": "tulip_seed",
-    "grass_seed+sand_seed": "sun_flower_seed",
-    "glass_seed+wood_seed": "apple_seed",
-    "vines_seed+wood_seed": "climbing_vine_seed",
-    "leaf_seed+vines_seed": "vines_2_seed",
-    "rose_seed+tulip_seed": "poppy_seed",
+    "barn_block_seed+green_block_seed": "green_pastel_block_seed",
+    "barn_block_seed+orange_block_seed": "orange_pastel_block_seed",
+    "barn_block_seed+pink_block_seed": "pink_pastel_block_seed",
+    "barn_block_seed+red_block_seed": "red_pastel_block_seed",
+    "barn_block_seed+wooden_background_seed": "barn_background_seed",
+    "barn_block_seed+wooden_door_seed": "barn_door_seed",
+    "barn_block_seed+wooden_fence_seed": "white_fence_seed",
+    "barn_block_seed+wooden_frame_seed": "barn_window_seed",
+    "barn_block_seed+yellow_block_seed": "yellow_pastel_block_seed",
+    "barn_door_seed+royal_door_seed": "screen_door_seed",
+    "barn_door_seed+steel_block_seed": "steel_door_seed",
+    "barn_window_seed+white_block_seed": "sink_seed",
+    "barn_window_seed+wooden_frame_seed": "royal_window_seed",
+    "black_block_seed+red_brick_wall_seed": "black_wallpaper_seed",
+    "black_block_seed+stone_brick_seed": "green_brick_seed",
+    "blue_block_seed+green_brick_seed": "dark_blue_block_seed",
+    "blue_block_seed+mail_box_seed": "blue_mail_box_seed",
+    "blue_block_seed+red_brick_wall_seed": "blue_wallpaper_seed",
+    "blue_block_seed+red_pastel_block_seed": "purple_pastel_block_seed",
+    "blue_block_seed+side_table_seed": "bed_seed",
+    "blue_block_seed+yellow_pastel_block_seed": "blue_pastel_block_seed",
+    "blue_pastel_block_seed+lily_seed": "pastel_flower_block_seed",
+    "brown_block_seed+red_brick_wall_seed": "brown_wallpaper_seed",
+    "brown_block_seed+wooden_block_seed": "wooden_box_seed",
+    "bush_seed+wooden_block_seed": "wooden_table_seed",
+    "cave_background_seed+green_brick_seed": "green_brick_wall_seed",
+    "cave_background_seed+red_brick_seed": "red_brick_wall_seed",
+    "cave_background_seed+sign_seed": "wooden_crappy_sign_seed",
+    "cave_background_seed+stone_brick_seed": "stone_brick_wall_seed",
+    "cave_background_seed+wooden_block_seed": "wooden_background_seed",
+    "dark_blue_block_seed+dark_red_block_seed": "dark_purple_block_seed",
+    "dark_green_block_seed+dark_yellow_block_seed": "dark_aqua_block_seed",
+    "dark_purple_block_seed+red_block_seed": "gem_block_seed",
+    "dirt_seed+leaf_seed": "grass_seed",
+    "dirt_seed+red_brick_seed": "brown_block_seed",
+    "dirt_seed+stone_seed": "stone_brick_seed",
+    "dirt_seed+wood_seed": "wooden_block_seed",
+    "dirt_seed+wooden_block_seed": "wooden_door_seed",
+    "dungeon_door_seed+royal_door_seed": "royal_entrance_seed",
+    "electric_pole_seed+steel_background_seed": "metal_pad_seed",
+    "glass_panel_seed+sink_seed": "fish_bowl_seed",
+    "glass_panel_seed+stone_seed": "glass_seed",
+    "glass_panel_seed+wooden_block_seed": "wooden_frame_seed",
     "glass_seed+grass_seed": "lily_seed",
+    "glass_seed+wood_seed": "apple_seed",
+    "grass_seed+lava_seed": "hay_seed",
+    "grass_seed+leaf_seed": "bush_seed",
+    "grass_seed+red_brick_seed": "green_block_seed",
+    "grass_seed+sand_seed": "sun_flower_seed",
+    "green_block_seed+green_brick_seed": "dark_green_block_seed",
+    "green_block_seed+red_brick_wall_seed": "green_wallpaper_seed",
+    "green_brick_seed+hay_seed": "sugar_cane_seed",
+    "green_brick_seed+orange_block_seed": "light_brown_block_seed",
+    "green_brick_seed+pink_block_seed": "dark_pink_block_seed",
+    "green_brick_seed+red_block_seed": "dark_red_block_seed",
+    "green_brick_seed+saw_blade_seed": "big_spike_seed",
+    "green_brick_seed+yellow_block_seed": "dark_yellow_block_seed",
+    "green_wallpaper_seed+wooden_chair_seed": "climbing_vine_seed",
+    "grey_block_seed+red_brick_wall_seed": "grey_wallpaper_seed",
+    "grey_wallpaper_seed+steel_block_seed": "steel_background_seed",
+    "happy_block_seed+royal_window_seed": "pink_curtains_seed",
+    "hay_bales_seed+wooden_block_seed": "barn_block_seed",
+    "hay_seed+wooden_background_seed": "hay_bales_seed",
+    "hay_seed+wooden_block_seed": "wooden_fence_seed",
+    "ice_block_seed+yellow_block_seed": "blue_block_seed",
+    "lava_seed+sand_seed": "glass_panel_seed",
+    "lava_seed+stone_seed": "red_brick_seed",
+    "lava_seed+wooden_block_seed": "campfire_seed",
+    "lava_seed+wooden_box_seed": "lantern_seed",
+    "leaf_seed+sand_seed": "tulip_seed",
+    "leaf_seed+vines_seed": "vines_2_seed",
+    "leaf_seed+wood_seed": "mushroom_seed",
+    "lily_seed+red_brick_seed": "white_block_seed",
+    "mushroom_seed+wooden_block_seed": "sign_seed",
+    "obsidian_seed+red_brick_seed": "black_block_seed",
+    "orange_block_seed+red_brick_wall_seed": "orange_wallpaper_seed",
+    "pastel_flower_block_seed+royal_window_seed": "purple_curtains_seed",
+    "pink_block_seed+red_brick_wall_seed": "pink_wallpaper_seed",
+    "red_block_seed+red_brick_wall_seed": "red_wallpaper_seed",
+    "red_block_seed+white_block_seed": "pink_block_seed",
+    "red_block_seed+yellow_block_seed": "orange_block_seed",
+    "red_brick_seed+rose_seed": "red_block_seed",
+    "red_brick_seed+stone_seed": "grey_block_seed",
+    "red_brick_seed+tulip_seed": "yellow_block_seed",
+    "red_brick_wall_seed+white_block_seed": "white_wallpaper_seed",
+    "red_brick_wall_seed+yellow_block_seed": "yellow_wallpaper_seed",
+    "red_pastel_block_seed+yellow_pastel_block_seed": "happy_block_seed",
+    "rose_seed+tulip_seed": "poppy_seed",
+    "royal_door_seed+saw_blade_seed": "portcullis_seed",
+    "royal_door_seed+steel_block_seed": "dungeon_door_seed",
+    "royal_door_seed+wooden_chair_seed": "fireplace_seed",
+    "sand_seed+stone_seed": "pile_of_sand_seed",
     "sand_seed+wood_plank_seed": "sand_castle_seed",
-    "leaf_seed+wood_seed": "wood_platform_seed",
-    "cave_background_seed+stone_seed": "sign_seed",
-    "leaf_seed+wood_plank_seed": "wooden_entrance_seed",
-    "lava_seed+wood_plank_seed": "wooden_block_seed",
-    "cave_background_seed+wood_plank_seed": "wooden_background_seed",
-    "leaf_seed+wooden_block_seed": "wooden_fence_seed",
-    "vines_seed+wood_platform_seed": "wooden_ladder_seed",
-    "wood_plank_seed+wooden_entrance_seed": "wooden_door_seed",
-    "wood_plank_seed+wooden_fence_seed": "wooden_frame_seed",
-    "dirt_seed+vines_seed": "mushroom_seed",
-    "lava_seed+stone_seed": "stone_brick_seed",
-    "glass_seed+stone_seed": "glass_panel_seed",
-    "glass_seed+lava_seed": "gem_block_seed",
+    "sign_seed+steel_block_seed": "electric_pole_seed",
+    "sink_seed+white_brick_block_seed": "water_well_seed",
+    "steel_block_seed+wood_platform_seed": "steel_platform_seed",
+    "steel_block_seed+wooden_box_seed": "sturdy_box_seed",
+    "steel_block_seed+wooden_ladder_seed": "steel_ladder_seed",
+    "steel_door_seed+steel_sign_seed": "mechanical_entrance_seed",
+    "stone_brick_seed+stone_brick_wall_seed": "white_brick_block_seed",
+    "stone_brick_wall_seed+white_brick_block_seed": "white_brick_wall_seed",
+    "stone_seed+wood_seed": "wood_plank_seed",
+    "vines_2_seed+wooden_block_seed": "wood_platform_seed",
+    "vines_2_seed+wooden_table_seed": "wooden_chair_seed",
+    "white_block_seed+white_brick_wall_seed": "toilet_seed",
+    "white_brick_block_seed+white_brick_wall_seed": "white_brick_platform_seed",
+    "white_fence_seed+wooden_box_seed": "wagon_wheel_seed",
+    "wood_platform_seed+wooden_block_seed": "wooden_ladder_seed",
+    "wood_platform_seed+wooden_door_seed": "wooden_entrance_seed",
+    "wooden_block_seed+wooden_box_seed": "wooden_barrel_seed",
 });
 const FISHING_RARITY_POOLS = Object.freeze({
     common: Object.freeze([

@@ -18,6 +18,8 @@ const clientAtlasItems = JSON.parse(
 const blockManagerSource = fs.readFileSync(path.join(clientRoot, "Scripts", "block_manager.gd"), "utf8");
 
 const expectedReturns = new Map([
+  ["recycle_bin", "recycle_bin"],
+  ["leaderboard", "leaderboard"],
   // The blocks-atlas migration consolidated vend_empty/vend_pending/vend_sold
   // into a single vending_machine item -- item_database.gd no longer has
   // separate entries for the old legacy ids, and getItemDefinition() now
@@ -97,7 +99,7 @@ for (const [itemId, expectedReturnItemId] of expectedReturns) {
   );
   assert.equal(Number(definition.drop_rules?.seed_chance), 0, `${itemId} must not drop a seed`);
   assert.deepEqual(Array.from(definition.drop_rules?.gem_range || []), [0, 0], `${itemId} must not drop gems`);
-  assert.equal(Array.isArray(definition.drop_rules?.fixed_drops), false, `${itemId} must not create fixed world drops`);
+  assert.equal((definition.drop_rules?.fixed_drops || []).length, 0, `${itemId} must not create fixed world drops`);
   assert.notEqual(definition.drops_self, true, `${itemId} must not use the generic self-drop path`);
 
   const clientEntry = extractClientItemEntry(itemId);

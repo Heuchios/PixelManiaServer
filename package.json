@@ -4,6 +4,8 @@
   "description": "",
   "main": "server.js",
   "scripts": {
+	"check:atlas-items": "node scripts/check_atlas_item_update.js",
+	"check:splicing": "node scripts/check_splicing_recipes.js",
 	"check:item-db": "node scripts/check_item_database_sync.js",
 	"check:item-instances": "node scripts/check_item_instance_wiring.js",
 	"check:failed-ledger-audit": "node scripts/check_failed_ledger_audit_coverage.js",

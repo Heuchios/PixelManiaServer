@@ -15,6 +15,11 @@ interface AtlasDefinitionBuilders {
 
 const ATLAS_PASSTHROUGH_KEYS = Object.freeze([
   "rarity",
+  "authored_drop_rules",
+  "server_triggered_animation",
+  "animation_trigger",
+  "visual_size",
+  "visual_offset",
   "seed",
   "instance_tracked",
   "shop_price",
