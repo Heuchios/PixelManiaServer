@@ -5262,6 +5262,12 @@ for (const [id, update] of Object.entries({ "slime": { "seed": "slime_seed", "au
         ITEM_DEFINITIONS[id] = block({ ...buildAtlasItemDefinition(id, { block, cleanItemId, displayNameForItemId }) });
     Object.assign(ITEM_DEFINITIONS[id], update);
 }
+// Spreadsheet recipes require seeds for these existing placeable items.
+for (const [id, update] of Object.entries({ "cow": { "seed": "cow_seed", "authored_drop_rules": true, "drop_rules": { "seed_chance": 0, "gem_range": [0, 0], "fixed_drops": [{ "item_id": "cow", "item_category": "block", "amount": 1 }, { "item_id": "cow_seed", "item_category": "seed", "amount": 1, "chance": 0.2 }, { "item_id": "gem", "item_category": "currency", "amount_range": [0, 3] }] }, "tree_drop_rules": { "seed_chance": 0, "gem_range": [0, 0], "fixed_drops": [{ "item_id": "cow", "item_category": "block", "amount_range": [2, 5] }, { "item_id": "cow_seed", "item_category": "seed", "amount_range": [0, 3] }, { "item_id": "gem", "item_category": "currency", "amount_range": [0, 5] }] } }, "bomb": { "seed": "bomb_seed", "authored_drop_rules": true, "drop_rules": { "seed_chance": 0, "gem_range": [0, 0], "fixed_drops": [{ "item_id": "bomb", "item_category": "block", "amount": 1 }, { "item_id": "gem", "item_category": "currency", "amount_range": [1, 7] }, { "item_id": "bomb_seed", "item_category": "seed", "amount": 1, "chance": 0.2 }] }, "tree_drop_rules": { "seed_chance": 0, "gem_range": [0, 0], "fixed_drops": [{ "item_id": "bomb", "item_category": "block", "amount_range": [2, 5] }, { "item_id": "bomb_seed", "item_category": "seed", "amount_range": [0, 3] }, { "item_id": "gem", "item_category": "currency", "amount_range": [0, 5] }] } }, "duck": { "seed": "duck_seed", "authored_drop_rules": true, "drop_rules": { "seed_chance": 0, "gem_range": [0, 0], "fixed_drops": [{ "item_id": "duck", "item_category": "block", "amount": 1 }, { "item_id": "duck_seed", "item_category": "seed", "amount": 1, "chance": 0.2 }, { "item_id": "gem", "item_category": "currency", "amount_range": [0, 3] }] }, "tree_drop_rules": { "seed_chance": 0, "gem_range": [0, 0], "fixed_drops": [{ "item_id": "duck", "item_category": "block", "amount_range": [2, 5] }, { "item_id": "duck_seed", "item_category": "seed", "amount_range": [0, 3] }, { "item_id": "gem", "item_category": "currency", "amount_range": [0, 5] }] } }, "fire_escape": { "seed": "fire_escape_seed", "authored_drop_rules": true, "drop_rules": { "seed_chance": 0, "gem_range": [0, 0], "fixed_drops": [{ "item_id": "fire_escape", "item_category": "block", "amount": 1 }, { "item_id": "fire_escape_seed", "item_category": "seed", "amount": 1, "chance": 0.2 }, { "item_id": "gem", "item_category": "currency", "amount_range": [0, 3] }] }, "tree_drop_rules": { "seed_chance": 0, "gem_range": [0, 0], "fixed_drops": [{ "item_id": "fire_escape", "item_category": "block", "amount_range": [2, 5] }, { "item_id": "fire_escape_seed", "item_category": "seed", "amount_range": [0, 3] }, { "item_id": "gem", "item_category": "currency", "amount_range": [0, 5] }] } }, "fire_hydrant": { "seed": "fire_hydrant_seed", "authored_drop_rules": true, "drop_rules": { "seed_chance": 0, "gem_range": [0, 0], "fixed_drops": [{ "item_id": "fire_hydrant", "item_category": "block", "amount": 1 }, { "item_id": "fire_hydrant_seed", "item_category": "seed", "amount": 1, "chance": 0.2 }, { "item_id": "gem", "item_category": "currency", "amount_range": [0, 3] }] }, "tree_drop_rules": { "seed_chance": 0, "gem_range": [0, 0], "fixed_drops": [{ "item_id": "fire_hydrant", "item_category": "block", "amount_range": [2, 5] }, { "item_id": "fire_hydrant_seed", "item_category": "seed", "amount_range": [0, 3] }, { "item_id": "gem", "item_category": "currency", "amount_range": [0, 5] }] } } })) {
+    if (!ITEM_DEFINITIONS[id])
+        ITEM_DEFINITIONS[id] = block({ ...buildAtlasItemDefinition(id, { block, cleanItemId, displayNameForItemId }) });
+    Object.assign(ITEM_DEFINITIONS[id], update);
+}
 ensureSeedDefinitionsFromBlocks(ITEM_DEFINITIONS);
 for (const [itemId, update] of Object.entries(ATLAS_ITEM_UPDATES)) {
     const seedId = String(update.seed || "");
@@ -5271,6 +5277,11 @@ for (const [itemId, update] of Object.entries(ATLAS_ITEM_UPDATES)) {
     }
 }
 const RECIPE_TIERS = Object.freeze({
+    "fire_hydrant_seed": 9,
+    "fire_escape_seed": 9,
+    "duck_seed": 9,
+    "bomb_seed": 9,
+    "cow_seed": 8,
     "checkpoint_seed": 8,
     "chicken_seed": 7,
     "star_block_seed": 7,
@@ -5736,6 +5747,11 @@ const STATION_RECIPES = Object.freeze({
     ]),
 });
 const SPLICE_RECIPES = Object.freeze({
+    "red_block_seed+rubber_duck_seed": "fire_hydrant_seed",
+    "steel_platform_seed+street_lamp_seed": "fire_escape_seed",
+    "rubber_duck_seed+sashimi_table_seed": "duck_seed",
+    "big_spike_seed+hazard_sign_seed": "bomb_seed",
+    "chicken_seed+water_well_seed": "cow_seed",
     "ceiling_lamp_seed+street_sign_seed": "street_lamp_seed",
     "biohazard_barrel_seed+steel_sign_seed": "hazard_sign_seed",
     "chicken_seed+slime_seed": "rubber_duck_seed",
