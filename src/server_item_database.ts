@@ -5342,6 +5342,11 @@ for (const [id, update] of Object.entries({"cow":{"seed":"cow_seed","authored_dr
   if (!ITEM_DEFINITIONS[id]) ITEM_DEFINITIONS[id] = block({...buildAtlasItemDefinition(id, {block, cleanItemId, displayNameForItemId})});
   Object.assign(ITEM_DEFINITIONS[id], update);
 }
+// Spreadsheet recipes require seeds for these existing placeable items.
+for (const [id, update] of Object.entries({"dice_block":{"seed":"dice_block_seed","authored_drop_rules":true,"drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"dice_block","item_category":"block","amount":1},{"item_id":"gem","item_category":"currency","amount_range":[1,7]},{"item_id":"dice_block_seed","item_category":"seed","amount":1,"chance":0.2}]},"tree_drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"dice_block","item_category":"block","amount_range":[2,5]},{"item_id":"dice_block_seed","item_category":"seed","amount_range":[0,3]},{"item_id":"gem","item_category":"currency","amount_range":[0,5]}]}},"blue_portal":{"seed":"blue_portal_seed","authored_drop_rules":true,"drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"blue_portal","item_category":"block","amount":1},{"item_id":"gem","item_category":"currency","amount_range":[1,7]},{"item_id":"blue_portal_seed","item_category":"seed","amount":1,"chance":0.2}]},"tree_drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"blue_portal","item_category":"block","amount_range":[2,5]},{"item_id":"blue_portal_seed","item_category":"seed","amount_range":[0,3]},{"item_id":"gem","item_category":"currency","amount_range":[0,5]}]}},"password_door":{"seed":"password_door_seed","authored_drop_rules":true,"drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"password_door","item_category":"block","amount":1},{"item_id":"gem","item_category":"currency","amount_range":[1,7]},{"item_id":"password_door_seed","item_category":"seed","amount":1,"chance":0.2}]},"tree_drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[{"item_id":"password_door","item_category":"block","amount_range":[2,5]},{"item_id":"password_door_seed","item_category":"seed","amount_range":[0,3]},{"item_id":"gem","item_category":"currency","amount_range":[0,5]}]}}})) {
+  if (!ITEM_DEFINITIONS[id]) ITEM_DEFINITIONS[id] = block({...buildAtlasItemDefinition(id, {block, cleanItemId, displayNameForItemId})});
+  Object.assign(ITEM_DEFINITIONS[id], update);
+}
 ensureSeedDefinitionsFromBlocks(ITEM_DEFINITIONS);
 for (const [itemId, update] of Object.entries(ATLAS_ITEM_UPDATES)) {
   const seedId = String(update.seed || "");
@@ -5353,6 +5358,9 @@ for (const [itemId, update] of Object.entries(ATLAS_ITEM_UPDATES)) {
 
 
 const RECIPE_TIERS: Readonly<Record<string, number>> = Object.freeze({
+"password_door_seed": 11,
+"blue_portal_seed": 11,
+"dice_block_seed": 10,
 "fire_hydrant_seed": 9,
 "fire_escape_seed": 9,
 "duck_seed": 9,
@@ -5824,6 +5832,9 @@ const STATION_RECIPES: Readonly<Record<string, ReadonlyArray<StationRecipe>>> = 
 });
 
 const SPLICE_RECIPES: Readonly<Record<string, string>> = Object.freeze({
+"dice_block_seed+royal_door_seed": "password_door_seed",
+"blue_block_seed+chandelier_seed": "blue_portal_seed",
+"bomb_seed+white_block_seed": "dice_block_seed",
 "red_block_seed+rubber_duck_seed": "fire_hydrant_seed",
 "steel_platform_seed+street_lamp_seed": "fire_escape_seed",
 "rubber_duck_seed+sashimi_table_seed": "duck_seed",
