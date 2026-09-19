@@ -7,7 +7,7 @@
  *
  * A rejected action only reaches the transaction ledger through one path:
  *
- *   sendActionRejected(socket, action, ...)   <- 278 literal call sites in server.js
+ *   sendActionRejected(socket, action, ...)   <- 281 literal call sites in server.js
  *     -> queueFailedTransactionLedger(socket, action, ...)   <- its only caller
  *          -> returns early unless shouldRecordFailedTransactionLedgerAction(action)
  *          -> otherwise recordTransactionLedgerEvent({ status: "failed", ... })
@@ -108,7 +108,9 @@ const DYNAMIC_FALLBACKS = ["request"];
  * looked at by a human instead of quietly widening the blind spot.
  */
 // Two stale-link rejection paths were added for refinery/charger disconnects.
-const EXPECTED_LITERAL_SITES = 280;
+// The foreground seed guard adds one world_block_update rejection. That action
+// already belongs to AUDITED, so rejecting the generic block bypass is logged.
+const EXPECTED_LITERAL_SITES = 281;
 // Re-pinned from 10 -> 9 after tracing every current dynamic call site (2026-08-09): all
 // nine pass an `action`-shaped variable through unchanged --
 // `cleanRouteType || "request"` / `type || "request"` (both already covered by
