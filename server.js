@@ -33,6 +33,7 @@ const ServerAdminLookupRoutesModule = require("./server_admin_lookup_routes");
 const ServerFriendRoutesModule = require("./server_friend_routes");
 const ServerTradeRoutesModule = require("./server_trade_routes");
 const ServerInventoryEconomyRoutesModule = require("./server_inventory_economy_routes");
+const ServerQuestStore = require("./server_quest_store");
 const ServerCalendarEventsModule = require("./server_calendar_events");
 const ServerLandfillEventModule = require("./server_landfill_event");
 const ServerPhase11aRuntimeModule = require("./server_phase11a_runtime");
@@ -5558,7 +5559,69 @@ async function executeTrade(trade) {
     }
 }
 async function handleInventoryTransactionRequest(socket, player, data) {
+    if (String(data.action || "").startsWith("quest_")) {
+        return await handleQuestRequest(socket, player, data);
+    }
     return await getServerInventoryEconomyRoutes().handleInventoryTransactionRequest(socket, player, data);
+}
+async function handleQuestRequest(socket, player, data) {
+    if (!requireAuthenticated(socket, player, "use the Quest Board"))
+        return;
+    const requestId = makeRequestId(data);
+    const worldName = cleanWorld(player.world || "");
+    if (!worldName || cleanWorld(data.world || worldName) !== worldName) {
+        sendInventoryTransactionRejected(socket, data, "Open a Quest Board in your current world.");
+        return;
+    }
+    if (await rejectIfWorldBanned(socket, player, worldName, "quest_board"))
+        return;
+    const needsBoard = ["quest_board_get", "quest_accept", "quest_refresh", "quest_redeem"].includes(String(data.action));
+    const validBoard = () => {
+        const grid = getTransactionGrid(data);
+        if (!grid || !isPlayerNearGrid(player, grid.x, grid.y))
+            return false;
+        return ensureWorldState(worldName).foreground.get(gridKey(grid.x, grid.y))?.block_type === "quest_board";
+    };
+    if (needsBoard && !validBoard()) {
+        sendInventoryTransactionRejected(socket, data, "Move closer to a Quest Board to read its letters.");
+        return;
+    }
+    const locks = await acquirePlayerInventoryLocks([player.account_username], `quest:${requestId}`);
+    if (!locks.acquired) {
+        sendInventoryTransactionRejected(socket, data, "Your inventory is busy. Please try again.");
+        return;
+    }
+    try {
+        // Flush pending snapshots before the canonical gem change, then revalidate
+        // mutable session/world access after that await.
+        const flush = await flushPendingSessionPersistence(player.account_username, "", "before_quest");
+        if (!flush.ok || player.world !== worldName || (needsBoard && !validBoard())) {
+            sendInventoryTransactionRejected(socket, data, "The board or session changed. Please open it again.");
+            return;
+        }
+        const result = await ServerQuestStore.apply(postgresStore, {
+            username: player.account_username, world: worldName, action: String(data.action),
+            request_id: requestId, payload: data, ip_address: getSocketAddress(socket), user_agent: String(socket?.userAgent || ""),
+        });
+        if (!result.ok && ["quest_choose", "quest_redeem"].includes(String(data.action))) {
+            queueFailedTransactionLedger(socket, "inventory_transaction_request", result.message, {
+                request_id: requestId, world: worldName, quest_action: data.action,
+            });
+        }
+        let statePayload = {};
+        if (result.ok && result.gems !== null && result.gems !== undefined) {
+            const refreshed = await refreshPlayerStateFromPostgres(player.account_username, "quest_reward");
+            if (refreshed.ok && refreshed.state)
+                statePayload = { player_data: buildPlayerStateForClient(refreshed.state) };
+        }
+        sendInventoryTransactionResult(socket, { ...statePayload, ok: result.ok,
+            request_id: requestId, action: data.action, message: result.message,
+            quest_board: result.board || null, quest_receipts: result.receipts || [],
+        });
+    }
+    finally {
+        releasePlayerInventoryLocks(locks);
+    }
 }
 async function handleInventoryUpgradePurchase(socket, player, data = {}) {
     return await getServerInventoryEconomyRoutes().handleInventoryUpgradePurchase(socket, player, data);

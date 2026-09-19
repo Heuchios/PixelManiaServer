@@ -113,7 +113,25 @@ const PROJECTS = {
     outDir: ".tsbuild",
     localOptions: {"allowJs":false},
     references: [],
-    inlineDependencies: ["drop-contracts", "inventory-contracts", "postgres-contracts", "item-data"],
+    inlineDependencies: ["drop-contracts", "inventory-contracts", "postgres-contracts", "item-data", "quests"],
+  },
+  "quests": {
+    include: ["src/server_quest_engine.ts", "src/server_quest_store.ts"],
+    outDir: ".tsbuild/quests",
+    localOptions: {noEmitOnError:true},
+    references: [],
+  },
+  "server-calendar-events": {
+    include: ["src/server_calendar_events.ts"],
+    outDir: ".tsbuild",
+    localOptions: {},
+    references: [],
+  },
+  "server-landfill-event": {
+    include: ["src/server_landfill_event.ts"],
+    outDir: ".tsbuild",
+    localOptions: {},
+    references: [],
   },
   "redis-store": {
     include: ["src/redis_store.ts"],

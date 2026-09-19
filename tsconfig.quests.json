@@ -1,0 +1,6 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {"noEmit": false, "outDir": ".tsbuild/quests", "rootDir": "src", "noEmitOnError": true},
+  "include": ["src/server_quest_engine.ts", "src/server_quest_store.ts"],
+  "exclude": []
+}

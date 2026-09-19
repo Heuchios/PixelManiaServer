@@ -1,0 +1,4425 @@
+{
+  "version": 1,
+  "quests": [
+    {
+      "id": "C01",
+      "tier": "favor",
+      "family": "letters",
+      "npc": "Pip",
+      "title": "The Backward Postmark",
+      "opening": "The stamp says tomorrow. The complaint says yesterday. I would like to blame the clock, but the clock has requested a lawyer.",
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "minutes": [
+        4,
+        7
+      ],
+      "steps": [
+        "Inspect all three postcard fronts and their stamped clues.",
+        "Order the cards from earliest to latest using the visible cause-and-effect clues.",
+        "Choose which note Pip attaches to the corrected parcel."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "A polite correction",
+          "reply": "Pip files the correction under Minor Chronological Disasters. The envelope finally stops ticking."
+        },
+        {
+          "id": "b",
+          "label": "An extremely official doodle",
+          "reply": "Pip draws a clock wearing a hat. The envelope approves by turning the right way up."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "An unlit lantern: the delivery has not begun.",
+            "The lantern is lighting: the courier has arrived.",
+            "A lit lantern: the parcel has been delivered."
+          ],
+          "hint": "Start before the light is lit, then the lighting, then the finished light.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "The stamp says tomorrow. The complaint says yesterday. I would like to blame the clock, but the clock has requested a lawyer.",
+            "An unlit lantern: the delivery has not begun.",
+            "The lantern is lighting: the courier has arrived.",
+            "A lit lantern: the parcel has been delivered."
+          ]
+        },
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "An unlit lantern: the delivery has not begun.",
+            "The lantern is lighting: the courier has arrived.",
+            "A lit lantern: the parcel has been delivered."
+          ],
+          "hint": "Start before the light is lit, then the lighting, then the finished light.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            2,
+            0,
+            1
+          ],
+          "clues": [
+            "The stamp says tomorrow. The complaint says yesterday. I would like to blame the clock, but the clock has requested a lawyer.",
+            "An unlit lantern: the delivery has not begun.",
+            "The lantern is lighting: the courier has arrived.",
+            "A lit lantern: the parcel has been delivered."
+          ]
+        },
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "An unlit lantern: the delivery has not begun.",
+            "The lantern is lighting: the courier has arrived.",
+            "A lit lantern: the parcel has been delivered."
+          ],
+          "hint": "Start before the light is lit, then the lighting, then the finished light.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            0,
+            1,
+            2
+          ],
+          "clues": [
+            "The stamp says tomorrow. The complaint says yesterday. I would like to blame the clock, but the clock has requested a lawyer.",
+            "An unlit lantern: the delivery has not begun.",
+            "The lantern is lighting: the courier has arrived.",
+            "A lit lantern: the parcel has been delivered."
+          ]
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C02",
+      "tier": "favor",
+      "family": "letters",
+      "npc": "Mica",
+      "title": "The Borrowed Ending",
+      "opening": "Someone returned this story without its ending. I suspect they wanted it to go on longer. We can give it a gentle place to stop.",
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "minutes": [
+        4,
+        7
+      ],
+      "steps": [
+        "Read three illustrated story strips at the desk.",
+        "Match each loose final word to its picture clue.",
+        "Choose a hopeful or funny final sentence from two valid endings."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "A hopeful ending",
+          "reply": "Mica closes the book softly. The blank space becomes a small drawing of a door."
+        },
+        {
+          "id": "b",
+          "label": "A ridiculous ending",
+          "reply": "The hero is rescued by a very punctual spoon. Mica admits this improves the original."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "The kite found a roof.",
+            "The sailor reached shore.",
+            "The boot found its partner."
+          ],
+          "slots": [
+            "A lost kite",
+            "A teacup sailor",
+            "A lonely boot"
+          ],
+          "hint": "Look for the object named in each ending.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "Someone returned this story without its ending. I suspect they wanted it to go on longer. We can give it a gentle place to stop.",
+            "The kite found a roof.",
+            "The sailor reached shore.",
+            "The boot found its partner."
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "The kite found a roof.",
+            "The sailor reached shore.",
+            "The boot found its partner."
+          ],
+          "slots": [
+            "A lost kite",
+            "A teacup sailor",
+            "A lonely boot"
+          ],
+          "hint": "Look for the object named in each ending.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            2,
+            0,
+            1
+          ],
+          "clues": [
+            "Someone returned this story without its ending. I suspect they wanted it to go on longer. We can give it a gentle place to stop.",
+            "The kite found a roof.",
+            "The sailor reached shore.",
+            "The boot found its partner."
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "The kite found a roof.",
+            "The sailor reached shore.",
+            "The boot found its partner."
+          ],
+          "slots": [
+            "A lost kite",
+            "A teacup sailor",
+            "A lonely boot"
+          ],
+          "hint": "Look for the object named in each ending.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            0,
+            1,
+            2
+          ],
+          "clues": [
+            "Someone returned this story without its ending. I suspect they wanted it to go on longer. We can give it a gentle place to stop.",
+            "The kite found a roof.",
+            "The sailor reached shore.",
+            "The boot found its partner."
+          ]
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C03",
+      "tier": "trip",
+      "family": "letters",
+      "npc": "Pip",
+      "title": "Address: A Little Less Lonely",
+      "opening": "Three parcels have arrived for people who forgot they were expecting anything. The addresses are feelings, which is inconvenient for sorting.",
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "minutes": [
+        8,
+        12
+      ],
+      "steps": [
+        "Inspect three recipient cards with explicit object preferences.",
+        "Route three supplied parcels using the shared clues; one parcel has two narratively valid recipients.",
+        "Choose the final recipient and read the resulting thank-you."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Send the spare lantern to Rue",
+          "reply": "Rue leaves the lantern by an empty chair. The return note says: Saved you a place."
+        },
+        {
+          "id": "b",
+          "label": "Send the spare lantern to Nell",
+          "reply": "Nell hangs it where the reeds hide the path. The return note says: The river says thanks."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Seed labels",
+            "Measuring tape",
+            "Reed whistle"
+          ],
+          "slots": [
+            "Tansy grows things.",
+            "Rue checks dimensions.",
+            "Nell listens beside the river."
+          ],
+          "hint": "Match each parcel to the activity in the recipient clue.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "Three parcels have arrived for people who forgot they were expecting anything. The addresses are feelings, which is inconvenient for sorting.",
+            "Seed labels",
+            "Measuring tape",
+            "Reed whistle"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Seed labels",
+            "Measuring tape",
+            "Reed whistle"
+          ],
+          "slots": [
+            "Tansy grows things.",
+            "Rue checks dimensions.",
+            "Nell listens beside the river."
+          ],
+          "hint": "Match each parcel to the activity in the recipient clue.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            2,
+            0,
+            1
+          ],
+          "clues": [
+            "Three parcels have arrived for people who forgot they were expecting anything. The addresses are feelings, which is inconvenient for sorting.",
+            "Seed labels",
+            "Measuring tape",
+            "Reed whistle"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Seed labels",
+            "Measuring tape",
+            "Reed whistle"
+          ],
+          "slots": [
+            "Tansy grows things.",
+            "Rue checks dimensions.",
+            "Nell listens beside the river."
+          ],
+          "hint": "Match each parcel to the activity in the recipient clue.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            0,
+            1,
+            2
+          ],
+          "clues": [
+            "Three parcels have arrived for people who forgot they were expecting anything. The addresses are feelings, which is inconvenient for sorting.",
+            "Seed labels",
+            "Measuring tape",
+            "Reed whistle"
+          ]
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C04",
+      "tier": "trip",
+      "family": "letters",
+      "npc": "Mica",
+      "title": "The Page That Would Not Sit Still",
+      "opening": "This page keeps moving to the next shelf. It is not haunted. It is merely filed under a subject it disagrees with.",
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "minutes": [
+        8,
+        12
+      ],
+      "steps": [
+        "Inspect four shelf symbols and the moving page description.",
+        "Place three index tabs to form a valid path to the matching shelf.",
+        "Give the page a formal title or the title it suggests."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "A Very Small Adventure",
+          "reply": "The page settles down. Mica quietly adds a second entry under Surprisingly Stubborn Stationery."
+        },
+        {
+          "id": "b",
+          "label": "The Page That Won",
+          "reply": "The page bows. Mica gives it a shelf with enough room for its confidence."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Weather shelf: the page describes rain.",
+            "Water index: rain is water from the sky.",
+            "Rain section: file the page here."
+          ],
+          "hint": "Begin with the broad subject, then the material, then the specific subject.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "This page keeps moving to the next shelf. It is not haunted. It is merely filed under a subject it disagrees with.",
+            "Weather shelf: the page describes rain.",
+            "Water index: rain is water from the sky.",
+            "Rain section: file the page here."
+          ]
+        },
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Weather shelf: the page describes rain.",
+            "Water index: rain is water from the sky.",
+            "Rain section: file the page here."
+          ],
+          "hint": "Begin with the broad subject, then the material, then the specific subject.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            2,
+            0,
+            1
+          ],
+          "clues": [
+            "This page keeps moving to the next shelf. It is not haunted. It is merely filed under a subject it disagrees with.",
+            "Weather shelf: the page describes rain.",
+            "Water index: rain is water from the sky.",
+            "Rain section: file the page here."
+          ]
+        },
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Weather shelf: the page describes rain.",
+            "Water index: rain is water from the sky.",
+            "Rain section: file the page here."
+          ],
+          "hint": "Begin with the broad subject, then the material, then the specific subject.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            0,
+            1,
+            2
+          ],
+          "clues": [
+            "This page keeps moving to the next shelf. It is not haunted. It is merely filed under a subject it disagrees with.",
+            "Weather shelf: the page describes rain.",
+            "Water index: rain is water from the sky.",
+            "Rain section: file the page here."
+          ]
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C05",
+      "tier": "favor",
+      "family": "building",
+      "npc": "Rue",
+      "title": "A Window for the Wind",
+      "opening": "There is a breeze that keeps knocking at my door. I think it wants to visit. Could we make somewhere it can come and go politely?",
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "minutes": [
+        4,
+        7
+      ],
+      "steps": [
+        "Place four supplied wall/roof tiles on the small mat.",
+        "Leave the marked entry and one window cell open; press Check.",
+        "Choose a high window or a low window from the two valid layouts."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "A high window",
+          "reply": "The breeze whistles through the roofline. Rue calls it a skylight with opinions."
+        },
+        {
+          "id": "b",
+          "label": "A low window",
+          "reply": "The breeze settles near the floor. Rue sets out a very small welcome mat."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "build",
+          "prompt": "Build a tiny roof: B2, C2, D2. Add one wall at B3. Leave C3 and C4 open.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            6,
+            7,
+            8,
+            11
+          ],
+          "hint": "Fill B2, C2, D2 and B3 only.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Fill B2, C2, D2 and B3 only.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        },
+        {
+          "kind": "build",
+          "prompt": "A Window for the Wind: assemble the alternate layout at D2, C2, B2, D3. Leave other squares clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            8,
+            7,
+            6,
+            13
+          ],
+          "hint": "Place only D2, C2, B2, D3.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Place only D2, C2, B2, D3.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        },
+        {
+          "kind": "build",
+          "prompt": "A Window for the Wind: assemble the alternate layout at B4, C4, D4, B3. Leave other squares clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            16,
+            17,
+            18,
+            11
+          ],
+          "hint": "Place only B4, C4, D4, B3.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Place only B4, C4, D4, B3.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C06",
+      "tier": "favor",
+      "family": "building",
+      "npc": "Rue",
+      "title": "One Chair Too Many",
+      "opening": "The room is finished. The problem is that nobody has sat down in it yet. A room can be shy too, apparently.",
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "minutes": [
+        4,
+        7
+      ],
+      "steps": [
+        "Place a supplied table and two chairs on a six-cell mat.",
+        "Keep the marked path to the door clear.",
+        "Dedicate the spare chair to a newcomer or an old friend."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "For someone new",
+          "reply": "Rue turns the spare chair toward the door. That should make the first hello easier."
+        },
+        {
+          "id": "b",
+          "label": "For an old friend",
+          "reply": "Rue leaves the chair just a little crooked. Old friends will recognize the place."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "build",
+          "prompt": "Place two chairs at B3 and D3 and a table at C3. Keep the lower doorway clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            11,
+            12,
+            13
+          ],
+          "hint": "Fill B3, C3 and D3 only.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Fill B3, C3 and D3 only.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        },
+        {
+          "kind": "build",
+          "prompt": "One Chair Too Many: assemble the alternate layout at D3, C3, B3. Leave other squares clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            13,
+            12,
+            11
+          ],
+          "hint": "Place only D3, C3, B3.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Place only D3, C3, B3.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        },
+        {
+          "kind": "build",
+          "prompt": "One Chair Too Many: assemble the alternate layout at B3, C3, D3. Leave other squares clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            11,
+            12,
+            13
+          ],
+          "hint": "Place only B3, C3, D3.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Place only B3, C3, D3.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C07",
+      "tier": "trip",
+      "family": "building",
+      "npc": "Rue",
+      "title": "The Smallest Festival",
+      "opening": "We have one table, six decorations, and an unreasonable amount of hope. That is enough for a festival if we arrange it correctly.",
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "minutes": [
+        8,
+        12
+      ],
+      "steps": [
+        "Assemble a six-piece stall with supplied structural tiles.",
+        "Connect its marked entrance to the table and shelter cells.",
+        "Choose paper stars or bunting, then submit the finished snapshot."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Paper stars",
+          "reply": "Rue declares it a festival. Pip arrives wearing a star that was meant for the roof."
+        },
+        {
+          "id": "b",
+          "label": "Bright bunting",
+          "reply": "The bunting flutters. Nell asks whether the festival has a fishing category."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "build",
+          "prompt": "Build a festival corner: roof A2–C2, supports A3/C3, table C4. Keep B3/B4 clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            5,
+            6,
+            7,
+            10,
+            12,
+            17
+          ],
+          "hint": "Fill A2, B2, C2, A3, C3 and C4 only.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Fill A2, B2, C2, A3, C3 and C4 only.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        },
+        {
+          "kind": "build",
+          "prompt": "The Smallest Festival: assemble the alternate layout at E2, D2, C2, E3, C3, C4. Leave other squares clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            9,
+            8,
+            7,
+            14,
+            12,
+            17
+          ],
+          "hint": "Place only E2, D2, C2, E3, C3, C4.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Place only E2, D2, C2, E3, C3, C4.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        },
+        {
+          "kind": "build",
+          "prompt": "The Smallest Festival: assemble the alternate layout at A4, B4, C4, A3, C3, C2. Leave other squares clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            15,
+            16,
+            17,
+            10,
+            12,
+            7
+          ],
+          "hint": "Place only A4, B4, C4, A3, C3, C2.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Place only A4, B4, C4, A3, C3, C2.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C08",
+      "tier": "trip",
+      "family": "building",
+      "npc": "Bolt",
+      "title": "A Bridge for a Very Small Problem",
+      "opening": "My parcel cart cannot cross this gap. The gap is not large, but the cart has written a surprisingly long complaint.",
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "minutes": [
+        8,
+        12
+      ],
+      "steps": [
+        "Inspect the cart route and two safe support clues.",
+        "Use six supplied pieces to connect start and destination on the work mat.",
+        "Select a sturdy-looking or cheerful-looking finish, then run the symbolic cart check."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Make it sturdy",
+          "reply": "The cart crosses and files a brief thank-you. Bolt is delighted by the reduction in paperwork."
+        },
+        {
+          "id": "b",
+          "label": "Make it cheerful",
+          "reply": "The cart crosses under paper flags. Its complaint has become a parade route."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "build",
+          "prompt": "Bridge row 3 from A to E; add a support at C4. Keep the rest clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            17
+          ],
+          "hint": "Fill A3, B3, C3, D3, E3 and C4.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Fill A3, B3, C3, D3, E3 and C4.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        },
+        {
+          "kind": "build",
+          "prompt": "A Bridge for a Very Small Problem: assemble the alternate layout at E3, D3, C3, B3, A3, C4. Leave other squares clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            14,
+            13,
+            12,
+            11,
+            10,
+            17
+          ],
+          "hint": "Place only E3, D3, C3, B3, A3, C4.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Place only E3, D3, C3, B3, A3, C4.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        },
+        {
+          "kind": "build",
+          "prompt": "A Bridge for a Very Small Problem: assemble the alternate layout at A3, B3, C3, D3, E3, C2. Leave other squares clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            10,
+            11,
+            12,
+            13,
+            14,
+            7
+          ],
+          "hint": "Place only A3, B3, C3, D3, E3, C2.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Place only A3, B3, C3, D3, E3, C2.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C09",
+      "tier": "favor",
+      "family": "garden",
+      "npc": "Tansy",
+      "title": "The Shy Seed",
+      "opening": "This seed grows whenever nobody calls it impressive. Let us try being quietly encouraging and see what happens.",
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "minutes": [
+        4,
+        7
+      ],
+      "steps": [
+        "Inspect the seed packet and two soil clues.",
+        "Match the seed token to the correct practice planter; observe its guaranteed short reveal.",
+        "Choose a gentle label for the sprout."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "A good beginning",
+          "reply": "The sprout unfolds one brave leaf. Tansy writes down: Encouragement, moderate volume."
+        },
+        {
+          "id": "b",
+          "label": "Take your time",
+          "reply": "The sprout leans against its label. Tansy decides patience is a perfectly good fertilizer."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Round seed",
+            "Striped seed",
+            "Heart seed"
+          ],
+          "slots": [
+            "Circle-marked dry planter",
+            "Stripe-marked cool planter",
+            "Heart-marked sheltered planter"
+          ],
+          "hint": "The symbols on seed and planter match; color is not needed.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "This seed grows whenever nobody calls it impressive. Let us try being quietly encouraging and see what happens.",
+            "Round seed",
+            "Striped seed",
+            "Heart seed"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Round seed",
+            "Striped seed",
+            "Heart seed"
+          ],
+          "slots": [
+            "Circle-marked dry planter",
+            "Stripe-marked cool planter",
+            "Heart-marked sheltered planter"
+          ],
+          "hint": "The symbols on seed and planter match; color is not needed.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            2,
+            0,
+            1
+          ],
+          "clues": [
+            "This seed grows whenever nobody calls it impressive. Let us try being quietly encouraging and see what happens.",
+            "Round seed",
+            "Striped seed",
+            "Heart seed"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Round seed",
+            "Striped seed",
+            "Heart seed"
+          ],
+          "slots": [
+            "Circle-marked dry planter",
+            "Stripe-marked cool planter",
+            "Heart-marked sheltered planter"
+          ],
+          "hint": "The symbols on seed and planter match; color is not needed.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            0,
+            1,
+            2
+          ],
+          "clues": [
+            "This seed grows whenever nobody calls it impressive. Let us try being quietly encouraging and see what happens.",
+            "Round seed",
+            "Striped seed",
+            "Heart seed"
+          ]
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C10",
+      "tier": "favor",
+      "family": "garden",
+      "npc": "Tansy",
+      "title": "The Label Mix-Up",
+      "opening": "The labels have become detached from the plants. One pot now claims to contain a small thunderstorm. I would rather check before watering it.",
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "minutes": [
+        4,
+        7
+      ],
+      "steps": [
+        "Compare three supplied plant cards with their visible traits.",
+        "Match the three labels without needing plant-name knowledge.",
+        "Choose which mislabeled nickname Tansy keeps as a joke."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Small thunderstorm",
+          "reply": "The thunderstorm is a fern. It accepts its promotion with dignity."
+        },
+        {
+          "id": "b",
+          "label": "Extremely leafy fish",
+          "reply": "The leafy fish remains firmly planted. Nell requests a second opinion."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Round leaves",
+            "Pointed leaves",
+            "Split leaves"
+          ],
+          "slots": [
+            "Round label",
+            "Pointed label",
+            "Split label"
+          ],
+          "hint": "Each label describes the visible leaf shape.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "The labels have become detached from the plants. One pot now claims to contain a small thunderstorm. I would rather check before watering it.",
+            "Round leaves",
+            "Pointed leaves",
+            "Split leaves"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Round leaves",
+            "Pointed leaves",
+            "Split leaves"
+          ],
+          "slots": [
+            "Round label",
+            "Pointed label",
+            "Split label"
+          ],
+          "hint": "Each label describes the visible leaf shape.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            2,
+            0,
+            1
+          ],
+          "clues": [
+            "The labels have become detached from the plants. One pot now claims to contain a small thunderstorm. I would rather check before watering it.",
+            "Round leaves",
+            "Pointed leaves",
+            "Split leaves"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Round leaves",
+            "Pointed leaves",
+            "Split leaves"
+          ],
+          "slots": [
+            "Round label",
+            "Pointed label",
+            "Split label"
+          ],
+          "hint": "Each label describes the visible leaf shape.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            0,
+            1,
+            2
+          ],
+          "clues": [
+            "The labels have become detached from the plants. One pot now claims to contain a small thunderstorm. I would rather check before watering it.",
+            "Round leaves",
+            "Pointed leaves",
+            "Split leaves"
+          ]
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C11",
+      "tier": "trip",
+      "family": "garden",
+      "npc": "Tansy",
+      "title": "A Cloud in a Jam Jar",
+      "opening": "The cloud agreed to water the garden, but it can only turn left. Please do not ask how it got into the jar. That was a separate mistake.",
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "minutes": [
+        8,
+        12
+      ],
+      "steps": [
+        "Read three planter markers and the cloud movement rule.",
+        "Arrange four supplied channel tiles so every marked planter receives a path.",
+        "Choose to release the cloud or give it a garden name."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Let it wander",
+          "reply": "The cloud leaves one last careful raindrop. Tansy waves until it becomes ordinary weather."
+        },
+        {
+          "id": "b",
+          "label": "Invite it to stay",
+          "reply": "The cloud accepts the name Drizzle. The jam jar is officially retired."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "build",
+          "prompt": "Connect the cloud at B2 to the planter at C4 using B2, C2, C3, C4.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            6,
+            7,
+            12,
+            17
+          ],
+          "hint": "The channel runs right once and then down twice.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "The channel runs right once and then down twice.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        },
+        {
+          "kind": "build",
+          "prompt": "A Cloud in a Jam Jar: assemble the alternate layout at D2, C2, C3, C4. Leave other squares clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            8,
+            7,
+            12,
+            17
+          ],
+          "hint": "Place only D2, C2, C3, C4.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Place only D2, C2, C3, C4.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        },
+        {
+          "kind": "build",
+          "prompt": "A Cloud in a Jam Jar: assemble the alternate layout at B4, C4, C3, C2. Leave other squares clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            16,
+            17,
+            12,
+            7
+          ],
+          "hint": "Place only B4, C4, C3, C2.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Place only B4, C4, C3, C2.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C12",
+      "tier": "trip",
+      "family": "garden",
+      "npc": "Mica",
+      "title": "A Recipe With Room for Surprise",
+      "opening": "The margin of this gardening notebook says: Add what you know, then leave room for what you do not. The recipe appears to mean it.",
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "minutes": [
+        8,
+        12
+      ],
+      "steps": [
+        "Compare two seed-token traits and choose the combination matching the notebook clue.",
+        "Complete the deterministic practice splice, or one verified eligible real splice; inspect the resulting pattern.",
+        "Choose a notebook caption for the unexpected pattern."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "A useful discovery",
+          "reply": "Mica adds a careful diagram. Tansy adds a tiny smile in the corner."
+        },
+        {
+          "id": "b",
+          "label": "A beautiful question",
+          "reply": "Mica leaves the last line blank. For once, nobody tries to repair the blank space."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Round leaves + climbing stem",
+            "Striped leaves + short stem",
+            "Broad leaves + shelter"
+          ],
+          "slots": [
+            "Round climbing silhouette",
+            "Low striped border",
+            "Broad canopy silhouette"
+          ],
+          "hint": "Both traits must match the resulting silhouette.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "The margin of this gardening notebook says: Add what you know, then leave room for what you do not. The recipe appears to mean it.",
+            "Round leaves + climbing stem",
+            "Striped leaves + short stem",
+            "Broad leaves + shelter"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Round leaves + climbing stem",
+            "Striped leaves + short stem",
+            "Broad leaves + shelter"
+          ],
+          "slots": [
+            "Round climbing silhouette",
+            "Low striped border",
+            "Broad canopy silhouette"
+          ],
+          "hint": "Both traits must match the resulting silhouette.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            2,
+            0,
+            1
+          ],
+          "clues": [
+            "The margin of this gardening notebook says: Add what you know, then leave room for what you do not. The recipe appears to mean it.",
+            "Round leaves + climbing stem",
+            "Striped leaves + short stem",
+            "Broad leaves + shelter"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Round leaves + climbing stem",
+            "Striped leaves + short stem",
+            "Broad leaves + shelter"
+          ],
+          "slots": [
+            "Round climbing silhouette",
+            "Low striped border",
+            "Broad canopy silhouette"
+          ],
+          "hint": "Both traits must match the resulting silhouette.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            0,
+            1,
+            2
+          ],
+          "clues": [
+            "The margin of this gardening notebook says: Add what you know, then leave room for what you do not. The recipe appears to mean it.",
+            "Round leaves + climbing stem",
+            "Striped leaves + short stem",
+            "Broad leaves + shelter"
+          ]
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C13",
+      "tier": "favor",
+      "family": "water",
+      "npc": "Nell",
+      "title": "A Difficult Witness",
+      "opening": "A fish says it saw a lantern walking. Fish are not famous for precision. Could you help me separate the lantern from the walking?",
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "minutes": [
+        4,
+        7
+      ],
+      "steps": [
+        "Read three guaranteed fish-witness cards, or obtain their token after one ordinary committed catch.",
+        "Choose which illustrated scene matches all three statements.",
+        "Decide how seriously Nell titles the report."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "An official investigation",
+          "reply": "The lantern was on Pip's satchel. Nell awards the fish partial credit."
+        },
+        {
+          "id": "b",
+          "label": "A fishy business",
+          "reply": "The lantern was on Pip's satchel. Nell awards herself full credit for the pun."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Pip carrying a lantern",
+            "A hat resting on a boat",
+            "A whistle hanging in reeds"
+          ],
+          "slots": [
+            "A walking light with a satchel",
+            "A floating hat without a head",
+            "A singing reed in the wind"
+          ],
+          "hint": "Identify the ordinary object that explains both clues.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "A fish says it saw a lantern walking. Fish are not famous for precision. Could you help me separate the lantern from the walking?",
+            "Pip carrying a lantern",
+            "A hat resting on a boat",
+            "A whistle hanging in reeds"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Pip carrying a lantern",
+            "A hat resting on a boat",
+            "A whistle hanging in reeds"
+          ],
+          "slots": [
+            "A walking light with a satchel",
+            "A floating hat without a head",
+            "A singing reed in the wind"
+          ],
+          "hint": "Identify the ordinary object that explains both clues.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            2,
+            0,
+            1
+          ],
+          "clues": [
+            "A fish says it saw a lantern walking. Fish are not famous for precision. Could you help me separate the lantern from the walking?",
+            "Pip carrying a lantern",
+            "A hat resting on a boat",
+            "A whistle hanging in reeds"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Pip carrying a lantern",
+            "A hat resting on a boat",
+            "A whistle hanging in reeds"
+          ],
+          "slots": [
+            "A walking light with a satchel",
+            "A floating hat without a head",
+            "A singing reed in the wind"
+          ],
+          "hint": "Identify the ordinary object that explains both clues.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            0,
+            1,
+            2
+          ],
+          "clues": [
+            "A fish says it saw a lantern walking. Fish are not famous for precision. Could you help me separate the lantern from the walking?",
+            "Pip carrying a lantern",
+            "A hat resting on a boat",
+            "A whistle hanging in reeds"
+          ]
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C14",
+      "tier": "favor",
+      "family": "water",
+      "npc": "Nell",
+      "title": "The Bottle With No Sea",
+      "opening": "This message traveled six inches and is very proud of itself. I think we should find out what was so urgent.",
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "minutes": [
+        4,
+        7
+      ],
+      "steps": [
+        "Inspect the bottle drawing and three shoreline symbols at the desk.",
+        "Align the symbols to read the short message.",
+        "Choose a reply to its sender."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Your message arrived safely",
+          "reply": "The reply travels six inches back. Somewhere, a very small correspondent is relieved."
+        },
+        {
+          "id": "b",
+          "label": "Next time, try a stamp",
+          "reply": "Pip adds a miniature stamp. Nell insists that the river must still receive a tip."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Reed: begin at the bank.",
+            "Stone: cross the stepping stone.",
+            "Moon: look up at the destination."
+          ],
+          "hint": "The message travels from the bank, across the stone, then looks upward.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "This message traveled six inches and is very proud of itself. I think we should find out what was so urgent.",
+            "Reed: begin at the bank.",
+            "Stone: cross the stepping stone.",
+            "Moon: look up at the destination."
+          ]
+        },
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Reed: begin at the bank.",
+            "Stone: cross the stepping stone.",
+            "Moon: look up at the destination."
+          ],
+          "hint": "The message travels from the bank, across the stone, then looks upward.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            2,
+            0,
+            1
+          ],
+          "clues": [
+            "This message traveled six inches and is very proud of itself. I think we should find out what was so urgent.",
+            "Reed: begin at the bank.",
+            "Stone: cross the stepping stone.",
+            "Moon: look up at the destination."
+          ]
+        },
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Reed: begin at the bank.",
+            "Stone: cross the stepping stone.",
+            "Moon: look up at the destination."
+          ],
+          "hint": "The message travels from the bank, across the stone, then looks upward.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            0,
+            1,
+            2
+          ],
+          "clues": [
+            "This message traveled six inches and is very proud of itself. I think we should find out what was so urgent.",
+            "Reed: begin at the bank.",
+            "Stone: cross the stepping stone.",
+            "Moon: look up at the destination."
+          ]
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C15",
+      "tier": "trip",
+      "family": "water",
+      "npc": "Nell",
+      "title": "Three Fish and a Rumor",
+      "opening": "Three witnesses, three stories, and none of them agree on the size of the hat. We may have to use geography.",
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "minutes": [
+        8,
+        12
+      ],
+      "steps": [
+        "Collect three statement tokens through desk observation stations or three fresh catches of any species.",
+        "Place the three witnesses on a simple bank map according to their relative-position clues.",
+        "Choose the rumor headline, then reveal what actually happened."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "A mysterious visitor",
+          "reply": "The visitor was Pip, investigating the hat from the other side of the river."
+        },
+        {
+          "id": "b",
+          "label": "Pip lost another hat",
+          "reply": "Pip would prefer the word misplaced. The fish remain unconvinced."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Nell beside the bridge",
+            "Pip at the reed bank",
+            "Rue beside the boat"
+          ],
+          "slots": [
+            "The witness next to a crossing",
+            "The witness behind tall grass",
+            "The witness beside an oar"
+          ],
+          "hint": "Bridge means crossing, reeds mean tall grass, and a boat carries an oar.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "Three witnesses, three stories, and none of them agree on the size of the hat. We may have to use geography.",
+            "Nell beside the bridge",
+            "Pip at the reed bank",
+            "Rue beside the boat"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Nell beside the bridge",
+            "Pip at the reed bank",
+            "Rue beside the boat"
+          ],
+          "slots": [
+            "The witness next to a crossing",
+            "The witness behind tall grass",
+            "The witness beside an oar"
+          ],
+          "hint": "Bridge means crossing, reeds mean tall grass, and a boat carries an oar.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            2,
+            0,
+            1
+          ],
+          "clues": [
+            "Three witnesses, three stories, and none of them agree on the size of the hat. We may have to use geography.",
+            "Nell beside the bridge",
+            "Pip at the reed bank",
+            "Rue beside the boat"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Nell beside the bridge",
+            "Pip at the reed bank",
+            "Rue beside the boat"
+          ],
+          "slots": [
+            "The witness next to a crossing",
+            "The witness behind tall grass",
+            "The witness beside an oar"
+          ],
+          "hint": "Bridge means crossing, reeds mean tall grass, and a boat carries an oar.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            0,
+            1,
+            2
+          ],
+          "clues": [
+            "Three witnesses, three stories, and none of them agree on the size of the hat. We may have to use geography.",
+            "Nell beside the bridge",
+            "Pip at the reed bank",
+            "Rue beside the boat"
+          ]
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C16",
+      "tier": "trip",
+      "family": "water",
+      "npc": "Mica",
+      "title": "The River's Borrowed Light",
+      "opening": "The river has returned a reflection that belongs to a different night. Nell thinks it is a receipt. I think it is a memory.",
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "minutes": [
+        8,
+        12
+      ],
+      "steps": [
+        "Inspect a supplied reflection card and three light-panel symbols.",
+        "Rotate the three panels in a bounded desk puzzle to reach the marked reflection.",
+        "Choose where the recovered light belongs."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Back on the river",
+          "reply": "The reflection settles into the water. Nell says it looks less worried now."
+        },
+        {
+          "id": "b",
+          "label": "In a lantern for travelers",
+          "reply": "Rue hangs the lantern by the path. The river seems pleased to be useful on land."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "build",
+          "prompt": "Reflect light from B2 to C3 using panels at B2, C2 and C3.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            6,
+            7,
+            12
+          ],
+          "hint": "The path turns at C2. Place exactly three panels.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "The path turns at C2. Place exactly three panels.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        },
+        {
+          "kind": "build",
+          "prompt": "The River's Borrowed Light: assemble the alternate layout at D2, C2, C3. Leave other squares clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            8,
+            7,
+            12
+          ],
+          "hint": "Place only D2, C2, C3.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Place only D2, C2, C3.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        },
+        {
+          "kind": "build",
+          "prompt": "The River's Borrowed Light: assemble the alternate layout at B4, C4, C3. Leave other squares clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            16,
+            17,
+            12
+          ],
+          "hint": "Place only B4, C4, C3.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Place only B4, C4, C3.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C17",
+      "tier": "favor",
+      "family": "workshop",
+      "npc": "Bolt",
+      "title": "The Button That Does Nothing",
+      "opening": "At last: a button with no dangerous consequences. Unfortunately it was supposed to ring a bell. Could you inspect the diagram?",
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "minutes": [
+        4,
+        7
+      ],
+      "steps": [
+        "Inspect the button, bell, and three connection symbols.",
+        "Select the missing connector from the supplied shape clues.",
+        "Choose a small ding or a grand announcement."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "A polite ding",
+          "reply": "Ding. Bolt looks deeply proud of this manageable achievement."
+        },
+        {
+          "id": "b",
+          "label": "A very important ding",
+          "reply": "DING. Pip arrives with three forms and no explanation."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Straight connector",
+            "Elbow connector",
+            "Bridge connector"
+          ],
+          "slots": [
+            "Two opposite terminals",
+            "Two terminals at a corner",
+            "Two wires crossing without joining"
+          ],
+          "hint": "Choose the shape that joins the indicated terminals.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "At last: a button with no dangerous consequences. Unfortunately it was supposed to ring a bell. Could you inspect the diagram?",
+            "Straight connector",
+            "Elbow connector",
+            "Bridge connector"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Straight connector",
+            "Elbow connector",
+            "Bridge connector"
+          ],
+          "slots": [
+            "Two opposite terminals",
+            "Two terminals at a corner",
+            "Two wires crossing without joining"
+          ],
+          "hint": "Choose the shape that joins the indicated terminals.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            2,
+            0,
+            1
+          ],
+          "clues": [
+            "At last: a button with no dangerous consequences. Unfortunately it was supposed to ring a bell. Could you inspect the diagram?",
+            "Straight connector",
+            "Elbow connector",
+            "Bridge connector"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Straight connector",
+            "Elbow connector",
+            "Bridge connector"
+          ],
+          "slots": [
+            "Two opposite terminals",
+            "Two terminals at a corner",
+            "Two wires crossing without joining"
+          ],
+          "hint": "Choose the shape that joins the indicated terminals.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            0,
+            1,
+            2
+          ],
+          "clues": [
+            "At last: a button with no dangerous consequences. Unfortunately it was supposed to ring a bell. Could you inspect the diagram?",
+            "Straight connector",
+            "Elbow connector",
+            "Bridge connector"
+          ]
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C18",
+      "tier": "favor",
+      "family": "workshop",
+      "npc": "Bolt",
+      "title": "The Upside-Down Manual",
+      "opening": "The machine works perfectly if I stand on my head. I would like a solution with fewer medical implications.",
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "minutes": [
+        4,
+        7
+      ],
+      "steps": [
+        "Read three safe setup cards and their cause/effect clues.",
+        "Arrange them into the valid assembly order.",
+        "Choose how Bolt marks the corrected first page."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "THIS WAY UP",
+          "reply": "Bolt thanks you and turns the entire workbench around. We are calling that progress."
+        },
+        {
+          "id": "b",
+          "label": "A cheerful arrow",
+          "reply": "The arrow is clear enough even for Bolt. He adds a second arrow to thank the first."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Secure the base before anything can stand.",
+            "Attach the wheel to the secured base.",
+            "Place the parcel on the completed cart."
+          ],
+          "hint": "Base, wheel, then parcel. Each step needs the previous one.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "The machine works perfectly if I stand on my head. I would like a solution with fewer medical implications.",
+            "Secure the base before anything can stand.",
+            "Attach the wheel to the secured base.",
+            "Place the parcel on the completed cart."
+          ]
+        },
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Secure the base before anything can stand.",
+            "Attach the wheel to the secured base.",
+            "Place the parcel on the completed cart."
+          ],
+          "hint": "Base, wheel, then parcel. Each step needs the previous one.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            2,
+            0,
+            1
+          ],
+          "clues": [
+            "The machine works perfectly if I stand on my head. I would like a solution with fewer medical implications.",
+            "Secure the base before anything can stand.",
+            "Attach the wheel to the secured base.",
+            "Place the parcel on the completed cart."
+          ]
+        },
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Secure the base before anything can stand.",
+            "Attach the wheel to the secured base.",
+            "Place the parcel on the completed cart."
+          ],
+          "hint": "Base, wheel, then parcel. Each step needs the previous one.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            0,
+            1,
+            2
+          ],
+          "clues": [
+            "The machine works perfectly if I stand on my head. I would like a solution with fewer medical implications.",
+            "Secure the base before anything can stand.",
+            "Attach the wheel to the secured base.",
+            "Place the parcel on the completed cart."
+          ]
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C19",
+      "tier": "trip",
+      "family": "workshop",
+      "npc": "Bolt",
+      "title": "The Machine That Makes Almost",
+      "opening": "It makes almost a lantern, almost a whistle, and almost tea. One of those is more urgent than the others.",
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "minutes": [
+        8,
+        12
+      ],
+      "steps": [
+        "Choose one of two supplied assembly silhouettes.",
+        "Fit four loaned pieces to the chosen silhouette, or complete an approved inexpensive recipe for one symbolic calibration token.",
+        "Run a deterministic calibration and choose the machine's first useful output."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "A little light",
+          "reply": "The light is slightly crooked. Rue calls that character, which saves Bolt a great deal of work."
+        },
+        {
+          "id": "b",
+          "label": "A clear whistle",
+          "reply": "The whistle plays one excellent note. Nell asks if it can interview fish."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "build",
+          "prompt": "Fit a lantern silhouette: cap C2, middle B3/C3/D3.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            7,
+            11,
+            12,
+            13
+          ],
+          "hint": "One tile at C2, then three across B3–D3.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "One tile at C2, then three across B3–D3.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        },
+        {
+          "kind": "build",
+          "prompt": "The Machine That Makes Almost: assemble the alternate layout at C2, D3, C3, B3. Leave other squares clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            7,
+            13,
+            12,
+            11
+          ],
+          "hint": "Place only C2, D3, C3, B3.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Place only C2, D3, C3, B3.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        },
+        {
+          "kind": "build",
+          "prompt": "The Machine That Makes Almost: assemble the alternate layout at C4, B3, C3, D3. Leave other squares clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            17,
+            11,
+            12,
+            13
+          ],
+          "hint": "Place only C4, B3, C3, D3.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Place only C4, B3, C3, D3.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C20",
+      "tier": "trip",
+      "family": "workshop",
+      "npc": "Rue",
+      "title": "A Detour for Yesterday",
+      "opening": "Bolt's conveyor keeps returning the same parcel to the sender. It is efficient in a way nobody asked for.",
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "minutes": [
+        8,
+        12
+      ],
+      "steps": [
+        "Inspect the sender, recipient, and one no-entry symbol.",
+        "Arrange four route pieces so a symbolic parcel reaches the recipient without a loop.",
+        "Choose a return-note stamp."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Delivered at last",
+          "reply": "Pip receives the parcel and briefly considers framing the route map."
+        },
+        {
+          "id": "b",
+          "label": "A scenic route",
+          "reply": "The parcel has seen more of the workshop than most visitors. Rue calls that tourism."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "build",
+          "prompt": "Route the parcel A2 → B2 → B3 → C3. Do not return to A3.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            5,
+            6,
+            11,
+            12
+          ],
+          "hint": "Fill only the four positions in the route; the return loop stays empty.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Fill only the four positions in the route; the return loop stays empty.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        },
+        {
+          "kind": "build",
+          "prompt": "A Detour for Yesterday: assemble the alternate layout at E2, D2, D3, C3. Leave other squares clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            9,
+            8,
+            13,
+            12
+          ],
+          "hint": "Place only E2, D2, D3, C3.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Place only E2, D2, D3, C3.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        },
+        {
+          "kind": "build",
+          "prompt": "A Detour for Yesterday: assemble the alternate layout at A4, B4, B3, C3. Leave other squares clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            15,
+            16,
+            11,
+            12
+          ],
+          "hint": "Place only A4, B4, B3, C3.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Place only A4, B4, B3, C3.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C21",
+      "tier": "favor",
+      "family": "exploring",
+      "npc": "Pip",
+      "title": "Footprints That Forgot Their Feet",
+      "opening": "The footprints arrived without the courier. They seem embarrassed. Let us work out which way they were trying to go.",
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "minutes": [
+        4,
+        7
+      ],
+      "steps": [
+        "Inspect three guaranteed trail markers in the Yard or their desk-map equivalents.",
+        "Follow the explicit object clues to select the correct destination.",
+        "Choose a note to leave for the missing courier."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "We found your route",
+          "reply": "The courier was Pip. The footprints were from yesterday. Pip is taking this very professionally."
+        },
+        {
+          "id": "b",
+          "label": "We saved you a snack",
+          "reply": "Pip arrives for the snack and remembers the route shortly afterward."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Muddy footprints leave the river.",
+            "Grass-stained footprints cross the garden.",
+            "Dry footprints arrive at the doorstep."
+          ],
+          "hint": "Follow the trail as it dries: mud, grass, doorstep.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "The footprints arrived without the courier. They seem embarrassed. Let us work out which way they were trying to go.",
+            "Muddy footprints leave the river.",
+            "Grass-stained footprints cross the garden.",
+            "Dry footprints arrive at the doorstep."
+          ]
+        },
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Muddy footprints leave the river.",
+            "Grass-stained footprints cross the garden.",
+            "Dry footprints arrive at the doorstep."
+          ],
+          "hint": "Follow the trail as it dries: mud, grass, doorstep.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            2,
+            0,
+            1
+          ],
+          "clues": [
+            "The footprints arrived without the courier. They seem embarrassed. Let us work out which way they were trying to go.",
+            "Muddy footprints leave the river.",
+            "Grass-stained footprints cross the garden.",
+            "Dry footprints arrive at the doorstep."
+          ]
+        },
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Muddy footprints leave the river.",
+            "Grass-stained footprints cross the garden.",
+            "Dry footprints arrive at the doorstep."
+          ],
+          "hint": "Follow the trail as it dries: mud, grass, doorstep.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            0,
+            1,
+            2
+          ],
+          "clues": [
+            "The footprints arrived without the courier. They seem embarrassed. Let us work out which way they were trying to go.",
+            "Muddy footprints leave the river.",
+            "Grass-stained footprints cross the garden.",
+            "Dry footprints arrive at the doorstep."
+          ]
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C22",
+      "tier": "favor",
+      "family": "exploring",
+      "npc": "Mica",
+      "title": "The Quiet Landmark",
+      "opening": "This landmark has never been famous, but three very good things happened beside it. That seems worth a small label.",
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "minutes": [
+        4,
+        7
+      ],
+      "steps": [
+        "Compare three supplied landmark scenes and memory clues.",
+        "Select the scene matching every clue; inspect its highlighted detail.",
+        "Choose the wording of its small plaque."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Something good happened here",
+          "reply": "The plaque is small. Mica says important things are allowed to be small."
+        },
+        {
+          "id": "b",
+          "label": "There is room for more",
+          "reply": "The landmark suddenly looks less like a destination and more like a beginning."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Bench and crooked lantern",
+            "Bridge and round stone",
+            "Gate and empty planter"
+          ],
+          "slots": [
+            "A place to sit beside a tilted light",
+            "A crossing beside a round step",
+            "An entrance with room to grow"
+          ],
+          "hint": "Use every detail; matching only the first object is not enough.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "This landmark has never been famous, but three very good things happened beside it. That seems worth a small label.",
+            "Bench and crooked lantern",
+            "Bridge and round stone",
+            "Gate and empty planter"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Bench and crooked lantern",
+            "Bridge and round stone",
+            "Gate and empty planter"
+          ],
+          "slots": [
+            "A place to sit beside a tilted light",
+            "A crossing beside a round step",
+            "An entrance with room to grow"
+          ],
+          "hint": "Use every detail; matching only the first object is not enough.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            2,
+            0,
+            1
+          ],
+          "clues": [
+            "This landmark has never been famous, but three very good things happened beside it. That seems worth a small label.",
+            "Bench and crooked lantern",
+            "Bridge and round stone",
+            "Gate and empty planter"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Bench and crooked lantern",
+            "Bridge and round stone",
+            "Gate and empty planter"
+          ],
+          "slots": [
+            "A place to sit beside a tilted light",
+            "A crossing beside a round step",
+            "An entrance with room to grow"
+          ],
+          "hint": "Use every detail; matching only the first object is not enough.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            0,
+            1,
+            2
+          ],
+          "clues": [
+            "This landmark has never been famous, but three very good things happened beside it. That seems worth a small label.",
+            "Bench and crooked lantern",
+            "Bridge and round stone",
+            "Gate and empty planter"
+          ]
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C23",
+      "tier": "trip",
+      "family": "exploring",
+      "npc": "Mica",
+      "title": "The Map With a Fold in It",
+      "opening": "The map keeps folding over the place you need. I suspect the place is shy, or the map is trying to protect its best picnic spot.",
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "minutes": [
+        8,
+        12
+      ],
+      "steps": [
+        "Inspect four guaranteed clue panels along the Yard route or desk map.",
+        "Arrange three map sections so their marked paths connect.",
+        "Choose whether to mark the destination as a picnic spot or a quiet lookout."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "A place to share lunch",
+          "reply": "Rue adds one small table to the postcard. The map stops folding quite so tightly."
+        },
+        {
+          "id": "b",
+          "label": "A place to watch the sky",
+          "reply": "Nell marks the best view. Pip asks whether the sky accepts mail."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Enter through the garden gate.",
+            "Follow the path past the little shelter.",
+            "Cross the bridge to the letter desk."
+          ],
+          "hint": "The gate leads to the shelter; the shelter path leads to the bridge.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "The map keeps folding over the place you need. I suspect the place is shy, or the map is trying to protect its best picnic spot.",
+            "Enter through the garden gate.",
+            "Follow the path past the little shelter.",
+            "Cross the bridge to the letter desk."
+          ]
+        },
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Enter through the garden gate.",
+            "Follow the path past the little shelter.",
+            "Cross the bridge to the letter desk."
+          ],
+          "hint": "The gate leads to the shelter; the shelter path leads to the bridge.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            2,
+            0,
+            1
+          ],
+          "clues": [
+            "The map keeps folding over the place you need. I suspect the place is shy, or the map is trying to protect its best picnic spot.",
+            "Enter through the garden gate.",
+            "Follow the path past the little shelter.",
+            "Cross the bridge to the letter desk."
+          ]
+        },
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Enter through the garden gate.",
+            "Follow the path past the little shelter.",
+            "Cross the bridge to the letter desk."
+          ],
+          "hint": "The gate leads to the shelter; the shelter path leads to the bridge.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            0,
+            1,
+            2
+          ],
+          "clues": [
+            "The map keeps folding over the place you need. I suspect the place is shy, or the map is trying to protect its best picnic spot.",
+            "Enter through the garden gate.",
+            "Follow the path past the little shelter.",
+            "Cross the bridge to the letter desk."
+          ]
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "C24",
+      "tier": "trip",
+      "family": "exploring",
+      "npc": "Pip",
+      "title": "A Parcel for the Place Between",
+      "opening": "The address reads: Between the last hello and the next one. I have narrowed that down to approximately everywhere.",
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "minutes": [
+        8,
+        12
+      ],
+      "steps": [
+        "Read three neighbor clues with clear relative positions.",
+        "Find the matching location on a bounded Yard map; inspect its guaranteed parcel marker.",
+        "Choose to leave the parcel for someone arriving or someone returning."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Someone arriving",
+          "reply": "The parcel contains a blank address card. Pip says that is exactly the right size for a beginning."
+        },
+        {
+          "id": "b",
+          "label": "Someone returning",
+          "reply": "The parcel contains a familiar ribbon. Pip says some addresses are people, after all."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Lantern between gate and table",
+            "Sign between pool and garden",
+            "Bench between workshop and bridge"
+          ],
+          "slots": [
+            "The place beside a light",
+            "The place below a sign",
+            "The place beside a seat"
+          ],
+          "hint": "Match the final landmark; every location is between two named places.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "The address reads: Between the last hello and the next one. I have narrowed that down to approximately everywhere.",
+            "Lantern between gate and table",
+            "Sign between pool and garden",
+            "Bench between workshop and bridge"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Lantern between gate and table",
+            "Sign between pool and garden",
+            "Bench between workshop and bridge"
+          ],
+          "slots": [
+            "The place beside a light",
+            "The place below a sign",
+            "The place beside a seat"
+          ],
+          "hint": "Match the final landmark; every location is between two named places.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            2,
+            0,
+            1
+          ],
+          "clues": [
+            "The address reads: Between the last hello and the next one. I have narrowed that down to approximately everywhere.",
+            "Lantern between gate and table",
+            "Sign between pool and garden",
+            "Bench between workshop and bridge"
+          ]
+        },
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Lantern between gate and table",
+            "Sign between pool and garden",
+            "Bench between workshop and bridge"
+          ],
+          "slots": [
+            "The place beside a light",
+            "The place below a sign",
+            "The place beside a seat"
+          ],
+          "hint": "Match the final landmark; every location is between two named places.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            0,
+            1,
+            2
+          ],
+          "clues": [
+            "The address reads: Between the last hello and the next one. I have narrowed that down to approximately everywhere.",
+            "Lantern between gate and table",
+            "Sign between pool and garden",
+            "Bench between workshop and bridge"
+          ]
+        }
+      ],
+      "chapter_order": null,
+      "arc": "",
+      "chapter_in_arc": 0,
+      "content_version": 1
+    },
+    {
+      "id": "S01",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Pip",
+      "title": "Postmarked Tomorrow",
+      "opening": "This letter has your name, tomorrow's date, and no sender. I have checked the calendar twice. It is being very unhelpful.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Inspect lantern, pebble, and clock clue cards.",
+        "Order the clues to identify the old letter desk.",
+        "Choose whether to open the envelope or keep its seal until arrival."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Open it now",
+          "reply": "Inside: When the moth asks, do not let it eat the last word. Pip stops joking for a moment."
+        },
+        {
+          "id": "b",
+          "label": "Keep the seal intact",
+          "reply": "At the desk the paper whispers: Do not let it eat the last word. Pip is relieved that you waited."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "The unlit lantern belongs to the old desk.",
+            "A pebble marks the dry path to the desk.",
+            "The clock hand points to the desk address."
+          ],
+          "hint": "Follow the place, its path, then the address pointing back to it.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "This letter has your name, tomorrow's date, and no sender. I have checked the calendar twice. It is being very unhelpful.",
+            "The unlit lantern belongs to the old desk.",
+            "A pebble marks the dry path to the desk.",
+            "The clock hand points to the desk address."
+          ]
+        }
+      ],
+      "chapter_order": 1,
+      "arc": "A",
+      "chapter_in_arc": 1,
+      "flag": "a_seal",
+      "postcard": "concept_postcard_s01",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S02",
+      "tier": "story",
+      "family": "building",
+      "npc": "Rue",
+      "title": "Address: Somewhere Warm",
+      "opening": "Pip says the address is somewhere warm. That is not a street, but it is a perfectly reasonable thing to need.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Solve the three-address clue card.",
+        "Assemble a four-piece shelter on the loaned work mat.",
+        "Choose a lantern or a window as its final feature."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "A lantern by the door",
+          "reply": "Rue lights the lantern. Pip decides the address is now official enough."
+        },
+        {
+          "id": "b",
+          "label": "A window toward the path",
+          "reply": "Rue opens the shutters. The room looks as if it has been expecting someone."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "build",
+          "prompt": "Shelter the letter: roof B2–D2, wall B3, open entry C3.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            6,
+            7,
+            8,
+            11
+          ],
+          "hint": "Place B2, C2, D2 and B3 only.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Place B2, C2, D2 and B3 only.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        }
+      ],
+      "chapter_order": 2,
+      "arc": "A",
+      "chapter_in_arc": 2,
+      "flag": "a_light",
+      "postcard": "concept_postcard_s02",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S03",
+      "tier": "story",
+      "family": "exploring",
+      "npc": "Pip",
+      "title": "The Missing Last Word",
+      "opening": "The paper moth has stolen a word. It is holding it very carefully for a thief. Perhaps we should ask what it thinks it is doing.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Inspect three guaranteed paper-fragment markers or their desk map.",
+        "Combine the fragments into the word HOME using picture/letter hints.",
+        "Choose the final sentence: Come home or Make home."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Come home",
+          "reply": "Pip reads the line twice. I think I wrote this to myself, they say."
+        },
+        {
+          "id": "b",
+          "label": "Make home",
+          "reply": "Pip folds the line into a little roof. Maybe the address was a decision."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "H: a house-shaped first scrap.",
+            "O: a round window in the second scrap.",
+            "ME: the final scrap names who belongs."
+          ],
+          "hint": "H + O + ME spells HOME.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "The paper moth has stolen a word. It is holding it very carefully for a thief. Perhaps we should ask what it thinks it is doing.",
+            "H: a house-shaped first scrap.",
+            "O: a round window in the second scrap.",
+            "ME: the final scrap names who belongs."
+          ]
+        }
+      ],
+      "chapter_order": 3,
+      "arc": "A",
+      "chapter_in_arc": 3,
+      "flag": null,
+      "postcard": "concept_postcard_s03",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S04",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Pip",
+      "title": "A Reply Worth Sending",
+      "opening": "We have a destination, a last word, and a moth that refuses to leave. I think that means we are ready to write back.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Place the three recovered memory cards into the reply.",
+        "Review two lines reflecting your seal and shelter choices.",
+        "Address the reply to Pip or whoever needs it next."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "To Pip",
+          "reply": "The next envelope is dated today. Pip smiles: One letter fixed. I am counting that."
+        },
+        {
+          "id": "b",
+          "label": "To whoever needs it next",
+          "reply": "The next envelope is dated today. Inside is a lighthouse with no reflection."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Remember the envelope and its seal.",
+            "Remember the shelter and its light.",
+            "Finish with the recovered word HOME."
+          ],
+          "hint": "The letter arrived first, the shelter followed, and HOME finished it.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "We have a destination, a last word, and a moth that refuses to leave. I think that means we are ready to write back.",
+            "Remember the envelope and its seal.",
+            "Remember the shelter and its light.",
+            "Finish with the recovered word HOME."
+          ]
+        }
+      ],
+      "chapter_order": 4,
+      "arc": "A",
+      "chapter_in_arc": 4,
+      "flag": null,
+      "postcard": "concept_postcard_s04",
+      "arc_reward": "concept_tomorrows_postmark",
+      "content_version": 1
+    },
+    {
+      "id": "S05",
+      "tier": "story",
+      "family": "water",
+      "npc": "Nell",
+      "title": "A Very Dry Message",
+      "opening": "This bottle contains water that has forgotten how to be wet. I have interviewed it. It is not cooperating.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Inspect three supplied catch-token drawings or obtain evidence through a fresh catch.",
+        "Match the token symbol to the bottle seal.",
+        "Title Nell's report seriously or playfully."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "A river anomaly",
+          "reply": "Nell labels the bottle carefully. Beneath its seal is a tiny drawing of a bell."
+        },
+        {
+          "id": "b",
+          "label": "An exceptionally dry joke",
+          "reply": "Nell laughs once, then notices the bell beneath the seal. That part is less funny."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Reed token",
+            "Bell token",
+            "Moon token"
+          ],
+          "slots": [
+            "Tall grass on the bank",
+            "A tune under the water",
+            "A reflection above the river"
+          ],
+          "hint": "The bottle seal shows a bell: it points to the second clue.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "This bottle contains water that has forgotten how to be wet. I have interviewed it. It is not cooperating.",
+            "Reed token",
+            "Bell token",
+            "Moon token"
+          ]
+        }
+      ],
+      "chapter_order": 5,
+      "arc": "B",
+      "chapter_in_arc": 1,
+      "flag": null,
+      "postcard": "concept_postcard_s05",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S06",
+      "tier": "story",
+      "family": "water",
+      "npc": "Nell",
+      "title": "Three Witnesses, No Alibis",
+      "opening": "The bell was heard by three fish. Each insists it was the only witness. They have all brought diagrams.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Inspect three statements via desk observations or three ordinary catches.",
+        "Place witnesses relative to the bridge, reed bank, and shadow.",
+        "Choose which witness Nell thanks first."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "The careful witness",
+          "reply": "The careful fish was right about the reeds. Nell records that without encouraging it."
+        },
+        {
+          "id": "b",
+          "label": "The enthusiastic witness",
+          "reply": "The enthusiastic fish was wrong about the giant hat. It was right about the reeds."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Nell beside the bridge",
+            "Pip at the reed bank",
+            "Rue beside the boat"
+          ],
+          "slots": [
+            "The witness next to a crossing",
+            "The witness behind tall grass",
+            "The witness beside an oar"
+          ],
+          "hint": "Bridge means crossing, reeds mean tall grass, and a boat carries an oar.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "The bell was heard by three fish. Each insists it was the only witness. They have all brought diagrams.",
+            "Nell beside the bridge",
+            "Pip at the reed bank",
+            "Rue beside the boat"
+          ]
+        }
+      ],
+      "chapter_order": 6,
+      "arc": "B",
+      "chapter_in_arc": 2,
+      "flag": null,
+      "postcard": "concept_postcard_s06",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S07",
+      "tier": "story",
+      "family": "building",
+      "npc": "Nell",
+      "title": "Borrowed Moonlight",
+      "opening": "The bell is down there, but the moon's reflection is somewhere else. Rue says a small reflector will do. I trust Rue more than the moon.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Inspect the marked source and bell target.",
+        "Rotate three supplied reflection panels to connect the light path.",
+        "Dedicate the recovered glow to the river or a traveler lantern."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Return it to the river",
+          "reply": "The water regains a silver edge. Nell says it looks like itself again."
+        },
+        {
+          "id": "b",
+          "label": "Keep a little for travelers",
+          "reply": "A lantern holds a small silver glow. The river still has plenty left."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "build",
+          "prompt": "Reflect light from B2 to C3 using panels at B2, C2 and C3.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            6,
+            7,
+            12
+          ],
+          "hint": "The path turns at C2. Place exactly three panels.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "The path turns at C2. Place exactly three panels.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        }
+      ],
+      "chapter_order": 7,
+      "arc": "B",
+      "chapter_in_arc": 3,
+      "flag": null,
+      "postcard": "concept_postcard_s07",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S08",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Nell",
+      "title": "The Bell Beneath the Reeds",
+      "opening": "I know that tune. Someone taught it to me before leaving Threadlight. Perhaps the river was keeping it safe.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Read the shape-captioned three-note sequence.",
+        "Reconstruct it using labeled chimes or the text sequence option.",
+        "Choose a message for the friend who left."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Welcome back, whenever you come",
+          "reply": "Nell leaves the message by the reeds. The bell sounds once, as if it understands."
+        },
+        {
+          "id": "b",
+          "label": "Safe travels, wherever you go",
+          "reply": "Nell sends the message with the current. The bell sounds once, then lets it go."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Circle chime: the first note.",
+            "Triangle chime: the note after the circle.",
+            "Square chime: the final note."
+          ],
+          "hint": "Circle, triangle, square. The captions contain all the sound information.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "I know that tune. Someone taught it to me before leaving Threadlight. Perhaps the river was keeping it safe.",
+            "Circle chime: the first note.",
+            "Triangle chime: the note after the circle.",
+            "Square chime: the final note."
+          ]
+        }
+      ],
+      "chapter_order": 8,
+      "arc": "B",
+      "chapter_in_arc": 4,
+      "flag": "b_message",
+      "postcard": "concept_postcard_s08",
+      "arc_reward": "concept_keeper_of_small_lights",
+      "content_version": 1
+    },
+    {
+      "id": "S09",
+      "tier": "story",
+      "family": "garden",
+      "npc": "Tansy",
+      "title": "Seeds With Instructions Missing",
+      "opening": "Almost, Perhaps, and Not Yet. These are peculiar seed names, but I have seen worse instructions.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Compare three soil/seed-token clues.",
+        "Plant the matching seed in the deterministic practice patch.",
+        "Choose a label for its paper-leaf reveal."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Almost ready",
+          "reply": "A sentence appears on the paper leaf and stops halfway. Tansy calls it an invitation."
+        },
+        {
+          "id": "b",
+          "label": "Ready to begin",
+          "reply": "The leaf unfolds like a letter. Its roots point toward a very unfinished thought."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Almost: a round seed",
+            "Perhaps: a striped seed",
+            "Not Yet: a heart seed"
+          ],
+          "slots": [
+            "Circle soil",
+            "Stripe soil",
+            "Heart soil"
+          ],
+          "hint": "Match the packet symbol with the soil symbol.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "Almost, Perhaps, and Not Yet. These are peculiar seed names, but I have seen worse instructions.",
+            "Almost: a round seed",
+            "Perhaps: a striped seed",
+            "Not Yet: a heart seed"
+          ]
+        }
+      ],
+      "chapter_order": 9,
+      "arc": "C",
+      "chapter_in_arc": 1,
+      "flag": null,
+      "postcard": "concept_postcard_s09",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S10",
+      "tier": "story",
+      "family": "garden",
+      "npc": "Tansy",
+      "title": "The Flower That Hated Its Name",
+      "opening": "It has rejected Moon Majesty, Supreme Blossom, and Kevin. I think we should listen before trying a fourth name.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Compare the flower's three pictured responses.",
+        "Identify the condition that makes it open: a laughter symbol.",
+        "Choose a silly name or leave it unnamed."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Call it Wobblebud",
+          "reply": "Wobblebud opens immediately. Tansy apologizes to every formal botanical society."
+        },
+        {
+          "id": "b",
+          "label": "Let it stay unnamed",
+          "reply": "The flower opens without a label. Tansy leaves a little blank sign beside it."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Closed under a grand title",
+            "Closed under a formal title",
+            "Open beside laughter"
+          ],
+          "slots": [
+            "Moon Majesty",
+            "Supreme Blossom",
+            "A silly joke"
+          ],
+          "hint": "The open flower is the one beside laughter, not a grand name.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "It has rejected Moon Majesty, Supreme Blossom, and Kevin. I think we should listen before trying a fourth name.",
+            "Closed under a grand title",
+            "Closed under a formal title",
+            "Open beside laughter"
+          ]
+        }
+      ],
+      "chapter_order": 10,
+      "arc": "C",
+      "chapter_in_arc": 2,
+      "flag": null,
+      "postcard": "concept_postcard_s10",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S11",
+      "tier": "story",
+      "family": "garden",
+      "npc": "Tansy",
+      "title": "Rain for a Cloud in a Jar",
+      "opening": "The cloud has watered everyone except itself. We should fix the channels, and perhaps also the arrangement.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Read the cloud movement rule and three planter markers.",
+        "Route four supplied channel pieces to every target.",
+        "Release the cloud or invite it to help at the garden opening."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Let the cloud wander",
+          "reply": "The cloud leaves a soft trail of rain. It seems lighter without the jar."
+        },
+        {
+          "id": "b",
+          "label": "Invite it to the opening",
+          "reply": "The cloud reserves a spot above the watering can. Tansy adds it to the guest list."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "build",
+          "prompt": "Connect the cloud at B2 to the planter at C4 using B2, C2, C3, C4.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            6,
+            7,
+            12,
+            17
+          ],
+          "hint": "The channel runs right once and then down twice.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "The channel runs right once and then down twice.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        }
+      ],
+      "chapter_order": 11,
+      "arc": "C",
+      "chapter_in_arc": 3,
+      "flag": null,
+      "postcard": "concept_postcard_s11",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S12",
+      "tier": "story",
+      "family": "building",
+      "npc": "Tansy",
+      "title": "A Garden Allowed to Grow",
+      "opening": "We have a flower, a place for rain, and an empty planter. I think the empty planter might be the most important part.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Place three memory objects and one empty planter on the mat.",
+        "Keep the path open and satisfy the two marked shelter cells.",
+        "Put the empty planter at the gate or the center."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "At the gate for newcomers",
+          "reply": "Tansy leaves room beside the gate. A paper root points toward Bolt's workshop."
+        },
+        {
+          "id": "b",
+          "label": "At the center for everyone",
+          "reply": "Tansy leaves room at the center. A paper root points toward Bolt's workshop."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "build",
+          "prompt": "Place flower B2, cloud D2, memory C3 and an empty planter C4.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            6,
+            8,
+            12,
+            17
+          ],
+          "hint": "Use the four marked memory locations; leave the side paths open.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Use the four marked memory locations; leave the side paths open.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        }
+      ],
+      "chapter_order": 12,
+      "arc": "C",
+      "chapter_in_arc": 4,
+      "flag": "c_empty_planter",
+      "postcard": "concept_postcard_s12",
+      "arc_reward": "concept_unnamed_flower_cover",
+      "content_version": 1
+    },
+    {
+      "id": "S13",
+      "tier": "story",
+      "family": "workshop",
+      "npc": "Bolt",
+      "title": "Instructions for Yesterday",
+      "opening": "The instructions are all correct. They are simply correct in the wrong order. I believe that is a smaller problem.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Inspect three setup cards and visible cause/effect clues.",
+        "Arrange the cards into the valid sequence.",
+        "Choose drawings or jokes for the manual margins."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Helpful drawings",
+          "reply": "The drawings explain the machine perfectly. Bolt looks a little disappointed by how simple it seems."
+        },
+        {
+          "id": "b",
+          "label": "Helpful jokes",
+          "reply": "The jokes explain the machine surprisingly well. Bolt gives the manual a comedy credit."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Secure the base before anything can stand.",
+            "Attach the wheel to the secured base.",
+            "Place the parcel on the completed cart."
+          ],
+          "hint": "Base, wheel, then parcel. Each step needs the previous one.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "The instructions are all correct. They are simply correct in the wrong order. I believe that is a smaller problem.",
+            "Secure the base before anything can stand.",
+            "Attach the wheel to the secured base.",
+            "Place the parcel on the completed cart."
+          ]
+        }
+      ],
+      "chapter_order": 13,
+      "arc": "D",
+      "chapter_in_arc": 1,
+      "flag": null,
+      "postcard": "concept_postcard_s13",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S14",
+      "tier": "story",
+      "family": "workshop",
+      "npc": "Bolt",
+      "title": "A Machine With Stage Fright",
+      "opening": "It works when nobody looks at it. We have tried looking politely. Could you check the missing part?",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Fit four supplied parts to the calibration silhouette, or use one approved real recipe for a token.",
+        "Run the server-checked calibration diagram.",
+        "Encourage the machine or tell it a harmless joke."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "You can do one small thing",
+          "reply": "The machine prints yesterday's weather. Bolt quietly stops congratulating it."
+        },
+        {
+          "id": "b",
+          "label": "Why did the cog cross the road?",
+          "reply": "The machine prints yesterday's weather, followed by a very small ha."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "build",
+          "prompt": "Fit a lantern silhouette: cap C2, middle B3/C3/D3.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            7,
+            11,
+            12,
+            13
+          ],
+          "hint": "One tile at C2, then three across B3–D3.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "One tile at C2, then three across B3–D3.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        }
+      ],
+      "chapter_order": 14,
+      "arc": "D",
+      "chapter_in_arc": 2,
+      "flag": null,
+      "postcard": "concept_postcard_s14",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S15",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Bolt",
+      "title": "The Perfect Day Problem",
+      "opening": "I wanted to save a good day for a friend. I did not intend to prevent it from ending. Those sounded more similar in the design notes.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Inspect three picnic memory strips.",
+        "Identify the earliest strip using explicit weather and object clues.",
+        "Choose to preserve the picnic's sound or its colors."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Keep the sound",
+          "reply": "The laughter becomes a small chime in the archive. Bolt lets the rest of the day move on."
+        },
+        {
+          "id": "b",
+          "label": "Keep the colors",
+          "reply": "The colors become a small postcard in the archive. Bolt lets the rest of the day move on."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "First picnic: clear sky and a full basket.",
+            "Second memory: gathering clouds and a half-full basket.",
+            "Last repetition: rain and an empty basket."
+          ],
+          "hint": "The basket empties while the weather worsens.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "I wanted to save a good day for a friend. I did not intend to prevent it from ending. Those sounded more similar in the design notes.",
+            "First picnic: clear sky and a full basket.",
+            "Second memory: gathering clouds and a half-full basket.",
+            "Last repetition: rain and an empty basket."
+          ]
+        }
+      ],
+      "chapter_order": 15,
+      "arc": "D",
+      "chapter_in_arc": 3,
+      "flag": "d_memory",
+      "postcard": "concept_postcard_s15",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S16",
+      "tier": "story",
+      "family": "workshop",
+      "npc": "Bolt",
+      "title": "A Useful Imperfection",
+      "opening": "The machine can remember or repeat. I think I accidentally underlined the wrong word.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Read the remember/repeat circuit labels.",
+        "Route the supplied graph to Remember, avoiding the loop.",
+        "Choose a mismatched final tile from two valid options."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "The slightly crooked tile",
+          "reply": "A new postcard appears. It is imperfect and has never existed before. Bolt calls that success."
+        },
+        {
+          "id": "b",
+          "label": "The wonderfully odd tile",
+          "reply": "A new postcard appears. Bolt cannot explain its tiny hat. He decides not to fix it."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "build",
+          "prompt": "Route to REMEMBER along A2, B2, C2, C3. Leave REPEAT at B3 empty.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            5,
+            6,
+            7,
+            12
+          ],
+          "hint": "Avoid B3; it closes the repeat loop.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Avoid B3; it closes the repeat loop.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        }
+      ],
+      "chapter_order": 16,
+      "arc": "D",
+      "chapter_in_arc": 4,
+      "flag": null,
+      "postcard": "concept_postcard_s16",
+      "arc_reward": "concept_useful_mistake_badge",
+      "content_version": 1
+    },
+    {
+      "id": "S17",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Rue",
+      "title": "The Guest Nobody Listed",
+      "opening": "Six place cards. Five chairs. I think we should arrange the room before deciding who does not belong.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Read three seating preferences.",
+        "Arrange the five named places without conflicts, leaving a marked sixth place.",
+        "Choose a welcome card for the empty place."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "We saved you a seat",
+          "reply": "Rue adds a sixth chair. The room looks more finished with an unfinished guest list."
+        },
+        {
+          "id": "b",
+          "label": "Come as you are",
+          "reply": "Rue leaves the card by the chair. Nobody asks the next guest for an explanation."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Pip",
+            "Nell",
+            "Tansy"
+          ],
+          "slots": [
+            "Chair nearest the mail slot",
+            "Chair nearest the river window",
+            "Chair nearest the planter"
+          ],
+          "hint": "Keep the unassigned fourth place open for a visitor.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "Six place cards. Five chairs. I think we should arrange the room before deciding who does not belong.",
+            "Pip",
+            "Nell",
+            "Tansy"
+          ]
+        }
+      ],
+      "chapter_order": 17,
+      "arc": "E",
+      "chapter_in_arc": 1,
+      "flag": null,
+      "postcard": "concept_postcard_s17",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S18",
+      "tier": "story",
+      "family": "building",
+      "npc": "Rue",
+      "title": "The Smallest Possible Festival",
+      "opening": "We do not need a grand event. We need one corner that looks happy to see people.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Place six loaned structural pieces on the mat.",
+        "Connect the entry, shelter, and table markers.",
+        "Choose flags or paper stars for the final decoration."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Paper flags",
+          "reply": "Pip hangs the flags in the wrong order. Rue decides there is no wrong order for this."
+        },
+        {
+          "id": "b",
+          "label": "Paper stars",
+          "reply": "One star folds itself into a moth. Rue pretends not to notice until it is ready."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "build",
+          "prompt": "Build a festival corner: roof A2–C2, supports A3/C3, table C4. Keep B3/B4 clear.",
+          "width": 5,
+          "height": 5,
+          "solution": [
+            5,
+            6,
+            7,
+            10,
+            12,
+            17
+          ],
+          "hint": "Fill A2, B2, C2, A3, C3 and C4 only.",
+          "clues": [
+            "Columns run A–E from left to right; rows run 1–5 from top to bottom.",
+            "Fill A2, B2, C2, A3, C3 and C4 only.",
+            "Tap squares to place or remove loaned tiles. Nothing is taken from your inventory."
+          ],
+          "display_order": []
+        }
+      ],
+      "chapter_order": 18,
+      "arc": "E",
+      "chapter_in_arc": 2,
+      "flag": null,
+      "postcard": "concept_postcard_s18",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S19",
+      "tier": "story",
+      "family": "exploring",
+      "npc": "Rue",
+      "title": "The Lantern That Waited",
+      "opening": "The last lantern will not light for an instruction. I suspect it is waiting for an invitation.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Inspect three shape-coded lantern markers or their desk-map cards.",
+        "Arrange their welcome symbols in the shown order.",
+        "Choose a preset welcome for the final lantern."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "There is no hurry",
+          "reply": "The lantern glows slowly. Rue waits with it, just to make the point clear."
+        },
+        {
+          "id": "b",
+          "label": "We are glad you came",
+          "reply": "The lantern glows at once. Something small rustles in the paper decorations."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Circle lantern: there is a place for you.",
+            "Triangle lantern: follow the welcome.",
+            "Square lantern: we are glad you came."
+          ],
+          "hint": "Follow circle, triangle, square. No audio or color distinction is required.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "The last lantern will not light for an instruction. I suspect it is waiting for an invitation.",
+            "Circle lantern: there is a place for you.",
+            "Triangle lantern: follow the welcome.",
+            "Square lantern: we are glad you came."
+          ]
+        }
+      ],
+      "chapter_order": 19,
+      "arc": "E",
+      "chapter_in_arc": 3,
+      "flag": null,
+      "postcard": "concept_postcard_s19",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S20",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Rue",
+      "title": "Leave a Chair Out",
+      "opening": "We have brought your shelter and garden memories to the table. There is still one place left. That is on purpose.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Select the already-unlocked shelter and garden postcards.",
+        "Place them at the table with the spare-chair marker.",
+        "Dedicate the chair to someone new or someone returning."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "Someone new",
+          "reply": "Morrow lands on the spare chair carrying a blank page. Rue simply says hello."
+        },
+        {
+          "id": "b",
+          "label": "Someone returning",
+          "reply": "Morrow lands on the spare chair carrying a blank page. Rue says welcome back."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Shelter postcard",
+            "Garden postcard",
+            "Empty chair"
+          ],
+          "slots": [
+            "A place to rest",
+            "A place to grow",
+            "A place for the next guest"
+          ],
+          "hint": "Match what each memory offers somebody.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "We have brought your shelter and garden memories to the table. There is still one place left. That is on purpose.",
+            "Shelter postcard",
+            "Garden postcard",
+            "Empty chair"
+          ]
+        }
+      ],
+      "chapter_order": 20,
+      "arc": "E",
+      "chapter_in_arc": 4,
+      "flag": "e_chair",
+      "postcard": "concept_postcard_s20",
+      "arc_reward": "concept_spare_chair_border",
+      "content_version": 1
+    },
+    {
+      "id": "S21",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Mica",
+      "title": "Things the Moth Did Not Eat",
+      "opening": "These scraps are not missing memories. They are the spaces around them. We may have accused the wrong part of the story.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Inspect three recovered scraps.",
+        "Sort marked memories and blank spaces using visible symbols.",
+        "Choose how to greet Morrow after the discovery."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "An apology",
+          "reply": "Morrow folds its wings into a small bow. Mica starts a new file labeled Corrections."
+        },
+        {
+          "id": "b",
+          "label": "An invitation to explain",
+          "reply": "Morrow points to the blank page. Mica finally understands what it has been carrying."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "A picnic drawing",
+            "A blank margin",
+            "An unfinished address"
+          ],
+          "slots": [
+            "A memory to keep",
+            "A space between memories",
+            "A story still waiting"
+          ],
+          "hint": "Morrow carried the empty spaces, not the picnic memory.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "These scraps are not missing memories. They are the spaces around them. We may have accused the wrong part of the story.",
+            "A picnic drawing",
+            "A blank margin",
+            "An unfinished address"
+          ]
+        }
+      ],
+      "chapter_order": 21,
+      "arc": "F",
+      "chapter_in_arc": 1,
+      "flag": null,
+      "postcard": "concept_postcard_s21",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S22",
+      "tier": "story",
+      "family": "exploring",
+      "npc": "Mica",
+      "title": "A Map Made of Almost",
+      "opening": "The unfinished paths all lead somewhere. We simply have to stop insisting they were meant to be finished alone.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Read four unlocked memory cards alongside their clues.",
+        "Arrange four map pieces so their marked paths connect.",
+        "Choose a name for the route back to the letter desk."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "The long way home",
+          "reply": "The path reaches the first letter desk. Pip has already prepared a fresh stamp."
+        },
+        {
+          "id": "b",
+          "label": "The beginning again",
+          "reply": "The path reaches the first letter desk. The blank page is no longer empty by accident."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Enter through the garden gate.",
+            "Follow the path past the little shelter.",
+            "Cross the bridge to the letter desk."
+          ],
+          "hint": "The gate leads to the shelter; the shelter path leads to the bridge.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "The unfinished paths all lead somewhere. We simply have to stop insisting they were meant to be finished alone.",
+            "Enter through the garden gate.",
+            "Follow the path past the little shelter.",
+            "Cross the bridge to the letter desk."
+          ]
+        }
+      ],
+      "chapter_order": 22,
+      "arc": "F",
+      "chapter_in_arc": 2,
+      "flag": null,
+      "postcard": "concept_postcard_s22",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S23",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Mica",
+      "title": "The Day We Did Not Keep",
+      "opening": "A memory is allowed to stay. A day is allowed to end. We can hold one without trapping the other.",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Review the available callbacks from Nell's message and Bolt's picnic memory.",
+        "Place the two keepsake cards outside the Repeat loop.",
+        "Choose what the final postcard emphasizes."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "The people who were there",
+          "reply": "The postcard holds the people clearly, with room around them for what comes next."
+        },
+        {
+          "id": "b",
+          "label": "The possibility of another day",
+          "reply": "The postcard holds a bright empty corner. Mica labels it Tomorrow, not yet written."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "match",
+          "prompt": "Match each card to its place. Select a place, then select its card.",
+          "cards": [
+            "Nell's message",
+            "Bolt's postcard",
+            "The empty next page"
+          ],
+          "slots": [
+            "A memory of a friend",
+            "A memory of a good day",
+            "Room for another day"
+          ],
+          "hint": "Keep the two memories; leave the next page free.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "A memory is allowed to stay. A day is allowed to end. We can hold one without trapping the other.",
+            "Nell's message",
+            "Bolt's postcard",
+            "The empty next page"
+          ]
+        }
+      ],
+      "chapter_order": 23,
+      "arc": "F",
+      "chapter_in_arc": 3,
+      "flag": "f_keepsake",
+      "postcard": "concept_postcard_s23",
+      "arc_reward": null,
+      "content_version": 1
+    },
+    {
+      "id": "S24",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Pip and Mica",
+      "title": "Dear Whoever Comes Next",
+      "opening": "We have the first letter, the last page, and a town willing to try tomorrow. Would you help us write the address?",
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "minutes": [
+        8,
+        15
+      ],
+      "steps": [
+        "Compose three preset lines from the seal, garden, and chair callbacks.",
+        "Read the personalized final postcard.",
+        "Sign A friend or The next courier and send it."
+      ],
+      "choices": [
+        {
+          "id": "a",
+          "label": "A friend",
+          "reply": "Morrow folds the blank space into a new envelope. There is room for another story."
+        },
+        {
+          "id": "b",
+          "label": "The next courier",
+          "reply": "Pip hands you a fresh stamp. Morrow folds a new envelope. There is room for another story."
+        }
+      ],
+      "variants": [
+        {
+          "kind": "order",
+          "prompt": "Tap the cards in the order described by the clues.",
+          "cards": [
+            "Begin with the letter that arrived.",
+            "Leave room like the garden's empty planter.",
+            "End with a welcome like Rue's spare chair."
+          ],
+          "hint": "Letter, garden, then welcome. These are the three lines of the final reply.",
+          "solution": [
+            0,
+            1,
+            2
+          ],
+          "display_order": [
+            1,
+            2,
+            0
+          ],
+          "clues": [
+            "We have the first letter, the last page, and a town willing to try tomorrow. Would you help us write the address?",
+            "Begin with the letter that arrived.",
+            "Leave room like the garden's empty planter.",
+            "End with a welcome like Rue's spare chair."
+          ]
+        }
+      ],
+      "chapter_order": 24,
+      "arc": "F",
+      "chapter_in_arc": 4,
+      "flag": "f_signature",
+      "postcard": "concept_postcard_s24",
+      "arc_reward": "concept_story_goes_on_seal",
+      "content_version": 1
+    }
+  ]
+}

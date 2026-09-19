@@ -33,3 +33,4 @@ tmp_*.js
 tmp_*.jsonl
 *.tsbuildinfo
 coverage/
+test-output/quest_*.json

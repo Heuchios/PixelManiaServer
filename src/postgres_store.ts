@@ -11,6 +11,7 @@ import DropContracts = require("./server_drop_contracts");
 import InventoryContracts = require("./server_inventory_contracts");
 import PostgresContracts = require("./postgres_store_contracts");
 import ItemDatabase = require("./server_item_database");
+import QuestStore = require("./server_quest_store");
 
 type PostgresPoolConstructor = new (config?: PoolConfig) => Pool;
 type PostgresError = Error & {
@@ -594,6 +595,7 @@ class PostgresStore {
   declare progressionReady: boolean;
   declare landfillReady: boolean;
   declare pool: Pool | null;
+  questReady = false;
   declare bootstrapSqlPath: string;
   declare autoBootstrap: boolean;
   declare writeQueue: Promise<unknown>;
@@ -752,6 +754,13 @@ class PostgresStore {
           }
           this.landfillReady = false;
           this.logger("[postgres] landfill schema upgrade failed. Landfill leaderboard/prizes are disabled.", getErrorMessage(error));
+        }
+        try {
+          await QuestStore.ensureSchema(this);
+          this.questReady = true;
+        } catch (error) {
+          this.questReady = false;
+          this.logger("[postgres] quest schema unavailable; Dispatch rewards disabled.", getErrorMessage(error));
         }
         this.ready = true;
         this.degraded = false;

@@ -9,6 +9,7 @@ const DropContracts = require("./server_drop_contracts");
 const InventoryContracts = require("./server_inventory_contracts");
 const PostgresContracts = require("./postgres_store_contracts");
 const ItemDatabase = require("./server_item_database");
+const QuestStore = require("./server_quest_store");
 let PoolClass = null;
 try {
     PoolClass = require("pg").Pool;
@@ -450,6 +451,7 @@ function normalizeIp(value) {
     return PostgresContracts.normalizeIp(value);
 }
 class PostgresStore {
+    questReady = false;
     /**
      * @param {PixelMania.PostgresStoreOptions} options
      */
@@ -594,6 +596,14 @@ class PostgresStore {
                     }
                     this.landfillReady = false;
                     this.logger("[postgres] landfill schema upgrade failed. Landfill leaderboard/prizes are disabled.", getErrorMessage(error));
+                }
+                try {
+                    await QuestStore.ensureSchema(this);
+                    this.questReady = true;
+                }
+                catch (error) {
+                    this.questReady = false;
+                    this.logger("[postgres] quest schema unavailable; Dispatch rewards disabled.", getErrorMessage(error));
                 }
                 this.ready = true;
                 this.degraded = false;

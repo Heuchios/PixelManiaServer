@@ -306,9 +306,11 @@ function run() {
     const queueCallSites = [...source.matchAll(/queueFailedTransactionLedger\(/g)].length;
     assert.equal(
       queueCallSites,
-      2,
-      `expected queueFailedTransactionLedger to have exactly one caller plus its declaration, found ${queueCallSites} occurrences. A second caller may bypass sendActionRejected.`,
+      3,
+      `expected the rejection caller, quest-result caller and declaration, found ${queueCallSites} occurrences. Audit any new direct caller.`,
     );
+    assert.match(source, /if \(!result\.ok && \["quest_choose", "quest_redeem"\]\.includes\(String\(data\.action\)\)\)\s*\{\s*queueFailedTransactionLedger\(socket, "inventory_transaction_request", result\.message/,
+      "quest failures must use the audited inventory action and only log valuable completion/redemption failures");
   });
 
   console.log("");

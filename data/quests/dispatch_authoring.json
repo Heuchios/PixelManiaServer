@@ -1,0 +1,2988 @@
+{
+  "schema": "pixelmania.quest-design-not-runtime",
+  "version": 1,
+  "proposal": true,
+  "tiers": {
+    "favor": {
+      "label": "Little Favor",
+      "gems": 10,
+      "stamps": 3,
+      "minutes": [
+        4,
+        7
+      ]
+    },
+    "trip": {
+      "label": "Field Trip",
+      "gems": 25,
+      "stamps": 5,
+      "minutes": [
+        8,
+        12
+      ]
+    },
+    "story": {
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ]
+    }
+  },
+  "quests": [
+    {
+      "id": "C01",
+      "kind": "commission",
+      "tier": "favor",
+      "family": "letters",
+      "npc": "Pip",
+      "title": "The Backward Postmark",
+      "label": "Little Favor",
+      "gems": 10,
+      "stamps": 3,
+      "minutes": [
+        4,
+        7
+      ],
+      "opening": "The stamp says tomorrow. The complaint says yesterday. I would like to blame the clock, but the clock has requested a lawyer.",
+      "steps": [
+        "Inspect all three postcard fronts and their stamped clues.",
+        "Order the cards from earliest to latest using the visible cause-and-effect clues.",
+        "Choose which note Pip attaches to the corrected parcel."
+      ],
+      "evidence": "All 3 clue IDs inspected; submitted permutation equals the persisted variant solution; one allowed choice committed.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "A polite correction",
+          "reply": "Pip files the correction under Minor Chronological Disasters. The envelope finally stops ticking."
+        },
+        {
+          "id": "b",
+          "label": "An extremely official doodle",
+          "reply": "Pip draws a clock wearing a hat. The envelope approves by turning the right way up."
+        }
+      ],
+      "variants": [
+        "Dry ink before rainy ink: use weather progression, not actual dates.",
+        "An unlit, lighting, then lit lantern establishes order.",
+        "A whole, opened, then resealed parcel establishes order."
+      ],
+      "mechanics": [
+        "observe",
+        "sequence",
+        "choose"
+      ],
+      "solo_route": "Letter desk: all clue cards supplied; no inventory, movement timing, or paid item required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "letter_desk"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C02",
+      "kind": "commission",
+      "tier": "favor",
+      "family": "letters",
+      "npc": "Mica",
+      "title": "The Borrowed Ending",
+      "label": "Little Favor",
+      "gems": 10,
+      "stamps": 3,
+      "minutes": [
+        4,
+        7
+      ],
+      "opening": "Someone returned this story without its ending. I suspect they wanted it to go on longer. We can give it a gentle place to stop.",
+      "steps": [
+        "Read three illustrated story strips at the desk.",
+        "Match each loose final word to its picture clue.",
+        "Choose a hopeful or funny final sentence from two valid endings."
+      ],
+      "evidence": "Three word-to-picture mappings match the variant answer map; either ending enum accepted.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "A hopeful ending",
+          "reply": "Mica closes the book softly. The blank space becomes a small drawing of a door."
+        },
+        {
+          "id": "b",
+          "label": "A ridiculous ending",
+          "reply": "The hero is rescued by a very punctual spoon. Mica admits this improves the original."
+        }
+      ],
+      "variants": [
+        "A lost kite finds a roof or a traveling hat.",
+        "A teacup sailor reaches shore or a biscuit island.",
+        "A lonely boot finds its partner or starts a dance club."
+      ],
+      "mechanics": [
+        "match",
+        "interpret",
+        "choose"
+      ],
+      "solo_route": "Letter desk: all clue cards supplied; no inventory, movement timing, or paid item required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "letter_desk"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C03",
+      "kind": "commission",
+      "tier": "trip",
+      "family": "letters",
+      "npc": "Pip",
+      "title": "Address: A Little Less Lonely",
+      "label": "Field Trip",
+      "gems": 25,
+      "stamps": 5,
+      "minutes": [
+        8,
+        12
+      ],
+      "opening": "Three parcels have arrived for people who forgot they were expecting anything. The addresses are feelings, which is inconvenient for sorting.",
+      "steps": [
+        "Inspect three recipient cards with explicit object preferences.",
+        "Route three supplied parcels using the shared clues; one parcel has two narratively valid recipients.",
+        "Choose the final recipient and read the resulting thank-you."
+      ],
+      "evidence": "Two fixed routes match answer map; final parcel uses one of two allowed recipients; all three parcel tokens consumed only within quest state.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Send the spare lantern to Rue",
+          "reply": "Rue leaves the lantern by an empty chair. The return note says: Saved you a place."
+        },
+        {
+          "id": "b",
+          "label": "Send the spare lantern to Nell",
+          "reply": "Nell hangs it where the reeds hide the path. The return note says: The river says thanks."
+        }
+      ],
+      "variants": [
+        "Route a seed label, measuring tape, and lantern.",
+        "Route a map case, reed whistle, and warm scarf.",
+        "Route a recipe card, sketchbook, and folding stool."
+      ],
+      "mechanics": [
+        "deduce",
+        "route",
+        "choose"
+      ],
+      "solo_route": "Letter desk: all clue cards supplied; no inventory, movement timing, or paid item required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "letter_desk"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C04",
+      "kind": "commission",
+      "tier": "trip",
+      "family": "letters",
+      "npc": "Mica",
+      "title": "The Page That Would Not Sit Still",
+      "label": "Field Trip",
+      "gems": 25,
+      "stamps": 5,
+      "minutes": [
+        8,
+        12
+      ],
+      "opening": "This page keeps moving to the next shelf. It is not haunted. It is merely filed under a subject it disagrees with.",
+      "steps": [
+        "Inspect four shelf symbols and the moving page description.",
+        "Place three index tabs to form a valid path to the matching shelf.",
+        "Give the page a formal title or the title it suggests."
+      ],
+      "evidence": "All shelf clues available; server validates a connected 3-tab route ending at solution shelf; choice committed.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "A Very Small Adventure",
+          "reply": "The page settles down. Mica quietly adds a second entry under Surprisingly Stubborn Stationery."
+        },
+        {
+          "id": "b",
+          "label": "The Page That Won",
+          "reply": "The page bows. Mica gives it a shelf with enough room for its confidence."
+        }
+      ],
+      "variants": [
+        "A page about rain belongs with weather, not boats.",
+        "A page about a bell belongs with sound, not towers.",
+        "A page about growing ink belongs with gardens, not pens."
+      ],
+      "mechanics": [
+        "observe",
+        "route",
+        "name"
+      ],
+      "solo_route": "Letter desk: all clue cards supplied; no inventory, movement timing, or paid item required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "letter_desk"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C05",
+      "kind": "commission",
+      "tier": "favor",
+      "family": "building",
+      "npc": "Rue",
+      "title": "A Window for the Wind",
+      "label": "Little Favor",
+      "gems": 10,
+      "stamps": 3,
+      "minutes": [
+        4,
+        7
+      ],
+      "opening": "There is a breeze that keeps knocking at my door. I think it wants to visit. Could we make somewhere it can come and go politely?",
+      "steps": [
+        "Place four supplied wall/roof tiles on the small mat.",
+        "Leave the marked entry and one window cell open; press Check.",
+        "Choose a high window or a low window from the two valid layouts."
+      ],
+      "evidence": "Snapshot has required four structural cells and unobstructed entry; either enumerated window layout valid. No aesthetic scoring.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "A high window",
+          "reply": "The breeze whistles through the roofline. Rue calls it a skylight with opinions."
+        },
+        {
+          "id": "b",
+          "label": "A low window",
+          "reply": "The breeze settles near the floor. Rue sets out a very small welcome mat."
+        }
+      ],
+      "variants": [
+        "Wind enters from the left; roof markers shift.",
+        "Wind enters from the right; doorway moves.",
+        "Wind arrives from above; two side windows form the valid alternatives."
+      ],
+      "mechanics": [
+        "build",
+        "inspect",
+        "choose"
+      ],
+      "solo_route": "Personal Yard work mat with loaned tiles. Optional own-world version only after permission and snapshot validators exist; decorations never affect reward.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "personal_work_mat"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C06",
+      "kind": "commission",
+      "tier": "favor",
+      "family": "building",
+      "npc": "Rue",
+      "title": "One Chair Too Many",
+      "label": "Little Favor",
+      "gems": 10,
+      "stamps": 3,
+      "minutes": [
+        4,
+        7
+      ],
+      "opening": "The room is finished. The problem is that nobody has sat down in it yet. A room can be shy too, apparently.",
+      "steps": [
+        "Place a supplied table and two chairs on a six-cell mat.",
+        "Keep the marked path to the door clear.",
+        "Dedicate the spare chair to a newcomer or an old friend."
+      ],
+      "evidence": "Three required object tokens placed; adjacency and clear-path predicate passes; dedication choice committed.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "For someone new",
+          "reply": "Rue turns the spare chair toward the door. That should make the first hello easier."
+        },
+        {
+          "id": "b",
+          "label": "For an old friend",
+          "reply": "Rue leaves the chair just a little crooked. Old friends will recognize the place."
+        }
+      ],
+      "variants": [
+        "Door on left; table has two valid orientations.",
+        "Door on bottom; chairs must share a table edge.",
+        "Corner doorway; preserve a two-cell route."
+      ],
+      "mechanics": [
+        "place",
+        "path",
+        "dedicate"
+      ],
+      "solo_route": "Personal Yard work mat with loaned tiles. Optional own-world version only after permission and snapshot validators exist; decorations never affect reward.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "personal_work_mat"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C07",
+      "kind": "commission",
+      "tier": "trip",
+      "family": "building",
+      "npc": "Rue",
+      "title": "The Smallest Festival",
+      "label": "Field Trip",
+      "gems": 25,
+      "stamps": 5,
+      "minutes": [
+        8,
+        12
+      ],
+      "opening": "We have one table, six decorations, and an unreasonable amount of hope. That is enough for a festival if we arrange it correctly.",
+      "steps": [
+        "Assemble a six-piece stall with supplied structural tiles.",
+        "Connect its marked entrance to the table and shelter cells.",
+        "Choose paper stars or bunting, then submit the finished snapshot."
+      ],
+      "evidence": "Mat snapshot contains roof/table/support predicates and one connected safe entry path; chosen decoration is ignored by structural scoring.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Paper stars",
+          "reply": "Rue declares it a festival. Pip arrives wearing a star that was meant for the roof."
+        },
+        {
+          "id": "b",
+          "label": "Bright bunting",
+          "reply": "The bunting flutters. Nell asks whether the festival has a fishing category."
+        }
+      ],
+      "variants": [
+        "Narrow corner stall with one side entrance.",
+        "Wide stall with center entrance and two pillars.",
+        "Raised stall with supplied step tiles and a clear ramp."
+      ],
+      "mechanics": [
+        "build",
+        "connect",
+        "decorate"
+      ],
+      "solo_route": "Personal Yard work mat with loaned tiles. Optional own-world version only after permission and snapshot validators exist; decorations never affect reward.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "personal_work_mat"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C08",
+      "kind": "commission",
+      "tier": "trip",
+      "family": "building",
+      "npc": "Bolt",
+      "title": "A Bridge for a Very Small Problem",
+      "label": "Field Trip",
+      "gems": 25,
+      "stamps": 5,
+      "minutes": [
+        8,
+        12
+      ],
+      "opening": "My parcel cart cannot cross this gap. The gap is not large, but the cart has written a surprisingly long complaint.",
+      "steps": [
+        "Inspect the cart route and two safe support clues.",
+        "Use six supplied pieces to connect start and destination on the work mat.",
+        "Select a sturdy-looking or cheerful-looking finish, then run the symbolic cart check."
+      ],
+      "evidence": "Bounded mat path is continuous between fixed endpoints and contains required support markers; cart simulation is deterministic; either finish allowed.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Make it sturdy",
+          "reply": "The cart crosses and files a brief thank-you. Bolt is delighted by the reduction in paperwork."
+        },
+        {
+          "id": "b",
+          "label": "Make it cheerful",
+          "reply": "The cart crosses under paper flags. Its complaint has become a parade route."
+        }
+      ],
+      "variants": [
+        "Straight three-cell gap with support below.",
+        "L-shaped gap with a central corner support.",
+        "Two short gaps sharing a safe central platform."
+      ],
+      "mechanics": [
+        "plan",
+        "build",
+        "test"
+      ],
+      "solo_route": "Personal Yard work mat with loaned tiles. Optional own-world version only after permission and snapshot validators exist; decorations never affect reward.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "personal_work_mat"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C09",
+      "kind": "commission",
+      "tier": "favor",
+      "family": "garden",
+      "npc": "Tansy",
+      "title": "The Shy Seed",
+      "label": "Little Favor",
+      "gems": 10,
+      "stamps": 3,
+      "minutes": [
+        4,
+        7
+      ],
+      "opening": "This seed grows whenever nobody calls it impressive. Let us try being quietly encouraging and see what happens.",
+      "steps": [
+        "Inspect the seed packet and two soil clues.",
+        "Match the seed token to the correct practice planter; observe its guaranteed short reveal.",
+        "Choose a gentle label for the sprout."
+      ],
+      "evidence": "Planter answer matches seed variant; deterministic practice growth completes; label enum chosen. No real seed item is minted.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "A good beginning",
+          "reply": "The sprout unfolds one brave leaf. Tansy writes down: Encouragement, moderate volume."
+        },
+        {
+          "id": "b",
+          "label": "Take your time",
+          "reply": "The sprout leans against its label. Tansy decides patience is a perfectly good fertilizer."
+        }
+      ],
+      "variants": [
+        "Round seed needs a dry, circle-marked planter.",
+        "Striped seed needs the cool, stripe-marked planter.",
+        "Heart-shaped seed needs a sheltered, heart-marked planter."
+      ],
+      "mechanics": [
+        "observe",
+        "match",
+        "name"
+      ],
+      "solo_route": "Deterministic personal practice patch and seed tokens. Optional freshly committed normal planting/splicing only with an accessible whitelisted route; no rare drop or real-growth wait required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "practice_patch"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C10",
+      "kind": "commission",
+      "tier": "favor",
+      "family": "garden",
+      "npc": "Tansy",
+      "title": "The Label Mix-Up",
+      "label": "Little Favor",
+      "gems": 10,
+      "stamps": 3,
+      "minutes": [
+        4,
+        7
+      ],
+      "opening": "The labels have become detached from the plants. One pot now claims to contain a small thunderstorm. I would rather check before watering it.",
+      "steps": [
+        "Compare three supplied plant cards with their visible traits.",
+        "Match the three labels without needing plant-name knowledge.",
+        "Choose which mislabeled nickname Tansy keeps as a joke."
+      ],
+      "evidence": "Three label mappings match explicitly shown trait clues; optional nickname has no correctness or reward effect.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Small thunderstorm",
+          "reply": "The thunderstorm is a fern. It accepts its promotion with dignity."
+        },
+        {
+          "id": "b",
+          "label": "Extremely leafy fish",
+          "reply": "The leafy fish remains firmly planted. Nell requests a second opinion."
+        }
+      ],
+      "variants": [
+        "Match leaf shapes: round, pointed, split.",
+        "Match illustrated growth stages: bud, leaf, vine.",
+        "Match visible symbols: sun, droplet, shelter."
+      ],
+      "mechanics": [
+        "compare",
+        "match",
+        "choose"
+      ],
+      "solo_route": "Deterministic personal practice patch and seed tokens. Optional freshly committed normal planting/splicing only with an accessible whitelisted route; no rare drop or real-growth wait required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "practice_patch"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C11",
+      "kind": "commission",
+      "tier": "trip",
+      "family": "garden",
+      "npc": "Tansy",
+      "title": "A Cloud in a Jam Jar",
+      "label": "Field Trip",
+      "gems": 25,
+      "stamps": 5,
+      "minutes": [
+        8,
+        12
+      ],
+      "opening": "The cloud agreed to water the garden, but it can only turn left. Please do not ask how it got into the jar. That was a separate mistake.",
+      "steps": [
+        "Read three planter markers and the cloud movement rule.",
+        "Arrange four supplied channel tiles so every marked planter receives a path.",
+        "Choose to release the cloud or give it a garden name."
+      ],
+      "evidence": "Server graph check reaches all 3 target planters under variant movement rule; no timer; all pieces remain quest-only.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Let it wander",
+          "reply": "The cloud leaves one last careful raindrop. Tansy waves until it becomes ordinary weather."
+        },
+        {
+          "id": "b",
+          "label": "Invite it to stay",
+          "reply": "The cloud accepts the name Drizzle. The jam jar is officially retired."
+        }
+      ],
+      "variants": [
+        "Left-turn channels with three targets.",
+        "A split channel and two color-plus-shape gates.",
+        "One blocked cell forces a loop around the center."
+      ],
+      "mechanics": [
+        "plan",
+        "route",
+        "choose"
+      ],
+      "solo_route": "Deterministic personal practice patch and seed tokens. Optional freshly committed normal planting/splicing only with an accessible whitelisted route; no rare drop or real-growth wait required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "practice_patch"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C12",
+      "kind": "commission",
+      "tier": "trip",
+      "family": "garden",
+      "npc": "Mica",
+      "title": "A Recipe With Room for Surprise",
+      "label": "Field Trip",
+      "gems": 25,
+      "stamps": 5,
+      "minutes": [
+        8,
+        12
+      ],
+      "opening": "The margin of this gardening notebook says: Add what you know, then leave room for what you do not. The recipe appears to mean it.",
+      "steps": [
+        "Compare two seed-token traits and choose the combination matching the notebook clue.",
+        "Complete the deterministic practice splice, or one verified eligible real splice; inspect the resulting pattern.",
+        "Choose a notebook caption for the unexpected pattern."
+      ],
+      "evidence": "Practice combination matches persisted recipe puzzle OR accepted whitelisted seed.splice_committed event after acceptance; inspection and caption completed; never both routes counted.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "A useful discovery",
+          "reply": "Mica adds a careful diagram. Tansy adds a tiny smile in the corner."
+        },
+        {
+          "id": "b",
+          "label": "A beautiful question",
+          "reply": "Mica leaves the last line blank. For once, nobody tries to repair the blank space."
+        }
+      ],
+      "variants": [
+        "Combine round leaves and climbing stems to match silhouette.",
+        "Combine striped leaves and a low profile to match border pattern.",
+        "Combine broad leaves and shelter marks to match canopy clue."
+      ],
+      "mechanics": [
+        "infer",
+        "make",
+        "record"
+      ],
+      "solo_route": "Deterministic personal practice patch and seed tokens. Optional freshly committed normal planting/splicing only with an accessible whitelisted route; no rare drop or real-growth wait required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "practice_patch"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C13",
+      "kind": "commission",
+      "tier": "favor",
+      "family": "water",
+      "npc": "Nell",
+      "title": "A Difficult Witness",
+      "label": "Little Favor",
+      "gems": 10,
+      "stamps": 3,
+      "minutes": [
+        4,
+        7
+      ],
+      "opening": "A fish says it saw a lantern walking. Fish are not famous for precision. Could you help me separate the lantern from the walking?",
+      "steps": [
+        "Read three guaranteed fish-witness cards, or obtain their token after one ordinary committed catch.",
+        "Choose which illustrated scene matches all three statements.",
+        "Decide how seriously Nell titles the report."
+      ],
+      "evidence": "Evidence set unlocked by desk interaction OR one unique committed catch; answer enum matches variant scene; title choice stored.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "An official investigation",
+          "reply": "The lantern was on Pip's satchel. Nell awards the fish partial credit."
+        },
+        {
+          "id": "b",
+          "label": "A fishy business",
+          "reply": "The lantern was on Pip's satchel. Nell awards herself full credit for the pun."
+        }
+      ],
+      "variants": [
+        "Walking lantern is a courier satchel.",
+        "Floating hat is a hat on a small boat.",
+        "Singing reed is a wind whistle near the bank."
+      ],
+      "mechanics": [
+        "observe",
+        "deduce",
+        "choose"
+      ],
+      "solo_route": "Desk observation/puzzle route is always available. Optional normal catches must be fresh server-committed catches of any species; practice outcomes are symbolic and yield no normal fish or XP.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "desk_alternative_and_optional_catch_adapter"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C14",
+      "kind": "commission",
+      "tier": "favor",
+      "family": "water",
+      "npc": "Nell",
+      "title": "The Bottle With No Sea",
+      "label": "Little Favor",
+      "gems": 10,
+      "stamps": 3,
+      "minutes": [
+        4,
+        7
+      ],
+      "opening": "This message traveled six inches and is very proud of itself. I think we should find out what was so urgent.",
+      "steps": [
+        "Inspect the bottle drawing and three shoreline symbols at the desk.",
+        "Align the symbols to read the short message.",
+        "Choose a reply to its sender."
+      ],
+      "evidence": "Three symbol positions match supplied alignment clues; reply is an allowed enum; no fishing equipment needed.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Your message arrived safely",
+          "reply": "The reply travels six inches back. Somewhere, a very small correspondent is relieved."
+        },
+        {
+          "id": "b",
+          "label": "Next time, try a stamp",
+          "reply": "Pip adds a miniature stamp. Nell insists that the river must still receive a tip."
+        }
+      ],
+      "variants": [
+        "Align reed, stone, moon symbols.",
+        "Align boot, ripple, lantern symbols.",
+        "Align shell, bridge, leaf symbols."
+      ],
+      "mechanics": [
+        "inspect",
+        "align",
+        "reply"
+      ],
+      "solo_route": "Desk observation/puzzle route is always available. Optional normal catches must be fresh server-committed catches of any species; practice outcomes are symbolic and yield no normal fish or XP.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "desk_alternative_and_optional_catch_adapter"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C15",
+      "kind": "commission",
+      "tier": "trip",
+      "family": "water",
+      "npc": "Nell",
+      "title": "Three Fish and a Rumor",
+      "label": "Field Trip",
+      "gems": 25,
+      "stamps": 5,
+      "minutes": [
+        8,
+        12
+      ],
+      "opening": "Three witnesses, three stories, and none of them agree on the size of the hat. We may have to use geography.",
+      "steps": [
+        "Collect three statement tokens through desk observation stations or three fresh catches of any species.",
+        "Place the three witnesses on a simple bank map according to their relative-position clues.",
+        "Choose the rumor headline, then reveal what actually happened."
+      ],
+      "evidence": "3 distinct observation IDs OR 3 unique committed catch session IDs; spatial answer map valid; headline choice committed. No rare/species gate.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "A mysterious visitor",
+          "reply": "The visitor was Pip, investigating the hat from the other side of the river."
+        },
+        {
+          "id": "b",
+          "label": "Pip lost another hat",
+          "reply": "Pip would prefer the word misplaced. The fish remain unconvinced."
+        }
+      ],
+      "variants": [
+        "Witness positions relative to bridge and reeds.",
+        "Witness positions relative to a boat and two banks.",
+        "Witness positions relative to a stepping-stone bend."
+      ],
+      "mechanics": [
+        "gather",
+        "map",
+        "reveal"
+      ],
+      "solo_route": "Desk observation/puzzle route is always available. Optional normal catches must be fresh server-committed catches of any species; practice outcomes are symbolic and yield no normal fish or XP.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "desk_alternative_and_optional_catch_adapter"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C16",
+      "kind": "commission",
+      "tier": "trip",
+      "family": "water",
+      "npc": "Mica",
+      "title": "The River's Borrowed Light",
+      "label": "Field Trip",
+      "gems": 25,
+      "stamps": 5,
+      "minutes": [
+        8,
+        12
+      ],
+      "opening": "The river has returned a reflection that belongs to a different night. Nell thinks it is a receipt. I think it is a memory.",
+      "steps": [
+        "Inspect a supplied reflection card and three light-panel symbols.",
+        "Rotate the three panels in a bounded desk puzzle to reach the marked reflection.",
+        "Choose where the recovered light belongs."
+      ],
+      "evidence": "Server graph/light-path predicate reaches one target with exactly the supplied panels; either dedication enum accepted; no real day/night requirement.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Back on the river",
+          "reply": "The reflection settles into the water. Nell says it looks less worried now."
+        },
+        {
+          "id": "b",
+          "label": "In a lantern for travelers",
+          "reply": "Rue hangs the lantern by the path. The river seems pleased to be useful on land."
+        }
+      ],
+      "variants": [
+        "One right-angle path with a blocked corner.",
+        "Two possible paths; match the target shape clue.",
+        "A split reflection with only one marked receiver."
+      ],
+      "mechanics": [
+        "inspect",
+        "rotate",
+        "dedicate"
+      ],
+      "solo_route": "Desk observation/puzzle route is always available. Optional normal catches must be fresh server-committed catches of any species; practice outcomes are symbolic and yield no normal fish or XP.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "desk_alternative_and_optional_catch_adapter"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C17",
+      "kind": "commission",
+      "tier": "favor",
+      "family": "workshop",
+      "npc": "Bolt",
+      "title": "The Button That Does Nothing",
+      "label": "Little Favor",
+      "gems": 10,
+      "stamps": 3,
+      "minutes": [
+        4,
+        7
+      ],
+      "opening": "At last: a button with no dangerous consequences. Unfortunately it was supposed to ring a bell. Could you inspect the diagram?",
+      "steps": [
+        "Inspect the button, bell, and three connection symbols.",
+        "Select the missing connector from the supplied shape clues.",
+        "Choose a small ding or a grand announcement."
+      ],
+      "evidence": "Connector enum equals variant solution; symbolic circuit closes; sound choice stored with captions. No real power system required.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "A polite ding",
+          "reply": "Ding. Bolt looks deeply proud of this manageable achievement."
+        },
+        {
+          "id": "b",
+          "label": "A very important ding",
+          "reply": "DING. Pip arrives with three forms and no explanation."
+        }
+      ],
+      "variants": [
+        "Missing straight connector.",
+        "Missing elbow connector.",
+        "Missing bridge-over connector with explicit diagram."
+      ],
+      "mechanics": [
+        "inspect",
+        "repair",
+        "choose"
+      ],
+      "solo_route": "Loaned assembly/circuit puzzle at the Yard. Optional normal recipe route requires validated accessible recipe ID and costs; player keeps the actual crafted item.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "assembly_puzzle"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C18",
+      "kind": "commission",
+      "tier": "favor",
+      "family": "workshop",
+      "npc": "Bolt",
+      "title": "The Upside-Down Manual",
+      "label": "Little Favor",
+      "gems": 10,
+      "stamps": 3,
+      "minutes": [
+        4,
+        7
+      ],
+      "opening": "The machine works perfectly if I stand on my head. I would like a solution with fewer medical implications.",
+      "steps": [
+        "Read three safe setup cards and their cause/effect clues.",
+        "Arrange them into the valid assembly order.",
+        "Choose how Bolt marks the corrected first page."
+      ],
+      "evidence": "Submitted 3-card order equals authored solution; no craft cost or equipment check; annotation choice committed.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "THIS WAY UP",
+          "reply": "Bolt thanks you and turns the entire workbench around. We are calling that progress."
+        },
+        {
+          "id": "b",
+          "label": "A cheerful arrow",
+          "reply": "The arrow is clear enough even for Bolt. He adds a second arrow to thank the first."
+        }
+      ],
+      "variants": [
+        "Put base before wheel before parcel.",
+        "Put frame before lens before light.",
+        "Put stand before bell before pull cord."
+      ],
+      "mechanics": [
+        "read",
+        "sequence",
+        "annotate"
+      ],
+      "solo_route": "Loaned assembly/circuit puzzle at the Yard. Optional normal recipe route requires validated accessible recipe ID and costs; player keeps the actual crafted item.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "assembly_puzzle"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C19",
+      "kind": "commission",
+      "tier": "trip",
+      "family": "workshop",
+      "npc": "Bolt",
+      "title": "The Machine That Makes Almost",
+      "label": "Field Trip",
+      "gems": 25,
+      "stamps": 5,
+      "minutes": [
+        8,
+        12
+      ],
+      "opening": "It makes almost a lantern, almost a whistle, and almost tea. One of those is more urgent than the others.",
+      "steps": [
+        "Choose one of two supplied assembly silhouettes.",
+        "Fit four loaned pieces to the chosen silhouette, or complete an approved inexpensive recipe for one symbolic calibration token.",
+        "Run a deterministic calibration and choose the machine's first useful output."
+      ],
+      "evidence": "One silhouette fit predicate OR whitelisted recipe.output_committed event; calibration answer checked; output is narrative only, not a minted tool.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "A little light",
+          "reply": "The light is slightly crooked. Rue calls that character, which saves Bolt a great deal of work."
+        },
+        {
+          "id": "b",
+          "label": "A clear whistle",
+          "reply": "The whistle plays one excellent note. Nell asks if it can interview fish."
+        }
+      ],
+      "variants": [
+        "Lantern/whistle outlines with four shared pieces.",
+        "Parcel scale/bell outlines with four shared pieces.",
+        "Wind vane/sign holder outlines with four shared pieces."
+      ],
+      "mechanics": [
+        "assemble",
+        "test",
+        "choose"
+      ],
+      "solo_route": "Loaned assembly/circuit puzzle at the Yard. Optional normal recipe route requires validated accessible recipe ID and costs; player keeps the actual crafted item.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "assembly_puzzle"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C20",
+      "kind": "commission",
+      "tier": "trip",
+      "family": "workshop",
+      "npc": "Rue",
+      "title": "A Detour for Yesterday",
+      "label": "Field Trip",
+      "gems": 25,
+      "stamps": 5,
+      "minutes": [
+        8,
+        12
+      ],
+      "opening": "Bolt's conveyor keeps returning the same parcel to the sender. It is efficient in a way nobody asked for.",
+      "steps": [
+        "Inspect the sender, recipient, and one no-entry symbol.",
+        "Arrange four route pieces so a symbolic parcel reaches the recipient without a loop.",
+        "Choose a return-note stamp."
+      ],
+      "evidence": "Directed graph from fixed sender reaches recipient, excludes blocked node and cycles; stamp enum accepted. No actual vending/trade transaction.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Delivered at last",
+          "reply": "Pip receives the parcel and briefly considers framing the route map."
+        },
+        {
+          "id": "b",
+          "label": "A scenic route",
+          "reply": "The parcel has seen more of the workshop than most visitors. Rue calls that tourism."
+        }
+      ],
+      "variants": [
+        "One forbidden return edge.",
+        "Two destinations, choose the recipient matching the seal.",
+        "A one-way gate changes the valid path."
+      ],
+      "mechanics": [
+        "plan",
+        "route",
+        "test"
+      ],
+      "solo_route": "Loaned assembly/circuit puzzle at the Yard. Optional normal recipe route requires validated accessible recipe ID and costs; player keeps the actual crafted item.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "assembly_puzzle"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C21",
+      "kind": "commission",
+      "tier": "favor",
+      "family": "exploring",
+      "npc": "Pip",
+      "title": "Footprints That Forgot Their Feet",
+      "label": "Little Favor",
+      "gems": 10,
+      "stamps": 3,
+      "minutes": [
+        4,
+        7
+      ],
+      "opening": "The footprints arrived without the courier. They seem embarrassed. Let us work out which way they were trying to go.",
+      "steps": [
+        "Inspect three guaranteed trail markers in the Yard or their desk-map equivalents.",
+        "Follow the explicit object clues to select the correct destination.",
+        "Choose a note to leave for the missing courier."
+      ],
+      "evidence": "All 3 marker IDs inspected in personal quest state; destination matches variant answer; note enum committed. No speed check.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "We found your route",
+          "reply": "The courier was Pip. The footprints were from yesterday. Pip is taking this very professionally."
+        },
+        {
+          "id": "b",
+          "label": "We saved you a snack",
+          "reply": "Pip arrives for the snack and remembers the route shortly afterward."
+        }
+      ],
+      "variants": [
+        "Mud to grass to doorstep.",
+        "Dry stones to reeds to bridge.",
+        "Sawdust to ribbons to workshop gate."
+      ],
+      "mechanics": [
+        "explore",
+        "infer",
+        "reply"
+      ],
+      "solo_route": "Fixed personal Yard clue markers, with an equivalent desk map containing the same evidence; no public-world access, speed, or social requirement.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "clue_map"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C22",
+      "kind": "commission",
+      "tier": "favor",
+      "family": "exploring",
+      "npc": "Mica",
+      "title": "The Quiet Landmark",
+      "label": "Little Favor",
+      "gems": 10,
+      "stamps": 3,
+      "minutes": [
+        4,
+        7
+      ],
+      "opening": "This landmark has never been famous, but three very good things happened beside it. That seems worth a small label.",
+      "steps": [
+        "Compare three supplied landmark scenes and memory clues.",
+        "Select the scene matching every clue; inspect its highlighted detail.",
+        "Choose the wording of its small plaque."
+      ],
+      "evidence": "One scene selection matches trait intersection; detail ID inspected; plaque choice saved. Existing public worlds are not searched.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Something good happened here",
+          "reply": "The plaque is small. Mica says important things are allowed to be small."
+        },
+        {
+          "id": "b",
+          "label": "There is room for more",
+          "reply": "The landmark suddenly looks less like a destination and more like a beginning."
+        }
+      ],
+      "variants": [
+        "Bench beside a crooked lantern.",
+        "Bridge with one round stepping stone.",
+        "Garden gate with an empty planter."
+      ],
+      "mechanics": [
+        "compare",
+        "observe",
+        "dedicate"
+      ],
+      "solo_route": "Fixed personal Yard clue markers, with an equivalent desk map containing the same evidence; no public-world access, speed, or social requirement.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "clue_map"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 10,
+        "stamps": 3
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C23",
+      "kind": "commission",
+      "tier": "trip",
+      "family": "exploring",
+      "npc": "Mica",
+      "title": "The Map With a Fold in It",
+      "label": "Field Trip",
+      "gems": 25,
+      "stamps": 5,
+      "minutes": [
+        8,
+        12
+      ],
+      "opening": "The map keeps folding over the place you need. I suspect the place is shy, or the map is trying to protect its best picnic spot.",
+      "steps": [
+        "Inspect four guaranteed clue panels along the Yard route or desk map.",
+        "Arrange three map sections so their marked paths connect.",
+        "Choose whether to mark the destination as a picnic spot or a quiet lookout."
+      ],
+      "evidence": "4 clue IDs inspected; server validates section orientation and connected path to the variant destination; dedication choice stored.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "A place to share lunch",
+          "reply": "Rue adds one small table to the postcard. The map stops folding quite so tightly."
+        },
+        {
+          "id": "b",
+          "label": "A place to watch the sky",
+          "reply": "Nell marks the best view. Pip asks whether the sky accepts mail."
+        }
+      ],
+      "variants": [
+        "River crossing connects north/south sections.",
+        "Garden path connects gate and shelter.",
+        "Workshop alley connects a courtyard and a lookout."
+      ],
+      "mechanics": [
+        "explore",
+        "assemble",
+        "choose"
+      ],
+      "solo_route": "Fixed personal Yard clue markers, with an equivalent desk map containing the same evidence; no public-world access, speed, or social requirement.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "clue_map"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "C24",
+      "kind": "commission",
+      "tier": "trip",
+      "family": "exploring",
+      "npc": "Pip",
+      "title": "A Parcel for the Place Between",
+      "label": "Field Trip",
+      "gems": 25,
+      "stamps": 5,
+      "minutes": [
+        8,
+        12
+      ],
+      "opening": "The address reads: Between the last hello and the next one. I have narrowed that down to approximately everywhere.",
+      "steps": [
+        "Read three neighbor clues with clear relative positions.",
+        "Find the matching location on a bounded Yard map; inspect its guaranteed parcel marker.",
+        "Choose to leave the parcel for someone arriving or someone returning."
+      ],
+      "evidence": "Three relative-position constraints satisfied by submitted cell; marker ID inspected; recipient choice stored; parcel is quest-only.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Someone arriving",
+          "reply": "The parcel contains a blank address card. Pip says that is exactly the right size for a beginning."
+        },
+        {
+          "id": "b",
+          "label": "Someone returning",
+          "reply": "The parcel contains a familiar ribbon. Pip says some addresses are people, after all."
+        }
+      ],
+      "variants": [
+        "Between the gate and table, beside a lantern.",
+        "Between the pool and garden, below a sign.",
+        "Between the workshop and bridge, near a bench."
+      ],
+      "mechanics": [
+        "deduce",
+        "explore",
+        "deliver"
+      ],
+      "solo_route": "Fixed personal Yard clue markers, with an equivalent desk map containing the same evidence; no public-world access, speed, or social requirement.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "clue_map"
+      ],
+      "chapter_order": null,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 25,
+        "stamps": 5
+      },
+      "content_version": "design-v1"
+    },
+    {
+      "id": "S01",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Pip",
+      "title": "Postmarked Tomorrow",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "This letter has your name, tomorrow's date, and no sender. I have checked the calendar twice. It is being very unhelpful.",
+      "steps": [
+        "Inspect lantern, pebble, and clock clue cards.",
+        "Order the clues to identify the old letter desk.",
+        "Choose whether to open the envelope or keep its seal until arrival."
+      ],
+      "evidence": "Three clues inspected; order answer matches authored solution; seal choice stored; essential last-word clue shown on either path.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Open it now",
+          "reply": "Inside: When the moth asks, do not let it eat the last word. Pip stops joking for a moment."
+        },
+        {
+          "id": "b",
+          "label": "Keep the seal intact",
+          "reply": "At the desk the paper whispers: Do not let it eat the last word. Pip is relieved that you waited."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Letter desk: all clue cards supplied; no inventory, movement timing, or paid item required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "letter_desk"
+      ],
+      "chapter_order": 1,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "A",
+      "chapter_in_arc": 1,
+      "prerequisite": "intro_read",
+      "persistent_flag": "a_seal",
+      "first_completion_postcard": "concept_postcard_s01",
+      "first_completion_arc_reward": null,
+      "release_scope": "launch"
+    },
+    {
+      "id": "S02",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "building",
+      "npc": "Rue",
+      "title": "Address: Somewhere Warm",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "Pip says the address is somewhere warm. That is not a street, but it is a perfectly reasonable thing to need.",
+      "steps": [
+        "Solve the three-address clue card.",
+        "Assemble a four-piece shelter on the loaned work mat.",
+        "Choose a lantern or a window as its final feature."
+      ],
+      "evidence": "Address answer valid; roof and open entry predicates pass; light choice recorded; no owned resources consumed.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "A lantern by the door",
+          "reply": "Rue lights the lantern. Pip decides the address is now official enough."
+        },
+        {
+          "id": "b",
+          "label": "A window toward the path",
+          "reply": "Rue opens the shutters. The room looks as if it has been expecting someone."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Personal Yard work mat with loaned tiles. Optional own-world version only after permission and snapshot validators exist; decorations never affect reward.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "personal_work_mat"
+      ],
+      "chapter_order": 2,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "A",
+      "chapter_in_arc": 2,
+      "prerequisite": "S01",
+      "persistent_flag": "a_light",
+      "first_completion_postcard": "concept_postcard_s02",
+      "first_completion_arc_reward": null,
+      "release_scope": "launch"
+    },
+    {
+      "id": "S03",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "exploring",
+      "npc": "Pip",
+      "title": "The Missing Last Word",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "The paper moth has stolen a word. It is holding it very carefully for a thief. Perhaps we should ask what it thinks it is doing.",
+      "steps": [
+        "Inspect three guaranteed paper-fragment markers or their desk map.",
+        "Combine the fragments into the word HOME using picture/letter hints.",
+        "Choose the final sentence: Come home or Make home."
+      ],
+      "evidence": "Three distinct fragment IDs; assembly accepted with accessible hint path; final sentence chosen; no rare spawn.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Come home",
+          "reply": "Pip reads the line twice. I think I wrote this to myself, they say."
+        },
+        {
+          "id": "b",
+          "label": "Make home",
+          "reply": "Pip folds the line into a little roof. Maybe the address was a decision."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Fixed personal Yard clue markers, with an equivalent desk map containing the same evidence; no public-world access, speed, or social requirement.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "clue_map"
+      ],
+      "chapter_order": 3,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "A",
+      "chapter_in_arc": 3,
+      "prerequisite": "S02",
+      "persistent_flag": null,
+      "first_completion_postcard": "concept_postcard_s03",
+      "first_completion_arc_reward": null,
+      "release_scope": "launch"
+    },
+    {
+      "id": "S04",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Pip",
+      "title": "A Reply Worth Sending",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "We have a destination, a last word, and a moth that refuses to leave. I think that means we are ready to write back.",
+      "steps": [
+        "Place the three recovered memory cards into the reply.",
+        "Review two lines reflecting your seal and shelter choices.",
+        "Address the reply to Pip or whoever needs it next."
+      ],
+      "evidence": "S01–S03 complete; all three memory IDs used; saved flags read with safe defaults; recipient choice commits arc completion.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "To Pip",
+          "reply": "The next envelope is dated today. Pip smiles: One letter fixed. I am counting that."
+        },
+        {
+          "id": "b",
+          "label": "To whoever needs it next",
+          "reply": "The next envelope is dated today. Inside is a lighthouse with no reflection."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Letter desk: all clue cards supplied; no inventory, movement timing, or paid item required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "letter_desk"
+      ],
+      "chapter_order": 4,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "A",
+      "chapter_in_arc": 4,
+      "prerequisite": "S03",
+      "persistent_flag": null,
+      "first_completion_postcard": "concept_postcard_s04",
+      "first_completion_arc_reward": "concept_tomorrows_postmark",
+      "release_scope": "launch"
+    },
+    {
+      "id": "S05",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "water",
+      "npc": "Nell",
+      "title": "A Very Dry Message",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "This bottle contains water that has forgotten how to be wet. I have interviewed it. It is not cooperating.",
+      "steps": [
+        "Inspect three supplied catch-token drawings or obtain evidence through a fresh catch.",
+        "Match the token symbol to the bottle seal.",
+        "Title Nell's report seriously or playfully."
+      ],
+      "evidence": "Desk token evidence OR fresh catch event; seal match valid; report enum chosen.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "A river anomaly",
+          "reply": "Nell labels the bottle carefully. Beneath its seal is a tiny drawing of a bell."
+        },
+        {
+          "id": "b",
+          "label": "An exceptionally dry joke",
+          "reply": "Nell laughs once, then notices the bell beneath the seal. That part is less funny."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Desk observation/puzzle route is always available. Optional normal catches must be fresh server-committed catches of any species; practice outcomes are symbolic and yield no normal fish or XP.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "desk_alternative_and_optional_catch_adapter"
+      ],
+      "chapter_order": 5,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "B",
+      "chapter_in_arc": 1,
+      "prerequisite": "S04",
+      "persistent_flag": null,
+      "first_completion_postcard": "concept_postcard_s05",
+      "first_completion_arc_reward": null,
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S06",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "water",
+      "npc": "Nell",
+      "title": "Three Witnesses, No Alibis",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "The bell was heard by three fish. Each insists it was the only witness. They have all brought diagrams.",
+      "steps": [
+        "Inspect three statements via desk observations or three ordinary catches.",
+        "Place witnesses relative to the bridge, reed bank, and shadow.",
+        "Choose which witness Nell thanks first."
+      ],
+      "evidence": "Three statement IDs unlocked; spatial arrangement matches author solution; thanks choice does not affect solved location.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "The careful witness",
+          "reply": "The careful fish was right about the reeds. Nell records that without encouraging it."
+        },
+        {
+          "id": "b",
+          "label": "The enthusiastic witness",
+          "reply": "The enthusiastic fish was wrong about the giant hat. It was right about the reeds."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Desk observation/puzzle route is always available. Optional normal catches must be fresh server-committed catches of any species; practice outcomes are symbolic and yield no normal fish or XP.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "desk_alternative_and_optional_catch_adapter"
+      ],
+      "chapter_order": 6,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "B",
+      "chapter_in_arc": 2,
+      "prerequisite": "S05",
+      "persistent_flag": null,
+      "first_completion_postcard": "concept_postcard_s06",
+      "first_completion_arc_reward": null,
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S07",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "building",
+      "npc": "Nell",
+      "title": "Borrowed Moonlight",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "The bell is down there, but the moon's reflection is somewhere else. Rue says a small reflector will do. I trust Rue more than the moon.",
+      "steps": [
+        "Inspect the marked source and bell target.",
+        "Rotate three supplied reflection panels to connect the light path.",
+        "Dedicate the recovered glow to the river or a traveler lantern."
+      ],
+      "evidence": "Server puzzle graph connects source to bell receiver; either dedication permitted; no dependence on actual nighttime.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Return it to the river",
+          "reply": "The water regains a silver edge. Nell says it looks like itself again."
+        },
+        {
+          "id": "b",
+          "label": "Keep a little for travelers",
+          "reply": "A lantern holds a small silver glow. The river still has plenty left."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Personal Yard work mat with loaned tiles. Optional own-world version only after permission and snapshot validators exist; decorations never affect reward.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "personal_work_mat"
+      ],
+      "chapter_order": 7,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "B",
+      "chapter_in_arc": 3,
+      "prerequisite": "S06",
+      "persistent_flag": null,
+      "first_completion_postcard": "concept_postcard_s07",
+      "first_completion_arc_reward": null,
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S08",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Nell",
+      "title": "The Bell Beneath the Reeds",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "I know that tune. Someone taught it to me before leaving Threadlight. Perhaps the river was keeping it safe.",
+      "steps": [
+        "Read the shape-captioned three-note sequence.",
+        "Reconstruct it using labeled chimes or the text sequence option.",
+        "Choose a message for the friend who left."
+      ],
+      "evidence": "Sequence equals authored three-symbol pattern; either accessibility input accepted; message stored and Arc B completed.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Welcome back, whenever you come",
+          "reply": "Nell leaves the message by the reeds. The bell sounds once, as if it understands."
+        },
+        {
+          "id": "b",
+          "label": "Safe travels, wherever you go",
+          "reply": "Nell sends the message with the current. The bell sounds once, then lets it go."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Letter desk: all clue cards supplied; no inventory, movement timing, or paid item required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "letter_desk"
+      ],
+      "chapter_order": 8,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "B",
+      "chapter_in_arc": 4,
+      "prerequisite": "S07",
+      "persistent_flag": "b_message",
+      "first_completion_postcard": "concept_postcard_s08",
+      "first_completion_arc_reward": "concept_keeper_of_small_lights",
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S09",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "garden",
+      "npc": "Tansy",
+      "title": "Seeds With Instructions Missing",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "Almost, Perhaps, and Not Yet. These are peculiar seed names, but I have seen worse instructions.",
+      "steps": [
+        "Compare three soil/seed-token clues.",
+        "Plant the matching seed in the deterministic practice patch.",
+        "Choose a label for its paper-leaf reveal."
+      ],
+      "evidence": "Seed/soil match valid; practice stage timer completes; label selected; no ordinary seed minted.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Almost ready",
+          "reply": "A sentence appears on the paper leaf and stops halfway. Tansy calls it an invitation."
+        },
+        {
+          "id": "b",
+          "label": "Ready to begin",
+          "reply": "The leaf unfolds like a letter. Its roots point toward a very unfinished thought."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Deterministic personal practice patch and seed tokens. Optional freshly committed normal planting/splicing only with an accessible whitelisted route; no rare drop or real-growth wait required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "practice_patch"
+      ],
+      "chapter_order": 9,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "C",
+      "chapter_in_arc": 1,
+      "prerequisite": "S08",
+      "persistent_flag": null,
+      "first_completion_postcard": "concept_postcard_s09",
+      "first_completion_arc_reward": null,
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S10",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "garden",
+      "npc": "Tansy",
+      "title": "The Flower That Hated Its Name",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "It has rejected Moon Majesty, Supreme Blossom, and Kevin. I think we should listen before trying a fourth name.",
+      "steps": [
+        "Compare the flower's three pictured responses.",
+        "Identify the condition that makes it open: a laughter symbol.",
+        "Choose a silly name or leave it unnamed."
+      ],
+      "evidence": "Three observations inspected; response inference matches clue set; naming choice accepted.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Call it Wobblebud",
+          "reply": "Wobblebud opens immediately. Tansy apologizes to every formal botanical society."
+        },
+        {
+          "id": "b",
+          "label": "Let it stay unnamed",
+          "reply": "The flower opens without a label. Tansy leaves a little blank sign beside it."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Deterministic personal practice patch and seed tokens. Optional freshly committed normal planting/splicing only with an accessible whitelisted route; no rare drop or real-growth wait required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "practice_patch"
+      ],
+      "chapter_order": 10,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "C",
+      "chapter_in_arc": 2,
+      "prerequisite": "S09",
+      "persistent_flag": null,
+      "first_completion_postcard": "concept_postcard_s10",
+      "first_completion_arc_reward": null,
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S11",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "garden",
+      "npc": "Tansy",
+      "title": "Rain for a Cloud in a Jar",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "The cloud has watered everyone except itself. We should fix the channels, and perhaps also the arrangement.",
+      "steps": [
+        "Read the cloud movement rule and three planter markers.",
+        "Route four supplied channel pieces to every target.",
+        "Release the cloud or invite it to help at the garden opening."
+      ],
+      "evidence": "Graph reaches all 3 targets; optional hints allowed; cloud choice stored.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Let the cloud wander",
+          "reply": "The cloud leaves a soft trail of rain. It seems lighter without the jar."
+        },
+        {
+          "id": "b",
+          "label": "Invite it to the opening",
+          "reply": "The cloud reserves a spot above the watering can. Tansy adds it to the guest list."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Deterministic personal practice patch and seed tokens. Optional freshly committed normal planting/splicing only with an accessible whitelisted route; no rare drop or real-growth wait required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "practice_patch"
+      ],
+      "chapter_order": 11,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "C",
+      "chapter_in_arc": 3,
+      "prerequisite": "S10",
+      "persistent_flag": null,
+      "first_completion_postcard": "concept_postcard_s11",
+      "first_completion_arc_reward": null,
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S12",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "building",
+      "npc": "Tansy",
+      "title": "A Garden Allowed to Grow",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "We have a flower, a place for rain, and an empty planter. I think the empty planter might be the most important part.",
+      "steps": [
+        "Place three memory objects and one empty planter on the mat.",
+        "Keep the path open and satisfy the two marked shelter cells.",
+        "Put the empty planter at the gate or the center."
+      ],
+      "evidence": "Four quest tokens placed; structural/path predicate valid; planter location is one of two accepted cells; arc completed.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "At the gate for newcomers",
+          "reply": "Tansy leaves room beside the gate. A paper root points toward Bolt's workshop."
+        },
+        {
+          "id": "b",
+          "label": "At the center for everyone",
+          "reply": "Tansy leaves room at the center. A paper root points toward Bolt's workshop."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Personal Yard work mat with loaned tiles. Optional own-world version only after permission and snapshot validators exist; decorations never affect reward.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "personal_work_mat"
+      ],
+      "chapter_order": 12,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "C",
+      "chapter_in_arc": 4,
+      "prerequisite": "S11",
+      "persistent_flag": "c_empty_planter",
+      "first_completion_postcard": "concept_postcard_s12",
+      "first_completion_arc_reward": "concept_unnamed_flower_cover",
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S13",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "workshop",
+      "npc": "Bolt",
+      "title": "Instructions for Yesterday",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "The instructions are all correct. They are simply correct in the wrong order. I believe that is a smaller problem.",
+      "steps": [
+        "Inspect three setup cards and visible cause/effect clues.",
+        "Arrange the cards into the valid sequence.",
+        "Choose drawings or jokes for the manual margins."
+      ],
+      "evidence": "Ordered answer valid; annotation choice stored; no normal craft required.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Helpful drawings",
+          "reply": "The drawings explain the machine perfectly. Bolt looks a little disappointed by how simple it seems."
+        },
+        {
+          "id": "b",
+          "label": "Helpful jokes",
+          "reply": "The jokes explain the machine surprisingly well. Bolt gives the manual a comedy credit."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Loaned assembly/circuit puzzle at the Yard. Optional normal recipe route requires validated accessible recipe ID and costs; player keeps the actual crafted item.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "assembly_puzzle"
+      ],
+      "chapter_order": 13,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "D",
+      "chapter_in_arc": 1,
+      "prerequisite": "S12",
+      "persistent_flag": null,
+      "first_completion_postcard": "concept_postcard_s13",
+      "first_completion_arc_reward": null,
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S14",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "workshop",
+      "npc": "Bolt",
+      "title": "A Machine With Stage Fright",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "It works when nobody looks at it. We have tried looking politely. Could you check the missing part?",
+      "steps": [
+        "Fit four supplied parts to the calibration silhouette, or use one approved real recipe for a token.",
+        "Run the server-checked calibration diagram.",
+        "Encourage the machine or tell it a harmless joke."
+      ],
+      "evidence": "Assembly OR whitelisted committed recipe; calibration answer correct; choice committed; output is story evidence only.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "You can do one small thing",
+          "reply": "The machine prints yesterday's weather. Bolt quietly stops congratulating it."
+        },
+        {
+          "id": "b",
+          "label": "Why did the cog cross the road?",
+          "reply": "The machine prints yesterday's weather, followed by a very small ha."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Loaned assembly/circuit puzzle at the Yard. Optional normal recipe route requires validated accessible recipe ID and costs; player keeps the actual crafted item.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "assembly_puzzle"
+      ],
+      "chapter_order": 14,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "D",
+      "chapter_in_arc": 2,
+      "prerequisite": "S13",
+      "persistent_flag": null,
+      "first_completion_postcard": "concept_postcard_s14",
+      "first_completion_arc_reward": null,
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S15",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Bolt",
+      "title": "The Perfect Day Problem",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "I wanted to save a good day for a friend. I did not intend to prevent it from ending. Those sounded more similar in the design notes.",
+      "steps": [
+        "Inspect three picnic memory strips.",
+        "Identify the earliest strip using explicit weather and object clues.",
+        "Choose to preserve the picnic's sound or its colors."
+      ],
+      "evidence": "Three strips inspected; chronology answer valid; bounded memory flag stored.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Keep the sound",
+          "reply": "The laughter becomes a small chime in the archive. Bolt lets the rest of the day move on."
+        },
+        {
+          "id": "b",
+          "label": "Keep the colors",
+          "reply": "The colors become a small postcard in the archive. Bolt lets the rest of the day move on."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Letter desk: all clue cards supplied; no inventory, movement timing, or paid item required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "letter_desk"
+      ],
+      "chapter_order": 15,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "D",
+      "chapter_in_arc": 3,
+      "prerequisite": "S14",
+      "persistent_flag": "d_memory",
+      "first_completion_postcard": "concept_postcard_s15",
+      "first_completion_arc_reward": null,
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S16",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "workshop",
+      "npc": "Bolt",
+      "title": "A Useful Imperfection",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "The machine can remember or repeat. I think I accidentally underlined the wrong word.",
+      "steps": [
+        "Read the remember/repeat circuit labels.",
+        "Route the supplied graph to Remember, avoiding the loop.",
+        "Choose a mismatched final tile from two valid options."
+      ],
+      "evidence": "Graph terminates at Remember and contains no cycle; either final connector option valid; Arc D completed.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "The slightly crooked tile",
+          "reply": "A new postcard appears. It is imperfect and has never existed before. Bolt calls that success."
+        },
+        {
+          "id": "b",
+          "label": "The wonderfully odd tile",
+          "reply": "A new postcard appears. Bolt cannot explain its tiny hat. He decides not to fix it."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Loaned assembly/circuit puzzle at the Yard. Optional normal recipe route requires validated accessible recipe ID and costs; player keeps the actual crafted item.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "assembly_puzzle"
+      ],
+      "chapter_order": 16,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "D",
+      "chapter_in_arc": 4,
+      "prerequisite": "S15",
+      "persistent_flag": null,
+      "first_completion_postcard": "concept_postcard_s16",
+      "first_completion_arc_reward": "concept_useful_mistake_badge",
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S17",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Rue",
+      "title": "The Guest Nobody Listed",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "Six place cards. Five chairs. I think we should arrange the room before deciding who does not belong.",
+      "steps": [
+        "Read three seating preferences.",
+        "Arrange the five named places without conflicts, leaving a marked sixth place.",
+        "Choose a welcome card for the empty place."
+      ],
+      "evidence": "Seating constraints satisfied; empty-place marker preserved; welcome enum committed; solo default.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "We saved you a seat",
+          "reply": "Rue adds a sixth chair. The room looks more finished with an unfinished guest list."
+        },
+        {
+          "id": "b",
+          "label": "Come as you are",
+          "reply": "Rue leaves the card by the chair. Nobody asks the next guest for an explanation."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Letter desk: all clue cards supplied; no inventory, movement timing, or paid item required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "letter_desk"
+      ],
+      "chapter_order": 17,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "E",
+      "chapter_in_arc": 1,
+      "prerequisite": "S16",
+      "persistent_flag": null,
+      "first_completion_postcard": "concept_postcard_s17",
+      "first_completion_arc_reward": null,
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S18",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "building",
+      "npc": "Rue",
+      "title": "The Smallest Possible Festival",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "We do not need a grand event. We need one corner that looks happy to see people.",
+      "steps": [
+        "Place six loaned structural pieces on the mat.",
+        "Connect the entry, shelter, and table markers.",
+        "Choose flags or paper stars for the final decoration."
+      ],
+      "evidence": "Required structural and clear-path predicates pass; decorative choice ignored by scoring.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Paper flags",
+          "reply": "Pip hangs the flags in the wrong order. Rue decides there is no wrong order for this."
+        },
+        {
+          "id": "b",
+          "label": "Paper stars",
+          "reply": "One star folds itself into a moth. Rue pretends not to notice until it is ready."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Personal Yard work mat with loaned tiles. Optional own-world version only after permission and snapshot validators exist; decorations never affect reward.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "personal_work_mat"
+      ],
+      "chapter_order": 18,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "E",
+      "chapter_in_arc": 2,
+      "prerequisite": "S17",
+      "persistent_flag": null,
+      "first_completion_postcard": "concept_postcard_s18",
+      "first_completion_arc_reward": null,
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S19",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "exploring",
+      "npc": "Rue",
+      "title": "The Lantern That Waited",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "The last lantern will not light for an instruction. I suspect it is waiting for an invitation.",
+      "steps": [
+        "Inspect three shape-coded lantern markers or their desk-map cards.",
+        "Arrange their welcome symbols in the shown order.",
+        "Choose a preset welcome for the final lantern."
+      ],
+      "evidence": "Three marker IDs inspected; order matches authored path; welcome enum turns on personal quest lantern state.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "There is no hurry",
+          "reply": "The lantern glows slowly. Rue waits with it, just to make the point clear."
+        },
+        {
+          "id": "b",
+          "label": "We are glad you came",
+          "reply": "The lantern glows at once. Something small rustles in the paper decorations."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Fixed personal Yard clue markers, with an equivalent desk map containing the same evidence; no public-world access, speed, or social requirement.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "clue_map"
+      ],
+      "chapter_order": 19,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "E",
+      "chapter_in_arc": 3,
+      "prerequisite": "S18",
+      "persistent_flag": null,
+      "first_completion_postcard": "concept_postcard_s19",
+      "first_completion_arc_reward": null,
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S20",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Rue",
+      "title": "Leave a Chair Out",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "We have brought your shelter and garden memories to the table. There is still one place left. That is on purpose.",
+      "steps": [
+        "Select the already-unlocked shelter and garden postcards.",
+        "Place them at the table with the spare-chair marker.",
+        "Dedicate the chair to someone new or someone returning."
+      ],
+      "evidence": "A2/C4 postcard entitlements present; memory arrangement valid; dedication stored; Morrow reveal and Arc E completion.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "Someone new",
+          "reply": "Morrow lands on the spare chair carrying a blank page. Rue simply says hello."
+        },
+        {
+          "id": "b",
+          "label": "Someone returning",
+          "reply": "Morrow lands on the spare chair carrying a blank page. Rue says welcome back."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Letter desk: all clue cards supplied; no inventory, movement timing, or paid item required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "letter_desk"
+      ],
+      "chapter_order": 20,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "E",
+      "chapter_in_arc": 4,
+      "prerequisite": "S19",
+      "persistent_flag": "e_chair",
+      "first_completion_postcard": "concept_postcard_s20",
+      "first_completion_arc_reward": "concept_spare_chair_border",
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S21",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Mica",
+      "title": "Things the Moth Did Not Eat",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "These scraps are not missing memories. They are the spaces around them. We may have accused the wrong part of the story.",
+      "steps": [
+        "Inspect three recovered scraps.",
+        "Sort marked memories and blank spaces using visible symbols.",
+        "Choose how to greet Morrow after the discovery."
+      ],
+      "evidence": "Three scrap classifications valid; accessible translation available; greeting stored.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "An apology",
+          "reply": "Morrow folds its wings into a small bow. Mica starts a new file labeled Corrections."
+        },
+        {
+          "id": "b",
+          "label": "An invitation to explain",
+          "reply": "Morrow points to the blank page. Mica finally understands what it has been carrying."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Letter desk: all clue cards supplied; no inventory, movement timing, or paid item required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "letter_desk"
+      ],
+      "chapter_order": 21,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "F",
+      "chapter_in_arc": 1,
+      "prerequisite": "S20",
+      "persistent_flag": null,
+      "first_completion_postcard": "concept_postcard_s21",
+      "first_completion_arc_reward": null,
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S22",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "exploring",
+      "npc": "Mica",
+      "title": "A Map Made of Almost",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "The unfinished paths all lead somewhere. We simply have to stop insisting they were meant to be finished alone.",
+      "steps": [
+        "Read four unlocked memory cards alongside their clues.",
+        "Arrange four map pieces so their marked paths connect.",
+        "Choose a name for the route back to the letter desk."
+      ],
+      "evidence": "Four required chapter-memory entitlements; graph reaches desk; route name enum committed; no unaided recall required.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "The long way home",
+          "reply": "The path reaches the first letter desk. Pip has already prepared a fresh stamp."
+        },
+        {
+          "id": "b",
+          "label": "The beginning again",
+          "reply": "The path reaches the first letter desk. The blank page is no longer empty by accident."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Fixed personal Yard clue markers, with an equivalent desk map containing the same evidence; no public-world access, speed, or social requirement.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "clue_map"
+      ],
+      "chapter_order": 22,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "F",
+      "chapter_in_arc": 2,
+      "prerequisite": "S21",
+      "persistent_flag": null,
+      "first_completion_postcard": "concept_postcard_s22",
+      "first_completion_arc_reward": null,
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S23",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Mica",
+      "title": "The Day We Did Not Keep",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "A memory is allowed to stay. A day is allowed to end. We can hold one without trapping the other.",
+      "steps": [
+        "Review the available callbacks from Nell's message and Bolt's picnic memory.",
+        "Place the two keepsake cards outside the Repeat loop.",
+        "Choose what the final postcard emphasizes."
+      ],
+      "evidence": "B4/D3 flags read with defaults; keepsake placement excludes repeat node; final keepsake enum saved.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "The people who were there",
+          "reply": "The postcard holds the people clearly, with room around them for what comes next."
+        },
+        {
+          "id": "b",
+          "label": "The possibility of another day",
+          "reply": "The postcard holds a bright empty corner. Mica labels it Tomorrow, not yet written."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Letter desk: all clue cards supplied; no inventory, movement timing, or paid item required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "letter_desk"
+      ],
+      "chapter_order": 23,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "F",
+      "chapter_in_arc": 3,
+      "prerequisite": "S22",
+      "persistent_flag": "f_keepsake",
+      "first_completion_postcard": "concept_postcard_s23",
+      "first_completion_arc_reward": null,
+      "release_scope": "later_arc"
+    },
+    {
+      "id": "S24",
+      "kind": "chapter",
+      "tier": "story",
+      "family": "letters",
+      "npc": "Pip and Mica",
+      "title": "Dear Whoever Comes Next",
+      "label": "Story Letter",
+      "gems": 15,
+      "stamps": 4,
+      "minutes": [
+        8,
+        15
+      ],
+      "opening": "We have the first letter, the last page, and a town willing to try tomorrow. Would you help us write the address?",
+      "steps": [
+        "Compose three preset lines from the seal, garden, and chair callbacks.",
+        "Read the personalized final postcard.",
+        "Sign A friend or The next courier and send it."
+      ],
+      "evidence": "S01–S23 completed; three allowed phrase selections; signature committed with Arc F receipt; first-completion seal unique.",
+      "choices": [
+        {
+          "id": "a",
+          "label": "A friend",
+          "reply": "Morrow folds the blank space into a new envelope. There is room for another story."
+        },
+        {
+          "id": "b",
+          "label": "The next courier",
+          "reply": "Pip hands you a fresh stamp. Morrow folds a new envelope. There is room for another story."
+        }
+      ],
+      "variants": [],
+      "mechanics": [
+        "story",
+        "puzzle",
+        "choice"
+      ],
+      "solo_route": "Letter desk: all clue cards supplied; no inventory, movement timing, or paid item required.",
+      "status": "PROPOSED_NOT_IMPLEMENTED",
+      "dependencies": [
+        "personal_quest_service",
+        "server_objective_validation",
+        "letter_desk"
+      ],
+      "chapter_order": 24,
+      "consumes_owned_items": false,
+      "random_drop_required": false,
+      "social_required": false,
+      "reward": {
+        "gems": 15,
+        "stamps": 4
+      },
+      "content_version": "design-v1",
+      "arc": "F",
+      "chapter_in_arc": 4,
+      "prerequisite": "S23",
+      "persistent_flag": "f_signature",
+      "first_completion_postcard": "concept_postcard_s24",
+      "first_completion_arc_reward": "concept_story_goes_on_seal",
+      "release_scope": "later_arc"
+    }
+  ]
+}
