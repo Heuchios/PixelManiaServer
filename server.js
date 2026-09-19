@@ -12851,7 +12851,9 @@ function getSeedConfiguredGrowTime(seedType) {
     const definition = ItemDatabase.getItemDefinition(seedType);
     const configured = Number(definition?.max_grow_time || definition?.grow_time || 0);
     if (Number.isFinite(configured) && configured > 0) {
-        return Math.max(1, Math.min(86400, configured));
+        // Item definitions are server-owned; multi-day spreadsheet durations must
+        // reach planting and splicing unchanged.
+        return Math.max(1, configured);
     }
     return SERVER_SEED_GROW_TIME_SECONDS;
 }

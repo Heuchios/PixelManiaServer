@@ -73,6 +73,7 @@ for (const recipe of crafting) {
 assert.equal(db.getSpliceResult('unknown_seed', 'dirt_seed'), '');
 assert.equal(db.getSpliceResult('dirt_seed', 'dirt_seed'), '');
 assert.equal(db.ITEMS.glowing_dirt.seed, '', 'Unrelated seedless blocks stay seedless');
+require('./check_seed_growth_duration');
 const harvest = JSON.parse(fs.readFileSync(path.join(clientDir, 'docs/splice-harvest-times.json'), 'utf8'));
 assert.equal(harvest.rows.length, rows.length, 'Every sheet duration captured');
 for (const row of harvest.rows) {
