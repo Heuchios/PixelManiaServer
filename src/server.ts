@@ -14280,6 +14280,7 @@ function serializeSeedForMessage(seed: any) {
     tree_created_at: seed.tree_created_at || seed.planted_at,
     max_grow_time: maxGrowTime,
     mature: growTime <= 0,
+    spliced: Boolean(seed.spliced),
     mutated: Boolean(seed.mutated),
   };
 }
@@ -14294,6 +14295,7 @@ function makeServerSeedEntry(x: any, y: any, seedType: any) {
     max_grow_time: maxGrowTime,
     planted_at: Date.now(),
     tree_created_at: Date.now(),
+    spliced: false,
     mutated: randomChance(SEED_MUTATION_CHANCE),
   };
 }
@@ -14490,6 +14492,11 @@ async function handleSeedSpliceTransactionLocked(socket: unknown, player: Server
 
   if (isSeedMature(seed)) {
     sendInventoryTransactionRejected(socket, data, "This seed-tree is mature. Harvest it first.");
+    return;
+  }
+
+  if (seed.spliced) {
+    sendInventoryTransactionRejected(socket, data, "This tree has already been spliced. Harvest it and plant a new seed first.");
     return;
   }
 
@@ -26713,12 +26720,14 @@ function applySeedUpdateToWorldState(worldName: any, update: any) {
 
   if (update.action === "place" || update.action === "splice") {
     const seedEntry = makeServerSeedEntry(update.x, update.y, update.seed_type);
+    seedEntry.spliced = update.action === "splice";
     state.seeds.set(key, seedEntry);
     update.grow_time = seedEntry.grow_time;
     update.max_grow_time = seedEntry.max_grow_time;
     update.planted_at = seedEntry.planted_at;
     update.tree_created_at = seedEntry.tree_created_at;
     update.mature = false;
+    update.spliced = seedEntry.spliced;
     update.mutated = Boolean(seedEntry.mutated);
   } else if (update.action === "remove") {
     state.seeds.delete(key);
@@ -29894,6 +29903,7 @@ function buildWorldBlockReconciliationPayload(
       grow_time: getSeedGrowthRemaining(seedEntry),
       max_grow_time: Math.max(0, Number(seedEntry.max_grow_time) || 0),
       mutated: Boolean(seedEntry.mutated),
+      spliced: Boolean(seedEntry.spliced),
       mature: isSeedMature(seedEntry),
     }
     : null;

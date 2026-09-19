@@ -673,6 +673,7 @@ function createWorldStateHelpers(config) {
             planted_at: plantedAt,
             tree_created_at: Number(rawEntry.tree_created_at) || plantedAt,
             mutated: Boolean(rawEntry.mutated),
+            spliced: Boolean(rawEntry.spliced),
         };
     }
     function serializeSeedForSave(seed) {

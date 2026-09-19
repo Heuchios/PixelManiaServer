@@ -338,6 +338,8 @@ assert.deepEqual(helpers.normalizeRemovedBlockEntry({ x: 3, y: 4, type: "" }), {
   block_type: "",
 });
 assert.equal(helpers.normalizeSeedEntry({ x: 1, y: 2, seed_type: "apple_seed" }).max_grow_time, 20);
+assert.equal(helpers.normalizeSeedEntry({ x: 1, y: 2, seed_type: "apple_seed", spliced: true }).spliced, true, "Reload preserves splice limit");
+assert.equal(helpers.normalizeSeedEntry({ x: 1, y: 2, seed_type: "apple_seed" }).spliced, false, "Legacy trees default to unspliced");
 const multiDayTree = helpers.normalizeSeedEntry({ x: 1, y: 2, seed_type: "apple_seed", max_grow_time: 7 * 86400, grow_time: 6 * 86400, planted_at: 1000000, tree_created_at: 900000 });
 assert.equal(multiDayTree.max_grow_time, 7 * 86400, "Loading must not shorten multi-day growth to one day");
 assert.equal(multiDayTree.tree_created_at, 900000, "Tree identity survives persistence and growth speedups");

@@ -73,6 +73,29 @@ const place = (x = 4, player = alice) => context.handleSeedPlaceTransaction({}, 
 const hit = (x = 4, player = alice) => context.handleSeedHarvestTransaction({}, player, packet('seed_harvest', x));
 const flush = () => new Promise(resolve => setImmediate(resolve));
 async function run() {
+  await place(50);
+  const splice = (player = alice) => context.handleSeedSpliceTransaction({}, player, { ...packet('seed_splice', 50), spliced: false });
+  failCommit = true;
+  await splice();
+  assert.equal(world.seeds.get('50:3').spliced, false, 'Failed splice restores eligibility');
+  failCommit = false;
+  await splice();
+  assert.equal(world.seeds.get('50:3').spliced, true);
+  const countAfterSplice = inventory.alice.seeds, commitsAfterSplice = commits;
+  const saved = JSON.parse(JSON.stringify(context.serializeSeedForMessage(world.seeds.get('50:3'))));
+  assert.equal(saved.spliced, true, 'Snapshot preserves splice lock');
+  world.seeds.set('50:3', saved);
+  await splice();
+  assert.equal(replies.at(-1).ok, false, 'Cannot splice twice, even with forged flag');
+  assert.equal(inventory.alice.seeds, countAfterSplice, 'Rejected splice spends no seed');
+  assert.equal(commits, commitsAfterSplice);
+  await splice(bob);
+  assert.equal(replies.at(-1).ok, false, 'Splice limit belongs to tree, not player');
+  now += 60000;
+  await hit(50);
+  await place(50);
+  await splice();
+  assert.equal(replies.at(-1).ok, true, 'Newly planted tree can splice again');
   for (const elapsed of [0, 30000]) {
     await place();
     const seed = world.seeds.get('4:3');
