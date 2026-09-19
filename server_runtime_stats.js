@@ -297,16 +297,21 @@ function getSubjectViolationSnapshot(target, options = {}) {
     return { tracked_subjects: entries.length, total, by_kind: byKind, by_label: byLabel, top };
 }
 // Optional, bounded runtime histograms. Names are capped because packet types are untrusted.
-function createRuntimeProfiler(enabled) {
+function createRuntimeProfiler(enabled, options = {}) {
     const buckets = new Map();
+    const now = options.now || Date.now;
+    const slowMs = Math.max(1, options.slowMs || 40);
+    const emit = options.emit || ((event) => console.warn("[PERFORMANCE_SPIKE]", JSON.stringify(event)));
+    let spikeWindow = now(), emittedSpikes = 0, suppressedSpikes = 0;
+    let gcObserver;
     if (enabled) {
-        const gcObserver = new node_perf_hooks_1.PerformanceObserver(list => {
+        gcObserver = new node_perf_hooks_1.PerformanceObserver(list => {
             for (const entry of list.getEntries())
                 observe("gc_ms", entry.duration);
         });
         gcObserver.observe({ entryTypes: ["gc"] });
     }
-    function observe(name, value) {
+    function observe(name, value, context = {}) {
         if (!enabled || !Number.isFinite(value))
             return;
         const key = name.slice(0, 96);
@@ -318,6 +323,30 @@ function createRuntimeProfiler(enabled) {
         bucket.total += value;
         bucket.max = Math.max(bucket.max, value);
         buckets.set(key, bucket);
+        if (value < slowMs || !key.endsWith("_ms") && !key.includes("_ms:"))
+            return;
+        const timestamp = now();
+        if (timestamp - spikeWindow >= 5000) {
+            spikeWindow = timestamp;
+            emittedSpikes = 0;
+            suppressedSpikes = 0;
+        }
+        // A congested connection must not create a second stall through log volume.
+        if (emittedSpikes >= 8) {
+            suppressedSpikes += 1;
+            return;
+        }
+        emittedSpikes += 1;
+        const safeContext = {};
+        for (const field of ["player_id", "world", "chunk", "request_id", "queue_depth", "buffered_bytes", "tick_lag_ms"]) {
+            const raw = context[field];
+            if (typeof raw === "number" && Number.isFinite(raw))
+                safeContext[field] = raw;
+            else if (typeof raw === "string")
+                safeContext[field] = raw.slice(0, 96).replace(/[\r\n]/g, "");
+        }
+        emit({ at: new Date(timestamp).toISOString(), monotonic_ms: performance.now(), operation: key,
+            duration_ms: value, ...safeContext });
     }
     function snapshot() {
         const result = {};
@@ -329,7 +358,8 @@ function createRuntimeProfiler(enabled) {
         buckets.clear();
         return result;
     }
-    return { enabled, observe, snapshot };
+    return { enabled, observe, snapshot, diagnostics: () => ({ emitted_spikes: emittedSpikes, suppressed_spikes: suppressedSpikes }),
+        dispose: () => gcObserver?.disconnect() };
 }
 module.exports = {
     createRuntimeProfiler,

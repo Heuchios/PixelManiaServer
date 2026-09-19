@@ -38,6 +38,32 @@ function compactMovementBatch(payload) {
             return compact;
         }) };
 }
+// Stateless column encoding: every row is still a complete authoritative
+// presence snapshot. No receiver baseline, delta cache or precision loss.
+function encodeMovementColumns(payload) {
+    const players = payload.players;
+    if (!Array.isArray(players) || players.length < 3 || players.length > 128 || !isRecord(players[0]))
+        return payload;
+    const fields = Object.keys(players[0]);
+    if (fields.length === 0 || fields.length > 64 || fields.some(key => key.length > 64))
+        return payload;
+    const rows = [];
+    for (const player of players) {
+        if (!isRecord(player))
+            return payload;
+        const keys = Object.keys(player);
+        // Keep heterogeneous/legacy payloads intact, including absent-vs-null fields.
+        if (keys.length !== fields.length || keys.some((key, index) => key !== fields[index]))
+            return payload;
+        const row = fields.map(key => player[key]);
+        if (row.some(value => value === undefined || typeof value === "function" || typeof value === "symbol"))
+            return payload;
+        rows.push(row);
+    }
+    const encoded = { ...payload, player_fields: fields, player_rows: rows };
+    delete encoded.players;
+    return encoded;
+}
 function createServerSocketDeliveryHelpers(config) {
     const droppablePacketTypes = new Set((Array.isArray(config.droppablePacketTypes) && config.droppablePacketTypes.length > 0
         ? config.droppablePacketTypes
@@ -191,7 +217,8 @@ function createServerSocketDeliveryHelpers(config) {
             return false;
         let raw;
         try {
-            raw = JSON.stringify(payload);
+            raw = JSON.stringify(socket?.movementBatchColumns === true && isRecord(payload) && payload.type === "player_position_batch"
+                ? encodeMovementColumns(payload) : payload);
         }
         catch (error) {
             config.warn("[socket_serialize_error]", getErrorMessage(error));
@@ -380,5 +407,6 @@ function createServerSocketDeliveryHelpers(config) {
 }
 module.exports = {
     compactMovementBatch,
+    encodeMovementColumns,
     createServerSocketDeliveryHelpers,
 };

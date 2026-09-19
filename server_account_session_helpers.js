@@ -138,9 +138,9 @@ function createServerAccountSessionHelpers(deps) {
     function makeSecureToken(byteLength = 32) {
         return crypto.randomBytes(Math.max(16, Math.trunc(Number(byteLength) || 32))).toString("hex");
     }
-    function queueSessionFallbackSave() {
+    function queueSessionFallbackSave(account) {
         if (!isPostgresAuthoritativeReady()) {
-            queueAccountsSave();
+            queueAccountsSave(account.username);
         }
     }
     function issueSessionToken(account) {
@@ -150,7 +150,7 @@ function createServerAccountSessionHelpers(deps) {
         account.refresh_token_hash = "";
         account.refresh_token_expires_at = "";
         account.last_seen_at = new Date().toISOString();
-        queueSessionFallbackSave();
+        queueSessionFallbackSave(account);
         return token;
     }
     function issueSessionTokens(account) {
@@ -161,7 +161,7 @@ function createServerAccountSessionHelpers(deps) {
         account.refresh_token_hash = makeTokenHash(refreshToken);
         account.refresh_token_expires_at = new Date(Date.now() + SESSION_REFRESH_TOKEN_TTL_MS).toISOString();
         account.last_seen_at = new Date().toISOString();
-        queueSessionFallbackSave();
+        queueSessionFallbackSave(account);
         return { sessionToken, refreshToken };
     }
     function clearSessionToken(account) {
@@ -172,7 +172,7 @@ function createServerAccountSessionHelpers(deps) {
         account.session_token_expires_at = "";
         account.refresh_token_hash = "";
         account.refresh_token_expires_at = "";
-        queueSessionFallbackSave();
+        queueSessionFallbackSave(account);
         if (username !== "" && typeof postgresStore?.revokeSessionsByUsername === "function") {
             postgresStore.revokeSessionsByUsername(username);
         }
@@ -382,7 +382,7 @@ function createServerAccountSessionHelpers(deps) {
                 account.email_verification_expires_at = "";
                 clearSessionToken(account);
                 accounts.set(accountKey(account.username), account);
-                queueAccountsSave();
+                queueAccountsSave(account.username);
             }
             else if (username !== "") {
                 await postgresStore.revokeSessionsForUsername(username, "email_verified");
@@ -396,7 +396,7 @@ function createServerAccountSessionHelpers(deps) {
             if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) {
                 account.email_verification_token_hash = "";
                 account.email_verification_expires_at = "";
-                queueAccountsSave();
+                queueAccountsSave(account.username);
                 return { ok: false, message: "This verification link expired. Register again to send a new email." };
             }
             account.email_verified = true;
@@ -404,7 +404,7 @@ function createServerAccountSessionHelpers(deps) {
             account.email_verification_token_hash = "";
             account.email_verification_expires_at = "";
             clearSessionToken(account);
-            queueAccountsSave();
+            queueAccountsSave(account.username);
             return { ok: true, message: "Your PixelMania email is verified. You can return to the game and sign on." };
         }
         return { ok: false, message: "This verification link is invalid or has already been used." };
@@ -465,7 +465,7 @@ function createServerAccountSessionHelpers(deps) {
                 account.password_algorithm = passwordHash.algorithm;
                 account.last_seen_at = new Date().toISOString();
                 clearSessionToken(account);
-                queueAccountsSave();
+                queueAccountsSave(account.username);
             }
             return { ok: true, username, message: "Your password was changed. Return to the game and sign on again." };
         }
@@ -484,7 +484,7 @@ function createServerAccountSessionHelpers(deps) {
             account.password_algorithm = passwordHash.algorithm;
             account.last_seen_at = new Date().toISOString();
             clearSessionToken(account);
-            queueAccountsSave();
+            queueAccountsSave(account.username);
         }
         if (!account) {
             return { ok: false, message: "Could not find this account. Request a new link and try again." };
@@ -538,7 +538,7 @@ function createServerAccountSessionHelpers(deps) {
             account.email_verification_token_hash = "";
             account.email_verification_expires_at = "";
             clearSessionToken(account);
-            queueAccountsSave();
+            queueAccountsSave(account.username);
         }
         if (isPostgresAuthoritativeReady()) {
             const update = await postgresStore.updateAccountEmail(username, newEmail);

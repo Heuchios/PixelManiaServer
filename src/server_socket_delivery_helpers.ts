@@ -12,6 +12,7 @@ interface MovementDeliveryState {
 }
 
 interface SocketLike {
+  movementBatchColumns?: boolean;
   readyState?: unknown;
   bufferedAmount?: unknown;
   playerId?: unknown;
@@ -110,6 +111,28 @@ function compactMovementBatch(payload: PlayerPositionBatchPayload): PlayerPositi
     for (const key of EQUIPMENT_ALIASES) delete compact[key];
     return compact;
   }) };
+}
+
+// Stateless column encoding: every row is still a complete authoritative
+// presence snapshot. No receiver baseline, delta cache or precision loss.
+function encodeMovementColumns(payload: PlayerPositionBatchPayload): PacketRecord {
+  const players = payload.players;
+  if (!Array.isArray(players) || players.length < 3 || players.length > 128 || !isRecord(players[0])) return payload;
+  const fields = Object.keys(players[0]);
+  if (fields.length === 0 || fields.length > 64 || fields.some(key => key.length > 64)) return payload;
+  const rows: unknown[][] = [];
+  for (const player of players) {
+    if (!isRecord(player)) return payload;
+    const keys = Object.keys(player);
+    // Keep heterogeneous/legacy payloads intact, including absent-vs-null fields.
+    if (keys.length !== fields.length || keys.some((key, index) => key !== fields[index])) return payload;
+    const row = fields.map(key => player[key]);
+    if (row.some(value => value === undefined || typeof value === "function" || typeof value === "symbol")) return payload;
+    rows.push(row);
+  }
+  const encoded: PacketRecord = { ...payload, player_fields: fields, player_rows: rows };
+  delete encoded.players;
+  return encoded;
 }
 
 function createServerSocketDeliveryHelpers(config: SocketDeliveryConfig) {
@@ -284,7 +307,8 @@ function createServerSocketDeliveryHelpers(config: SocketDeliveryConfig) {
     if (!isSocketOpen(socket)) return false;
     let raw: string;
     try {
-      raw = JSON.stringify(payload);
+      raw = JSON.stringify(socket?.movementBatchColumns === true && isRecord(payload) && payload.type === "player_position_batch"
+        ? encodeMovementColumns(payload) : payload);
     } catch (error) {
       config.warn("[socket_serialize_error]", getErrorMessage(error));
       return false;
@@ -479,5 +503,6 @@ function createServerSocketDeliveryHelpers(config: SocketDeliveryConfig) {
 
 export = {
   compactMovementBatch,
+  encodeMovementColumns,
   createServerSocketDeliveryHelpers,
 };

@@ -589,6 +589,7 @@ class PostgresStore {
   declare schema: string;
   declare enabled: boolean;
   declare logger: (...args: unknown[]) => void;
+  declare runtimeProfile: ((name: string, value: number, context?: Record<string, unknown>) => void) | null;
   declare ready: boolean;
   declare degraded: boolean;
   declare initialized: boolean;
@@ -615,6 +616,7 @@ class PostgresStore {
     this.schema = /^[A-Za-z_][A-Za-z0-9_]*$/.test(schema) ? schema.toLowerCase() : "pixelmania";
     this.enabled = Boolean(options.enabled);
     this.logger = typeof options.logger === "function" ? options.logger : ((...args) => console.warn(...args));
+    this.runtimeProfile = typeof options.runtimeProfile === "function" ? options.runtimeProfile : null;
     this.ready = false;
     this.degraded = false;
     this.initialized = false;
@@ -1928,6 +1930,11 @@ class PostgresStore {
           const finishedAt = Date.now();
           const queueWaitMs = startedAt - queuedAt;
           const execMs = finishedAt - startedAt;
+          if (this.runtimeProfile) {
+            const context = { queue_depth: queueDepthAtEnqueue };
+            this.runtimeProfile(`db_queue_ms:${cleanLabel}`, queueWaitMs, context);
+            this.runtimeProfile(`db_write_ms:${cleanLabel}`, execMs, context);
+          }
           if (this.slowWriteLogThresholdMs > 0 && queueWaitMs + execMs >= this.slowWriteLogThresholdMs) {
             this.logger(
               `[postgres] slow write: label=${cleanLabel} scope=${cleanScope} queue_wait_ms=${queueWaitMs} exec_ms=${execMs} queue_depth_at_enqueue=${queueDepthAtEnqueue}`
@@ -1945,14 +1952,21 @@ class PostgresStore {
     scope: string = POSTGRES_GLOBAL_WRITE_SCOPE
   ): Promise<T | null> {
     if (!this.isReady()) return null;
-    return this.enqueueWrite(label, () => this.withTransactionNow(work), scope);
+    return this.enqueueWrite(label, () => this.withTransactionNow(work, label), scope);
   }
 
-  async withTransactionNow<T>(work: TransactionWork<T>): Promise<T | null> {
+  async withTransactionNow<T>(work: TransactionWork<T>, label = "transaction"): Promise<T | null> {
     if (!this.isReady()) return null;
 
     for (let attempt = 1; attempt <= POSTGRES_TRANSACTION_MAX_ATTEMPTS; attempt += 1) {
-      const client = await this.db.connect();
+      const poolStarted = this.runtimeProfile ? performance.now() : 0;
+      let client;
+      try {
+        client = await this.db.connect();
+      } finally {
+        this.runtimeProfile?.(`db_pool_wait_ms:${label}`, performance.now() - poolStarted, { queue_depth: this.writeQueueDepth });
+      }
+      const transactionStarted = this.runtimeProfile ? performance.now() : 0;
       let released = false;
       try {
         // Fresh memo per attempt; see endIdentityCache in the finally below.
@@ -1982,6 +1996,7 @@ class PostgresStore {
         if (!released) {
           client.release();
         }
+        this.runtimeProfile?.(`db_transaction_ms:${label}`, performance.now() - transactionStarted);
       }
     }
 

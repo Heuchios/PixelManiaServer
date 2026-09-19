@@ -2179,6 +2179,8 @@ const worldEventCommandCooldowns = new Map();
 const pendingPersistenceWrites = new Set();
 const worldSnapshotStorageWarnings = new Set();
 let accountsSaveTimer = null;
+const dirtyAccountSaveKeys = new Set();
+let saveAllAccountsPending = false;
 let mailTransporter = null;
 let worldEventRandomTimer = null;
 const worldSnapshotSchedulerState = {
@@ -2201,9 +2203,27 @@ const worldRouteStats = {
 let lastWorldRouteRedisUnhealthyWarnAt = 0;
 const serverTickStats = ServerRuntimeStats.createServerTickStats(SERVER_TICK_MONITOR_INTERVAL_MS);
 if (runtimeProfiler.enabled) {
+    let loopSampleAt = performance.now();
+    let profileWindowAt = performance.now();
+    let profileCpu = process.cpuUsage();
+    let profileNetwork = { rx_messages: 0, rx_bytes: 0, tx_bytes: 0 };
+    const loopProbe = setInterval(() => {
+        const now = performance.now();
+        runtimeProfiler.observe("event_loop_delay_ms", Math.max(0, now - loopSampleAt - 100));
+        loopSampleAt = now;
+    }, 100);
+    loopProbe.unref();
     const runtimeProfileTimer = setInterval(() => {
+        const now = performance.now();
+        const windowSeconds = Math.max(0.001, (now - profileWindowAt) / 1000);
+        const cpu = process.cpuUsage(profileCpu);
+        const network = { rx_messages: playerNetworkStats.inbound_messages_received,
+            rx_bytes: playerNetworkStats.inbound_bytes_received, tx_bytes: playerNetworkStats.outbound_bytes_sent };
+        const rates = Object.fromEntries(["rx_messages", "rx_bytes", "tx_bytes"].map(key => [key, (network[key] - profileNetwork[key]) / windowSeconds]));
         console.log("[RUNTIME_PROFILE]", JSON.stringify({
-            window_seconds: 5, connected_players: players.size,
+            at: new Date().toISOString(), monotonic_ms: performance.now(), spikes: runtimeProfiler.diagnostics(),
+            window_seconds: windowSeconds, connected_players: players.size,
+            cpu_ms: { user: cpu.user / 1000, system: cpu.system / 1000 }, rates_per_second: rates,
             memory: process.memoryUsage(), metrics: runtimeProfiler.snapshot(),
             network_totals: {
                 rx_messages: playerNetworkStats.inbound_messages_received,
@@ -2214,6 +2234,9 @@ if (runtimeProfiler.enabled) {
                 coalesced_movement: playerNetworkStats.coalesced_inbound_player_position_messages,
             }, tick: serverTickStats,
         }));
+        profileWindowAt = now;
+        profileCpu = process.cpuUsage();
+        profileNetwork = network;
     }, 5000);
     runtimeProfileTimer.unref();
 }
@@ -2320,6 +2343,7 @@ const postgresStore = new PostgresStore({
     connectTimeoutMs: POSTGRES_CONNECT_TIMEOUT_MS,
     maxWriteQueueDepth: POSTGRES_WRITE_QUEUE_MAX,
     slowWriteLogThresholdMs: POSTGRES_SLOW_WRITE_LOG_MS,
+    runtimeProfile: runtimeProfiler.enabled ? runtimeProfiler.observe : null,
     logger: (...args) => console.warn(...args),
 });
 const ServerPunishmentHelpers = ServerPunishmentHelpersModule.createServerPunishmentHelpers({
@@ -2888,6 +2912,7 @@ wss.on("connection", (socket, request = null) => {
         const envelope = {
             data,
             enqueuedAt,
+            firstEnqueuedAt: enqueuedAt,
             messageBytes,
             messageType: incomingMessageType,
             queueDepthAtEnqueue: 0,
@@ -2913,7 +2938,18 @@ wss.on("connection", (socket, request = null) => {
             const queueWaitMs = Math.max(0, processingStartedAt - envelope.enqueuedAt);
             const data = envelope.data;
             const incomingMessageType = envelope.messageType;
-            runtimeProfiler.observe(`queue_ms:${incomingMessageType}`, queueWaitMs);
+            // Coalescing refreshes enqueuedAt for the newest position, but must not hide
+            // how long this queue slot waited behind an earlier durable action.
+            if (runtimeProfiler.enabled)
+                runtimeProfiler.observe(`queue_slot_ms:${incomingMessageType}`, Math.max(0, processingStartedAt - envelope.firstEnqueuedAt), {
+                    player_id: playerId, world: String(data.world || ""), request_id: String(data.request_id || ""),
+                    queue_depth: socket.inboundMessageQueueDepth, tick_lag_ms: serverTickStats.event_loop_lag_ms,
+                });
+            if (runtimeProfiler.enabled)
+                runtimeProfiler.observe(`queue_ms:${incomingMessageType}`, queueWaitMs, {
+                    player_id: playerId, world: String(data.world || ""), request_id: String(data.request_id || ""),
+                    queue_depth: socket.inboundMessageQueueDepth, tick_lag_ms: serverTickStats.event_loop_lag_ms,
+                });
             if (incomingMessageType === "inventory_transaction_request" && ["seed_place", "seed_splice", "seed_harvest"].includes(String(data.action))) {
                 runtimeProfiler.observe(`seed_queue_ms:${data.action}`, queueWaitMs);
             }
@@ -2955,6 +2991,10 @@ wss.on("connection", (socket, request = null) => {
                     return;
                 }
                 player.client_version = clientVersion || player.client_version;
+                // Encoding capability affects only this receiver, never gameplay authority.
+                if (Object.prototype.hasOwnProperty.call(data, "movement_batch_format")) {
+                    socket.movementBatchColumns = data.movement_batch_format === "columns_v1";
+                }
                 if (rejectIfPostgresAuthorityUnavailable(socket, player, incomingMessageType, data)) {
                     return;
                 }
@@ -2978,7 +3018,10 @@ wss.on("connection", (socket, request = null) => {
             }
             finally {
                 if (runtimeProfiler.enabled)
-                    runtimeProfiler.observe(`handler_ms:${incomingMessageType}`, performance.now() - handlerStarted);
+                    runtimeProfiler.observe(`handler_ms:${incomingMessageType}`, performance.now() - handlerStarted, {
+                        player_id: playerId, world: String(data.world || ""), request_id: String(data.request_id || ""),
+                        queue_depth: socket.inboundMessageQueueDepth, tick_lag_ms: serverTickStats.event_loop_lag_ms,
+                    });
             }
         };
         socket.inboundMessageQueue = Promise.resolve(socket.inboundMessageQueue).then(processMessage, processMessage);
@@ -14645,7 +14688,9 @@ async function commitPlayerInventoryState(socket, player, username, beforeState,
         const lockStarted = performance.now();
         inventoryLock = await acquirePlayerInventoryLocks([cleanUsername], options.inventory_lock_owner || options.action || "inventory_commit");
         if (runtimeProfiler.enabled)
-            runtimeProfiler.observe("inventory_lock_ms", performance.now() - lockStarted);
+            runtimeProfiler.observe("inventory_lock_ms", performance.now() - lockStarted, {
+                player_id: player?.id, world: options.world || player?.world, request_id: options.request_id,
+            });
         if (!inventoryLock.acquired) {
             return InventoryContracts.buildInventoryCommitFailure({
                 reason: "inventory_locked",
@@ -14713,7 +14758,9 @@ async function commitPlayerInventoryState(socket, player, username, beforeState,
                 result = await buildTransaction();
             }
             if (runtimeProfiler.enabled)
-                runtimeProfiler.observe("inventory_world_persistence_ms", performance.now() - persistenceStarted);
+                runtimeProfiler.observe("inventory_world_persistence_ms", performance.now() - persistenceStarted, {
+                    player_id: player?.id, world: worldName, request_id: options.request_id,
+                });
             if (!result || !result.ok) {
                 logSecurityEvent(socket, player, "postgres_inventory_commit_failed", {
                     username: cleanUsername,
@@ -17251,6 +17298,37 @@ function invalidateMovementCollisionCache(worldName) {
     movementCollisionWorldRevision.set(clean, nextRevision);
     movementCollisionCacheByWorld.delete(clean);
 }
+// Ordinary cell edits do not change generated terrain elsewhere in the world.
+// Keep the authoritative overlay current without copying thousands of neighbors.
+// Bulk restores/generation changes still use full invalidation above.
+function updateMovementCollisionCell(worldName, update) {
+    if (String(update.layer || "foreground").toLowerCase() !== "foreground")
+        return;
+    if (update.action !== "place" && update.action !== "break")
+        return;
+    const clean = cleanWorld(worldName || "START");
+    const previousRevision = getMovementCollisionRevision(clean);
+    const revision = previousRevision + 1;
+    movementCollisionWorldRevision.set(clean, revision);
+    const cached = movementCollisionCacheByWorld.get(clean);
+    if (!cached || cached.revision !== previousRevision || !(cached.map instanceof Map)) {
+        movementCollisionCacheByWorld.delete(clean);
+        return;
+    }
+    const state = ensureWorldState(clean);
+    const key = gridKey(update.x, update.y);
+    const block = state.foreground.get(key);
+    if (block)
+        cached.map.set(key, { ...block, source: "explicit" });
+    else if (state.removed_foreground.has(key))
+        cached.map.delete(key);
+    else {
+        // A restoration may reveal generated terrain; rebuild through the canonical path.
+        movementCollisionCacheByWorld.delete(clean);
+        return;
+    }
+    cached.revision = revision;
+}
 function getMovementCollisionMap(worldName) {
     const clean = cleanWorld(worldName || "START");
     const revision = getMovementCollisionRevision(clean);
@@ -17259,7 +17337,10 @@ function getMovementCollisionMap(worldName) {
         return cached.map;
     }
     const state = ensureWorldState(clean);
+    const started = runtimeProfiler.enabled ? performance.now() : 0;
     const map = buildEffectiveForegroundMap(clean, state);
+    if (runtimeProfiler.enabled)
+        runtimeProfiler.observe("collision_overlay_rebuild_ms", performance.now() - started, { world: clean });
     movementCollisionCacheByWorld.set(clean, { revision, map });
     while (movementCollisionCacheByWorld.size > MOVEMENT_COLLISION_CACHE_MAX_WORLDS) {
         const oldestKey = movementCollisionCacheByWorld.keys().next().value;
@@ -20159,7 +20240,7 @@ function markAccountSeen(username) {
     if (!account)
         return;
     account.last_seen_at = new Date().toISOString();
-    queueAccountsSave();
+    queueAccountsSave(account.username);
     postgresStore.mirrorAccount(account, { touchLogin: false });
 }
 function buildAdminInventoryLookupPlayerData(username, state) {
@@ -24320,7 +24401,7 @@ function applyBlockUpdateToWorldState(worldName, update) {
             markElectricalNetworksDirty(state);
         }
         if (isForeground) {
-            invalidateMovementCollisionCache(worldName);
+            updateMovementCollisionCell(worldName, update);
         }
         return;
     }
@@ -24352,7 +24433,7 @@ function applyBlockUpdateToWorldState(worldName, update) {
             markElectricalNetworksDirty(state);
         }
         if (isForeground) {
-            invalidateMovementCollisionCache(worldName);
+            updateMovementCollisionCell(worldName, update);
         }
     }
 }
@@ -27279,7 +27360,7 @@ function serializeWorldState(worldName) {
     const started = runtimeProfiler.enabled ? performance.now() : 0;
     const result = PersistenceHelpers.clonePersistenceSnapshot(WorldStateHelpers.serializeWorldState(worldName));
     if (runtimeProfiler.enabled)
-        runtimeProfiler.observe("world_snapshot_clone_ms", performance.now() - started);
+        runtimeProfiler.observe("world_snapshot_clone_ms", performance.now() - started, { world: cleanWorld(worldName) });
     return result;
 }
 function getWorldBlockTypeAt(worldName, x, y, layer = "foreground") {
@@ -30163,11 +30244,19 @@ function upsertAccount(rawAccount) {
         friend_requests_out: sanitizeAccountNameArray(existing.friend_requests_out || incoming.friend_requests_out || [], 200),
     };
     accounts.set(key, account);
-    queueAccountsSave();
+    queueAccountsSave(account.username);
     postgresStore.mirrorAccount(account, { touchLogin: false });
     return account;
 }
-function queueAccountsSave() {
+function queueAccountsSave(...usernames) {
+    // An unscoped call remains an explicit full-save fallback for migrations.
+    if (usernames.length === 0)
+        saveAllAccountsPending = true;
+    for (const username of usernames) {
+        const key = accountKey(cleanAccountName(username));
+        if (key !== "")
+            dirtyAccountSaveKeys.add(key);
+    }
     if (accountsSaveTimer)
         clearTimeout(accountsSaveTimer);
     accountsSaveTimer = setTimeout(() => {
@@ -30176,21 +30265,40 @@ function queueAccountsSave() {
     }, SAVE_DEBOUNCE_MS);
 }
 function saveAccounts() {
+    const saveAll = saveAllAccountsPending;
+    const dirtyKeys = Array.from(dirtyAccountSaveKeys);
+    saveAllAccountsPending = false;
+    dirtyAccountSaveKeys.clear();
     const payload = {
         account_state_version: 1,
         saved_at: new Date().toISOString(),
         accounts: Array.from(accounts.values()),
     };
-    // This writes EVERY registered account, and queueAccountsSave fires it on a 250ms
-    // debounce from every login, join_world and player_state_save. Synchronously, that is
-    // ~40ms of blocked event loop at 2,000 accounts and ~83ms at 5,000 -- up to a third of
-    // the loop spent inside one writeFileSync. The async form is atomic in exactly the same
-    // way (temp file + rename) and trackPersistenceWrite keeps it drained on shutdown, so
-    // the only change is that it no longer stops the world while it writes.
+    // Keep the complete recovery file, but only upsert changed PostgreSQL accounts.
+    // A last-seen update previously rewrote all accounts on the global DB queue.
+    const changedAccounts = saveAll ? payload.accounts : dirtyKeys.map(key => accounts.get(key)).filter(Boolean);
     trackPersistenceWrite(writeJsonFileAtomicAsync(ACCOUNTS_SAVE_PATH, payload), "account states JSON backup");
-    if (postgresStore.isReady()) {
-        trackPersistenceWrite(postgresStore.saveAccountStates(payload.accounts), "account states");
+    if (changedAccounts.length > 0 && (postgresStore.isReady() || POSTGRES_ENABLED)) {
+        const operation = Promise.resolve().then(() => postgresStore.isReady() ? postgresStore.saveAccountStates(changedAccounts) : false)
+            .then(saved => {
+            if (saved === false)
+                throw new Error("Account snapshot persistence is unavailable");
+            return true;
+        }).catch(error => {
+            // Never lose dirty work on failure or erase edits added during the write.
+            for (const key of dirtyKeys)
+                dirtyAccountSaveKeys.add(key);
+            if (saveAll)
+                saveAllAccountsPending = true;
+            if (!accountsSaveTimer) {
+                accountsSaveTimer = setTimeout(() => { accountsSaveTimer = null; saveAccounts(); }, 5000);
+                accountsSaveTimer.unref?.();
+            }
+            throw error;
+        });
+        return trackPersistenceWrite(operation, "account states");
     }
+    return null;
 }
 function sanitizeCountDictionary(rawValue, limit = MAX_PLAYER_INVENTORY_KEYS, expectedCategory = "") {
     return PlayerStateHelpers.sanitizeCountDictionary(rawValue, limit, expectedCategory);
@@ -32187,7 +32295,7 @@ function queueWorldUpdateBroadcast(worldName, message, excludePlayerId = "") {
     }
     if (String(message.type || "").toLowerCase() === "world_block_update" &&
         String(message.layer || "foreground").toLowerCase() === "foreground") {
-        invalidateMovementCollisionCache(clean);
+        updateMovementCollisionCell(clean, message);
     }
     if (isDropInterestManagementEnabled() &&
         isDropWorldUpdatePayload(message) &&

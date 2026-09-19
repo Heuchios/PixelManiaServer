@@ -17,6 +17,7 @@ const req = prefix => `${prefix}-${++requestSequence}`;
 const clients = [];
 let server;
 let moving;
+let trafficPhase = false;
 
 function percentile(values, q) {
   const sorted = values.slice().sort((a, b) => a - b);
@@ -26,6 +27,7 @@ function percentile(values, q) {
 class Client {
   constructor(port, index, rtt) {
     this.index = index;
+    this.world = 'PERF_LOCAL' + (Math.floor(index / Number(process.env.PERF_WORLD_SIZE || 50)) || '');
     this.rtt = rtt;
     this.messages = [];
     this.cells = new Map();
@@ -37,11 +39,27 @@ class Client {
     this.sequence = 0;
     this.movementBytes = 0;
     this.movementItems = 0;
+    this.wireByType = {};
     this.legacyEquivalentBytes = 0;
+    this.receivedPackets = 0;
+    this.orderedStalls = 0;
+    this.remoteGaps = {};
     this.ws = new WebSocket(`ws://127.0.0.1:${port}`);
     this.ws.on("error", error => { this.error = error; });
     this.ws.on("message", raw => {
       const data = JSON.parse(raw.toString());
+      if (Array.isArray(data.player_rows)) {
+        data.players = data.player_rows.map(row => Object.fromEntries(data.player_fields.map((key, index) => [key, row[index]])));
+        delete data.player_rows;
+        delete data.player_fields;
+      }
+      const bucket = this.wireByType[data.type] || { count: 0, bytes: 0, max_bytes: 0 };
+      bucket.count++; bucket.bytes += raw.length; bucket.max_bytes = Math.max(bucket.max_bytes, raw.length);
+      this.wireByType[data.type] = bucket;
+      if (this.index === 0 && data.type === 'player_position_batch' && (data.players || []).length >= 10 && !this.savedMovementSample) {
+        this.savedMovementSample = true;
+        fs.writeFileSync(path.join(output, 'movement-sample.json'), raw);
+      }
       if (data.type === "player_position_batch") {
         this.movementBytes += raw.length;
         this.movementItems += (data.players || []).length;
@@ -55,6 +73,14 @@ class Client {
         }) };
         this.legacyEquivalentBytes += Buffer.byteLength(JSON.stringify(expanded));
       }
+      this.receivedPackets++;
+      const stallEvery = Number(process.env.PERF_ORDERED_STALL_EVERY || 0);
+      if (trafficPhase && stallEvery > 0 && this.receivedPackets % stallEvery === 0) {
+        // Model TCP recovery: retain every message and hold all later ones in order.
+        // This is an application fault model, not a claim of kernel packet-loss testing.
+        this.nextReceive = Math.max(this.nextReceive, performance.now()) + Number(process.env.PERF_ORDERED_STALL_MS || 250);
+        this.orderedStalls++;
+      }
       const due = Math.max(this.nextReceive, performance.now() + this.delay());
       this.nextReceive = due;
       setTimeout(() => this.receive(data), Math.max(0, due - performance.now()));
@@ -62,6 +88,14 @@ class Client {
   }
   delay() { return this.rtt / 2 + Math.sin(++requestSequence * 1.7) * this.rtt * 0.15; }
   receive(data) {
+    if (trafficPhase && data.type === 'player_position_batch') {
+      const now = performance.now();
+      for (const player of data.players || []) {
+        const previous = this.remoteGaps[player.player_id];
+        if (!previous) this.remoteGaps[player.player_id] = { last: now, count: 0, max_ms: 0 };
+        else { previous.max_ms = Math.max(previous.max_ms, now - previous.last); previous.last = now; previous.count++; }
+      }
+    }
     if (data.type === "world_update_batch") {
       for (const item of data.updates || []) this.receive({ world: data.world, ...item });
       return;
@@ -89,6 +123,7 @@ class Client {
     }
   }
   send(data) {
+    if (data.type === 'dev_backend_login' && process.env.PERF_COLUMNS === '1') data = { ...data, movement_batch_format: 'columns_v1' };
     const due = Math.max(this.nextSend, performance.now() + this.delay());
     this.nextSend = due;
     setTimeout(() => {
@@ -109,7 +144,7 @@ class Client {
   async operation(data) {
     const request_id = data.request_id || req(data.action || data.type);
     const started = performance.now();
-    this.send({ world: "PERF_LOCAL", ...data, request_id });
+    this.send({ world: this.world, ...data, request_id });
     const expectedTypes = data.type === 'inventory_transaction_request'
       ? ['inventory_transaction_result', 'action_rejected', 'rate_limited']
       : ['world_block_update', 'world_block_reconcile', 'action_rejected', 'rate_limited', 'client_pong'];
@@ -126,7 +161,7 @@ class Client {
     return inventory;
   }
   move(elapsed) {
-    this.send({ type: "player_position", world: "PERF_LOCAL", x: this.spawn.spawn_x + Math.sin(elapsed / 300) * 4,
+    this.send({ type: "player_position", world: this.world, x: this.spawn.spawn_x + Math.sin(elapsed / 300) * 4,
       y: this.spawn.spawn_y, velocity_x: Math.cos(elapsed / 300) * 13.33, velocity_y: 0,
       on_floor: true, facing: 1, allow_join: false, movement_sequence: ++this.sequence,
       client_time_msec: Math.round(performance.now()), animation_state: "idle" });
@@ -155,7 +190,10 @@ async function main() {
     WORLD_ROUTE_ENFORCEMENT_ENABLED: "false", PIXELMANIA_DATA_DIR: path.join(output, "data"),
     PIXELMANIA_RUNTIME_PROFILE: "1", BLOCK_ACTION_PROFILE_LOGS: "1" };
   const log = fs.createWriteStream(path.join(output, "server.log"));
-  server = spawn(process.execPath, [path.join(root, "server.js")], { cwd: output, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
+  const serverArgs = Number(process.env.PERF_TEST_COMMIT_DELAY_MS || 0) > 0 || process.env.PERF_DETERMINISTIC_DROPS === '1'
+    ? ['--require', path.join(__dirname, 'runtime_fault_preload.js'), path.join(root, 'server.js')]
+    : [path.join(root, 'server.js')];
+  server = spawn(process.execPath, serverArgs, { cwd: output, env, windowsHide: true, stdio: ["ignore", "pipe", "pipe"] });
   server.stdout.pipe(log); server.stderr.pipe(log);
   let healthy = false;
   for (let i = 0; i < 60; i++) {
@@ -166,22 +204,27 @@ async function main() {
   assert(healthy, "Isolated server failed to start; inspect server.log");
   const count = Number(process.env.PERF_PLAYERS || 6);
   for (let i = 0; i < count; i++) {
-    const client = new Client(port, i, [30,75,150][i % 3]); clients.push(client);
+    const rtts = String(process.env.PERF_RTTS || '30,75,150').split(',').map(Number);
+    const client = new Client(port, i, rtts[i % rtts.length]); clients.push(client);
     await new Promise((resolve, reject) => { client.ws.once("open", resolve); client.ws.once("error", reject); });
     client.send({ type: "dev_backend_login", username: `RuntimePerf${i}`, world: "LOBBY", request_id: req("login") });
     await client.until(m => m.type === "account_auth_ok", "login");
     const joinId = req("join");
-    client.send({ type: "join_world", world: "PERF_LOCAL", request_id: joinId });
+    client.send({ type: "join_world", world: client.world, request_id: joinId });
     client.spawn = await client.until(m => m.type === "join_world_ok", "join");
     await client.until(m => m.type === "world_state" || m.type === "world_state_stream_end", "snapshot");
   }
   const started = performance.now();
   moving = setInterval(() => { for (const client of clients) client.move(performance.now() - started); }, 50);
   await wait(1000);
+  const trafficStart = clients.map(c => ({ bytes: c.movementBytes, items: c.movementItems }));
+  const measuredStarted = performance.now();
+  trafficPhase = true;
   const measurements = [];
   const seedMeasurements = [];
   if (process.env.PERF_SEEDS === "1") {
     const actor = clients[0];
+    const observers = clients.filter(c => c.world === actor.world);
     const inventoryBefore = await actor.inventory();
     const seedCount = inv => Number(inv.seed_inventory?.dirt_seed || 0);
     assert.ok(seedCount(inventoryBefore) >= 3, 'Disposable test identity needs starter dirt seeds');
@@ -192,26 +235,26 @@ async function main() {
       const planted = await actor.operation({ ...target, action: 'seed_place' });
       assert.equal(planted.response.ok, true, JSON.stringify(planted.response));
       const key = `${target.x}:${target.y}`;
-      for (const peer of clients) await peer.until(m => m.type === 'world_seed_update' && m.action === 'place' && m.x === target.x && m.y === target.y, 'seed fanout');
+      for (const peer of observers) await peer.until(m => m.type === 'world_seed_update' && m.action === 'place' && m.x === target.x && m.y === target.y, 'seed fanout');
       assert.ok(actor.seeds.get(key).grow_time > 0, 'Client growth spoof must not create mature tree');
       for (let i = 0; i < 3; i++) {
         await wait(310);
-        const peer = clients[i % clients.length];
+        const peer = observers[i % observers.length];
         const punched = await peer.operation({ ...target, action: 'seed_harvest' });
         assert.equal(punched.response.ok, true, JSON.stringify(punched.response));
         assert.equal(punched.response.seed_removed, i === 2);
-        if (i < 2) for (const observer of clients) await observer.until(m => m.type === 'world_seed_update' && m.action === 'hit' && m.x === target.x && m.y === target.y && m.hit_count === i + 1, 'tree hit fanout');
+        if (i < 2) for (const observer of observers) await observer.until(m => m.type === 'world_seed_update' && m.action === 'hit' && m.x === target.x && m.y === target.y && m.hit_count === i + 1, 'tree hit fanout');
       }
-      for (const peer of clients) {
+      for (const peer of observers) {
         await peer.until(m => m.type === 'world_seed_update' && m.action === 'remove' && m.x === target.x && m.y === target.y, 'tree removal fanout');
         assert.equal(peer.seeds.has(key), false);
       }
-      seedMeasurements.push({ plant_ms: planted.ms, peers_synchronized: clients.length });
+      seedMeasurements.push({ plant_ms: planted.ms, peers_synchronized: observers.length });
     }
     assert.equal(seedCount(await actor.inventory()), seedCount(inventoryBefore) - 3, 'Plant/break must permanently consume all three seeds');
     assert.deepEqual(clients.map(c => c.drops.size), dropCounts, 'Growing trees produced drops');
   }
-  for (let i = 0; i < Math.min(3, count); i++) {
+  for (let i = 0; i < Math.min(5, count); i++) {
     const client = clients[i];
     const target = { type: "world_block_update", layer: "foreground", x: client.spawn.spawn_grid_x + 2,
       y: client.spawn.spawn_grid_y - 1, block_type: "dirt" };
@@ -233,6 +276,9 @@ async function main() {
     }
     assert(removed, "Break never completed");
     await wait(250);
+    // Ordered round-trip barrier: delayed observers must receive the original
+    // drop before taking the duplicate-check baseline, even with a 300ms stall.
+    await Promise.all(clients.map(peer => peer.operation({ type: 'client_ping' })));
     const dropsBeforeReplay = clients.map(c => c.drops.size);
     assert(dropsBeforeReplay[0] > 0, "Harness must observe real drop broadcasts");
     const inventoryAfterBreak = await client.inventory();
@@ -244,7 +290,8 @@ async function main() {
     assert.deepEqual(await rival.inventory(), rivalInventory, "Rival duplicate break changed authoritative inventory");
     const key = `${target.layer}:${target.x}:${target.y}`;
     for (const [index, peer] of clients.entries()) {
-      assert.equal(peer.cells.get(key), "", "Ghost block / missing authoritative broadcast");
+      if (peer.world === client.world) assert.equal(peer.cells.get(key), "", "Ghost block / missing authoritative broadcast");
+      else assert.equal(peer.cells.has(key), false, 'World edits leaked to an unrelated world');
       assert.equal(peer.drops.size, dropsBeforeReplay[index], "Duplicate operation generated a new drop");
     }
     const ping = await client.operation({ type: "client_ping" });
@@ -256,7 +303,17 @@ async function main() {
   await wait(300);
   const corrections = clients.flatMap(c => c.messages.filter(m => m.type === "action_rejected" && m.action === "player_position"));
   assert.equal(corrections.length, 0, `Movement corrections: ${JSON.stringify(corrections.slice(0,3))}`);
-  const result = { scope:"local development storage, ordered application RTT with deterministic jitter; no GPU or production database",
+  const health = await (await fetch(`http://127.0.0.1:${port}/health`)).json();
+  const result = { at: new Date().toISOString(), scope:"local development storage, ordered application RTT with deterministic jitter; no GPU or production database",
+    movement_format: process.env.PERF_COLUMNS === '1' ? 'columns_v1' : 'legacy',
+    worlds: Object.fromEntries([...new Set(clients.map(c => c.world))].map(world => [world, clients.filter(c => c.world === world).length])),
+    fault_model: { commit_wait_ms: Number(process.env.PERF_TEST_COMMIT_DELAY_MS || 0),
+      ordered_stalls: clients.map(c => c.orderedStalls), ordered_stall_ms: Number(process.env.PERF_ORDERED_STALL_MS || 0) },
+    remote_movement_gaps: clients.map(c => ({ observer: c.index, players: c.remoteGaps })),
+    measured_duration_ms: performance.now() - measuredStarted,
+    measured_movement_bytes: clients.reduce((n,c,i) => n + c.movementBytes - trafficStart[i].bytes, 0),
+    measured_movement_items: clients.reduce((n,c,i) => n + c.movementItems - trafficStart[i].items, 0),
+    network_by_client: clients.map(c => c.wireByType), health,
     players:count, duration_ms:performance.now()-started, movement_corrections:corrections.length,drops_observed:clients.map(c=>c.drops.size),measurements, seedMeasurements,
     duplicate_inventory_invariants_passed:true,
     movement_wire_bytes:clients.reduce((n,c)=>n+c.movementBytes,0), movement_items:clients.reduce((n,c)=>n+c.movementItems,0),

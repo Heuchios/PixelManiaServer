@@ -1,0 +1,35 @@
+"use strict";
+const assert = require('node:assert/strict');
+const {createRuntimeProfiler} = require('../server_runtime_stats');
+const PostgresStore = require('../postgres_store');
+const wait = ms => new Promise(resolve => setTimeout(resolve,ms));
+async function main() {
+  let clock = 100000; const events=[];
+  const profile=createRuntimeProfiler(true,{now:()=>clock,emit:e=>events.push(e),slowMs:40});
+  for(let i=0;i<20;i++) profile.observe('handler_ms:place',300,{world:'TEST\nWORLD',request_id:'safe',token:'never-log',queue_depth:4});
+  assert.equal(events.length,8); assert.equal(profile.diagnostics().suppressed_spikes,12);
+  assert.equal(events[0].world,'TESTWORLD'); assert.equal(events[0].token,undefined);
+  clock+=5001;profile.observe('handler_ms:place',400);assert.equal(events.length,9);
+  profile.observe('bad_ms',NaN);for(let i=0;i<200;i++)profile.observe('distinct_'+i,1);
+  const snapshot=profile.snapshot();assert.equal(Object.keys(snapshot).length,128);
+  assert.equal(snapshot['handler_ms:place'].count,21);assert.equal(snapshot['handler_ms:place'].max,400);
+  profile.dispose();
+  const off=createRuntimeProfiler(false,{emit:()=>assert.fail('Disabled logger emitted')});
+  off.observe('disabled_ms',500);assert.deepEqual(off.snapshot(),{});off.dispose();
+  const metrics=[],queries=[];let releases=0;
+  const store=new PostgresStore({enabled:false,logger:()=>{},runtimeProfile:(name,value)=>metrics.push({name,value})});
+  store.enabled=true;store.ready=true;
+  store.pool={connect:async()=>{await wait(15);return {query:async sql=>queries.push(sql),release:()=>releases++};}};
+  const result=await store.withTransaction(async()=>{await wait(20);return 123;},'profile_fixture');
+  assert.equal(result,123);assert.deepEqual(queries,['BEGIN','COMMIT']);assert.equal(releases,1);
+  assert(metrics.some(m=>m.name==='db_pool_wait_ms:profile_fixture'&&m.value>=10));
+  assert(metrics.some(m=>m.name==='db_transaction_ms:profile_fixture'&&m.value>=15));
+  assert(metrics.some(m=>m.name==='db_write_ms:profile_fixture'));
+  await assert.rejects(store.withTransaction(async()=>{throw new Error('fixture rollback');},'failure'),/fixture rollback/);
+  assert.equal(queries.at(-1),'ROLLBACK');assert.equal(releases,2);assert.equal(store.writeQueueDepth,0);
+  store.pool={connect:async()=>{throw new Error('pool unavailable');}};
+  await assert.rejects(store.withTransaction(async()=>{},'pool_failure'),/pool unavailable/);
+  assert(metrics.some(m=>m.name==='db_pool_wait_ms:pool_failure'));assert.equal(store.writeQueueDepth,0);
+  console.log('RUNTIME_SPIKE_PROFILE_OK: bounded, opt-in, redacted, queue/pool/transaction timing, commit/rollback/release unchanged');
+}
+main().catch(error=>{console.error(error);process.exitCode=1;});

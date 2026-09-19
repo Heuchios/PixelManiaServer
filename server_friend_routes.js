@@ -179,7 +179,7 @@ function createServerFriendRoutes(deps) {
             target.friend_requests_out = removeAccountName(target.friend_requests_out, sender.username);
             sender.friends = addAccountName(sender.friends, target.username);
             target.friends = addAccountName(target.friends, sender.username);
-            queueAccountsSave();
+            queueAccountsSave(sender.username, target.username);
             sendJson(socket, {
                 type: "friend_request_accepted",
                 ok: true,
@@ -202,7 +202,7 @@ function createServerFriendRoutes(deps) {
         }
         sender.friend_requests_out = addAccountName(sender.friend_requests_out, target.username);
         target.friend_requests_in = addAccountName(target.friend_requests_in, sender.username);
-        queueAccountsSave();
+        queueAccountsSave(sender.username, target.username);
         sendJson(socket, {
             type: "friend_request_sent",
             ok: true,
@@ -246,7 +246,7 @@ function createServerFriendRoutes(deps) {
             receiver.friends = addAccountName(receiver.friends, requester.username);
             requester.friends = addAccountName(requester.friends, receiver.username);
         }
-        queueAccountsSave();
+        queueAccountsSave(receiver.username, requester.username);
         sendJson(socket, {
             type: "friend_response_result",
             ok: true,

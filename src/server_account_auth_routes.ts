@@ -196,7 +196,7 @@ function createServerAccountAuthRoutes(deps: AccountAuthDeps) {
       postgresStore.mirrorAccount(account, { touchLogin: false });
     }
 
-    queueAccountsSave();
+    queueAccountsSave(account.username);
     queueVerificationEmail(account, verificationToken);
     sendVerificationRequired(socket, requestId, "register", account, "Account created. Check your email to verify before signing on.");
   }
@@ -434,7 +434,7 @@ function createServerAccountAuthRoutes(deps: AccountAuthDeps) {
         friend_requests_out: [],
       };
       accounts.set(key, account);
-      queueAccountsSave();
+      queueAccountsSave(account.username);
       postgresStore.mirrorAccount(account, { touchLogin: false });
     } else {
       account.last_seen_at = now;
@@ -621,7 +621,7 @@ function createServerAccountAuthRoutes(deps: AccountAuthDeps) {
       account.password_salt = upgradedPasswordHash.salt;
       account.password_hash = upgradedPasswordHash.hash;
       account.password_algorithm = upgradedPasswordHash.algorithm;
-      queueAccountsSave();
+      queueAccountsSave(account.username);
     }
 
     if (!isAccountEmailVerified(account)) {
@@ -634,7 +634,7 @@ function createServerAccountAuthRoutes(deps: AccountAuthDeps) {
       }
 
       const verificationToken = makeEmailVerificationToken(account);
-      queueAccountsSave();
+      queueAccountsSave(account.username);
       queueVerificationEmail(account, verificationToken);
       fail("Verify your email before signing on. I sent a new verification email.", "email_not_verified_new_link", {
         requires_email_verification: true,
@@ -685,7 +685,7 @@ function createServerAccountAuthRoutes(deps: AccountAuthDeps) {
         account.session_token_expires_at = previousSessionExpiresAt;
         account.refresh_token_hash = previousRefreshHash;
         account.refresh_token_expires_at = previousRefreshExpiresAt;
-        queueAccountsSave();
+        queueAccountsSave(account.username);
         if (sessionResult.reason === "aborted" || !isAuthSocketOpen(socket)) return;
         fail("Could not create your saved login session. Try again.", "session_create_failed");
         return;
@@ -832,7 +832,7 @@ function createServerAccountAuthRoutes(deps: AccountAuthDeps) {
         account.session_token_expires_at = previousSessionExpiresAt;
         account.refresh_token_hash = previousRefreshHash;
         account.refresh_token_expires_at = previousRefreshExpiresAt;
-        queueAccountsSave();
+        queueAccountsSave(account.username);
         if (sessionResult.reason === "aborted" || !isAuthSocketOpen(socket)) return;
         fail("Could not refresh your saved login. Sign on again.", "session_refresh_failed");
         return;

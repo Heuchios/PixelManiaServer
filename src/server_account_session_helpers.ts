@@ -236,9 +236,9 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
     return crypto.randomBytes(Math.max(16, Math.trunc(Number(byteLength) || 32))).toString("hex");
   }
 
-  function queueSessionFallbackSave(): void {
+  function queueSessionFallbackSave(account: PacketRecord): void {
     if (!isPostgresAuthoritativeReady()) {
-      queueAccountsSave();
+      queueAccountsSave(account.username);
     }
   }
 
@@ -249,7 +249,7 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
     account.refresh_token_hash = "";
     account.refresh_token_expires_at = "";
     account.last_seen_at = new Date().toISOString();
-    queueSessionFallbackSave();
+    queueSessionFallbackSave(account);
     return token;
   }
 
@@ -261,7 +261,7 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
     account.refresh_token_hash = makeTokenHash(refreshToken);
     account.refresh_token_expires_at = new Date(Date.now() + SESSION_REFRESH_TOKEN_TTL_MS).toISOString();
     account.last_seen_at = new Date().toISOString();
-    queueSessionFallbackSave();
+    queueSessionFallbackSave(account);
     return { sessionToken, refreshToken };
   }
 
@@ -272,7 +272,7 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
     account.session_token_expires_at = "";
     account.refresh_token_hash = "";
     account.refresh_token_expires_at = "";
-    queueSessionFallbackSave();
+    queueSessionFallbackSave(account);
     if (username !== "" && typeof postgresStore?.revokeSessionsByUsername === "function") {
       postgresStore.revokeSessionsByUsername(username);
     }
@@ -503,7 +503,7 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
         account.email_verification_expires_at = "";
         clearSessionToken(account);
         accounts.set(accountKey(account.username), account);
-        queueAccountsSave();
+        queueAccountsSave(account.username);
       } else if (username !== "") {
         await postgresStore.revokeSessionsForUsername(username, "email_verified");
       }
@@ -518,7 +518,7 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
       if (!Number.isFinite(expiresAt) || Date.now() > expiresAt) {
         account.email_verification_token_hash = "";
         account.email_verification_expires_at = "";
-        queueAccountsSave();
+        queueAccountsSave(account.username);
         return { ok: false, message: "This verification link expired. Register again to send a new email." };
       }
 
@@ -527,7 +527,7 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
       account.email_verification_token_hash = "";
       account.email_verification_expires_at = "";
       clearSessionToken(account);
-      queueAccountsSave();
+      queueAccountsSave(account.username);
       return { ok: true, message: "Your PixelMania email is verified. You can return to the game and sign on." };
     }
 
@@ -595,7 +595,7 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
         account.password_algorithm = passwordHash.algorithm;
         account.last_seen_at = new Date().toISOString();
         clearSessionToken(account);
-        queueAccountsSave();
+        queueAccountsSave(account.username);
       }
 
       return { ok: true, username, message: "Your password was changed. Return to the game and sign on again." };
@@ -618,7 +618,7 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
       account.password_algorithm = passwordHash.algorithm;
       account.last_seen_at = new Date().toISOString();
       clearSessionToken(account);
-      queueAccountsSave();
+      queueAccountsSave(account.username);
     }
 
     if (!account) {
@@ -677,7 +677,7 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
       account.email_verification_token_hash = "";
       account.email_verification_expires_at = "";
       clearSessionToken(account);
-      queueAccountsSave();
+      queueAccountsSave(account.username);
     }
 
     if (isPostgresAuthoritativeReady()) {
