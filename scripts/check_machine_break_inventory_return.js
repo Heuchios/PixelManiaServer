@@ -18,7 +18,7 @@ const clientAtlasItems = JSON.parse(
 const blockManagerSource = fs.readFileSync(path.join(clientRoot, "Scripts", "block_manager.gd"), "utf8");
 
 const expectedReturns = new Map([
-  ["recycle_bin", "recycle_bin"],
+
   ["leaderboard", "leaderboard"],
   // The blocks-atlas migration consolidated vend_empty/vend_pending/vend_sold
   // into a single vending_machine item -- item_database.gd no longer has
@@ -119,3 +119,10 @@ assert.match(blockManagerSource, /func return_broken_block_directly_to_inventory
 assert.match(blockManagerSource, /elif not world\.try_drop_fixed_break_drops/);
 
 console.log(`[machine-break-return] verified ${expectedReturns.size} recoverable machine states`);
+
+const recycle = ItemDatabase.getItemDefinition("recycle_bin");
+assert.equal(recycle.break_return_to_inventory, false);
+assert.equal(recycle.seed, "recycle_bin_seed");
+assert.deepEqual(recycle.drop_rules.fixed_drops.map(d => d.item_id).sort(), ["gem", "recycle_bin", "recycle_bin_seed"]);
+assert.ok(recycle.drop_rules.fixed_drops.every(d => d.amount > 0 || d.amount_range?.[1] > 0));
+assert.equal(ItemDatabase.getSpliceResult("green_couch_seed", "biohazard_barrel_seed"), "recycle_bin_seed");

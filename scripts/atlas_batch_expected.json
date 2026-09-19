@@ -1,0 +1,114 @@
+[
+  [
+    "metal_gate",
+    "Metal Gate",
+    8,
+    11,
+    8,
+    "solid"
+  ],
+  [
+    "electrical_box",
+    "Electrical Box",
+    0,
+    17,
+    8,
+    "solid"
+  ],
+  [
+    "display_box",
+    "Display Block",
+    0,
+    14,
+    9,
+    "solid"
+  ],
+  [
+    "blink_checkpoint",
+    "Blink Checkpoint",
+    11,
+    14,
+    9,
+    "prop"
+  ],
+  [
+    "battery_assembler",
+    "Battery Assembler",
+    4,
+    17,
+    10,
+    "solid"
+  ],
+  [
+    "yellow_portal",
+    "Orange Portal",
+    0,
+    15,
+    11,
+    "portal"
+  ],
+  [
+    "gem_driller",
+    "Gem Driller",
+    5,
+    16,
+    14,
+    "solid"
+  ],
+  [
+    "hellbrick",
+    "Hellbrick",
+    15,
+    36,
+    3,
+    "solid"
+  ],
+  [
+    "hellbrick_wall",
+    "Hellbrick Wall",
+    15,
+    37,
+    4,
+    "wall"
+  ],
+  [
+    "magma_stone",
+    "Magma Stone",
+    15,
+    38,
+    1,
+    "solid"
+  ],
+  [
+    "hell_portal",
+    "Hell Portal",
+    16,
+    36,
+    11,
+    "portal"
+  ],
+  [
+    "hellbrick_platform",
+    "Hellbrick Platform",
+    17,
+    36,
+    6,
+    "platform"
+  ],
+  [
+    "hell_entrance",
+    "Hell Entrance",
+    16,
+    37,
+    9,
+    "prop"
+  ],
+  [
+    "recycle_bin",
+    "Recycle Bin",
+    17,
+    14,
+    10,
+    "prop"
+  ]
+]
