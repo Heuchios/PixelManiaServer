@@ -2136,7 +2136,7 @@ function getServerPhase9RemainingRoutes() {
       handleFriendListRequest: (...args: unknown[]) => getServerFriendRoutes().handleFriendListRequest(...args),
       handleFriendRequest: (...args: unknown[]) => getServerFriendRoutes().handleFriendRequest(...args),
       handleFriendResponse: (...args: unknown[]) => getServerFriendRoutes().handleFriendResponse(...args),
-      handleInventoryTransactionRequest: (...args: unknown[]) => getServerInventoryEconomyRoutes().handleInventoryTransactionRequest(...args),
+      handleInventoryTransactionRequest: (socket: unknown, player: unknown, data: unknown) => handleInventoryTransactionRequest(socket, player, data),
       handleInventoryUpgradePurchase: (...args: unknown[]) => getServerInventoryEconomyRoutes().handleInventoryUpgradePurchase(...args),
       handleNetfoxSpawnTicketRequest,
       handleNetfoxTrustedPlayerState,

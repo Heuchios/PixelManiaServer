@@ -1813,7 +1813,7 @@ function getServerPhase9RemainingRoutes() {
             handleFriendListRequest: (...args) => getServerFriendRoutes().handleFriendListRequest(...args),
             handleFriendRequest: (...args) => getServerFriendRoutes().handleFriendRequest(...args),
             handleFriendResponse: (...args) => getServerFriendRoutes().handleFriendResponse(...args),
-            handleInventoryTransactionRequest: (...args) => getServerInventoryEconomyRoutes().handleInventoryTransactionRequest(...args),
+            handleInventoryTransactionRequest: (socket, player, data) => handleInventoryTransactionRequest(socket, player, data),
             handleInventoryUpgradePurchase: (...args) => getServerInventoryEconomyRoutes().handleInventoryUpgradePurchase(...args),
             handleNetfoxSpawnTicketRequest,
             handleNetfoxTrustedPlayerState,

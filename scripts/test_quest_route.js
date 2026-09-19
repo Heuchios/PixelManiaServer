@@ -1,10 +1,10 @@
 const assert=require('node:assert/strict'),fs=require('node:fs'),vm=require('node:vm');
 const source=fs.readFileSync(require.resolve('../server.js'),'utf8');
-const start=source.indexOf('async function handleQuestRequest(');
+const start=source.indexOf('async function handleInventoryTransactionRequest(');
 const end=source.indexOf('\nasync function handleInventoryUpgradePurchase(',start);
 assert(start>0&&end>start);
 async function run(overrides={}){
- let applied=0,released=0,response=null,rejected=null;
+ let applied=0,released=0,response=null,rejected=null,legacy=0;
  const player={authenticated:true,account_username:'tester',world:'START'};
  const context={
   requireAuthenticated:()=>true,makeRequestId:()=> 'route-test',cleanWorld:s=>s,
@@ -16,9 +16,18 @@ async function run(overrides={}){
   refreshPlayerStateFromPostgres:async()=>({ok:true,state:{gems:15}}),buildPlayerStateForClient:s=>s,
   sendInventoryTransactionResult:(_,r)=>response=r,sendInventoryTransactionRejected:(_,d,m)=>rejected=m,
   queueFailedTransactionLedger:()=>{},...overrides,
+  getServerInventoryEconomyRoutes:()=>({handleInventoryTransactionRequest:()=>{legacy++;}}),
  };
  vm.createContext(context);vm.runInContext(source.slice(start,end),context);
- await context.handleQuestRequest({},player,{action:'quest_accept',world:'START',x:1,y:2});
+ // Exercise the actual dispatcher dependency, not only the leaf quest handler.
+ const binding=source.match(/handleInventoryTransactionRequest: ([^\r\n]+),/);
+ assert(binding,'Missing inventory dispatcher binding');
+ const handler=vm.runInContext('('+binding[1]+')',context);
+ const routes=require('../server_phase9_remaining_routes').createServerPhase9RemainingRoutes({handleInventoryTransactionRequest:handler});
+ await routes.handleInventoryTransactionRequest({},player,{action:'quest_accept',world:'START',x:1,y:2});
+ assert.equal(legacy,0,'Quest packets must not bypass the quest handler');
+ await routes.handleInventoryTransactionRequest({},player,{action:'shop_buy',world:'START'});
+ assert.equal(legacy,1,'Ordinary inventory actions must keep their existing route');
  return {applied,released,response,rejected};
 }
 (async()=>{
