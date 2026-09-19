@@ -13018,11 +13018,6 @@ function rollFishingReward(lureId: any, rodId: any = "") {
   };
 }
 
-function getFishingServerCatchChance(difficulty: any) {
-  const safeDifficulty = clampInteger(difficulty || 1, 1, 10);
-  return Math.max(0.7, Math.min(0.98, 1.02 - safeDifficulty * 0.035));
-}
-
 function getFishingRewardFxRarity(itemId: any) {
   const definition = ItemDatabase.getItemDefinition(itemId);
   return String(definition?.rarity || "common").trim().toLowerCase();
@@ -13214,7 +13209,9 @@ async function handleFishingCompleteTransaction(socket: any, player: any, data: 
 
   if (await rejectIfWorldBanned(socket, player, session.world, "fishing_complete")) return;
 
-  const success = Boolean(data.success) && randomChance(getFishingServerCatchChance(session.difficulty));
+  // The minigame already decides whether the fish escaped. Do not randomly
+  // discard a completed catch after the player has landed all required pulls.
+  const success = data.success === true;
   if (!success) {
     sendInventoryTransactionResult(socket, {
       ok: true,
