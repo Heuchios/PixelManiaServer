@@ -10851,7 +10851,7 @@ async function handleTackleBoxHarvestUpdate(socket, player, worldName, update, r
     const isWaterWell = Boolean(block && isWaterWellBlockType(block.block_type));
     const isAtmMachine = Boolean(block && isAtmMachineBlockType(block.block_type));
     const isTackleBox = Boolean(block && isTackleBoxBlockType(block.block_type));
-    const providerName = isAtmMachine ? "ATM Machine" : (isWaterWell ? "Water Well" : "Tackle Box");
+    const providerName = isAtmMachine ? "ATM Machine" : (isWaterWell ? "Water Well" : "Bait Box");
     const providerType = isAtmMachine ? "atm_machine" : (isWaterWell ? "water_well" : "tackle_box");
     if (!block || (!isTackleBox && !isWaterWell && !isAtmMachine)) {
         sendActionRejected(socket, "world_interaction_update", `${providerName} missing.`, {
@@ -18467,7 +18467,7 @@ async function applyProducerSpeedupToWorld(worldName, options = {}) {
 function formatProducerSpeedupStats(stats = {}) {
     const labels = [
         ["seeds", "seed trees"],
-        ["tackle_boxes", "tackle boxes"],
+        ["tackle_boxes", "bait boxes"],
         ["water_wells", "water wells"],
         ["chickens", "chickens"],
         ["cows", "cows"],

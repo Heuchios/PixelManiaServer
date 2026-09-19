@@ -36,6 +36,8 @@ for (const row of rows.filter(r => r.status === 'active')) {
   assert.equal(db.getSpliceResult(...row.seeds.slice(0, 2)), row.seeds[2], row.names.join(' + '));
   row.ids.forEach((id, i) => assert.equal(db.getItemDefinition(id).seed, row.seeds[i], id));
 }
+assert.equal(pairs.length, rows.filter(r => r.status === 'active').length, 'No unlisted splicing recipes');
+assert.equal(db.STATION_RECIPES.furnace.length, 0, 'No unlisted furnace recipes');
 assert.equal(rows.length, sheet.rows.length, 'Every live sheet row was audited');
 assert.equal(new Set(rows.map(r => r.row)).size, rows.length, 'Duplicate audit rows');
 for (const source of sheet.rows) {
@@ -71,4 +73,14 @@ for (const recipe of crafting) {
 assert.equal(db.getSpliceResult('unknown_seed', 'dirt_seed'), '');
 assert.equal(db.getSpliceResult('dirt_seed', 'dirt_seed'), '');
 assert.equal(db.ITEMS.glowing_dirt.seed, '', 'Unrelated seedless blocks stay seedless');
+const harvest = JSON.parse(fs.readFileSync(path.join(clientDir, 'docs/splice-harvest-times.json'), 'utf8'));
+assert.equal(harvest.rows.length, rows.length, 'Every sheet duration captured');
+for (const row of harvest.rows) {
+  if (!row.seed_id) continue;
+  assert.equal(db.ITEMS[row.seed_id].grow_time, row.seconds, row.name);
+  assert.equal(db.ITEMS[row.seed_id].max_grow_time, row.seconds, row.name);
+}
+for (const output of Object.values(db.SPLICE_RECIPES)) {
+  assert.ok(harvest.rows.some(row => row.seed_id === output), `Missing duration: ${output}`);
+}
 console.log(`Recipes OK: ${rows.length} sheet rows audited; ${pairs.length} splicing; ${crafting.length} crafting; unique pairs/outputs, red-row separation and server parity verified.`);
