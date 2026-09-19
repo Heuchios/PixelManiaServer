@@ -30,6 +30,7 @@ class Client {
     this.messages = [];
     this.cells = new Map();
     this.drops = new Map();
+    this.seeds = new Map();
     this.waiters = new Set();
     this.nextSend = 0;
     this.nextReceive = 0;
@@ -68,6 +69,11 @@ class Client {
     if (data.type === "world_block_update" && ["break", "place"].includes(data.action)) {
       this.cells.set(`${data.layer}:${data.x}:${data.y}`, data.action === "break" ? "" : data.block_type);
     }
+    if (data.type === "world_seed_update") {
+      const key = `${data.x}:${data.y}`;
+      if (data.action === "remove") this.seeds.delete(key);
+      else if (data.action === "place" || data.action === "splice") this.seeds.set(key, data);
+    }
     if (data.type === "drop_spawned") {
       assert(data.drop_id, "Drop must have an authoritative ID");
       this.drops.set(data.drop_id, data);
@@ -104,15 +110,18 @@ class Client {
     const request_id = data.request_id || req(data.action || data.type);
     const started = performance.now();
     this.send({ world: "PERF_LOCAL", ...data, request_id });
+    const expectedTypes = data.type === 'inventory_transaction_request'
+      ? ['inventory_transaction_result', 'action_rejected', 'rate_limited']
+      : ['world_block_update', 'world_block_reconcile', 'action_rejected', 'rate_limited', 'client_pong'];
     const response = await this.until(m => (m.request_id === request_id || m.action_id === request_id) &&
-      ["world_block_update", "world_block_reconcile", "action_rejected", "rate_limited", "client_pong"].includes(m.type), request_id);
+      expectedTypes.includes(m.type), request_id);
     return { response, ms: performance.now() - started, request_id };
   }
   async inventory() {
     const request_id = req("inventory");
     this.send({ type: "player_state_request", request_id });
     const state = await this.until(m => m.type === "player_state" && m.request_id === request_id, request_id);
-    const inventory = Object.fromEntries(Object.entries(state.player_data || {}).filter(([key]) => key.startsWith("inventory")));
+    const inventory = Object.fromEntries(Object.entries(state.player_data || {}).filter(([key]) => key.startsWith("inventory") || key.endsWith("_inventory")));
     assert(Object.keys(inventory).length > 0, "Inventory assertion must inspect real authoritative fields");
     return inventory;
   }
@@ -125,6 +134,16 @@ class Client {
 }
 
 async function main() {
+  if (process.env.PERF_SEEDS === "1") {
+    const playersDir = path.join(output, 'data', 'players');
+    fs.mkdirSync(playersDir, { recursive: true });
+    // Provision only the isolated development server's disposable identity,
+    // before it starts. Never use a client inventory edit/grant packet.
+    const file = path.join(playersDir, 'runtimeperf0.json');
+    assert.ok(!fs.existsSync(file), 'Use a fresh PERF_OUTPUT_DIR for the seed fixture');
+    fs.writeFileSync(file, JSON.stringify({ player_state_version: 1, username: 'RuntimePerf0',
+      player_data: { account_username: 'RuntimePerf0', inventory: { dirt: 200 }, seed_inventory: { dirt_seed: 10 } } }));
+  }
   const listener = net.createServer();
   await new Promise(resolve => listener.listen(0, "127.0.0.1", resolve));
   const port = listener.address().port;
@@ -160,6 +179,38 @@ async function main() {
   moving = setInterval(() => { for (const client of clients) client.move(performance.now() - started); }, 50);
   await wait(1000);
   const measurements = [];
+  const seedMeasurements = [];
+  if (process.env.PERF_SEEDS === "1") {
+    const actor = clients[0];
+    const inventoryBefore = await actor.inventory();
+    const seedCount = inv => Number(inv.seed_inventory?.dirt_seed || 0);
+    assert.ok(seedCount(inventoryBefore) >= 3, 'Disposable test identity needs starter dirt seeds');
+    const dropCounts = clients.map(c => c.drops.size);
+    for (let offset = 0; offset < 3; offset++) {
+      const target = { type: 'inventory_transaction_request', x: actor.spawn.spawn_grid_x + offset - 1,
+        y: actor.spawn.spawn_grid_y - 1, seed_type: 'dirt_seed', grow_time: 0, mature: true };
+      const planted = await actor.operation({ ...target, action: 'seed_place' });
+      assert.equal(planted.response.ok, true, JSON.stringify(planted.response));
+      const key = `${target.x}:${target.y}`;
+      for (const peer of clients) await peer.until(m => m.type === 'world_seed_update' && m.action === 'place' && m.x === target.x && m.y === target.y, 'seed fanout');
+      assert.ok(actor.seeds.get(key).grow_time > 0, 'Client growth spoof must not create mature tree');
+      for (let i = 0; i < 3; i++) {
+        await wait(310);
+        const peer = clients[i % clients.length];
+        const punched = await peer.operation({ ...target, action: 'seed_harvest' });
+        assert.equal(punched.response.ok, true, JSON.stringify(punched.response));
+        assert.equal(punched.response.seed_removed, i === 2);
+        if (i < 2) for (const observer of clients) await observer.until(m => m.type === 'world_seed_update' && m.action === 'hit' && m.x === target.x && m.y === target.y && m.hit_count === i + 1, 'tree hit fanout');
+      }
+      for (const peer of clients) {
+        await peer.until(m => m.type === 'world_seed_update' && m.action === 'remove' && m.x === target.x && m.y === target.y, 'tree removal fanout');
+        assert.equal(peer.seeds.has(key), false);
+      }
+      seedMeasurements.push({ plant_ms: planted.ms, peers_synchronized: clients.length });
+    }
+    assert.equal(seedCount(await actor.inventory()), seedCount(inventoryBefore) - 3, 'Plant/break must permanently consume all three seeds');
+    assert.deepEqual(clients.map(c => c.drops.size), dropCounts, 'Growing trees produced drops');
+  }
   for (let i = 0; i < Math.min(3, count); i++) {
     const client = clients[i];
     const target = { type: "world_block_update", layer: "foreground", x: client.spawn.spawn_grid_x + 2,
@@ -206,7 +257,7 @@ async function main() {
   const corrections = clients.flatMap(c => c.messages.filter(m => m.type === "action_rejected" && m.action === "player_position"));
   assert.equal(corrections.length, 0, `Movement corrections: ${JSON.stringify(corrections.slice(0,3))}`);
   const result = { scope:"local development storage, ordered application RTT with deterministic jitter; no GPU or production database",
-    players:count, duration_ms:performance.now()-started, movement_corrections:corrections.length,drops_observed:clients.map(c=>c.drops.size),measurements,
+    players:count, duration_ms:performance.now()-started, movement_corrections:corrections.length,drops_observed:clients.map(c=>c.drops.size),measurements, seedMeasurements,
     duplicate_inventory_invariants_passed:true,
     movement_wire_bytes:clients.reduce((n,c)=>n+c.movementBytes,0), movement_items:clients.reduce((n,c)=>n+c.movementItems,0),
     equivalent_uncompacted_bytes:clients.reduce((n,c)=>n+c.legacyEquivalentBytes,0),

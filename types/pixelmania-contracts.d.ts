@@ -155,6 +155,8 @@ declare namespace PixelMania {
     correlation_id?: string | null;
     metadata?: Record<string, unknown>;
     world_state?: Record<string, unknown>;
+    /** Request an atomic world/inventory commit without a redundant caller snapshot. */
+    world_mutation?: boolean;
     world_changes?: Array<Record<string, unknown>>;
     allow_state_repair?: boolean;
     allow_dev_json_fallback?: boolean;

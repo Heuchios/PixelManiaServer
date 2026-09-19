@@ -910,7 +910,7 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
     if (!itemDatabase.hasItem(seedType) || resolveInventoryCategory(seedType) !== "seed") return null;
 
     const configuredGrowTime = config.getSeedConfiguredGrowTime(seedType);
-    const maxGrowTime = Math.max(1, Math.min(86400, Number(rawEntry.max_grow_time) || configuredGrowTime));
+    const maxGrowTime = Math.max(1, Number(rawEntry.max_grow_time) || configuredGrowTime);
     const rawMature = Boolean(rawEntry.mature);
     const growTime = rawMature ? 0 : Math.max(0, Math.min(maxGrowTime, Number(rawEntry.grow_time) || maxGrowTime));
     let plantedAt = Number(rawEntry.planted_at || 0);
@@ -925,6 +925,7 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
       grow_time: growTime,
       max_grow_time: maxGrowTime,
       planted_at: plantedAt,
+      tree_created_at: Number(rawEntry.tree_created_at) || plantedAt,
       mutated: Boolean(rawEntry.mutated),
     };
   }
@@ -937,7 +938,7 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
     if (!Number.isFinite(plantedAt) || plantedAt <= 0) {
       const maxGrowTime = Math.max(
         1,
-        Math.min(86400, Number(serialized.max_grow_time) || config.getSeedConfiguredGrowTime(serialized.seed_type)),
+        Number(serialized.max_grow_time) || config.getSeedConfiguredGrowTime(serialized.seed_type),
       );
       const growTime = Boolean(serialized.mature)
         ? 0

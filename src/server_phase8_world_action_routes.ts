@@ -88,6 +88,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
     getWorldObjectJournalData,
     gridKey,
     handleFrozenTreasureOpen,
+    handleSeedPlaceTransaction,
     hasAntiGravityBlock,
     hasAntiPunchBlock,
     hasAntiTalkBlock,
@@ -360,6 +361,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
           }
           if (
             !canPlayerBuildAtGrid(player, worldName, update.x, update.y) &&
+            !((update.action === "break" || update.action === "hit") && update.layer === "foreground" && getWorldBlockTypeAt(worldName, update.x, update.y, "foreground") === "toxic_waste") &&
             !canPlayerBreakOwnVendingMachine(player, worldName, update) &&
             !isFishMongerBreakAttempt(worldName, update)
           ) {
@@ -563,6 +565,24 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
           const areaLockStatePayload = applyAreaLockStateForBlockUpdate(worldName, update, player, shouldBroadcastAreaLockState);
           const placementInteractionPayloads = [];
           const placementInteractionChanges = [];
+          if (update.action === "break" && update.layer === "foreground" && blockTypeBefore === "biohazard_barrel") {
+            const state = ensureWorldState(worldName);
+            const { planToxicWasteSpread } = require("./toxic_waste_spread");
+            const spots = planToxicWasteSpread(update.x, update.y, (x: number, y: number) =>
+              isGridInWorld(x, y) && !getWorldBlockTypeAt(worldName, x, y, "foreground") &&
+              !state.seeds.has(gridKey(x, y)) && canPlayerBuildAtGrid(player, worldName, x, y));
+            for (const spot of spots) {
+              const waste = { ...update, action: "place", block_type: "toxic_waste", item_id: 0, x: spot.x, y: spot.y };
+              applyBlockUpdateToWorldState(worldName, waste);
+              placementInteractionPayloads.push(waste);
+              placementInteractionChanges.push({
+                ...getAuditActor(socket, player), source_type: "toxic_barrel_break", source_id: blockTransactionId,
+                request_id: requestId, world: worldName, action: "place", layer: "foreground",
+                x: spot.x, y: spot.y, block_type: "toxic_waste", block_type_before: "", block_type_after: "toxic_waste",
+                details: { old_block_id: "", new_block_id: "toxic_waste", actual_layer: "foreground" },
+              });
+            }
+          }
           if (areaLockStatePayload) {
             placementInteractionPayloads.push(areaLockStatePayload);
             placementInteractionChanges.push(buildWorldObjectChangeEntry(
@@ -1695,97 +1715,15 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
           return;
   }
 
-  async function handleWorldSeedUpdate(socket: any, player: any, data: PacketRecord, context: RouteContext): Promise<void> {
+  async function handleWorldSeedUpdate(socket: any, player: any, data: PacketRecord, _context: RouteContext): Promise<void> {
     if (!requireAuthenticated(socket, player, "edit worlds")) return;
-
-          const worldName = cleanWorld(data.world || player.world || "START");
-          if (!requireSameWorld(socket, player, worldName, "edit that world")) return;
-          if (await rejectIfWorldBanned(socket, player, worldName, "world_seed_update")) return;
-          if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) return;
-
-          const update = sanitizeSeedUpdate(data, worldName);
-          if (!update) return;
-
-          const validation = await validateSeedUpdateAgainstServerState(socket, player, worldName, update, makeRequestId(data));
-          if (!validation.ok) return;
-
-          const seedTransactionId = makeAuditId("seed");
-          applySeedUpdateToWorldState(worldName, update);
-
-          let seedPlayerState = validation.playerState;
-          let seedPostgresCommitted = validation.postgres_committed;
-          let requesterInventoryDeltas = seedPlayerState
-            ? buildInventoryDeltaClientPayloads(validation.inventoryDeltas, seedPlayerState)
-            : [];
-
-          if (validation.deferred_inventory_commit) {
-            // One commit for the seed cost and the planted seed. If it fails the seed is
-            // taken back out of world state, so the player is never charged for a seed
-            // that was not planted.
-            const deferred = validation.deferred_inventory_commit;
-            const serializedWorld = serializeWorldState(worldName);
-            const inventoryCommit = await commitPlayerInventoryState(
-              socket,
-              player,
-              deferred.username,
-              deferred.beforeState,
-              deferred.afterState,
-              {
-                ...(deferred.options || {}),
-                world: worldName,
-                world_state: serializedWorld,
-              }
-            );
-            if (!inventoryCommit.ok) {
-              ensureWorldState(worldName).seeds.delete(gridKey(update.x, update.y));
-              sendActionRejected(socket, "world_seed_update", inventoryCommit.message || "PostgreSQL rejected the seed placement.", {
-                reason: inventoryCommit.reason || "inventory_commit_failed",
-                seed_type: update.seed_type,
-                x: update.x,
-                y: update.y,
-              });
-              return;
-            }
-            seedPlayerState = inventoryCommit.state;
-            seedPostgresCommitted = inventoryCommit.postgres_committed;
-            requesterInventoryDeltas = buildInventoryDeltaClientPayloads(inventoryCommit.deltas, seedPlayerState);
-            persistWorldStateAfterInventoryCommit(worldName, inventoryCommit.postgres_committed, serializedWorld);
-          } else {
-            queueWorldSave(worldName);
-          }
-
-          sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
-          logWorldChange(socket, player, {
-            source_type: "world_seed_update",
-            source_id: seedTransactionId,
-            world: worldName,
-            action: update.action,
-            layer: "seed",
-            x: update.x,
-            y: update.y,
-            block_type: update.seed_type,
-            details: {
-              seed_type: update.seed_type,
-              mutated: Boolean(update.mutated),
-            },
-          });
-          if (update.action === "place" && seedPlayerState) {
-            logItemLedgerForState(socket, player, player.account_username, seedPlayerState, update.seed_type, "seed", -1, "world_seed_place", seedTransactionId, "seed_plant_cost", worldName, {
-              x: update.x,
-              y: update.y,
-            }, { skipPostgres: seedPostgresCommitted });
-          }
-
-          if (seedPlayerState) {
-            sendInventoryTransactionResult(socket, {
-              ok: true,
-              action: "world_seed_place",
-              message: "",
-              username: player.account_username,
-              inventory_deltas: requesterInventoryDeltas,
-            });
-          }
-          return;
+    // Old clients must go through the same inventory/cell locks and server-owned
+    // growth creation. Never accept client remove/mature/splice world updates.
+    if (data.action !== "place") {
+      sendActionRejected(socket, "world_seed_update", "Use a server seed transaction.");
+      return;
+    }
+    await handleSeedPlaceTransaction(socket, player, { ...data, action: "seed_place" });
   }
 
   return {

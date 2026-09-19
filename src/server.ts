@@ -731,7 +731,7 @@ const CCTV_EVENT_LIMIT = 20;
 const SERVER_SEED_GROW_TIME_SECONDS = Math.max(1, Number(process.env.SEED_GROW_TIME_SECONDS) || 8);
 const MATURE_SEED_EXTRA_DROP_CHANCE = Math.max(0, Math.min(1, Number(process.env.MATURE_SEED_EXTRA_DROP_CHANCE) || 0.65));
 const GROWING_TREE_BREAK_HITS_REQUIRED = 3;
-const growingTreeBreakHits = new WeakMap<object, number>();
+const growingTreeBreakHits = new WeakMap<object, { hits: number; updatedAt: number }>();
 const CONFIGURED_SEED_MUTATION_CHANCE = Number(process.env.SEED_MUTATION_CHANCE);
 const SEED_MUTATION_CHANCE = Math.max(0, Math.min(1, Number.isFinite(CONFIGURED_SEED_MUTATION_CHANCE) ? CONFIGURED_SEED_MUTATION_CHANCE : 0.005));
 const SNOW_STORM_EVENT_TYPE = "snow_storm";
@@ -1874,6 +1874,7 @@ function getServerPhase8WorldActionRoutes() {
       getWorldObjectJournalData,
       gridKey,
       handleFrozenTreasureOpen,
+      handleSeedPlaceTransaction,
       hasAntiGravityBlock,
       hasAntiPunchBlock,
       hasAntiTalkBlock,
@@ -3300,6 +3301,9 @@ wss.on("connection", (socket: ServerWebSocket, request: import("node:http").Inco
       const data = envelope.data;
       const incomingMessageType = envelope.messageType;
       runtimeProfiler.observe(`queue_ms:${incomingMessageType}`, queueWaitMs);
+      if (incomingMessageType === "inventory_transaction_request" && ["seed_place", "seed_splice", "seed_harvest"].includes(String(data.action))) {
+        runtimeProfiler.observe(`seed_queue_ms:${data.action}`, queueWaitMs);
+      }
       socket.inboundMessageQueueDepth = Math.max(
         0,
         Math.trunc(Number(socket.inboundMessageQueueDepth) || 0) - 1,
@@ -14245,15 +14249,17 @@ function isSeedMature(seed: any) {
 
 function registerGrowingTreeBreakHit(seed: object) {
   const seedObject = seed;
+  const now = Date.now();
+  const previous = growingTreeBreakHits.get(seedObject);
   const hitCount = Math.min(
     GROWING_TREE_BREAK_HITS_REQUIRED,
-    Math.max(0, growingTreeBreakHits.get(seedObject) || 0) + 1,
+    (previous && now - previous.updatedAt <= BLOCK_DAMAGE_RESET_MS ? previous.hits : 0) + 1,
   );
   const shouldBreak = hitCount >= GROWING_TREE_BREAK_HITS_REQUIRED;
   if (shouldBreak) {
     growingTreeBreakHits.delete(seedObject);
   } else {
-    growingTreeBreakHits.set(seedObject, hitCount);
+    growingTreeBreakHits.set(seedObject, { hits: hitCount, updatedAt: now });
   }
   return {
     hit_count: hitCount,
@@ -14270,6 +14276,8 @@ function serializeSeedForMessage(seed: any) {
     y: seed.y,
     seed_type: seed.seed_type,
     grow_time: growTime,
+    planted_at: seed.planted_at,
+    tree_created_at: seed.tree_created_at || seed.planted_at,
     max_grow_time: maxGrowTime,
     mature: growTime <= 0,
     mutated: Boolean(seed.mutated),
@@ -14285,16 +14293,46 @@ function makeServerSeedEntry(x: any, y: any, seedType: any) {
     grow_time: maxGrowTime,
     max_grow_time: maxGrowTime,
     planted_at: Date.now(),
+    tree_created_at: Date.now(),
     mutated: randomChance(SEED_MUTATION_CHANCE),
   };
 }
 
+// Use the same cell lock as foreground block actions. Validation, mutation,
+// durable inventory/world commit and rollback must form one cell operation.
+async function runSeedActionLocked(socket: unknown, player: ServerPacketRecord, data: ServerPacketRecord, run: () => Promise<void>) {
+  const started = performance.now();
+  const grid = getTransactionGrid(data);
+  if (!grid) return run(); // The canonical handler returns its normal validation error.
+  const worldName = getTransactionWorldName(player, data);
+  const resource = getWorldBlockActionLockResource(worldName, { ...grid, layer: "foreground" });
+  const lock = await acquireLiveActionLock(worldBlockActionLocks, "world_block", resource, player.id);
+  if (runtimeProfiler.enabled) runtimeProfiler.observe("seed_cell_lock_ms", performance.now() - started);
+  if (!lock.acquired) {
+    sendInventoryTransactionRejected(socket, data, "That tile is busy. Try again.");
+    return;
+  }
+  try {
+    await run();
+  } finally {
+    releaseLiveActionLock(lock);
+    if (runtimeProfiler.enabled) runtimeProfiler.observe(`seed_action_ms:${data.action}`, performance.now() - started);
+  }
+}
+
 async function handleSeedPlaceTransaction(socket: any, player: any, data: any) {
+  return runSeedActionLocked(socket, player, data, () => handleSeedPlaceTransactionLocked(socket, player, data));
+}
+
+async function handleSeedPlaceTransactionLocked(socket: unknown, player: ServerPacketRecord, data: ServerPacketRecord) {
   const requestId = makeRequestId(data);
   const worldName = getTransactionWorldName(player, data);
-  if (!requireSameWorld(socket, player, worldName, "plant seeds in that world")) return;
-  if (await rejectIfWorldBanned(socket, player, worldName, "seed_place")) return;
-  if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) return;
+  if (!requireSameWorld(socket, player, worldName, "plant seeds in that world")
+      || await rejectIfWorldBanned(socket, player, worldName, "seed_place")
+      || !requireBuildPermission(socket, player, worldName, "edit this locked world")) {
+    sendInventoryTransactionRejected(socket, data, "You cannot plant in that world.");
+    return;
+  }
 
   const grid: any = getTransactionGrid(data);
   if (!grid || !isPlayerNearGrid(player, grid.x, grid.y)) {
@@ -14341,6 +14379,7 @@ async function handleSeedPlaceTransaction(socket: any, player: any, data: any) {
   const seedGrowTime = getSeedConfiguredGrowTime(seedType);
   const update: any = {
     type: "world_seed_update",
+    request_id: requestId,
     action: "place",
     x: grid.x,
     y: grid.y,
@@ -14352,7 +14391,7 @@ async function handleSeedPlaceTransaction(socket: any, player: any, data: any) {
 
   applySeedUpdateToWorldState(worldName, update);
   const seedTransactionId = makeAuditId("seed");
-  const serializedWorld = serializeWorldState(worldName);
+  const commitStarted = performance.now();
   const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "seed_place",
     action: "seed_place",
@@ -14360,9 +14399,10 @@ async function handleSeedPlaceTransaction(socket: any, player: any, data: any) {
     request_id: requestId,
     world: worldName,
     metadata: { transaction_id: seedTransactionId, x: grid.x, y: grid.y, seed_type: seedType, mutated: Boolean(update.mutated) },
-    world_state: serializedWorld,
+    world_mutation: true,
     failure_message: "Server inventory changed. Try again.",
   });
+  if (runtimeProfiler.enabled) runtimeProfiler.observe(`seed_commit_ms:${data.action}`, performance.now() - commitStarted);
   if (!commit.ok) {
     ensureWorldState(worldName).seeds.delete(key);
     sendInventoryTransactionRejected(socket, data, commit.message);
@@ -14370,7 +14410,7 @@ async function handleSeedPlaceTransaction(socket: any, player: any, data: any) {
   }
   const committedState = commit.state;
   const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
-  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
+  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed);
   sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
 
   logWorldChange(socket, player, {
@@ -14410,11 +14450,18 @@ function getBlockTypeForSeed(seedType: any) {
 }
 
 async function handleSeedSpliceTransaction(socket: any, player: any, data: any) {
+  return runSeedActionLocked(socket, player, data, () => handleSeedSpliceTransactionLocked(socket, player, data));
+}
+
+async function handleSeedSpliceTransactionLocked(socket: unknown, player: ServerPacketRecord, data: ServerPacketRecord) {
   const requestId = makeRequestId(data);
   const worldName = getTransactionWorldName(player, data);
-  if (!requireSameWorld(socket, player, worldName, "splice seeds in that world")) return;
-  if (await rejectIfWorldBanned(socket, player, worldName, "seed_splice")) return;
-  if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) return;
+  if (!requireSameWorld(socket, player, worldName, "splice seeds in that world")
+      || await rejectIfWorldBanned(socket, player, worldName, "seed_splice")
+      || !requireBuildPermission(socket, player, worldName, "edit this locked world")) {
+    sendInventoryTransactionRejected(socket, data, "You cannot splice in that world.");
+    return;
+  }
 
   const grid: any = getTransactionGrid(data);
   if (!grid || !isPlayerNearGrid(player, grid.x, grid.y)) {
@@ -14468,6 +14515,7 @@ async function handleSeedSpliceTransaction(socket: any, player: any, data: any) 
   const seedGrowTime = getSeedConfiguredGrowTime(resultSeed);
   const update: any = {
     type: "world_seed_update",
+    request_id: requestId,
     action: "splice",
     x: grid.x,
     y: grid.y,
@@ -14481,7 +14529,7 @@ async function handleSeedSpliceTransaction(socket: any, player: any, data: any) 
   const originalSeed = cloneJson(seed);
   applySeedUpdateToWorldState(worldName, update);
   const seedTransactionId = makeAuditId("seed");
-  const serializedWorld = serializeWorldState(worldName);
+  const commitStarted = performance.now();
   const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "seed_splice",
     action: "seed_splice",
@@ -14489,9 +14537,10 @@ async function handleSeedSpliceTransaction(socket: any, player: any, data: any) 
     request_id: requestId,
     world: worldName,
     metadata: { transaction_id: seedTransactionId, x: grid.x, y: grid.y, previous_seed_type: seed.seed_type, seed_type: resultSeed },
-    world_state: serializedWorld,
+    world_mutation: true,
     failure_message: "Server inventory changed. Try again.",
   });
+  if (runtimeProfiler.enabled) runtimeProfiler.observe(`seed_commit_ms:${data.action}`, performance.now() - commitStarted);
   if (!commit.ok) {
     ensureWorldState(worldName).seeds.set(key, originalSeed);
     sendInventoryTransactionRejected(socket, data, commit.message);
@@ -14499,7 +14548,7 @@ async function handleSeedSpliceTransaction(socket: any, player: any, data: any) 
   }
   const committedState = commit.state;
   const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
-  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
+  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed);
   sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
 
   sendInventoryTransactionResult(socket, {
@@ -14515,11 +14564,18 @@ async function handleSeedSpliceTransaction(socket: any, player: any, data: any) 
 }
 
 async function handleSeedHarvestTransaction(socket: any, player: any, data: any) {
+  return runSeedActionLocked(socket, player, data, () => handleSeedHarvestTransactionLocked(socket, player, data));
+}
+
+async function handleSeedHarvestTransactionLocked(socket: unknown, player: ServerPacketRecord, data: ServerPacketRecord) {
   const requestId = makeRequestId(data);
   const worldName = getTransactionWorldName(player, data);
-  if (!requireSameWorld(socket, player, worldName, "harvest seeds in that world")) return;
-  if (await rejectIfWorldBanned(socket, player, worldName, "seed_harvest")) return;
-  if (!requireBuildPermission(socket, player, worldName, "edit this locked world")) return;
+  if (!requireSameWorld(socket, player, worldName, "harvest seeds in that world")
+      || await rejectIfWorldBanned(socket, player, worldName, "seed_harvest")
+      || !requireBuildPermission(socket, player, worldName, "edit this locked world")) {
+    sendInventoryTransactionRejected(socket, data, "You cannot harvest in that world.");
+    return;
+  }
 
   const grid: any = getTransactionGrid(data);
   if (!grid || !isPlayerNearGrid(player, grid.x, grid.y)) {
@@ -14539,6 +14595,11 @@ async function handleSeedHarvestTransaction(socket: any, player: any, data: any)
     sendInventoryTransactionRejected(socket, data, "There is no seed-tree there.");
     return;
   }
+  const requestedTree = Number(data.tree_created_at || 0);
+  if (requestedTree > 0 && requestedTree !== Number(seed.tree_created_at || seed.planted_at)) {
+    sendInventoryTransactionRejected(socket, data, "That tree has changed.");
+    return;
+  }
 
   const dropPosition = getGridCenterPixels(grid.x, grid.y);
   const drops: any = [];
@@ -14548,16 +14609,24 @@ async function handleSeedHarvestTransaction(socket: any, player: any, data: any)
     const breakHit = registerGrowingTreeBreakHit(seed);
     growingTreeHitCount = breakHit.hit_count;
     if (!breakHit.should_break) {
+      sendWorldUpdateToRequesterAndWorld(socket, player, worldName, {
+        type: "world_seed_update", action: "hit", request_id: requestId,
+        world: worldName, x: grid.x, y: grid.y, seed_type: seed.seed_type,
+        planted_at: seed.planted_at, tree_created_at: seed.tree_created_at || seed.planted_at, hit_count: breakHit.hit_count,
+        hits_required: breakHit.hits_required, damage_reset_ms: BLOCK_DAMAGE_RESET_MS,
+      });
       sendInventoryTransactionResult(socket, {
         ok: true,
         request_id: requestId,
         action: "seed_harvest",
         message: "",
         username: player.account_username,
+        world: worldName, x: grid.x, y: grid.y, planted_at: seed.planted_at,
         seed_removed: false,
         growing_tree: true,
         hit_count: breakHit.hit_count,
         hits_required: breakHit.hits_required,
+        damage_reset_ms: BLOCK_DAMAGE_RESET_MS,
         inventory_deltas: [],
       });
       return;
@@ -14601,13 +14670,15 @@ async function handleSeedHarvestTransaction(socket: any, player: any, data: any)
         }
       }
     }
-  } else {
-    drops.push({ item_id: seed.seed_type, item_category: "seed", amount: 1, y_offset: 0 });
   }
+  // Immature trees are destruction only: no item, seed, or inventory refund.
 
   const update: any = {
     type: "world_seed_update",
+    request_id: requestId,
     action: "remove",
+    planted_at: seed.planted_at,
+    tree_created_at: seed.tree_created_at || seed.planted_at,
     x: grid.x,
     y: grid.y,
     seed_type: seed.seed_type,
@@ -14650,7 +14721,7 @@ async function handleSeedHarvestTransaction(socket: any, player: any, data: any)
     y: grid.y,
   });
   const seedTransactionId = makeAuditId("seed");
-  const serializedWorld = serializeWorldState(worldName);
+  const commitStarted = performance.now();
   const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
     source: "seed_harvest",
     action: "seed_harvest",
@@ -14666,9 +14737,10 @@ async function handleSeedHarvestTransaction(socket: any, player: any, data: any)
       reward_count: rewards.length,
       growing_tree_hit_count: growingTreeHitCount,
     },
-    world_state: serializedWorld,
+    world_mutation: true,
     failure_message: "Server inventory changed. Try again.",
   });
+  if (runtimeProfiler.enabled) runtimeProfiler.observe(`seed_commit_ms:${data.action}`, performance.now() - commitStarted);
   if (!commit.ok) {
     const rollbackState = ensureWorldState(worldName);
     rollbackState.seeds.set(key, originalSeed);
@@ -14680,7 +14752,7 @@ async function handleSeedHarvestTransaction(socket: any, player: any, data: any)
   }
   const committedState = commit.state;
   const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
-  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed, serializedWorld);
+  persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed);
   sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
   for (const payload of payloads) {
     sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload);
@@ -16025,7 +16097,9 @@ async function commitPlayerInventoryState(socket: any, player: any, username: an
 
   let inventoryLock: any = null;
   if (options.skip_inventory_lock !== true) {
+    const lockStarted = performance.now();
     inventoryLock = await acquirePlayerInventoryLocks([cleanUsername], options.inventory_lock_owner || options.action || "inventory_commit");
+    if (runtimeProfiler.enabled) runtimeProfiler.observe("inventory_lock_ms", performance.now() - lockStarted);
     if (!inventoryLock.acquired) {
       return InventoryContracts.buildInventoryCommitFailure({
         reason: "inventory_locked",
@@ -16045,7 +16119,7 @@ async function commitPlayerInventoryState(socket: any, player: any, username: an
     const requestedWorldState = options.world_state && typeof options.world_state === "object"
       ? options.world_state
       : {};
-    const includesWorldMutation = Object.keys(requestedWorldState).length > 0 || worldChanges.length > 0;
+    const includesWorldMutation = options.world_mutation === true || Object.keys(requestedWorldState).length > 0 || worldChanges.length > 0;
     let worldStateForCommit: ServerPacketRecord = {};
     const transactionMetadata: ServerPacketRecord = options.metadata && typeof options.metadata === "object"
       ? options.metadata
@@ -16086,6 +16160,7 @@ async function commitPlayerInventoryState(socket: any, player: any, username: an
     );
 
     let result: ServerPacketRecord | null = null;
+    const persistenceStarted = performance.now();
     if (includesWorldMutation) {
       const persistence = await runOwnedWorldPersistence(
         worldName,
@@ -16101,6 +16176,7 @@ async function commitPlayerInventoryState(socket: any, player: any, username: an
     } else {
       result = await buildTransaction();
     }
+    if (runtimeProfiler.enabled) runtimeProfiler.observe("inventory_world_persistence_ms", performance.now() - persistenceStarted);
 
     if (!result || !result.ok) {
       logSecurityEvent(socket, player, "postgres_inventory_commit_failed", {
@@ -17327,6 +17403,12 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
 
   if (update.action === "break" || update.action === "hit") {
     const targetLayer = getWorldLayerMap(state, update.layer);
+    if (update.layer === "foreground" && state.seeds.has(key)) {
+      sendActionRejected(socket, "world_block_update", "Use the tree harvest action for this tile.", {
+        reason: "seed_requires_harvest", x: update.x, y: update.y, request_id: requestId,
+      });
+      return { ok: false };
+    }
     const removedLayer = getWorldRemovedLayerMap(state, update.layer);
     let serverBlock: any = targetLayer.get(key);
     if (!serverBlock && update.layer === "foreground") {
@@ -20119,6 +20201,7 @@ function speedupSeedGrowthState(seed: any, nowMs: any, targetRemainingSeconds: a
   const nextRemainingSeconds = Math.max(0, Math.min(maxGrowTime, targetRemainingSeconds));
   seed.grow_time = nextRemainingSeconds;
   seed.max_grow_time = maxGrowTime;
+  seed.tree_created_at = seed.tree_created_at || seed.planted_at;
   seed.planted_at = nowMs - Math.max(0, maxGrowTime - nextRemainingSeconds) * 1000;
   seed.mature = nextRemainingSeconds <= 0;
   return true;
@@ -26633,6 +26716,8 @@ function applySeedUpdateToWorldState(worldName: any, update: any) {
     state.seeds.set(key, seedEntry);
     update.grow_time = seedEntry.grow_time;
     update.max_grow_time = seedEntry.max_grow_time;
+    update.planted_at = seedEntry.planted_at;
+    update.tree_created_at = seedEntry.tree_created_at;
     update.mature = false;
     update.mutated = Boolean(seedEntry.mutated);
   } else if (update.action === "remove") {
