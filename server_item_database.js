@@ -5291,6 +5291,8 @@ if (ITEM_DEFINITIONS["donation_box"])
 ITEM_DEFINITIONS["donation_box_seed"] = { "category": "seed", "display_name": "Donation Box Seed", "texture": "res://Assets/seeds/seed_box.png", "seed_box_icon": true, "grows_into": "donation_box", "rarity": "common", "grow_time": 150, "max_grow_time": 150, "recipe_tier": 7 };
 ITEM_DEFINITIONS["cloud_block"] = { "item_id": "cloud_block", "display_name": "Cloud Block", "category": "block", "rarity": "common", "stack_limit": 400, "tradeable": true, "dropable": true, "admin_grantable": true, "hidden": false, "placeable": true, "place_layer": "foreground", "block_health": 4, "breakable": true, "solid": true, "collidable": true, "no_collision": false, "collision_type": "full", "atlas_item_id": 216, "atlas_source_id": 0, "atlas_coords": [24, 2], "texture": { "atlas": "res://image.png", "cell": [24, 2], "cell_size": [32, 32] }, "inventory_icon": { "atlas": "res://image.png", "cell": [24, 2], "cell_size": [32, 32] }, "seed": "cloud_block_seed", "recipe_tier": 9, "authored_drop_rules": true, "drop_rules": { "seed_chance": 0, "gem_range": [0, 0], "fixed_drops": [{ "item_id": "cloud_block", "item_category": "block", "amount": 1 }, { "item_id": "cloud_block_seed", "item_category": "seed", "amount": 1, "chance": 0.2 }, { "item_id": "gem", "item_category": "currency", "amount_range": [0, 3] }] }, "tree_drop_rules": { "seed_chance": 0, "gem_range": [0, 0], "fixed_drops": [{ "item_id": "cloud_block", "item_category": "block", "amount_range": [2, 5] }, { "item_id": "cloud_block_seed", "item_category": "seed", "amount_range": [0, 3] }, { "item_id": "gem", "item_category": "currency", "amount_range": [0, 5] }] }, "id": 216, "item_key": "cloud_block", "name": "Cloud Block", "type": "block", "layer": "foreground", "source_id": 0, "collision": true, "hardness": 4, "atlas_enabled": true };
 ITEM_DEFINITIONS["cloud_block_seed"] = { "category": "seed", "display_name": "Cloud Block Seed", "rarity": "common", "texture": "res://Assets/seeds/seed_box.png", "seed_box_icon": true, "grows_into": "cloud_block", "grow_time": 150, "max_grow_time": 150, "recipe_tier": 9 };
+Object.assign(ITEM_DEFINITIONS["display_case"], { "display_name": "Display Wall", "texture": { "atlas": "res://image.png", "cell": [1, 14], "cell_size": [32, 32] }, "inventory_icon": { "atlas": "res://image.png", "cell": [1, 14], "cell_size": [32, 32] }, "atlas_coords": [1, 14], "atlas_item_id": 217, "seed": "display_case_seed", "recipe_tier": 8 });
+ITEM_DEFINITIONS["display_case_seed"] = { "category": "seed", "display_name": "Display Wall Seed", "texture": "res://Assets/seeds/seed_box.png", "seed_box_icon": true, "grows_into": "display_case", "rarity": "rare", "grow_time": 150, "max_grow_time": 150, "recipe_tier": 8 };
 ensureSeedDefinitionsFromBlocks(ITEM_DEFINITIONS);
 for (const [itemId, update] of Object.entries(ATLAS_ITEM_UPDATES)) {
     const seedId = String(update.seed || "");
@@ -5300,6 +5302,10 @@ for (const [itemId, update] of Object.entries(ATLAS_ITEM_UPDATES)) {
     }
 }
 const RECIPE_TIERS = Object.freeze({
+    "neon_block": 7,
+    "neon_block_seed": 7,
+    "display_case": 8,
+    "display_case_seed": 8,
     "cloud_block": 9,
     "cloud_block_seed": 9,
     "wooden_shelf": 6,
@@ -5783,6 +5789,9 @@ const STATION_RECIPES = Object.freeze({
     ]),
 });
 const SPLICE_RECIPES = Object.freeze({
+    "electric_pole_seed+neon_block_seed": "tv_seed",
+    "bush_seed+display_case_seed": "cloud_block_seed",
+    "empty_jar_seed+glass_panel_seed": "display_case_seed",
     "cloud_block_seed+white_brick_block_seed": "water_fountain_seed",
     "pencil_block_seed+wooden_shelf_seed": "cozy_chalkboard_seed",
     "sign_seed+wooden_shelf_seed": "donation_box_seed",
