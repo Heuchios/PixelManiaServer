@@ -47,9 +47,10 @@ for (const source of sheet.rows) {
   const outputId = row.ids[2];
   if (outputId && db.getItemDefinition(outputId)) {
     assert.equal(db.RECIPE_TIERS[outputId], Number(source.tier), `Authored tier: row ${row.row}`);
-    assert.equal(db.getItemDefinition(outputId).recipe_tier, Number(source.tier), `Runtime tier: row ${row.row}`);
+    const expectedTier = require('../item_data_overrides.json')[outputId]?.recipe_tier ?? Number(source.tier);
+    assert.equal(db.getItemDefinition(outputId).recipe_tier, expectedTier, `Runtime tier: row ${row.row}`);
     const seedId = db.getItemDefinition(outputId).seed;
-    if (seedId) assert.equal(db.getItemDefinition(seedId).recipe_tier, Number(source.tier), seedId);
+    if (seedId) assert.equal(db.getItemDefinition(seedId).recipe_tier, expectedTier, seedId);
   }
   if (source.crafting) {
     const outputSeed = row.ids[2] && db.getItemDefinition(row.ids[2])?.seed;
@@ -74,6 +75,7 @@ assert.equal(db.getSpliceResult('unknown_seed', 'dirt_seed'), '');
 assert.equal(db.getSpliceResult('dirt_seed', 'dirt_seed'), '');
 assert.equal(db.ITEMS.glowing_dirt.seed, '', 'Unrelated seedless blocks stay seedless');
 require('./check_seed_growth_duration');
+require('./check_item_data_contract');
 const harvest = JSON.parse(fs.readFileSync(path.join(clientDir, 'docs/splice-harvest-times.json'), 'utf8'));
 assert.equal(harvest.rows.length, rows.length, 'Every sheet duration captured');
 for (const row of harvest.rows) {

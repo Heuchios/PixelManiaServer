@@ -315,6 +315,15 @@ function main() {
   const missingOnServer = sortIds([...clientItemIds].filter((itemId) => !serverItemIds.has(itemId)));
   const serverOnly = sortIds([...serverItemIds].filter((itemId) => !clientItemIds.has(itemId)));
   const clientNonCollidableIds = extractClientNonCollidableIds(clientBody);
+  const contractPath = path.join(path.dirname(clientItemDatabasePath), '..', 'Data', 'items', 'item_data_overrides.json');
+  if (fs.existsSync(contractPath)) {
+    const patches = JSON.parse(fs.readFileSync(contractPath, 'utf8'));
+    for (const [id, patch] of Object.entries(patches)) {
+      clientItemIds.add(id);
+      if (patch.no_collision === true || patch.platform_collision === true) clientNonCollidableIds.add(id);
+      else if (patch.no_collision === false) clientNonCollidableIds.delete(id);
+    }
+  }
   const collisionMismatches = sortIds(
     [...clientNonCollidableIds].filter((itemId) => isSolidMovementCollisionBlock(ITEMS[itemId])),
   );

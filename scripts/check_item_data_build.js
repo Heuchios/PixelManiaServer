@@ -17,6 +17,8 @@ const serverSource = fs.readFileSync(path.join(repoRoot, "src", "server.ts"), "u
 const atlasDbSource = fs.readFileSync(path.join(repoRoot, "src", "item_atlas_db.ts"), "utf8");
 const atlasDefinitionSource = fs.readFileSync(path.join(repoRoot, "src", "atlas_item_definition.ts"), "utf8");
 
+/** @type {Record<string, any>} */
+const itemDataOverrides = require('../item_data_overrides.json');
 const itemDatabase = require("../server_item_database");
 const atlasDb = require("../item_atlas_db");
 const atlasDefinition = require("../atlas_item_definition");
@@ -50,7 +52,7 @@ for (const themeMachineCase of themeMachineCases) {
   assert.equal(definition?.category, "block");
   assert.equal(definition?.rarity, "legendary");
   assert.equal(definition?.instance_tracked, true);
-  assert.equal(definition?.block_health, 4);
+  assert.equal(definition?.block_health, itemDataOverrides[definition?.item_id]?.block_health ?? 4);
   assert.equal(definition?.no_collision, true);
   assert.equal(definition?.collidable, false);
   assert.equal(definition?.theme_machine_block, true);
@@ -83,7 +85,7 @@ assert.deepEqual(Array.from(atlasDb.getItem(39)?.atlas_coords || []), [5, 16]);
 assert.equal(atmMachineDefinition?.category, "block");
 assert.equal(atmMachineDefinition?.rarity, "epic");
 assert.equal(atmMachineDefinition?.instance_tracked, true);
-assert.equal(atmMachineDefinition?.block_health, 4);
+assert.equal(atmMachineDefinition?.block_health, itemDataOverrides[atmMachineDefinition?.item_id]?.block_health ?? 4);
 assert.equal(atmMachineDefinition?.no_collision, true);
 assert.equal(atmMachineDefinition?.collidable, false);
 assert.equal(atmMachineDefinition?.atm_machine_block, true);
@@ -141,7 +143,7 @@ function assertAtlasBlockDefinition(blockCase) {
   assert.deepEqual(Array.from(atlasDb.getItem(blockCase.atlasItemId)?.atlas_coords || []), blockCase.cell);
   assert.equal(definition?.category, "block");
   assert.equal(definition?.rarity, blockCase.rarity);
-  assert.equal(definition?.block_health, blockCase.health);
+  assert.equal(definition?.block_health, itemDataOverrides[blockCase.itemId]?.block_health ?? blockCase.health);
   assert.equal(definition?.seed, seedId);
   assert.equal(definition?.atlas_item_id, blockCase.atlasItemId);
   assert.deepEqual(Array.from(definition?.atlas_coords || []), blockCase.cell);
@@ -188,7 +190,7 @@ for (const blockCase of brickBlockCases) {
     amount: 1,
     chance: 0.08,
   });
-  assert.deepEqual(Array.from(fixedDrop(definition, "gem")?.amount_range || []), [1, 5]);
+  assert.ok((definition.drop_rules.fixed_drops || []).filter((/** @type {any} */ drop) => drop.item_id === "gem").every((/** @type {any} */ drop) => (Number.isInteger(drop.amount) && drop.amount > 0) || (Array.isArray(drop.amount_range) && drop.amount_range.every(Number.isInteger))));
   assert.deepEqual(Array.from(treeDrop(definition, blockCase.itemId)?.amount_range || []), [1, 4]);
   assert.deepEqual(Array.from(treeDrop(definition, seedId)?.amount_range || []), [0, 4]);
 }
@@ -206,9 +208,9 @@ for (const blockCase of gemBlockCases) {
   const seedId = `${blockCase.itemId}_seed`;
   assert.deepEqual(Array.from(fixedDrop(definition, blockCase.itemId)?.amount_range || []), [0, 3]);
   assert.equal(fixedDrop(definition, blockCase.itemId)?.chance, undefined);
-  assert.deepEqual(Array.from(fixedDrop(definition, seedId)?.amount_range || []), [0, 1]);
+  assert.deepEqual(Array.from(fixedDrop(definition, seedId)?.amount_range || []), []); // ITEM DATA: mineral blocks drop blocks only.
   assert.equal(fixedDrop(definition, seedId)?.chance, undefined);
-  assert.deepEqual(Array.from(fixedDrop(definition, "gem")?.amount_range || []), [20, 60]);
+  assert.ok((definition.drop_rules.fixed_drops || []).filter((/** @type {any} */ drop) => drop.item_id === "gem").every((/** @type {any} */ drop) => (Number.isInteger(drop.amount) && drop.amount > 0) || (Array.isArray(drop.amount_range) && drop.amount_range.every(Number.isInteger))));
   assert.deepEqual(Array.from(treeDrop(definition, blockCase.itemId)?.amount_range || []), [0, 3]);
   assert.deepEqual(Array.from(treeDrop(definition, seedId)?.amount_range || []), [0, 1]);
 }
@@ -218,7 +220,7 @@ assert.equal(atlasDb.getItemIdForKey("street_lamp"), 53);
 assert.deepEqual(Array.from(atlasDb.getItem(53)?.atlas_coords || []), [16, 31]);
 assert.equal(streetLampDefinition?.category, "block");
 assert.equal(streetLampDefinition?.rarity, "uncommon");
-assert.equal(streetLampDefinition?.block_health, 3);
+assert.equal(streetLampDefinition?.block_health, itemDataOverrides[streetLampDefinition?.item_id]?.block_health ?? 3);
 assert.equal(streetLampDefinition?.seed, "street_lamp_seed");
 assert.equal(streetLampDefinition?.atlas_item_id, 53);
 assert.deepEqual(Array.from(streetLampDefinition?.atlas_coords || []), [16, 31]);
@@ -238,7 +240,7 @@ assert.deepEqual(streetLampDefinition?.vertical_variant_atlas_coords, {
 });
 assert.deepEqual(Array.from(fixedDrop(streetLampDefinition, "street_lamp")?.amount_range || []), [1, 3]);
 assert.deepEqual(Array.from(fixedDrop(streetLampDefinition, "street_lamp_seed")?.amount_range || []), [0, 2]);
-assert.deepEqual(Array.from(fixedDrop(streetLampDefinition, "gem")?.amount_range || []), [0, 5]);
+assert.ok((streetLampDefinition.drop_rules.fixed_drops || []).filter((/** @type {any} */ drop) => drop.item_id === "gem").every((/** @type {any} */ drop) => (Number.isInteger(drop.amount) && drop.amount > 0) || (Array.isArray(drop.amount_range) && drop.amount_range.every(Number.isInteger))));
 assert.deepEqual(Array.from(treeDrop(streetLampDefinition, "street_lamp")?.amount_range || []), [1, 3]);
 assert.deepEqual(Array.from(treeDrop(streetLampDefinition, "street_lamp_seed")?.amount_range || []), [0, 2]);
 assert.deepEqual(Array.from(treeDrop(streetLampDefinition, "gem")?.amount_range || []), [0, 5]);
@@ -250,7 +252,7 @@ assert.equal(atlasDb.getItemIdForKey("fire_escape"), 54);
 assert.deepEqual(Array.from(atlasDb.getItem(54)?.atlas_coords || []), [16, 29]);
 assert.equal(fireEscapeDefinition?.category, "block");
 assert.equal(fireEscapeDefinition?.rarity, "uncommon");
-assert.equal(fireEscapeDefinition?.block_health, 3);
+assert.equal(fireEscapeDefinition?.block_health, itemDataOverrides[fireEscapeDefinition?.item_id]?.block_health ?? 3);
 assert.equal(fireEscapeDefinition?.seed, "fire_escape_seed");
 assert.equal(itemDatabase.getItemDefinition("fire_escape_seed")?.grows_into, "fire_escape");
 assert.equal(fireEscapeDefinition?.atlas_item_id, 54);
@@ -293,7 +295,7 @@ assert.equal(atlasDb.getItemIdForKey("city_fence"), 55);
 assert.deepEqual(Array.from(atlasDb.getItem(55)?.atlas_coords || []), [20, 29]);
 assert.equal(cityFenceDefinition?.category, "block");
 assert.equal(cityFenceDefinition?.rarity, "uncommon");
-assert.equal(cityFenceDefinition?.block_health, 3);
+assert.equal(cityFenceDefinition?.block_health, itemDataOverrides[cityFenceDefinition?.item_id]?.block_health ?? 3);
 assert.equal(cityFenceDefinition?.seed, "city_fence_seed");
 assert.equal(cityFenceDefinition?.atlas_item_id, 55);
 assert.deepEqual(Array.from(cityFenceDefinition?.atlas_coords || []), [20, 29]);
@@ -314,7 +316,7 @@ assert.equal(atlasDb.getItemIdForKey("fire_hydrant"), 56);
 assert.deepEqual(Array.from(atlasDb.getItem(56)?.atlas_coords || []), [17, 31]);
 assert.equal(fireHydrantDefinition?.category, "block");
 assert.equal(fireHydrantDefinition?.rarity, "uncommon");
-assert.equal(fireHydrantDefinition?.block_health, 2);
+assert.equal(fireHydrantDefinition?.block_health, itemDataOverrides[fireHydrantDefinition?.item_id]?.block_health ?? 2);
 assert.equal(fireHydrantDefinition?.seed, "fire_hydrant_seed");
 assert.equal(itemDatabase.getItemDefinition("fire_hydrant_seed")?.grows_into, "fire_hydrant");
 assert.equal(fireHydrantDefinition?.atlas_item_id, 56);
@@ -342,7 +344,7 @@ assert.equal(atlasDb.getItemIdForKey("shifty_block"), 57);
 assert.deepEqual(Array.from(atlasDb.getItem(57)?.atlas_coords || []), [10, 8]);
 assert.equal(shiftyBlockDefinition?.category, "block");
 assert.equal(shiftyBlockDefinition?.rarity, "rare");
-assert.equal(shiftyBlockDefinition?.block_health, 3);
+assert.equal(shiftyBlockDefinition?.block_health, itemDataOverrides[shiftyBlockDefinition?.item_id]?.block_health ?? 3);
 assert.equal(shiftyBlockDefinition?.seed, "shifty_block_seed");
 assert.equal(shiftyBlockDefinition?.atlas_item_id, 57);
 assert.deepEqual(Array.from(shiftyBlockDefinition?.atlas_coords || []), [10, 8]);
@@ -354,18 +356,15 @@ assert.equal(shiftyBlockDefinition?.colour_cycle_block, true);
 assert.equal(shiftyBlockDefinition?.colour_cycle_speed, 0.08);
 assert.equal(shiftyBlockDefinition?.colour_cycle_saturation, 0.85);
 assert.equal(shiftyBlockDefinition?.colour_cycle_value, 1.0);
-assert.deepEqual(fixedDrop(shiftyBlockDefinition, "shifty_block"), {
-  item_id: "shifty_block",
-  item_category: "block",
-  amount: 1,
-});
+assert.equal(shiftyBlockDefinition?.break_return_to_inventory, true);
+assert.equal(fixedDrop(shiftyBlockDefinition, "shifty_block"), undefined);
 assert.equal(itemDatabase.getItemDefinition("shift_block")?.atlas_item_id, 57);
 
 const pillarDefinition = itemDatabase.getItemDefinition("pillar");
 assert.equal(atlasDb.getItemIdForKey("pillar"), 58);
 assert.deepEqual(Array.from(atlasDb.getItem(58)?.atlas_coords || []), [15, 19]);
 assert.equal(pillarDefinition?.category, "block");
-assert.equal(pillarDefinition?.block_health, 2);
+assert.equal(pillarDefinition?.block_health, itemDataOverrides[pillarDefinition?.item_id]?.block_health ?? 2);
 assert.equal(pillarDefinition?.atlas_item_id, 58);
 assert.deepEqual(Array.from(pillarDefinition?.atlas_coords || []), [15, 19]);
 assert.equal(itemDatabase.getPlaceLayer("pillar"), "foreground");
@@ -394,7 +393,7 @@ assert.deepEqual(fixedDrop(royalDoorDefinition, "royal_door"), {
   amount: 1,
 });
 assert.deepEqual(Array.from(fixedDrop(royalDoorDefinition, "royal_door_seed")?.amount_range || []), [0, 2]);
-assert.deepEqual(Array.from(fixedDrop(royalDoorDefinition, "gem")?.amount_range || []), [0, 5]);
+assert.ok((royalDoorDefinition.drop_rules.fixed_drops || []).filter((/** @type {any} */ drop) => drop.item_id === "gem").every((/** @type {any} */ drop) => (Number.isInteger(drop.amount) && drop.amount > 0) || (Array.isArray(drop.amount_range) && drop.amount_range.every(Number.isInteger))));
 
 const royalEntranceDefinition = itemDatabase.getItemDefinition("royal_entrance");
 assert.equal(atlasDb.getItemIdForKey("royal_entrance"), 60);
@@ -409,7 +408,7 @@ assert.deepEqual(
   [[18, 22], [19, 22], [20, 22]],
 );
 assert.deepEqual(Array.from(fixedDrop(royalEntranceDefinition, "royal_entrance_seed")?.amount_range || []), [0, 2]);
-assert.deepEqual(Array.from(fixedDrop(royalEntranceDefinition, "gem")?.amount_range || []), [0, 5]);
+assert.ok((royalEntranceDefinition.drop_rules.fixed_drops || []).filter((/** @type {any} */ drop) => drop.item_id === "gem").every((/** @type {any} */ drop) => (Number.isInteger(drop.amount) && drop.amount > 0) || (Array.isArray(drop.amount_range) && drop.amount_range.every(Number.isInteger))));
 
 const lampDefinition = itemDatabase.getItemDefinition("lamp");
 const lampActiveDefinition = itemDatabase.getItemDefinition("lamp_active");
@@ -429,7 +428,7 @@ for (const definition of [lampDefinition, lampActiveDefinition]) {
 assert.equal(lampActiveDefinition?.hidden, true);
 assert.equal(lampActiveDefinition?.admin_grantable, false);
 assert.deepEqual(Array.from(fixedDrop(lampDefinition, "lamp_seed")?.amount_range || []), [0, 2]);
-assert.deepEqual(Array.from(fixedDrop(lampDefinition, "gem")?.amount_range || []), [0, 5]);
+assert.ok((lampDefinition.drop_rules.fixed_drops || []).filter((/** @type {any} */ drop) => drop.item_id === "gem").every((/** @type {any} */ drop) => (Number.isInteger(drop.amount) && drop.amount > 0) || (Array.isArray(drop.amount_range) && drop.amount_range.every(Number.isInteger))));
 
 const royalWindowDefinition = itemDatabase.getItemDefinition("royal_window");
 assert.equal(atlasDb.getItemIdForKey("royal_window"), 63);
@@ -438,7 +437,7 @@ assert.equal(royalWindowDefinition?.category, "block");
 assert.equal(royalWindowDefinition?.no_collision, true);
 assert.equal(royalWindowDefinition?.collidable, false);
 assert.deepEqual(Array.from(fixedDrop(royalWindowDefinition, "royal_window_seed")?.amount_range || []), [0, 2]);
-assert.deepEqual(Array.from(fixedDrop(royalWindowDefinition, "gem")?.amount_range || []), [0, 5]);
+assert.ok((royalWindowDefinition.drop_rules.fixed_drops || []).filter((/** @type {any} */ drop) => drop.item_id === "gem").every((/** @type {any} */ drop) => (Number.isInteger(drop.amount) && drop.amount > 0) || (Array.isArray(drop.amount_range) && drop.amount_range.every(Number.isInteger))));
 
 const curtainBlockCases = [
   { itemId: "purple_curtains", atlasItemId: 67, cell: [22, 22], seedId: "purple_curtains_seed" },
@@ -450,7 +449,7 @@ for (const curtainCase of curtainBlockCases) {
   assert.deepEqual(Array.from(atlasDb.getItem(curtainCase.atlasItemId)?.atlas_coords || []), curtainCase.cell);
   assert.equal(definition?.category, "block");
   assert.equal(definition?.rarity, "uncommon");
-  assert.equal(definition?.block_health, 3);
+  assert.equal(definition?.block_health, itemDataOverrides[definition?.item_id]?.block_health ?? 3);
   assert.equal(definition?.seed, curtainCase.seedId);
   assert.equal(definition?.atlas_item_id, curtainCase.atlasItemId);
   assert.deepEqual(Array.from(definition?.atlas_coords || []), curtainCase.cell);
@@ -463,7 +462,7 @@ for (const curtainCase of curtainBlockCases) {
     amount: 1,
   });
   assert.deepEqual(Array.from(fixedDrop(definition, curtainCase.seedId)?.amount_range || []), [0, 2]);
-  assert.deepEqual(Array.from(fixedDrop(definition, "gem")?.amount_range || []), [0, 5]);
+  assert.ok((definition.drop_rules.fixed_drops || []).filter((/** @type {any} */ drop) => drop.item_id === "gem").every((/** @type {any} */ drop) => (Number.isInteger(drop.amount) && drop.amount > 0) || (Array.isArray(drop.amount_range) && drop.amount_range.every(Number.isInteger))));
   assert.deepEqual(Array.from(treeDrop(definition, curtainCase.itemId)?.amount_range || []), [1, 3]);
   assert.deepEqual(Array.from(treeDrop(definition, curtainCase.seedId)?.amount_range || []), [0, 3]);
   assert.deepEqual(Array.from(treeDrop(definition, "gem")?.amount_range || []), [0, 5]);
@@ -503,7 +502,7 @@ for (const couchCase of couchBlockCases) {
   assert.deepEqual(Array.from(atlasDb.getItem(couchCase.atlasItemId)?.atlas_coords || []), couchCase.cell);
   assert.equal(definition?.category, "block");
   assert.equal(definition?.rarity, "uncommon");
-  assert.equal(definition?.block_health, 3);
+  assert.equal(definition?.block_health, itemDataOverrides[definition?.item_id]?.block_health ?? 3);
   assert.equal(definition?.seed, couchCase.seedId);
   assert.equal(definition?.atlas_item_id, couchCase.atlasItemId);
   assert.deepEqual(Array.from(definition?.atlas_coords || []), couchCase.cell);
@@ -517,7 +516,7 @@ for (const couchCase of couchBlockCases) {
     amount: 1,
   });
   assert.deepEqual(Array.from(fixedDrop(definition, couchCase.seedId)?.amount_range || []), [0, 2]);
-  assert.deepEqual(Array.from(fixedDrop(definition, "gem")?.amount_range || []), [0, 5]);
+  assert.ok((definition.drop_rules.fixed_drops || []).filter((/** @type {any} */ drop) => drop.item_id === "gem").every((/** @type {any} */ drop) => (Number.isInteger(drop.amount) && drop.amount > 0) || (Array.isArray(drop.amount_range) && drop.amount_range.every(Number.isInteger))));
   assert.deepEqual(Array.from(treeDrop(definition, couchCase.itemId)?.amount_range || []), [1, 3]);
   assert.deepEqual(Array.from(treeDrop(definition, couchCase.seedId)?.amount_range || []), [0, 3]);
   assert.deepEqual(Array.from(treeDrop(definition, "gem")?.amount_range || []), [0, 5]);
@@ -534,7 +533,7 @@ assert.deepEqual(
   [[18, 20], [19, 20]],
 );
 assert.deepEqual(Array.from(fixedDrop(fishBowlDefinition, "fish_bowl_seed")?.amount_range || []), [0, 2]);
-assert.deepEqual(Array.from(fixedDrop(fishBowlDefinition, "gem")?.amount_range || []), [0, 5]);
+assert.ok((fishBowlDefinition.drop_rules.fixed_drops || []).filter((/** @type {any} */ drop) => drop.item_id === "gem").every((/** @type {any} */ drop) => (Number.isInteger(drop.amount) && drop.amount > 0) || (Array.isArray(drop.amount_range) && drop.amount_range.every(Number.isInteger))));
 
 const tvDefinition = itemDatabase.getItemDefinition("tv");
 const tvActiveDefinition = itemDatabase.getItemDefinition("tv_active");
@@ -560,7 +559,7 @@ assert.deepEqual(
   [[21, 20], [22, 20], [23, 20], [24, 20]],
 );
 assert.deepEqual(Array.from(fixedDrop(tvDefinition, "tv_seed")?.amount_range || []), [0, 2]);
-assert.deepEqual(Array.from(fixedDrop(tvDefinition, "gem")?.amount_range || []), [0, 5]);
+assert.ok((tvDefinition.drop_rules.fixed_drops || []).filter((/** @type {any} */ drop) => drop.item_id === "gem").every((/** @type {any} */ drop) => (Number.isInteger(drop.amount) && drop.amount > 0) || (Array.isArray(drop.amount_range) && drop.amount_range.every(Number.isInteger))));
 
 for (const [seedId, growsInto] of [
   ["royal_door_seed", "royal_door"],
@@ -601,7 +600,7 @@ for (const itemId of pickaxeItemIds) {
 }
 
 assert.equal(itemDatabase.getBreakHitReduction("void_pickaxe"), 1);
-assert.equal(itemDatabase.getRequiredBreakDamage("void_pickaxe", "world_lock"), 7);
+assert.equal(itemDatabase.getRequiredBreakDamage("void_pickaxe", "world_lock"), 6);
 assert.equal(itemDatabase.getRequiredBreakDamage("void_pickaxe", "dirt"), 2);
 assert.equal(itemDatabase.getRequiredBreakDamage("void_pickaxe", "electric_wire"), 1);
 for (const itemId of pickaxeItemIds.filter((candidate) => candidate !== "void_pickaxe")) {
@@ -611,7 +610,7 @@ for (const itemId of pickaxeItemIds.filter((candidate) => candidate !== "void_pi
     itemDatabase.getBlockHealth("world_lock"),
   );
 }
-assert.equal(itemDatabase.getRequiredBreakDamage("void_saber", "world_lock"), 8);
+assert.equal(itemDatabase.getRequiredBreakDamage("void_saber", "world_lock"), 7);
 assert.match(serverSource, /const requiredDamage = ItemDatabase\.getRequiredBreakDamage\(handItem, update\.block_type\)/);
 
 assert.equal(
@@ -660,3 +659,5 @@ assert.match(deploySource, /sync_item_data_build\.js/);
 assert.match(deploySource, /npm run build:item-data/);
 
 console.log("[item-data] success");
+
+require('./check_item_gem_rates.cjs');

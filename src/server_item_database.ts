@@ -5998,6 +5998,12 @@ for (const [itemId, tier] of Object.entries(RECIPE_TIERS)) {
   if (ITEM_DEFINITIONS[itemId]) ITEM_DEFINITIONS[itemId].recipe_tier = tier;
 }
 
+// Final authored ITEM DATA properties must win over legacy and atlas defaults.
+const ITEM_DATA_OVERRIDES: Record<string, ItemDefinition> = require("./item_data_overrides.json");
+for (const [itemId, patch] of Object.entries(ITEM_DATA_OVERRIDES)) {
+  if (!ITEM_DEFINITIONS[itemId] && patch.category === "seed") ITEM_DEFINITIONS[itemId] = seed(String(patch.grows_into), patch);
+  if (ITEM_DEFINITIONS[itemId]) Object.assign(ITEM_DEFINITIONS[itemId], patch);
+}
 const ITEMS: Readonly<ItemDefinitions> = Object.freeze(ITEM_DEFINITIONS);
 
 const STATION_RECIPES: Readonly<Record<string, ReadonlyArray<StationRecipe>>> = Object.freeze({
@@ -6341,7 +6347,7 @@ const FISHING_TABLE_SPECS: Readonly<Record<string, FishingTableSpec>> = Object.f
       Object.freeze({ item_id: "rusty_bicycle", item_category: "material", weight: 7, difficulty: 4 }),
       Object.freeze({ item_id: "lost_chapter", item_category: "material", weight: 5, difficulty: 5 }),
       Object.freeze({ item_id: "topaz_necklace", item_category: "material", weight: 4, difficulty: 6 }),
-      Object.freeze({ item_id: "toxic_waste", item_category: "material", weight: 4, difficulty: 6 }),
+      Object.freeze({ item_id: "toxic_waste", item_category: "block", weight: 4, difficulty: 6 }),
       Object.freeze({ item_id: "naval_mines", item_category: "material", weight: 2, difficulty: 7 }),
       Object.freeze({ item_id: "atlantic_chest", item_category: "block", weight: 1, difficulty: 6 }),
     ]),

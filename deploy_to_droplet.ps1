@@ -304,6 +304,7 @@ foreach ($relativePath in $requiredBackendPaths) {
 $clientReleasePaths = @(
   "Scripts/item_database.gd",
   "Scripts/ItemAtlasDB.gd",
+  "Scripts/item_data_contract.gd",
   "Scripts/developer_panel_ui.gd",
   "Scripts/network_manager.gd",
   "Scripts/world.gd",
@@ -325,6 +326,7 @@ $clientReleasePaths = @(
   "Scenes/ui/inventory/InventoryScene.tscn",
   "Scenes/ui/inventory/InventoryPreview.tscn",
   "Data/items/atlas_items.json",
+  "Data/items/item_data_overrides.json",
   "Assets/ui/clothes_slot.png",
   "Assets/ui/clothes_slot.png.import",
   "Assets/ui/material_slot.png",
