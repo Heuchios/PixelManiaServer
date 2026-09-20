@@ -26,24 +26,9 @@
 //     once a new one starts -- no destructive "reset" mutation is needed, next month's season
 //     key just starts at zero rows).
 //
-// IMPORTANT SCOPE NOTE (Phase 1 of a multi-phase build): this module deliberately does NOT hook
-// into the join_world/door_enter pipeline (server_phase8_player_session_routes.ts) or the
-// trusted-movement pipeline. Both are documented in project memory as the source of repeated
-// serious production outages (world_join_outage_2026_08.md, world_route_epoch_fencing.md,
-// world_entry_provisional_latch.md, world_ownership_lease_lost.md). Instead:
-//   - Instance occupancy is detected by POLLING the existing, already-battle-tested
-//     getWorldPopulationCount reader on a timer (see startInstancePolling) -- purely additive
-//     and read-only, zero risk to the join/leave pipeline.
-//   - requestJoinLandfillRace only decides WHICH world name a player should go to; the client
-//     is expected to then issue a completely normal join_world request to that name, reusing
-//     the existing, unmodified join flow (the same one every other world join already uses).
-//   - Actually confining players to the "entry area" until the gate opens, and locking the
-//     instance to late joiners at the join_world/door_enter layer, is Phase 2 -- it needs a
-//     dedicated read of server_phase8_player_session_routes.ts first, which this pass did not
-//     do. Until Phase 2 lands, isInstanceJoinable() is authoritative for routing new players via
-//     requestJoinLandfillRace, but nothing yet stops a player from reaching a full/locked
-//     instance through some other path (e.g. a door, or a direct join_world call with the
-//     world name guessed/typed).
+// Entry uses the normal snapshot/ready flow, with a landfill guard at activation.
+// World-index hooks track arrivals and departures immediately; polling reconciles
+// the scoring roster. Started races reject re-entry, and empty used rooms retire.
 //
 // Trash block weights and the top-10 prize catalog are intentionally empty registries: Hassan
 // will add real entries later, the same workflow as the existing blocks-atlas migration
@@ -117,6 +102,9 @@ interface LandfillInstance {
   worldName: string;
   index: number;
   state: LandfillSessionState;
+  abandoned: boolean;
+  ready: boolean;
+  departedUsernames: Set<string>;
   createdAtMs: number;
   // Authoritative wall-clock deadlines. These are the ONLY source of truth for phase timing --
   // they are broadcast to clients so every client renders the same countdown/timer from a shared
@@ -141,20 +129,7 @@ interface LandfillInstance {
   // Coalescing state for the throttled race-state broadcast (see maybeBroadcastSessionState).
   broadcastDirty: boolean;
   lastBroadcastAtMs: number;
-  // Phase 2: usernames recorded via recordLandfillInstanceJoin once they actually pass the
-  // join_world-layer eligibility guard (see canPlayerJoinLandfillInstance below). This is the
-  // authoritative, immediately-updated capacity signal for that guard -- unlike
-  // getWorldPopulationCount, which is only refreshed by the ~5s poll in pollInstancesOnce and so
-  // is too laggy to safely gate concurrent joins. A username is never removed from this set on
-  // disconnect, so a participant can always rejoin their own instance later, even after it has
-  // locked or is otherwise full to new players.
-  //
-  // The one exception is the abandoned-entry reconciliation in pollInstancesOnce: because
-  // recordLandfillInstanceJoin runs in handleJoinWorld BEFORE the world-route check that can
-  // still fail the join, a player whose join dies after that point would otherwise hold a slot in
-  // this set forever without ever being present. That is a slow capacity leak that eventually
-  // makes an instance permanently un-joinable (instance_full with nobody in it), so a still-in-
-  // "entry" instance that has been provably empty for a while has its participant set released.
+  // Actual world-index arrivals, synchronously removed on departure.
   participantUsernames: Set<string>;
   // Players the Join Race flow has actually routed to this session. THIS is the door policy: a
   // Landfill instance may only be entered by someone requestJoinLandfillRace explicitly sent here.
@@ -386,6 +361,7 @@ function createLandfillEventSystem(deps: LandfillDeps) {
   const instances = new Map<string, LandfillInstance>();
   let pollTimer: any = null;
   let sessionSequence = 0;
+  let joinQueue: Promise<unknown> = Promise.resolve();
   // World names retired by recent races. A finished world's terrain is a pure function of its
   // name (serverWorldGenerationSeed in server.ts hashes the name and nothing else), so reusing a
   // name would hand players the exact map they just finished. Bounded so it cannot grow forever.
@@ -503,7 +479,7 @@ function createLandfillEventSystem(deps: LandfillDeps) {
     // better than a race that cannot start.
     let fallbackIndex = instances.size + 1;
     let fallback = canonicalInstanceKey(`${LANDFILL_WORLD_PREFIX}${fallbackIndex}`);
-    while (instances.has(fallback)) {
+    while (instances.has(fallback) || recentlyUsedWorldNames.includes(fallback)) {
       fallbackIndex += 1;
       fallback = canonicalInstanceKey(`${LANDFILL_WORLD_PREFIX}${fallbackIndex}`);
     }
@@ -539,6 +515,9 @@ function createLandfillEventSystem(deps: LandfillDeps) {
       worldName,
       index,
       state: "waiting_for_players",
+      abandoned: false,
+      ready: false,
+      departedUsernames: new Set<string>(),
       createdAtMs: nowMs,
       countdownEndsAtMs: 0,
       raceStartedAtMs: 0,
@@ -591,6 +570,7 @@ function createLandfillEventSystem(deps: LandfillDeps) {
         logger.warn("[landfill] failed to build the entry pen:", getErrorMessage ? getErrorMessage(error) : error);
       }
     }
+    instance.ready = true;
     return instance;
   }
 
@@ -615,7 +595,7 @@ function createLandfillEventSystem(deps: LandfillDeps) {
   }
 
   function isInstanceJoinable(instance: LandfillInstance): boolean {
-    if (!isJoinableState(instance.state)) return false;
+    if (!instance.ready || instance.abandoned || !isJoinableState(instance.state)) return false;
     if (instance.participants.size >= maxPlayersPerInstance) return false;
     if (instance.participantUsernames.size >= maxPlayersPerInstance) return false;
     // Admission reserves a slot. Without this, N players pressing Go Green at once would all be
@@ -652,30 +632,16 @@ function createLandfillEventSystem(deps: LandfillDeps) {
     }
     const cleanUsername = cleanAccountName(username || "");
 
-    // THE DOOR POLICY, and it MUST be evaluated before the participant check below.
-    //
-    // Landfill worlds are enterable only by players the Join Race flow routed here (see
-    // admittedUsernames). Instance names are not secret -- the client shows the name in its own
-    // world field as soon as you are routed there -- so without this, typing that name into the
-    // lobby JOIN field, or warping to a friend mid-race, drops an uninvited player into a live
-    // session. Both reach exactly this function via handleJoinWorld, so refusing here closes both.
-    //
-    // This check originally sat AFTER the participantUsernames check, which made it toothless for
-    // anyone who had ever legitimately raced. reconcileParticipants adds every present player to
-    // participantUsernames and nothing ever removes them -- that set is the reconnect record -- so
-    // a returning player matched there and was waved straight through before admission was ever
-    // consulted. Because testing naturally reuses the same accounts, that was the first case hit
-    // in practice: race once via Go Green, leave, type the world name, walk back in.
+    // Only event-assigned players may enter; knowing a name grants no admission.
+    if (cleanUsername !== "" && instance.departedUsernames.has(cleanUsername)) {
+      return { ok: false, reason: "instance_abandoned" };
+    }
     if (cleanUsername === "" || !instance.admittedUsernames.has(cleanUsername)) {
       return { ok: false, reason: "join_race_required" };
     }
 
-    if (instance.participantUsernames.has(cleanUsername)) {
-      // An ADMITTED player who is already a recorded participant -- i.e. reconnecting. They may
-      // return to their own instance even once it has locked, filled, or the calendar window has
-      // closed, all of which would otherwise refuse them below. Admission was proven immediately
-      // above, so this relaxes only the state gates, never the door itself.
-      return { ok: true };
+    if (instance.abandoned || instance.departedUsernames.has(cleanUsername)) {
+      return { ok: false, reason: "instance_abandoned" };
     }
     if (isPreRaceState(instance.state) && typeof isEventWindowOpen === "function" && !isEventWindowOpen()) {
       // The calendar window closed while this instance was still sitting open in the entry pen
@@ -684,16 +650,26 @@ function createLandfillEventSystem(deps: LandfillDeps) {
       return { ok: false, reason: "event_not_active" };
     }
     if (!isJoinableState(instance.state)) {
-      // RACING and every terminal state. This is the late-entry lock: once the race is underway
-      // nobody new gets in, so a player who joined at t=0 is never racing someone who arrived at
-      // t=90s. Already-recorded participants short-circuited above, so a mid-race reconnect by a
-      // genuine competitor still works.
+      // Started and terminal races reject everyone, including former participants.
       return { ok: false, reason: "instance_locked" };
     }
-    if (instance.participantUsernames.size >= maxPlayersPerInstance) {
+    if (!instance.participantUsernames.has(cleanUsername) && instance.participantUsernames.size >= maxPlayersPerInstance) {
       return { ok: false, reason: "instance_full" };
     }
     return { ok: true };
+  }
+
+  async function resolveLandfillInstanceJoin(worldName: unknown, username: unknown) {
+    const check = canPlayerJoinLandfillInstance(worldName, username);
+    if (check.ok) return { ok: true, world_name: String(worldName) };
+    const instance = getInstance(worldName);
+    const cleanUsername = cleanAccountName(username || "");
+    if (instance && (instance.admittedUsernames.has(cleanUsername) || instance.departedUsernames.has(cleanUsername))
+        && ["instance_locked", "instance_full", "instance_abandoned"].includes(check.reason || "")) {
+      recordLandfillInstanceLeave(worldName, cleanUsername);
+      return requestJoinLandfillRace(cleanUsername);
+    }
+    return check;
   }
 
   // Companion to canPlayerJoinLandfillInstance -- called after that check passes and the normal
@@ -709,9 +685,30 @@ function createLandfillEventSystem(deps: LandfillDeps) {
     instance.lastParticipantChangeMs = Date.now();
   }
 
-  function findOpenInstance(): LandfillInstance | null {
+  // Called at actual world-index removal, including disconnects. Polling alone misses a
+  // join/leave/rejoin completed between two ticks.
+  function recordLandfillInstanceLeave(worldName: unknown, username: unknown): void {
+    const instance = getInstance(worldName);
+    const cleanUsername = cleanAccountName(username || "");
+    if (!instance || !cleanUsername) return;
+    instance.departedUsernames.add(cleanUsername);
+    instance.participantUsernames.delete(cleanUsername);
+    instance.admittedUsernames.delete(cleanUsername);
+    const participant = instance.participants.get(cleanUsername);
+    if (participant) {
+      participant.connected = false;
+      if (isForfeitableState(instance.state)) participant.forfeited = true;
+    }
+    instance.broadcastDirty = true;
+    // Pending admissions cannot keep a used, empty world open for recycling.
+    if (isPreRaceState(instance.state) && instance.participantUsernames.size === 0) {
+      instance.abandoned = true;
+    }
+  }
+
+  function findOpenInstance(username: string): LandfillInstance | null {
     for (const instance of instances.values()) {
-      if (isInstanceJoinable(instance)) return instance;
+      if (!instance.departedUsernames.has(username) && isInstanceJoinable(instance)) return instance;
     }
     return null;
   }
@@ -721,24 +718,24 @@ function createLandfillEventSystem(deps: LandfillDeps) {
   // the client, which then performs a completely normal join_world request, same as joining any
   // other named world.
   async function requestJoinLandfillRace(username: unknown = ""): Promise<{ ok: boolean; reason?: string; world_name?: string }> {
+    // Serialize allocation through terrain initialization, so simultaneous clicks cannot
+    // reserve several sessions for one account or publish a half-reset world.
+    const pending = joinQueue.then(() => allocateLandfillRace(username));
+    joinQueue = pending.catch(() => {});
+    return pending;
+  }
+
+  async function allocateLandfillRace(username: unknown): Promise<{ ok: boolean; reason?: string; world_name?: string }> {
     if (typeof isEventWindowOpen === "function" && !isEventWindowOpen()) {
       return { ok: false, reason: "event_not_active" };
     }
-    // A player may only belong to one live session. Without this, pressing Join Race again while
-    // already in a race would enrol the same account in a second session: their breaks would score
-    // in whichever world they are standing in, but BOTH sessions would persist a result for them
-    // at completion, awarding KG twice for one race's worth of work. Returning their existing
-    // session instead makes the button idempotent and doubles as the reconnect path.
+    // Repeated requests may retain only an open, un-abandoned waiting room.
     const cleanRequester = cleanAccountName(username || "");
+    for (const session of instances.values()) reconcileParticipants(session, Date.now());
     if (cleanRequester !== "") {
       const existingSession = findSessionForParticipant(cleanRequester);
       if (existingSession) {
-        // Re-grant admission on the way out. Now that canPlayerJoinLandfillInstance checks
-        // admission BEFORE the participant short-circuit, a returning player whose admission was
-        // dropped (the abandoned-entry reconciliation clears them) would otherwise be handed a
-        // world name their own join is about to refuse. Pressing Go Green is the sanctioned way
-        // back in, so granting here is exactly right -- and typing the name, which never reaches
-        // this function, stays refused.
+        // Membership lookup excludes started, abandoned and departed sessions.
         existingSession.admittedUsernames.add(cleanRequester);
         existingSession.lastParticipantChangeMs = Date.now();
         logger.log("[WORLD_JOIN] landfill join returning player to their existing session", {
@@ -750,7 +747,7 @@ function createLandfillEventSystem(deps: LandfillDeps) {
         return { ok: true, world_name: existingSession.worldName };
       }
     }
-    const existing = findOpenInstance();
+    const existing = findOpenInstance(cleanRequester);
     const instance = existing || await createNewInstance();
     // Grant admission. This is the ONLY place admission is ever granted, and it is what makes the
     // Go Green button the sole door into a Landfill world -- see admittedUsernames. Granting it
@@ -800,23 +797,12 @@ function createLandfillEventSystem(deps: LandfillDeps) {
       advanceSessionState(instance, now);
       maybeBroadcastSessionState(instance, now);
 
-      if (instance.state === "cleanup") {
+      if (instance.state === "cleanup" || instance.abandoned) {
         retireSession(instance);
         continue;
       }
 
-      // Abandoned-entry reconciliation. recordLandfillInstanceJoin runs in handleJoinWorld before
-      // the world-route check that can still fail the join, so a join that dies after that point
-      // leaves a username occupying a slot in participantUsernames while that player is not, and
-      // never was, actually in the world. Left alone those slots accumulate until the instance
-      // reports instance_full with nobody standing in it -- permanently un-joinable, and a
-      // guaranteed repeat of the "silently un-enterable Landfill world" class of bug.
-      //
-      // Releasing is only safe when we are certain nobody is mid-join: the instance must still be
-      // in "entry" (never gated open), the world must be provably empty, and the participant set
-      // must have been untouched for longer than a client could plausibly still be loading. The
-      // reconnect guarantee is unaffected -- an instance with zero players present has no session
-      // left to reconnect into, and the freed instance stays joinable by anyone including them.
+      // Expired loading reservations retire their world instead of recycling it.
       if (
         instance.state === "waiting_for_players"
         && population === 0
@@ -829,11 +815,8 @@ function createLandfillEventSystem(deps: LandfillDeps) {
           released_admissions: Array.from(instance.admittedUsernames),
           idle_ms: now - instance.lastParticipantChangeMs,
         });
-        instance.participantUsernames.clear();
-        // Admissions reserve capacity, so they leak it exactly the same way if a player is routed
-        // here and never arrives. Released under the identical provably-empty conditions.
-        instance.admittedUsernames.clear();
-        instance.lastParticipantChangeMs = now;
+        retireSession(instance);
+        continue;
       }
 
       // Idle sweep. Only ever applies to a session that never got off the ground -- a session that
@@ -865,7 +848,7 @@ function createLandfillEventSystem(deps: LandfillDeps) {
     if (cleanUsername === "") return null;
     for (const instance of instances.values()) {
       // A terminal session is not a membership that should block or redirect a new join.
-      if (instance.state === "finished" || instance.state === "cleanup") continue;
+      if (!instance.ready || instance.abandoned || !isJoinableState(instance.state) || instance.departedUsernames.has(cleanUsername)) continue;
       // A forfeited participant (see reconcileParticipants) must NOT be treated as still
       // belonging here -- that is precisely the "leaving forfeits the spot" fix. Their entry
       // stays in `participants` for scoring purposes only (see the interface doc comment on
@@ -889,11 +872,7 @@ function createLandfillEventSystem(deps: LandfillDeps) {
     return total;
   }
 
-  // Sync instance.participants against who is physically in the world. This is the module's only
-  // knowledge of arrivals and departures, and it is deliberately a READ of the existing roster
-  // rather than a hook into the join/leave pipeline -- the header scope note documents why that
-  // pipeline is not to be touched. The cost is up to one tick of latency on a departure, which is
-  // immaterial for a 10s countdown and a 120s race.
+  // Reconcile progress records with the roster; index hooks cover sub-tick visits.
   function reconcileParticipants(instance: LandfillInstance, nowMs: number): void {
     if (typeof getWorldPlayerIdentities !== "function") return;
     let roster: unknown;
@@ -962,9 +941,7 @@ function createLandfillEventSystem(deps: LandfillDeps) {
         // not abandoning a live spot, and must not un-admit someone who is legitimately waiting
         // on their results/leaderboard placement.
         if (isForfeitableState(instance.state)) {
-          participant.forfeited = true;
-          instance.participantUsernames.delete(participant.username);
-          instance.admittedUsernames.delete(participant.username);
+          recordLandfillInstanceLeave(instance.worldName, participant.username);
         }
       }
     }
@@ -1476,6 +1453,8 @@ function createLandfillEventSystem(deps: LandfillDeps) {
     requestJoinLandfillRace,
     canPlayerJoinLandfillInstance,
     recordLandfillInstanceJoin,
+    recordLandfillInstanceLeave,
+    resolveLandfillInstanceJoin,
     getLandfillEntryPenBounds,
     startInstancePolling,
     stopInstancePolling,

@@ -17,7 +17,25 @@ async function ensureSchema(store:any):Promise<void>{
    PRIMARY KEY(player_id, receipt_id)
  );
  CREATE INDEX IF NOT EXISTS quest_receipts_time ON ${store.table("quest_receipts")}(created_at);
+ CREATE TABLE IF NOT EXISTS ${store.table("quest_gameplay_events")} (
+  player_id uuid NOT NULL REFERENCES ${store.table("players")}(player_id),
+  event_key text NOT NULL, action text NOT NULL, item_type text NOT NULL,
+  created_at timestamptz NOT NULL DEFAULT clock_timestamp(), PRIMARY KEY(player_id,event_key)
+ );
+ CREATE INDEX IF NOT EXISTS quest_gameplay_player_time ON ${store.table("quest_gameplay_events")}(player_id,created_at);
  `);
+}
+// Invoked only from canonical database commits; no network action exposes it.
+async function recordGameplay(store:any,client:any,playerId:string,action:string,metadata:Row,key:string):Promise<void>{
+ if(!store.questReady||!playerId||!key)return;
+ const kind:Row={seed_place:"plant",seed_splice:"splice",seed_harvest:"harvest",fishing_complete:"fish",world_block_break:"break"};
+ if(!kind[action])return;
+ if(action==="fishing_complete"&&metadata.item_category!=="fish")return;
+ if(action==="seed_harvest"&&metadata.matured!==true)return;
+ const item=String(metadata.seed_type||metadata.item_id||metadata.block_type||"");
+ await client.query(`INSERT INTO ${store.table("quest_gameplay_events")} (player_id,event_key,action,item_type)
+ SELECT $1,$2,$3,$4 WHERE EXISTS(SELECT 1 FROM ${store.table("quest_accounts")} WHERE player_id=$1 AND state->'active'<>'{}'::jsonb)
+ ON CONFLICT DO NOTHING`,[playerId,`${action}:${key}`,kind[action],item]);
 }
 async function apply(store:any, entry:Row):Promise<Row>{
  if(!store.isReady()||!store.questReady)return {ok:false,message:"The Dispatch is unavailable. Your rewards are safe; please try again later."};
@@ -30,7 +48,35 @@ async function apply(store:any, entry:Row):Promise<Row>{
    await client.query(`INSERT INTO ${store.table("quest_accounts")} (player_id) VALUES($1) ON CONFLICT DO NOTHING`,[playerId]);
    const saved=await client.query(`SELECT state FROM ${store.table("quest_accounts")} WHERE player_id=$1 FOR UPDATE`,[playerId]);
    const before=saved.rows[0].state;
+   // Reconcile committed gameplay on board visits and claims. Rejected actions and
+   // rolled-back transactions never appear here. Exact event keys prevent retries counting twice.
+   for(const active of Object.values(before.active||{}) as Row[]){
+    if(!active.objectives)continue;
+    active.progress=[];
+    for(const objective of active.objectives){
+     const counted=await client.query(`SELECT count(*)::integer AS total FROM (SELECT 1 FROM ${store.table("quest_gameplay_events")}
+       WHERE player_id=$1 AND created_at>=to_timestamp($2::double precision/1000) AND action=$3 AND ($4::text='' OR item_type=$4) LIMIT $5) matching`,
+       [playerId,active.accepted_at,objective.action,objective.item_type,objective.target]);
+     active.progress.push(Math.min(objective.target,Number(counted.rows[0].total)));
+    }
+    active.solved=active.objectives.every((o:Row,i:number)=>active.progress[i]>=o.target);
+   }
    const changed=Engine.transition(before,entry.action,entry.payload,Date.now(),username.toLowerCase());
+   let progression:Row={};
+   const requestedXp=changed.receipts.reduce((sum:number,r:Row)=>sum+Number(r.xp||0),0);
+   if(requestedXp){
+    if(!store.progressionReady)throw new Error("Experience rewards are temporarily unavailable. Please try again later.");
+    const current=(await client.query(`SELECT player_level,player_xp,player_total_xp,last_level_up_at FROM ${store.table("players")} WHERE player_id=$1 FOR UPDATE`,[playerId])).rows[0];
+    const xp=Number(current.player_level)>=100?0:requestedXp;
+    const next=await store.updatePlayerProgression(client,playerId,{...current,player_xp:Number(current.player_xp)+xp,player_total_xp:Number(current.player_total_xp)+xp,player_title:""});
+    if(next.player_level>Number(current.player_level)){
+     next.last_level_up_at=new Date().toISOString();
+     await client.query(`UPDATE ${store.table("players")} SET last_level_up_at=$2::timestamptz WHERE player_id=$1`,[playerId,next.last_level_up_at]);
+    }
+    await client.query(`UPDATE ${store.table("players")} SET player_state=COALESCE(player_state,'{}'::jsonb)||$2::jsonb WHERE player_id=$1`,[playerId,JSON.stringify(next)]);
+    progression={xp_gained:xp,levels_gained:next.player_level-Number(current.player_level),level_before:Number(current.player_level),level_after:next.player_level,xp_after:next.player_xp,xp_needed:next.player_xp_needed,total_xp_after:next.player_total_xp,title:next.player_title,source:"quest_reward"};
+    if(xp)await client.query(`INSERT INTO ${store.table("player_progression_events")} (player_id,source,xp_delta,level_before,level_after,xp_before,xp_after,total_xp_after,metadata) VALUES($1,'quest_reward',$2,$3,$4,$5,$6,$7,$8::jsonb)`,[playerId,xp,current.player_level,next.player_level,current.player_xp,next.player_xp,next.player_total_xp,JSON.stringify({request_id:entry.request_id,receipts:changed.receipts.map((r:Row)=>r.id)})]);
+   }
    let gemsBefore:number|null=null,gemsAfter:number|null=null,gemLedgerId=null,itemTransactionId=null;
    const inventoryBeforeHash=changed.gemDelta?await store.getInventorySnapshotHash(client,playerId):null;
    if(changed.gemDelta){
@@ -63,7 +109,7 @@ async function apply(store:any, entry:Row):Promise<Row>{
      metadata:{receipts:changed.receipts,stamps_before:before.stamps||0,stamps_after:changed.state.stamps}});
    }
    await client.query(`UPDATE ${store.table("quest_accounts")} SET state=$2::jsonb,updated_at=now() WHERE player_id=$1`,[playerId,JSON.stringify(changed.state)]);
-   return {ok:true,board:changed.board,message:changed.message,receipts:changed.receipts,gems:gemsAfter};
+   return {ok:true,board:changed.board,message:changed.message,receipts:changed.receipts,gems:gemsAfter,progression};
   },"quest_operation",`quest:${username.toLowerCase()}`);
   return result||{ok:false,message:"The Dispatch could not save your letter. Please try again."};
  }catch(error:any){
@@ -71,4 +117,4 @@ async function apply(store:any, entry:Row):Promise<Row>{
   return {ok:false,message:error?.code?"The Dispatch could not save your letter. Please refresh and try again.":String(error?.message||"Quest request failed.")};
  }
 }
-export = {ensureSchema,apply};
+export = {ensureSchema,apply,recordGameplay};

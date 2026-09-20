@@ -61,6 +61,7 @@ const ServerMessageRouterHelpersModule = require("../server_message_router_helpe
  */
 const AUDITED = [
   "inventory_transaction_request",
+  "join_world",
   "world_block_update",
   "world_interaction_update",
   "world_item_drop_pickup",
@@ -110,7 +111,8 @@ const DYNAMIC_FALLBACKS = ["request"];
 // Two stale-link rejection paths were added for refinery/charger disconnects.
 // The foreground seed guard adds one world_block_update rejection. That action
 // already belongs to AUDITED, so rejecting the generic block bypass is logged.
-const EXPECTED_LITERAL_SITES = 281;
+// Missing-ticket and failed ticket-commit admission rejections are audited too.
+const EXPECTED_LITERAL_SITES = 283;
 // Re-pinned from 10 -> 9 after tracing every current dynamic call site (2026-08-09): all
 // nine pass an `action`-shaped variable through unchanged --
 // `cleanRouteType || "request"` / `type || "request"` (both already covered by

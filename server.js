@@ -797,6 +797,8 @@ const SHOP_CATALOG = new Map([
     ["entrance_mover", { item_id: "entrance_mover", item_category: "tool", amount: 1, price: 200 }],
     ["lock_mover", { item_id: "lock_mover", item_category: "tool", amount: 1, price: 17000 }],
     ["door_mover", { item_id: "door_mover", item_category: "tool", amount: 1, price: 500 }],
+    ["fertilizer", { item_id: "fertilizer", item_category: "tool", amount: 1, price: 500 }],
+    ["super_fertilizer", { item_id: "super_fertilizer", item_category: "tool", amount: 1, price: 2100 }],
     ["electric_tool", { item_id: "electric_tool", item_category: "tool", amount: 1, price: 5000 }],
     ["wooden_fishing_rod", { item_id: "wooden_fishing_rod", item_category: "tool", amount: 1, price: 1500 }],
     ["bamboo_fishing_rod", { item_id: "bamboo_fishing_rod", item_category: "tool", amount: 1, price: 5000 }],
@@ -1366,6 +1368,7 @@ function getServerInventoryEconomyRoutes() {
             handleSafeTransaction,
             handleSeedHarvestTransaction,
             handleSeedPlaceTransaction,
+            handleSeedFertilizeTransaction,
             handleSeedSpliceTransaction,
             handleStationRecipeTransaction,
             handleTrashInventoryItemTransaction,
@@ -1412,6 +1415,8 @@ function getServerPhase8PlayerSessionRoutes() {
             buildPublicPlayerPresencePayload,
             buildPublicPlayerProfilePayload,
             cancelActiveTradeForPlayer,
+            resolveLandfillInstanceJoin: (worldName, username) => getServerLandfillEventSystem().resolveLandfillInstanceJoin(worldName, username),
+            authorizeLandfillTicket,
             checkLandfillInstanceJoinEligibility: (worldName, username) => getServerLandfillEventSystem().canPlayerJoinLandfillInstance(worldName, username),
             cleanAccountName,
             cleanWorld,
@@ -5618,7 +5623,7 @@ async function handleQuestRequest(socket, player, data) {
     }
     if (await rejectIfWorldBanned(socket, player, worldName, "quest_board"))
         return;
-    const needsBoard = ["quest_board_get", "quest_accept", "quest_refresh", "quest_redeem"].includes(String(data.action));
+    const needsBoard = ["quest_board_get", "quest_accept", "quest_refresh", "quest_redeem", "quest_choose"].includes(String(data.action));
     const validBoard = () => {
         const grid = getTransactionGrid(data);
         if (!grid || !isPlayerNearGrid(player, grid.x, grid.y))
@@ -5660,6 +5665,7 @@ async function handleQuestRequest(socket, player, data) {
         sendInventoryTransactionResult(socket, { ...statePayload, ok: result.ok,
             request_id: requestId, action: data.action, message: result.message,
             quest_board: result.board || null, quest_receipts: result.receipts || [],
+            progression: result.progression || {},
         });
     }
     finally {
@@ -13043,6 +13049,90 @@ async function runSeedActionLocked(socket, player, data, run) {
             runtimeProfiler.observe(`seed_action_ms:${data.action}`, performance.now() - started);
     }
 }
+async function authorizeLandfillTicket(socket, player, world, consume) {
+    const state = ensureWritablePlayerState(player.account_username);
+    if (!state || getInventoryCount(state, "landfill_ticket", "material") < 1) {
+        sendActionRejected(socket, "join_world", "You need a Landfill Ticket to enter.", { reason: "missing_landfill_ticket", world });
+        return false;
+    }
+    if (!consume)
+        return true;
+    const before = cloneJson(state);
+    const after = cloneJson(state);
+    if (!spendItemFromState(after, "landfill_ticket", "material", 1))
+        return false;
+    const result = await commitPlayerInventoryState(socket, player, player.account_username, before, after, {
+        source: "landfill_entry", action: "landfill_entry", reason: "landfill_ticket_cost",
+        request_id: player.world_entry_session_id, world,
+        metadata: { item_id: "landfill_ticket", world_entry_session_id: player.world_entry_session_id },
+    });
+    if (!result.ok) {
+        sendActionRejected(socket, "join_world", result.message, { reason: "landfill_ticket_commit_failed", world });
+        return false;
+    }
+    sendInventoryTransactionResult(socket, { ok: true, action: "landfill_entry", request_id: player.world_entry_session_id,
+        inventory_deltas: buildInventoryDeltaClientPayloads(result.deltas, result.state) });
+    logItemLedgerForState(socket, player, player.account_username, result.state, "landfill_ticket", "material", -1, "landfill_entry", player.world_entry_session_id, "landfill_ticket_cost", world, {}, { skipPostgres: result.postgres_committed });
+    return true;
+}
+async function handleSeedFertilizeTransaction(socket, player, data) {
+    return runSeedActionLocked(socket, player, data, async () => {
+        const worldName = getTransactionWorldName(player, data);
+        const grid = getTransactionGrid(data);
+        const itemId = clampString(data.item_id || "");
+        const seconds = itemId === "fertilizer" ? 3600 : itemId === "super_fertilizer" ? 14400 : 0;
+        if (!seconds || !grid || !requireSameWorld(socket, player, worldName, "fertilize trees")
+            || await rejectIfWorldBanned(socket, player, worldName, "seed_fertilize")
+            || !requireBuildPermission(socket, player, worldName, "fertilize trees")
+            || !isPlayerNearGrid(player, grid.x, grid.y) || !canPlayerBuildAtGrid(player, worldName, grid.x, grid.y)) {
+            sendInventoryTransactionRejected(socket, data, "You cannot fertilize that tree.");
+            return;
+        }
+        const worldState = ensureWorldState(worldName);
+        const key = gridKey(grid.x, grid.y);
+        const originalSeed = worldState.seeds.get(key);
+        if (!originalSeed || getSeedGrowthRemaining(originalSeed) <= 0) {
+            sendInventoryTransactionRejected(socket, data, "Select a growing tree.");
+            return;
+        }
+        const state = ensureWritablePlayerState(player.account_username);
+        const before = cloneJson(state);
+        const after = cloneJson(state);
+        if (!after || !spendItemFromState(after, itemId, "tool", 1)) {
+            sendInventoryTransactionRejected(socket, data, "You do not have that fertilizer.");
+            return;
+        }
+        const updatedSeed = { ...originalSeed };
+        speedupSeedGrowthState(updatedSeed, Date.now(), Math.max(0, getSeedGrowthRemaining(originalSeed) - seconds));
+        const requestId = makeRequestId(data);
+        worldState.seeds.set(key, updatedSeed);
+        let commit;
+        try {
+            commit = await commitPlayerInventoryState(socket, player, player.account_username, before, after, {
+                source: "seed_fertilize", action: "seed_fertilize", reason: "fertilizer_cost", request_id: requestId,
+                world: worldName, world_mutation: true,
+                metadata: { item_id: itemId, x: grid.x, y: grid.y, reduction_seconds: seconds },
+                world_changes: [buildWorldObjectChangeEntry(socket, player, worldName, { action: "fertilize", object_type: "seed", source_type: "seed_fertilize", request_id: requestId, x: grid.x, y: grid.y }, originalSeed, updatedSeed, requestId, { item_id: itemId, reduction_seconds: seconds })],
+            });
+        }
+        catch (error) {
+            worldState.seeds.set(key, originalSeed);
+            throw error;
+        }
+        if (!commit.ok) {
+            worldState.seeds.set(key, originalSeed);
+            sendInventoryTransactionRejected(socket, data, commit.message);
+            return;
+        }
+        persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed);
+        sendWorldUpdateToRequesterAndWorld(socket, player, worldName, {
+            ...serializeSeedForMessage(updatedSeed), type: "world_seed_update", action: "place", world: worldName, request_id: requestId,
+        });
+        logItemLedgerForState(socket, player, player.account_username, commit.state, itemId, "tool", -1, "seed_fertilize", requestId, "fertilizer_cost", worldName, { x: grid.x, y: grid.y }, { skipPostgres: commit.postgres_committed });
+        sendInventoryTransactionResult(socket, { ok: true, action: "seed_fertilize", request_id: requestId,
+            inventory_deltas: buildInventoryDeltaClientPayloads(commit.deltas, commit.state) });
+    });
+}
 async function handleSeedPlaceTransaction(socket, player, data) {
     return runSeedActionLocked(socket, player, data, () => handleSeedPlaceTransactionLocked(socket, player, data));
 }
@@ -13426,6 +13516,7 @@ async function handleSeedHarvestTransactionLocked(socket, player, data) {
             mutated: Boolean(seed.mutated),
             reward_count: rewards.length,
             growing_tree_hit_count: growingTreeHitCount,
+            matured: maturedSeed,
         },
         world_mutation: true,
         failure_message: "Server inventory changed. Try again.",
@@ -15628,6 +15719,13 @@ function createBreakDrops(worldName, update) {
         return [];
     const position = getGridCenterPixels(update.x, update.y);
     const drops = getBreakDropsForBlock(update.block_type, update.layer);
+    // Use the same live event window as Landfill admission. Roll independently of
+    // normal drops, including direct inventory returns; hits and scoops never roll.
+    if (ItemDatabase.getItemDefinition(update.block_type)?.category === "block"
+        && getServerCalendarEventScheduler().isEventActive("landfill")
+        && Math.random() < 1 / 50) {
+        drops.push({ item_id: "landfill_ticket", item_category: "material", amount: 1 });
+    }
     const createdDrops = [];
     for (const drop of drops) {
         const payload = createServerDrop(worldName, drop.item_id, drop.item_category, drop.amount, position.x, position.y, SERVER_DROP_PICKUP_DELAY);
@@ -16921,6 +17019,12 @@ async function handleDoorEnterRequest(socket, player, data) {
         return rejectDoorEnter(socket, "Door is not linked.");
     }
     const targetWorld = cleanWorld(sourceDoor.target_world || sourceWorld);
+    if (targetWorld !== sourceWorld && ServerLandfillEventModule.isLandfillWorldName(targetWorld)) {
+        rejectDoorEnter(socket, "Join the Landfill event from the lobby to enter a fresh race.", {
+            reason: "join_race_required", target_world: targetWorld,
+        });
+        return false;
+    }
     const targetDoorId = cleanDoorId(sourceDoor.target_door_id || "");
     const worldOnlyDestination = targetDoorId === "";
     if (await rejectIfWorldBanned(socket, player, targetWorld, "door_enter"))
@@ -30563,7 +30667,10 @@ function removePlayerFromWorldIndex(playerOrId, worldName = "") {
     if (clean !== "") {
         const set = worldPlayers.get(clean);
         if (set) {
-            set.delete(playerId);
+            const removed = set.delete(playerId);
+            if (removed && serverLandfillEventSystem && /^LANDFILL_/i.test(clean)) {
+                serverLandfillEventSystem.recordLandfillInstanceLeave(clean, player?.account_username || player?.name || "");
+            }
             if (set.size === 0)
                 worldPlayers.delete(clean);
         }
@@ -30573,7 +30680,10 @@ function removePlayerFromWorldIndex(playerOrId, worldName = "") {
         return;
     }
     for (const [indexedWorld, set] of worldPlayers.entries()) {
-        set.delete(playerId);
+        const removed = set.delete(playerId);
+        if (removed && serverLandfillEventSystem && /^LANDFILL_/i.test(indexedWorld)) {
+            serverLandfillEventSystem.recordLandfillInstanceLeave(indexedWorld, player?.account_username || player?.name || "");
+        }
         if (set.size === 0)
             worldPlayers.delete(indexedWorld);
     }
@@ -30597,6 +30707,9 @@ function updatePlayerWorldIndex(player) {
     }
     getWorldPlayerIdSet(nextWorld, true).add(playerId);
     player.indexed_world = nextWorld;
+    if (previousWorld !== nextWorld && serverLandfillEventSystem && /^LANDFILL_/i.test(nextWorld)) {
+        serverLandfillEventSystem.recordLandfillInstanceJoin(nextWorld, player.account_username || player.name || "");
+    }
 }
 function clearPlayerWorldIndex(playerOrId) {
     removePlayerFromWorldIndex(playerOrId);

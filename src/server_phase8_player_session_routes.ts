@@ -56,6 +56,9 @@ interface Phase8PlayerSessionDeps {
   buildPublicPlayerPresencePayload(type: string, player: PlayerRecord, worldName: unknown): unknown;
   buildPublicPlayerProfilePayload(username: string, requestId: string, purpose: string): unknown;
   cancelActiveTradeForPlayer(playerId: string, reason: string): unknown;
+  authorizeLandfillTicket(socket: unknown, player: PlayerRecord, world: string, consume: boolean): Promise<boolean>;
+  checkLandfillInstanceJoinEligibility?(world: unknown, username: unknown): { ok: boolean; reason?: string };
+  resolveLandfillInstanceJoin?(world: unknown, username: unknown): Promise<{ ok: boolean; reason?: string; world_name?: string }>;
   cleanAccountName(value: unknown): string;
   cleanWorld(value: unknown): string;
   clampInteger(value: unknown, min: number, max: number): number;
@@ -290,8 +293,39 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
   ): Promise<void> {
     const worldName = deps.cleanWorld(player.world_entry_world || player.world || "");
     const sessionId = deps.clampString(player.world_entry_session_id || "", 128);
-    if (!worldName || !sessionId) return;
+    if (!worldName || !sessionId || player.world_entry_state === "active" || player.world_entry_ticket_pending) return;
 
+    // Loading may outlast the countdown. Recheck immediately before publishing presence;
+    // no await separates this guard from the index insertion below.
+    if (/^LANDFILL_/i.test(worldName)) {
+      const check = deps.checkLandfillInstanceJoinEligibility?.(worldName, player.account_username || player.name);
+      if (!check?.ok) {
+        const requestId = player.world_entry_join_request_id;
+        await cancelProvisionalWorldEntry(player, worldName, context, "landfill_instance_locked");
+        // Reuse the normal snapshot flow for the replacement world, keeping the request ID.
+        if (check && ["instance_locked", "instance_full", "instance_abandoned"].includes(check.reason || "")) {
+          await handleJoinWorld(socket, player, { world: worldName, join_request_id: requestId, world_entry_ready_v1: true }, context);
+        } else {
+          deps.sendActionRejected(socket, "join_world", "This Landfill instance is no longer available. Join a new race from the lobby.", {
+            reason: check?.reason || "landfill_unavailable", world: worldName, join_request_id: requestId,
+          });
+        }
+        return;
+      }
+    }
+    if (/^LANDFILL_/i.test(worldName)) {
+      player.world_entry_ticket_pending = true;
+      let paid = false;
+      try {
+        paid = await deps.authorizeLandfillTicket(socket, player, worldName, true);
+      } finally {
+        player.world_entry_ticket_pending = false;
+      }
+      if (!paid) {
+        await cancelProvisionalWorldEntry(player, worldName, context, "landfill_ticket_required");
+        return;
+      }
+    }
     player.world_entry_state = "active";
     player.world_entry_snapshot_queued = false;
     player.world_entry_catchup_attempts = 0;
@@ -519,7 +553,7 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
     const joinProfileStartedAt = process.hrtime.bigint();
     if (!deps.requireAuthenticated(socket, player, "join worlds")) return;
 
-    const newWorld = deps.cleanWorld(data.world);
+    let newWorld = deps.cleanWorld(data.world);
     const joinRequestId = deps.clampString(data.join_request_id || data.request_id || "", 128);
     const worldEntryReadySupported = data.world_entry_ready_v1 === true
       || ["1", "true", "yes", "on"].includes(String(data.world_entry_ready_v1 || "").trim().toLowerCase());
@@ -561,6 +595,26 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       // Releases the admission reservation, world index entry and route lease, and clears
       // player.world -- so the join below correctly sees no previous world to leave.
       await cancelProvisionalWorldEntry(player, pendingWorld, context, "provisional_entry_timeout");
+    }
+    if (/^LANDFILL_/i.test(newWorld)) {
+      if (!await deps.authorizeLandfillTicket(socket, player, newWorld, false)) return;
+      const result = deps.resolveLandfillInstanceJoin
+        ? await deps.resolveLandfillInstanceJoin(newWorld, player.account_username || player.name)
+        : { ok: false, reason: "landfill_unavailable" };
+      if (!result.ok) {
+        deps.sendActionRejected(socket, "join_world", "Join the Landfill event from the lobby to enter a fresh race.", {
+          reason: result.reason, world: newWorld, join_request_id: joinRequestId,
+        });
+        return;
+      }
+      const targetWorld = deps.cleanWorld(result.world_name || newWorld);
+      if (targetWorld !== newWorld) {
+        deps.sendJson(socket, {
+          type: "landfill_instance_redirect", world: newWorld, target_world: targetWorld,
+          join_request_id: joinRequestId,
+        });
+      }
+      newWorld = targetWorld;
     }
     const oldWorld = player.world;
     const worldEntryProfile = beginWorldEntryServerProfile(newWorld, joinRequestId);

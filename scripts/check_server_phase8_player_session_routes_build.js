@@ -39,6 +39,7 @@ function record(/** @type {string} */ value) {
 
 const deps = {
   activeFishingSessions,
+  authorizeLandfillTicket: async () => true,
   adminInventoryLookupPurpose: "admin_inventory_lookup",
   adminItemInstanceHistoryLookupPurpose: "admin_item_instance_history_lookup",
   adminItemInstanceLookupPurpose: "admin_item_instance_lookup",
@@ -502,6 +503,41 @@ const socket = {};
   assert.match(deploySource, /check_server_phase8_player_session_routes_build\.js/);
   assert.match(deploySource, /npm run build:server-phase8-player-session-routes/);
 
+  // Exercise the real join route, not only the event helper: direct names fail closed.
+  const landfillPlayer = /** @type {any} */ ({ account_username: "landfill", name: "landfill", world: "", joined_world: false });
+  const sentBeforeLandfill = sent.length;
+  await routes.handleJoinWorld(socket, landfillPlayer, { world: "LANDFILL_100001", join_request_id: "lf-denied" }, { playerId: "lf" });
+  assert.equal(landfillPlayer.joined_world, false);
+  assert.equal(sent.length, sentBeforeLandfill, "missing landfill admission must not deliver a snapshot");
+
+  let resolved = 0;
+  let activationChecks = 0;
+  let ticketsSpent = 0;
+  const landfillRoutes = Phase8RoutesModule.createServerPhase8PlayerSessionRoutes({
+    ...deps,
+    authorizeLandfillTicket: async (/** @type {unknown} */ _socket, /** @type {unknown} */ _player, /** @type {unknown} */ _world, /** @type {boolean} */ consume) => { if (consume) ticketsSpent += 1; return true; },
+    resolveLandfillInstanceJoin: async () => ({ ok: true, world_name: ++resolved === 1 ? "LANDFILL_100002" : "LANDFILL_100003" }),
+    checkLandfillInstanceJoinEligibility: () => ++activationChecks === 1 ? { ok: false, reason: "instance_locked" } : { ok: true },
+  });
+  await landfillRoutes.handleJoinWorld(socket, landfillPlayer, { world: "LANDFILL_100001", join_request_id: "lf-redirect" }, { playerId: "lf" });
+  // Legacy immediate activation discovers GO during loading and starts a replacement snapshot.
+  assert.equal(landfillPlayer.world, "LANDFILL_100003");
+  assert.equal(landfillPlayer.joined_world, false, "replacement waits for its own ready acknowledgement");
+  assert.ok(sent.some((/** @type {any} */ packet) => packet.type === "landfill_instance_redirect" && packet.target_world === "LANDFILL_100002"));
+  assert.ok(sent.some((/** @type {any} */ packet) => packet.type === "landfill_instance_redirect" && packet.target_world === "LANDFILL_100003"));
+  assert.ok(!sent.some((/** @type {any} */ packet) => packet.type === "world_entry_active" && packet.world === "LANDFILL_100002"), "a race that started during loading never activates the late player");
+
+  assert.equal(ticketsSpent, 0, "redirected snapshots must not consume tickets");
+  const ready = { world: landfillPlayer.world, world_entry_session_id: landfillPlayer.world_entry_session_id, world_revision: worldRevision, block_revision: worldBlockRevision };
+  await landfillRoutes.handleWorldEntryReady(socket, landfillPlayer, ready, { playerId: "lf" });
+  assert.equal(landfillPlayer.joined_world, true);
+  assert.equal(ticketsSpent, 1);
+  await landfillRoutes.handleWorldEntryReady(socket, landfillPlayer, ready, { playerId: "lf" });
+  assert.equal(ticketsSpent, 1, "duplicate ready packets must not spend another ticket");
+  const noTicketRoutes = Phase8RoutesModule.createServerPhase8PlayerSessionRoutes({ ...deps, authorizeLandfillTicket: async () => false });
+  const noTicketSent = sent.length;
+  await noTicketRoutes.handleJoinWorld(socket, { account_username: "empty", world: "", joined_world: false }, { world: "LANDFILL_100001" }, { playerId: "empty" });
+  assert.equal(sent.length, noTicketSent, "missing tickets must reject before a snapshot");
   console.log("[server-phase8-player-session-routes] success");
 })().catch((error) => {
   console.error(error);

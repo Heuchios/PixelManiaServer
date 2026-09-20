@@ -383,19 +383,127 @@
           "chance": 0.8
         }
       ]
-    }
+    },
+    "category": "material",
+    "display_name": "Water Bucket",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        5,
+        0
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        5,
+        0
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": false,
+    "item_type": "material",
+    "equipable": false
   },
   "entrance_mover": {
     "description": "Move a world entrance.",
-    "sheet_type": "consumable"
+    "sheet_type": "consumable",
+    "category": "tool",
+    "display_name": "World Entrance Mover",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        0,
+        1
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        0,
+        1
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": true,
+    "item_type": "consumable",
+    "equipable": false
   },
   "lock_mover": {
     "description": "Move a world lock.",
-    "sheet_type": "consumable"
+    "sheet_type": "consumable",
+    "category": "tool",
+    "display_name": "World Lock Mover",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        1,
+        1
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        1,
+        1
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": true,
+    "item_type": "consumable",
+    "equipable": false
   },
   "door_mover": {
     "description": "Move a door.",
-    "sheet_type": "consumable"
+    "sheet_type": "consumable",
+    "category": "tool",
+    "display_name": "Door Mover",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        2,
+        1
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        2,
+        1
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": true,
+    "item_type": "consumable",
+    "equipable": false
   },
   "world_lock": {
     "description": "Keeps your world yours.",
@@ -426,7 +534,34 @@
   },
   "world_lock_key": {
     "description": "Opens a world lock.",
-    "sheet_type": "material"
+    "sheet_type": "material",
+    "category": "material",
+    "display_name": "World Key",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        6,
+        0
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        6,
+        0
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": false,
+    "item_type": "material",
+    "equipable": false
   },
   "entrance_gate": {
     "description": "The way into a world.",
@@ -1282,12 +1417,66 @@
   "grain": {
     "description": "Just a handful of grains.",
     "recipe_tier": 1,
-    "sheet_type": "material, consumable"
+    "sheet_type": "material, consumable",
+    "category": "material",
+    "display_name": "Grains",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        5,
+        1
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        5,
+        1
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": true,
+    "item_type": "material",
+    "equipable": false
   },
   "wheat": {
     "description": "Ready for harvest.",
     "recipe_tier": 1,
-    "sheet_type": "material, consumable"
+    "sheet_type": "material, consumable",
+    "category": "material",
+    "display_name": "Wheat",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        6,
+        1
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        6,
+        1
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": true,
+    "item_type": "material",
+    "equipable": false
   },
   "wooden_ladder_seed": {
     "grow_time": 480,
@@ -8386,7 +8575,34 @@
   },
   "crude_oil": {
     "description": "Black gold.",
-    "sheet_type": "material"
+    "sheet_type": "material",
+    "category": "material",
+    "display_name": "Crude Oil",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        0,
+        2
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        0,
+        2
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": false,
+    "item_type": "material",
+    "equipable": false
   },
   "gem_driller_seed": {
     "grow_time": 712800,
@@ -8598,7 +8814,34 @@
   },
   "battery": {
     "description": "Portable power.",
-    "sheet_type": "material"
+    "sheet_type": "material",
+    "category": "material",
+    "display_name": "Battery",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        0,
+        3
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        0,
+        3
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": false,
+    "item_type": "material",
+    "equipable": false
   },
   "electric_pole_seed": {
     "grow_time": 5400,
@@ -9043,7 +9286,34 @@
   "metal_scrap": {
     "description": "Old junk.",
     "recipe_tier": 1,
-    "sheet_type": "material"
+    "sheet_type": "material",
+    "category": "material",
+    "display_name": "Scrap",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        1,
+        3
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        1,
+        3
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": false,
+    "item_type": "material",
+    "equipable": false
   },
   "broken_tv_seed": {
     "grow_time": 30,
@@ -9630,12 +9900,66 @@
   "egg": {
     "description": "Fresh egg.",
     "recipe_tier": 1,
-    "sheet_type": "material, consumable"
+    "sheet_type": "material, consumable",
+    "category": "material",
+    "display_name": "Egg",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        2,
+        2
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        2,
+        2
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": true,
+    "item_type": "material",
+    "equipable": false
   },
   "golden_egg": {
     "description": "A very fancy egg.",
     "recipe_tier": 1,
-    "sheet_type": "material"
+    "sheet_type": "material",
+    "category": "material",
+    "display_name": "Golden Egg",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        3,
+        2
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        3,
+        2
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": false,
+    "item_type": "material",
+    "equipable": false
   },
   "duck_seed": {
     "grow_time": 81900,
@@ -9859,7 +10183,34 @@
   "milk": {
     "description": "Fresh milk.",
     "recipe_tier": 1,
-    "sheet_type": "material, consumable"
+    "sheet_type": "material, consumable",
+    "category": "material",
+    "display_name": "Bucket Milk",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        4,
+        2
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        4,
+        2
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": true,
+    "item_type": "material",
+    "equipable": false
   },
   "hay_seed": {
     "grow_time": 100,
@@ -14245,5 +14596,359 @@
         }
       ]
     }
+  },
+  "seed_pack": {
+    "category": "material",
+    "display_name": "Seed Pack",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        0,
+        0
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        0,
+        0
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": false,
+    "item_type": "material",
+    "equipable": false
+  },
+  "small_gem": {
+    "category": "material",
+    "display_name": "Small Gem",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        1,
+        0
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        1,
+        0
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": false,
+    "item_type": "material",
+    "equipable": false
+  },
+  "medium_gem": {
+    "category": "material",
+    "display_name": "Medium Gem",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        2,
+        0
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        2,
+        0
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": false,
+    "item_type": "material",
+    "equipable": false
+  },
+  "large_gem": {
+    "category": "material",
+    "display_name": "Large Gem",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        3,
+        0
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        3,
+        0
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": false,
+    "item_type": "material",
+    "equipable": false
+  },
+  "huge_gem": {
+    "category": "material",
+    "display_name": "Huge Gem",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        4,
+        0
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        4,
+        0
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": false,
+    "item_type": "material",
+    "equipable": false
+  },
+  "fertilizer": {
+    "category": "tool",
+    "display_name": "Fertilizer Spray",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        3,
+        1
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        3,
+        1
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": true,
+    "item_type": "consumable",
+    "equipable": false,
+    "growth_reduction_seconds": 3600,
+    "description": "Reduces a tree's remaining growth time by 1 hour. Consumed on successful use."
+  },
+  "super_fertilizer": {
+    "category": "tool",
+    "display_name": "Super Fertilizer Spray",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        4,
+        1
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        4,
+        1
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": true,
+    "item_type": "consumable",
+    "equipable": false,
+    "growth_reduction_seconds": 14400,
+    "description": "Reduces a tree's remaining growth time by 4 hours. Consumed on successful use."
+  },
+  "gasoline": {
+    "category": "material",
+    "display_name": "Gasoline",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        1,
+        2
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        1,
+        2
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": false,
+    "item_type": "material",
+    "equipable": false
+  },
+  "assembled_scrap": {
+    "category": "material",
+    "display_name": "Assembled Scrap",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        2,
+        3
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        2,
+        3
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": false,
+    "item_type": "material",
+    "equipable": false
+  },
+  "roman_coin": {
+    "category": "material",
+    "display_name": "Roman Coin",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        0,
+        4
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        0,
+        4
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": false,
+    "item_type": "material",
+    "equipable": false
+  },
+  "golden_roman_coin": {
+    "category": "material",
+    "display_name": "Golden Roman Coin",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        1,
+        4
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        1,
+        4
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": false,
+    "item_type": "material",
+    "equipable": false
+  },
+  "landfill_ticket": {
+    "category": "material",
+    "display_name": "Landfill Ticket",
+    "texture": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        2,
+        4
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "inventory_icon": {
+      "atlas": "res://Assets/items/material.png",
+      "cell": [
+        2,
+        4
+      ],
+      "cell_size": [
+        32,
+        32
+      ]
+    },
+    "consumable": false,
+    "item_type": "material",
+    "equipable": false,
+    "consume_on_world_entry": "landfill",
+    "description": "Required to enter a Landfill world. One ticket is consumed when you join."
   }
 }

@@ -299,6 +299,9 @@ function createServerMessageRouterHelpers(config) {
             return true;
         if (normalized === "inventory_transaction_request")
             return true;
+        // World entry can spend a Landfill Ticket; rejected admission is an economy audit event.
+        if (normalized === "join_world")
+            return true;
         if (normalized === "world_seed_update")
             return true;
         if (normalized === "world_interaction_update")

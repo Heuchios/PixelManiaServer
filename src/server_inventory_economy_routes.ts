@@ -40,6 +40,7 @@ function createServerInventoryEconomyRoutes(deps: InventoryEconomyRoutesDeps) {
     handleSafeTransaction,
     handleSeedHarvestTransaction,
     handleSeedPlaceTransaction,
+    handleSeedFertilizeTransaction,
     handleSeedSpliceTransaction,
     handleStationRecipeTransaction,
     handleTrashInventoryItemTransaction,
@@ -88,6 +89,7 @@ function createServerInventoryEconomyRoutes(deps: InventoryEconomyRoutesDeps) {
     ["convert_world_lock", handleWorldLockConversionTransaction],
     ["world_lock_get_key", handleWorldLockGetKeyTransaction],
     ["seed_place", handleSeedPlaceTransaction],
+    ["seed_fertilize", handleSeedFertilizeTransaction],
     ["seed_splice", handleSeedSpliceTransaction],
     ["seed_harvest", handleSeedHarvestTransaction],
   ]);

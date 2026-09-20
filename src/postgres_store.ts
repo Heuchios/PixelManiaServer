@@ -6886,6 +6886,13 @@ class PostgresStore {
     const pendingChanges = Array.isArray(changes) ? changes : [];
     if (pendingChanges.length === 0) return;
     if (!worldId) return;
+    if(this.questReady){
+      for(const change of pendingChanges){
+        if(change.source_type!=="world_block_update"||change.action!=="break"||change.layer!=="foreground")continue;
+        const actor=await client.query(`SELECT p.player_id FROM ${this.table("players")} p JOIN ${this.table("accounts")} a ON a.account_id=p.account_id WHERE lower(a.username::text)=lower($1)`,[String(change.actor_username||"")]);
+        if(actor.rows[0])await QuestStore.recordGameplay(this,client,actor.rows[0].player_id,"world_block_break",{block_type:change.block_type_before||change.block_type},String(change.source_id||change.request_id||""));
+      }
+    }
     if (pendingChanges.length === 1) {
       // One change is the overwhelmingly common case (a single block place or break).
       // Keep it on the single-row path so its statement text stays identical.
@@ -10253,6 +10260,7 @@ class PostgresStore {
           }
         }
 
+        await QuestStore.recordGameplay(this,client,playerId,action,metadata,String(metadata.transaction_id||requestId));
         return InventoryContracts.buildPostgresInventoryDeltaTransactionSuccess({
           playerId,
           worldId,

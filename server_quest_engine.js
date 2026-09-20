@@ -11,7 +11,7 @@ const BY_ID = new Map(CATALOGUE.map(q => [q.id, q]));
 const DAY = 86400000;
 const TIERS = ["favor", "trip", "story"];
 const REWARDS = {
-    favor: { gems: 10, stamps: 3 }, trip: { gems: 25, stamps: 5 }, story: { gems: 15, stamps: 4 },
+    favor: { gems: 10, stamps: 0, xp: 50 }, trip: { gems: 25, stamps: 0, xp: 125 }, story: { gems: 15, stamps: 0, xp: 75 },
 };
 // Account cosmetics are usable inside the Dispatch; no inventory items are minted.
 const COSMETICS = [
@@ -104,11 +104,22 @@ function view(s, day, now, account) {
         done: board.done, refresh: board.refresh, active: Object.fromEntries(Object.entries(s.active).map(([k, v]) => [k, publicInstance(v)])),
         story: publicQuest(BY_ID.get(availableStory(s, day, account)), s.flags), story_next: s.story_next, encore: s.story_next > 24,
         chapters: s.chapters, flags: s.flags, cosmetics: COSMETICS.map(c => ({ ...c, owned: s.cosmetics.includes(c.id) })), equipped: s.equipped,
-        week_days: (s.weeks[String(weekId(day))]?.days || []).length, weekly_reward: 8 };
+        week_days: (s.weeks[String(weekId(day))]?.days || []).length, weekly_reward: 100 };
 }
 function transition(raw, action, payload, now, account) {
     const s = normalize(raw), day = dayId(now);
     const board = assigned(s, day, account);
+    for (const a of Object.values(s.active)) {
+        if (!a.objectives) {
+            const q = BY_ID.get(a.quest.id);
+            a.quest = JSON.parse(JSON.stringify(q));
+            a.objectives = q.objectives;
+            a.progress = q.objectives.map(() => 0);
+            a.solved = false;
+            a.accepted_at = now;
+            a.reward = REWARDS[a.tier];
+        }
+    }
     for (const tier of ["favor", "trip"])
         if (s.active[tier] && s.active[tier].expires_at <= now)
             delete s.active[tier];
@@ -132,7 +143,9 @@ function transition(raw, action, payload, now, account) {
         s.active[tier] = { id: `${day}:${tier}`, tier, day, quest: JSON.parse(JSON.stringify(q)), variant, puzzle: JSON.parse(JSON.stringify(q.variants[variant])),
             inspected: [], solved: false, hint: false, accepted_at: now, expires_at: tier === "story" ? null : (day + 2) * DAY + 4 * 3600000, reward: REWARDS[tier] };
         s.active[tier].quest.callback = callback(q, s.flags);
-        message = "Letter accepted. Inspect the clues to begin.";
+        s.active[tier].objectives = JSON.parse(JSON.stringify(q.objectives));
+        s.active[tier].progress = q.objectives.map(() => 0);
+        message = "Quest accepted. Play normally, then return to the board to claim gems and XP.";
     }
     else if (action === "quest_refresh") {
         const tier = String(payload.tier || "");
@@ -174,6 +187,8 @@ function transition(raw, action, payload, now, account) {
             message = a.puzzle.hint;
         }
         if (action === "quest_solve") {
+            if (a.objectives)
+                fail("Complete this objective through gameplay, then return to the Quest Board.");
             if (a.inspected.length !== a.puzzle.clues.length)
                 fail("Read each clue before submitting the puzzle.");
             const answer = payload.answer;
@@ -199,7 +214,7 @@ function transition(raw, action, payload, now, account) {
             original.done[tier] = true;
             s.stamps += a.reward.stamps;
             gemDelta += a.reward.gems;
-            const receipt = { id: a.id, quest_id: a.quest.id, day: a.day, tier, gems: a.reward.gems, stamps: a.reward.stamps, choice: choice.id, reply: choice.reply, at: now };
+            const receipt = { id: a.id, quest_id: a.quest.id, day: a.day, tier, gems: a.reward.gems, xp: a.reward.xp || 0, stamps: a.reward.stamps, choice: choice.id, reply: choice.reply, at: now };
             receipts.push(receipt);
             if (tier === "story" && a.quest.chapter_order) {
                 if (a.quest.chapter_order !== s.story_next)
@@ -215,8 +230,7 @@ function transition(raw, action, payload, now, account) {
                 s.weeks[week].days.push(day);
             if (s.weeks[week].days.length >= 5 && !s.weeks[week].rewarded) {
                 s.weeks[week].rewarded = true;
-                s.stamps += 8;
-                receipts.push({ id: `week:${week}`, gems: 0, stamps: 8, at: now, quest_id: "weekly", tier: "weekly" });
+                receipts.push({ id: `week:${week}`, gems: 0, xp: 100, stamps: 0, at: now, quest_id: "weekly", tier: "weekly" });
             }
             delete s.active[tier];
             message = choice.reply;

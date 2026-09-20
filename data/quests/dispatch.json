@@ -1,16 +1,17 @@
 {
-  "version": 1,
+  "version": 2,
   "quests": [
     {
       "id": "C01",
       "tier": "favor",
-      "family": "letters",
-      "npc": "Pip",
-      "title": "The Backward Postmark",
-      "opening": "The stamp says tomorrow. The complaint says yesterday. I would like to blame the clock, but the clock has requested a lawyer.",
+      "family": "plant",
+      "npc": "Tansy",
+      "title": "A Fresh Start",
+      "opening": "A bare patch can become a little promise. Plant a fresh row for tomorrow.",
       "reward": {
         "gems": 10,
-        "stamps": 3
+        "xp": 50,
+        "stamps": 0
       },
       "minutes": [
         4,
@@ -24,13 +25,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "A polite correction",
-          "reply": "Pip files the correction under Minor Chronological Disasters. The envelope finally stops ticking."
+          "label": "Share the good news",
+          "reply": "Tansy smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "An extremely official doodle",
-          "reply": "Pip draws a clock wearing a hat. The envelope approves by turning the right way up."
+          "label": "Thank the neighbors",
+          "reply": "Tansy promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -116,18 +117,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "plant",
+          "item_type": "",
+          "target": 8,
+          "label": "Plant 8 seeds"
+        }
+      ]
     },
     {
       "id": "C02",
       "tier": "favor",
-      "family": "letters",
-      "npc": "Mica",
-      "title": "The Borrowed Ending",
-      "opening": "Someone returned this story without its ending. I suspect they wanted it to go on longer. We can give it a gentle place to stop.",
+      "family": "harvest",
+      "npc": "Tansy",
+      "title": "The Morning Harvest",
+      "opening": "The neighbors are waiting for the first harvest. Let the trees finish growing.",
       "reward": {
         "gems": 10,
-        "stamps": 3
+        "xp": 50,
+        "stamps": 0
       },
       "minutes": [
         4,
@@ -141,13 +151,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "A hopeful ending",
-          "reply": "Mica closes the book softly. The blank space becomes a small drawing of a door."
+          "label": "Share the good news",
+          "reply": "Tansy smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "A ridiculous ending",
-          "reply": "The hero is rescued by a very punctual spoon. Mica admits this improves the original."
+          "label": "Thank the neighbors",
+          "reply": "Tansy promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -248,18 +258,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "harvest",
+          "item_type": "",
+          "target": 6,
+          "label": "Harvest 6 mature trees"
+        }
+      ]
     },
     {
       "id": "C03",
       "tier": "trip",
-      "family": "letters",
-      "npc": "Pip",
-      "title": "Address: A Little Less Lonely",
-      "opening": "Three parcels have arrived for people who forgot they were expecting anything. The addresses are feelings, which is inconvenient for sorting.",
+      "family": "break",
+      "npc": "Rue",
+      "title": "Room to Grow",
+      "opening": "Rue needs a planting patch cleared before the next garden visit.",
       "reward": {
         "gems": 25,
-        "stamps": 5
+        "xp": 125,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -273,13 +292,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "Send the spare lantern to Rue",
-          "reply": "Rue leaves the lantern by an empty chair. The return note says: Saved you a place."
+          "label": "Share the good news",
+          "reply": "Rue smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "Send the spare lantern to Nell",
-          "reply": "Nell hangs it where the reeds hide the path. The return note says: The river says thanks."
+          "label": "Thank the neighbors",
+          "reply": "Rue promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -380,18 +399,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "break",
+          "item_type": "dirt",
+          "target": 40,
+          "label": "Break 40 dirt blocks"
+        }
+      ]
     },
     {
       "id": "C04",
       "tier": "trip",
-      "family": "letters",
-      "npc": "Mica",
-      "title": "The Page That Would Not Sit Still",
-      "opening": "This page keeps moving to the next shelf. It is not haunted. It is merely filed under a subject it disagrees with.",
+      "family": "fish",
+      "npc": "Nell",
+      "title": "Supper by the River",
+      "opening": "Nell has invited the neighbors for supper. A few good catches will help.",
       "reward": {
         "gems": 25,
-        "stamps": 5
+        "xp": 125,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -405,13 +433,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "A Very Small Adventure",
-          "reply": "The page settles down. Mica quietly adds a second entry under Surprisingly Stubborn Stationery."
+          "label": "Share the good news",
+          "reply": "Nell smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "The Page That Won",
-          "reply": "The page bows. Mica gives it a shelf with enough room for its confidence."
+          "label": "Thank the neighbors",
+          "reply": "Nell promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -497,18 +525,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "fish",
+          "item_type": "",
+          "target": 6,
+          "label": "Catch 6 fish"
+        }
+      ]
     },
     {
       "id": "C05",
       "tier": "favor",
-      "family": "building",
-      "npc": "Rue",
-      "title": "A Window for the Wind",
-      "opening": "There is a breeze that keeps knocking at my door. I think it wants to visit. Could we make somewhere it can come and go politely?",
+      "family": "splice",
+      "npc": "Tansy",
+      "title": "A Little Green",
+      "opening": "Tansy wants a green border for the community garden.",
       "reward": {
         "gems": 10,
-        "stamps": 3
+        "xp": 50,
+        "stamps": 0
       },
       "minutes": [
         4,
@@ -522,13 +559,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "A high window",
-          "reply": "The breeze whistles through the roofline. Rue calls it a skylight with opinions."
+          "label": "Share the good news",
+          "reply": "Tansy smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "A low window",
-          "reply": "The breeze settles near the floor. Rue sets out a very small welcome mat."
+          "label": "Thank the neighbors",
+          "reply": "Tansy promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -593,18 +630,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "splice",
+          "item_type": "grass_seed",
+          "target": 1,
+          "label": "Splice 1 Grass tree (Dirt + Leaf seeds)"
+        }
+      ]
     },
     {
       "id": "C06",
       "tier": "favor",
-      "family": "building",
-      "npc": "Rue",
-      "title": "One Chair Too Many",
-      "opening": "The room is finished. The problem is that nobody has sat down in it yet. A room can be shy too, apparently.",
+      "family": "plant",
+      "npc": "Pip",
+      "title": "Seeds for Tomorrow",
+      "opening": "Pip promised to bring news of a new orchard on the next delivery.",
       "reward": {
         "gems": 10,
-        "stamps": 3
+        "xp": 50,
+        "stamps": 0
       },
       "minutes": [
         4,
@@ -618,13 +664,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "For someone new",
-          "reply": "Rue turns the spare chair toward the door. That should make the first hello easier."
+          "label": "Share the good news",
+          "reply": "Pip smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "For an old friend",
-          "reply": "Rue leaves the chair just a little crooked. Old friends will recognize the place."
+          "label": "Thank the neighbors",
+          "reply": "Pip promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -686,18 +732,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "plant",
+          "item_type": "",
+          "target": 12,
+          "label": "Plant 12 seeds"
+        }
+      ]
     },
     {
       "id": "C07",
       "tier": "trip",
-      "family": "building",
+      "family": "break",
       "npc": "Rue",
-      "title": "The Smallest Festival",
-      "opening": "We have one table, six decorations, and an unreasonable amount of hope. That is enough for a festival if we arrange it correctly.",
+      "title": "Stone for the Path",
+      "opening": "The path to the garden needs a sturdier foundation.",
       "reward": {
         "gems": 25,
-        "stamps": 5
+        "xp": 125,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -711,13 +766,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "Paper stars",
-          "reply": "Rue declares it a festival. Pip arrives wearing a star that was meant for the roof."
+          "label": "Share the good news",
+          "reply": "Rue smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "Bright bunting",
-          "reply": "The bunting flutters. Nell asks whether the festival has a fishing category."
+          "label": "Thank the neighbors",
+          "reply": "Rue promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -788,18 +843,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "break",
+          "item_type": "stone",
+          "target": 40,
+          "label": "Break 40 stone blocks"
+        }
+      ]
     },
     {
       "id": "C08",
       "tier": "trip",
-      "family": "building",
-      "npc": "Bolt",
-      "title": "A Bridge for a Very Small Problem",
-      "opening": "My parcel cart cannot cross this gap. The gap is not large, but the cart has written a surprisingly long complaint.",
+      "family": "fish",
+      "npc": "Nell",
+      "title": "The Patient Angler",
+      "opening": "Nell says every catch has a story. Bring back five of them.",
       "reward": {
         "gems": 25,
-        "stamps": 5
+        "xp": 125,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -813,13 +877,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "Make it sturdy",
-          "reply": "The cart crosses and files a brief thank-you. Bolt is delighted by the reduction in paperwork."
+          "label": "Share the good news",
+          "reply": "Nell smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "Make it cheerful",
-          "reply": "The cart crosses under paper flags. Its complaint has become a parade route."
+          "label": "Thank the neighbors",
+          "reply": "Nell promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -890,18 +954,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "fish",
+          "item_type": "",
+          "target": 6,
+          "label": "Catch 6 fish"
+        }
+      ]
     },
     {
       "id": "C09",
       "tier": "favor",
-      "family": "garden",
-      "npc": "Tansy",
-      "title": "The Shy Seed",
-      "opening": "This seed grows whenever nobody calls it impressive. Let us try being quietly encouraging and see what happens.",
+      "family": "splice",
+      "npc": "Rue",
+      "title": "A Wooden Welcome",
+      "opening": "Rue is preparing materials for a welcoming bench.",
       "reward": {
         "gems": 10,
-        "stamps": 3
+        "xp": 50,
+        "stamps": 0
       },
       "minutes": [
         4,
@@ -915,13 +988,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "A good beginning",
-          "reply": "The sprout unfolds one brave leaf. Tansy writes down: Encouragement, moderate volume."
+          "label": "Share the good news",
+          "reply": "Rue smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "Take your time",
-          "reply": "The sprout leans against its label. Tansy decides patience is a perfectly good fertilizer."
+          "label": "Thank the neighbors",
+          "reply": "Rue promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -1022,18 +1095,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "splice",
+          "item_type": "wooden_block_seed",
+          "target": 1,
+          "label": "Splice 1 Wooden Block tree (Dirt + Wood seeds)"
+        }
+      ]
     },
     {
       "id": "C10",
       "tier": "favor",
-      "family": "garden",
-      "npc": "Tansy",
-      "title": "The Label Mix-Up",
-      "opening": "The labels have become detached from the plants. One pot now claims to contain a small thunderstorm. I would rather check before watering it.",
+      "family": "harvest",
+      "npc": "Pip",
+      "title": "Harvest Letters",
+      "opening": "The mailbag is full of requests from the growers. Time to help with their harvest.",
       "reward": {
         "gems": 10,
-        "stamps": 3
+        "xp": 50,
+        "stamps": 0
       },
       "minutes": [
         4,
@@ -1047,13 +1129,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "Small thunderstorm",
-          "reply": "The thunderstorm is a fern. It accepts its promotion with dignity."
+          "label": "Share the good news",
+          "reply": "Pip smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "Extremely leafy fish",
-          "reply": "The leafy fish remains firmly planted. Nell requests a second opinion."
+          "label": "Thank the neighbors",
+          "reply": "Pip promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -1154,18 +1236,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "harvest",
+          "item_type": "",
+          "target": 8,
+          "label": "Harvest 8 mature trees"
+        }
+      ]
     },
     {
       "id": "C11",
       "tier": "trip",
-      "family": "garden",
-      "npc": "Tansy",
-      "title": "A Cloud in a Jam Jar",
-      "opening": "The cloud agreed to water the garden, but it can only turn left. Please do not ask how it got into the jar. That was a separate mistake.",
+      "family": "splice",
+      "npc": "Bolt",
+      "title": "A Brick Beginning",
+      "opening": "Bolt has a drawing for a tiny workshop foundation.",
       "reward": {
         "gems": 25,
-        "stamps": 5
+        "xp": 125,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -1179,13 +1270,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "Let it wander",
-          "reply": "The cloud leaves one last careful raindrop. Tansy waves until it becomes ordinary weather."
+          "label": "Share the good news",
+          "reply": "Bolt smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "Invite it to stay",
-          "reply": "The cloud accepts the name Drizzle. The jam jar is officially retired."
+          "label": "Thank the neighbors",
+          "reply": "Bolt promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -1250,18 +1341,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "splice",
+          "item_type": "stone_brick_seed",
+          "target": 2,
+          "label": "Splice 2 Stone Brick tree (Dirt + Stone seeds)"
+        }
+      ]
     },
     {
       "id": "C12",
       "tier": "trip",
-      "family": "garden",
-      "npc": "Mica",
-      "title": "A Recipe With Room for Surprise",
-      "opening": "The margin of this gardening notebook says: Add what you know, then leave room for what you do not. The recipe appears to mean it.",
+      "family": "plant",
+      "npc": "Tansy",
+      "title": "The Garden Border",
+      "opening": "A small green border will make this corner feel like home.",
       "reward": {
         "gems": 25,
-        "stamps": 5
+        "xp": 125,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -1275,13 +1375,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "A useful discovery",
-          "reply": "Mica adds a careful diagram. Tansy adds a tiny smile in the corner."
+          "label": "Share the good news",
+          "reply": "Tansy smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "A beautiful question",
-          "reply": "Mica leaves the last line blank. For once, nobody tries to repair the blank space."
+          "label": "Thank the neighbors",
+          "reply": "Tansy promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -1382,18 +1482,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "plant",
+          "item_type": "grass_seed",
+          "target": 20,
+          "label": "Plant 20 Grass seeds"
+        }
+      ]
     },
     {
       "id": "C13",
       "tier": "favor",
-      "family": "water",
-      "npc": "Nell",
-      "title": "A Difficult Witness",
-      "opening": "A fish says it saw a lantern walking. Fish are not famous for precision. Could you help me separate the lantern from the walking?",
+      "family": "plant",
+      "npc": "Tansy",
+      "title": "Orchard Afternoon",
+      "opening": "Tansy is planning a larger orchard. Every planted seed gets it closer.",
       "reward": {
         "gems": 10,
-        "stamps": 3
+        "xp": 50,
+        "stamps": 0
       },
       "minutes": [
         4,
@@ -1407,13 +1516,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "An official investigation",
-          "reply": "The lantern was on Pip's satchel. Nell awards the fish partial credit."
+          "label": "Share the good news",
+          "reply": "Tansy smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "A fishy business",
-          "reply": "The lantern was on Pip's satchel. Nell awards herself full credit for the pun."
+          "label": "Thank the neighbors",
+          "reply": "Tansy promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -1514,18 +1623,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "plant",
+          "item_type": "",
+          "target": 12,
+          "label": "Plant 12 seeds"
+        }
+      ]
     },
     {
       "id": "C14",
       "tier": "favor",
-      "family": "water",
-      "npc": "Nell",
-      "title": "The Bottle With No Sea",
-      "opening": "This message traveled six inches and is very proud of itself. I think we should find out what was so urgent.",
+      "family": "harvest",
+      "npc": "Pip",
+      "title": "The Harvest Basket",
+      "opening": "Pip volunteered to help with the harvest. The basket is larger than expected.",
       "reward": {
         "gems": 10,
-        "stamps": 3
+        "xp": 50,
+        "stamps": 0
       },
       "minutes": [
         4,
@@ -1539,13 +1657,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "Your message arrived safely",
-          "reply": "The reply travels six inches back. Somewhere, a very small correspondent is relieved."
+          "label": "Share the good news",
+          "reply": "Pip smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "Next time, try a stamp",
-          "reply": "Pip adds a miniature stamp. Nell insists that the river must still receive a tip."
+          "label": "Thank the neighbors",
+          "reply": "Pip promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -1631,18 +1749,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "harvest",
+          "item_type": "",
+          "target": 8,
+          "label": "Harvest 8 mature trees"
+        }
+      ]
     },
     {
       "id": "C15",
       "tier": "trip",
-      "family": "water",
-      "npc": "Nell",
-      "title": "Three Fish and a Rumor",
-      "opening": "Three witnesses, three stories, and none of them agree on the size of the hat. We may have to use geography.",
+      "family": "break",
+      "npc": "Rue",
+      "title": "The Builders Pitch In",
+      "opening": "The neighbors are clearing space for their next building project.",
       "reward": {
         "gems": 25,
-        "stamps": 5
+        "xp": 125,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -1656,13 +1783,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "A mysterious visitor",
-          "reply": "The visitor was Pip, investigating the hat from the other side of the river."
+          "label": "Share the good news",
+          "reply": "Rue smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "Pip lost another hat",
-          "reply": "Pip would prefer the word misplaced. The fish remain unconvinced."
+          "label": "Thank the neighbors",
+          "reply": "Rue promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -1763,18 +1890,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "break",
+          "item_type": "",
+          "target": 60,
+          "label": "Break 60 foreground blocks"
+        }
+      ]
     },
     {
       "id": "C16",
       "tier": "trip",
-      "family": "water",
-      "npc": "Mica",
-      "title": "The River's Borrowed Light",
-      "opening": "The river has returned a reflection that belongs to a different night. Nell thinks it is a receipt. I think it is a memory.",
+      "family": "fish",
+      "npc": "Nell",
+      "title": "A River Gathering",
+      "opening": "The river picnic grew into a neighborhood gathering. Nell could use a hand.",
       "reward": {
         "gems": 25,
-        "stamps": 5
+        "xp": 125,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -1788,13 +1924,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "Back on the river",
-          "reply": "The reflection settles into the water. Nell says it looks less worried now."
+          "label": "Share the good news",
+          "reply": "Nell smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "In a lantern for travelers",
-          "reply": "Rue hangs the lantern by the path. The river seems pleased to be useful on land."
+          "label": "Thank the neighbors",
+          "reply": "Nell promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -1856,18 +1992,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "fish",
+          "item_type": "",
+          "target": 8,
+          "label": "Catch 8 fish"
+        }
+      ]
     },
     {
       "id": "C17",
       "tier": "favor",
-      "family": "workshop",
-      "npc": "Bolt",
-      "title": "The Button That Does Nothing",
-      "opening": "At last: a button with no dangerous consequences. Unfortunately it was supposed to ring a bell. Could you inspect the diagram?",
+      "family": "splice",
+      "npc": "Tansy",
+      "title": "Three Green Promises",
+      "opening": "Three little patches of green will connect the neighbors gardens.",
       "reward": {
         "gems": 10,
-        "stamps": 3
+        "xp": 50,
+        "stamps": 0
       },
       "minutes": [
         4,
@@ -1881,13 +2026,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "A polite ding",
-          "reply": "Ding. Bolt looks deeply proud of this manageable achievement."
+          "label": "Share the good news",
+          "reply": "Tansy smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "A very important ding",
-          "reply": "DING. Pip arrives with three forms and no explanation."
+          "label": "Thank the neighbors",
+          "reply": "Tansy promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -1988,18 +2133,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "splice",
+          "item_type": "grass_seed",
+          "target": 1,
+          "label": "Splice 1 Grass trees (Dirt + Leaf seeds)"
+        }
+      ]
     },
     {
       "id": "C18",
       "tier": "favor",
-      "family": "workshop",
+      "family": "splice",
       "npc": "Bolt",
-      "title": "The Upside-Down Manual",
-      "opening": "The machine works perfectly if I stand on my head. I would like a solution with fewer medical implications.",
+      "title": "The Wooden Workshop",
+      "opening": "Bolt wants to try building with something quieter than metal.",
       "reward": {
         "gems": 10,
-        "stamps": 3
+        "xp": 50,
+        "stamps": 0
       },
       "minutes": [
         4,
@@ -2013,13 +2167,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "THIS WAY UP",
-          "reply": "Bolt thanks you and turns the entire workbench around. We are calling that progress."
+          "label": "Share the good news",
+          "reply": "Bolt smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "A cheerful arrow",
-          "reply": "The arrow is clear enough even for Bolt. He adds a second arrow to thank the first."
+          "label": "Thank the neighbors",
+          "reply": "Bolt promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -2105,18 +2259,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "splice",
+          "item_type": "wooden_block_seed",
+          "target": 1,
+          "label": "Splice 1 Wooden Block trees (Dirt + Wood seeds)"
+        }
+      ]
     },
     {
       "id": "C19",
       "tier": "trip",
-      "family": "workshop",
-      "npc": "Bolt",
-      "title": "The Machine That Makes Almost",
-      "opening": "It makes almost a lantern, almost a whistle, and almost tea. One of those is more urgent than the others.",
+      "family": "splice",
+      "npc": "Rue",
+      "title": "A Stone Brick Path",
+      "opening": "Rue has marked the first three sections of a new path.",
       "reward": {
         "gems": 25,
-        "stamps": 5
+        "xp": 125,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -2130,13 +2293,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "A little light",
-          "reply": "The light is slightly crooked. Rue calls that character, which saves Bolt a great deal of work."
+          "label": "Share the good news",
+          "reply": "Rue smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "A clear whistle",
-          "reply": "The whistle plays one excellent note. Nell asks if it can interview fish."
+          "label": "Thank the neighbors",
+          "reply": "Rue promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -2201,18 +2364,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "splice",
+          "item_type": "stone_brick_seed",
+          "target": 3,
+          "label": "Splice 3 Stone Brick trees (Dirt + Stone seeds)"
+        }
+      ]
     },
     {
       "id": "C20",
       "tier": "trip",
-      "family": "workshop",
-      "npc": "Rue",
-      "title": "A Detour for Yesterday",
-      "opening": "Bolt's conveyor keeps returning the same parcel to the sender. It is efficient in a way nobody asked for.",
+      "family": "harvest",
+      "npc": "Tansy",
+      "title": "Green Harvest",
+      "opening": "The garden border has grown. Help Tansy gather its first harvest.",
       "reward": {
         "gems": 25,
-        "stamps": 5
+        "xp": 125,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -2226,13 +2398,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "Delivered at last",
-          "reply": "Pip receives the parcel and briefly considers framing the route map."
+          "label": "Share the good news",
+          "reply": "Tansy smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "A scenic route",
-          "reply": "The parcel has seen more of the workshop than most visitors. Rue calls that tourism."
+          "label": "Thank the neighbors",
+          "reply": "Tansy promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -2297,18 +2469,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "harvest",
+          "item_type": "grass_seed",
+          "target": 12,
+          "label": "Harvest 12 mature Grass trees"
+        }
+      ]
     },
     {
       "id": "C21",
       "tier": "favor",
-      "family": "exploring",
-      "npc": "Pip",
-      "title": "Footprints That Forgot Their Feet",
-      "opening": "The footprints arrived without the courier. They seem embarrassed. Let us work out which way they were trying to go.",
+      "family": "break",
+      "npc": "Mica",
+      "title": "A Rocky Errand",
+      "opening": "Mica wants the old stonework rebuilt with freshly gathered material.",
       "reward": {
         "gems": 10,
-        "stamps": 3
+        "xp": 50,
+        "stamps": 0
       },
       "minutes": [
         4,
@@ -2322,13 +2503,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "We found your route",
-          "reply": "The courier was Pip. The footprints were from yesterday. Pip is taking this very professionally."
+          "label": "Share the good news",
+          "reply": "Mica smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "We saved you a snack",
-          "reply": "Pip arrives for the snack and remembers the route shortly afterward."
+          "label": "Thank the neighbors",
+          "reply": "Mica promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -2414,18 +2595,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "break",
+          "item_type": "stone",
+          "target": 20,
+          "label": "Break 20 stone blocks"
+        }
+      ]
     },
     {
       "id": "C22",
       "tier": "favor",
-      "family": "exploring",
-      "npc": "Mica",
-      "title": "The Quiet Landmark",
-      "opening": "This landmark has never been famous, but three very good things happened beside it. That seems worth a small label.",
+      "family": "fish",
+      "npc": "Nell",
+      "title": "A Day by the Water",
+      "opening": "Nell has time for a longer fishing trip. There is a place beside her for you.",
       "reward": {
         "gems": 10,
-        "stamps": 3
+        "xp": 50,
+        "stamps": 0
       },
       "minutes": [
         4,
@@ -2439,13 +2629,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "Something good happened here",
-          "reply": "The plaque is small. Mica says important things are allowed to be small."
+          "label": "Share the good news",
+          "reply": "Nell smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "There is room for more",
-          "reply": "The landmark suddenly looks less like a destination and more like a beginning."
+          "label": "Thank the neighbors",
+          "reply": "Nell promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -2546,18 +2736,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "fish",
+          "item_type": "",
+          "target": 3,
+          "label": "Catch 3 fish"
+        }
+      ]
     },
     {
       "id": "C23",
       "tier": "trip",
-      "family": "exploring",
-      "npc": "Mica",
-      "title": "The Map With a Fold in It",
-      "opening": "The map keeps folding over the place you need. I suspect the place is shy, or the map is trying to protect its best picnic spot.",
+      "family": "plant",
+      "npc": "Pip",
+      "title": "The Next Orchard",
+      "opening": "Pip wants to deliver a letter saying the orchard is finally underway.",
       "reward": {
         "gems": 25,
-        "stamps": 5
+        "xp": 125,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -2571,13 +2770,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "A place to share lunch",
-          "reply": "Rue adds one small table to the postcard. The map stops folding quite so tightly."
+          "label": "Share the good news",
+          "reply": "Pip smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "A place to watch the sky",
-          "reply": "Nell marks the best view. Pip asks whether the sky accepts mail."
+          "label": "Thank the neighbors",
+          "reply": "Pip promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -2663,18 +2862,27 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "plant",
+          "item_type": "",
+          "target": 35,
+          "label": "Plant 35 seeds"
+        }
+      ]
     },
     {
       "id": "C24",
       "tier": "trip",
-      "family": "exploring",
-      "npc": "Pip",
-      "title": "A Parcel for the Place Between",
-      "opening": "The address reads: Between the last hello and the next one. I have narrowed that down to approximately everywhere.",
+      "family": "harvest",
+      "npc": "Tansy",
+      "title": "Harvest Festival",
+      "opening": "The festival begins with a harvest, and the neighbors are counting on yours.",
       "reward": {
         "gems": 25,
-        "stamps": 5
+        "xp": 125,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -2688,13 +2896,13 @@
       "choices": [
         {
           "id": "a",
-          "label": "Someone arriving",
-          "reply": "The parcel contains a blank address card. Pip says that is exactly the right size for a beginning."
+          "label": "Share the good news",
+          "reply": "Tansy smiles. Your help made a difference today."
         },
         {
           "id": "b",
-          "label": "Someone returning",
-          "reply": "The parcel contains a familiar ribbon. Pip says some addresses are people, after all."
+          "label": "Thank the neighbors",
+          "reply": "Tansy promises to pass your thanks along. The next adventure can wait until tomorrow."
         }
       ],
       "variants": [
@@ -2795,7 +3003,15 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "harvest",
+          "item_type": "",
+          "target": 20,
+          "label": "Harvest 20 mature trees"
+        }
+      ]
     },
     {
       "id": "S01",
@@ -2806,7 +3022,8 @@
       "opening": "This letter has your name, tomorrow's date, and no sender. I have checked the calendar twice. It is being very unhelpful.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -2863,7 +3080,15 @@
       "flag": "a_seal",
       "postcard": "concept_postcard_s01",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "plant",
+          "item_type": "",
+          "target": 8,
+          "label": "Plant 8 seeds"
+        }
+      ]
     },
     {
       "id": "S02",
@@ -2874,7 +3099,8 @@
       "opening": "Pip says the address is somewhere warm. That is not a street, but it is a perfectly reasonable thing to need.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -2924,7 +3150,15 @@
       "flag": "a_light",
       "postcard": "concept_postcard_s02",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "plant",
+          "item_type": "",
+          "target": 10,
+          "label": "Plant 10 seeds"
+        }
+      ]
     },
     {
       "id": "S03",
@@ -2935,7 +3169,8 @@
       "opening": "The paper moth has stolen a word. It is holding it very carefully for a thief. Perhaps we should ask what it thinks it is doing.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -2992,7 +3227,15 @@
       "flag": null,
       "postcard": "concept_postcard_s03",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "splice",
+          "item_type": "stone_brick_seed",
+          "target": 1,
+          "label": "Splice 1 Stone Brick tree (Dirt + Stone seeds)"
+        }
+      ]
     },
     {
       "id": "S04",
@@ -3003,7 +3246,8 @@
       "opening": "We have a destination, a last word, and a moth that refuses to leave. I think that means we are ready to write back.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -3060,7 +3304,15 @@
       "flag": null,
       "postcard": "concept_postcard_s04",
       "arc_reward": "concept_tomorrows_postmark",
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "fish",
+          "item_type": "",
+          "target": 4,
+          "label": "Catch 4 fish"
+        }
+      ]
     },
     {
       "id": "S05",
@@ -3071,7 +3323,8 @@
       "opening": "This bottle contains water that has forgotten how to be wet. I have interviewed it. It is not cooperating.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -3133,7 +3386,15 @@
       "flag": null,
       "postcard": "concept_postcard_s05",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "break",
+          "item_type": "stone",
+          "target": 10,
+          "label": "Break 10 stone blocks"
+        }
+      ]
     },
     {
       "id": "S06",
@@ -3144,7 +3405,8 @@
       "opening": "The bell was heard by three fish. Each insists it was the only witness. They have all brought diagrams.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -3206,7 +3468,15 @@
       "flag": null,
       "postcard": "concept_postcard_s06",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "harvest",
+          "item_type": "",
+          "target": 6,
+          "label": "Harvest 6 mature trees"
+        }
+      ]
     },
     {
       "id": "S07",
@@ -3217,7 +3487,8 @@
       "opening": "The bell is down there, but the moon's reflection is somewhere else. Rue says a small reflector will do. I trust Rue more than the moon.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -3266,7 +3537,15 @@
       "flag": null,
       "postcard": "concept_postcard_s07",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "break",
+          "item_type": "stone",
+          "target": 10,
+          "label": "Break 10 stone blocks"
+        }
+      ]
     },
     {
       "id": "S08",
@@ -3277,7 +3556,8 @@
       "opening": "I know that tune. Someone taught it to me before leaving Threadlight. Perhaps the river was keeping it safe.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -3334,7 +3614,15 @@
       "flag": "b_message",
       "postcard": "concept_postcard_s08",
       "arc_reward": "concept_keeper_of_small_lights",
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "plant",
+          "item_type": "grass_seed",
+          "target": 5,
+          "label": "Plant 5 Grass seeds"
+        }
+      ]
     },
     {
       "id": "S09",
@@ -3345,7 +3633,8 @@
       "opening": "Almost, Perhaps, and Not Yet. These are peculiar seed names, but I have seen worse instructions.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -3407,7 +3696,15 @@
       "flag": null,
       "postcard": "concept_postcard_s09",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "splice",
+          "item_type": "grass_seed",
+          "target": 2,
+          "label": "Splice 2 Grass trees (Dirt + Leaf seeds)"
+        }
+      ]
     },
     {
       "id": "S10",
@@ -3418,7 +3715,8 @@
       "opening": "It has rejected Moon Majesty, Supreme Blossom, and Kevin. I think we should listen before trying a fourth name.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -3480,7 +3778,15 @@
       "flag": null,
       "postcard": "concept_postcard_s10",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "fish",
+          "item_type": "",
+          "target": 4,
+          "label": "Catch 4 fish"
+        }
+      ]
     },
     {
       "id": "S11",
@@ -3491,7 +3797,8 @@
       "opening": "The cloud has watered everyone except itself. We should fix the channels, and perhaps also the arrangement.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -3541,7 +3848,15 @@
       "flag": null,
       "postcard": "concept_postcard_s11",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "break",
+          "item_type": "dirt",
+          "target": 10,
+          "label": "Break 10 dirt blocks"
+        }
+      ]
     },
     {
       "id": "S12",
@@ -3552,7 +3867,8 @@
       "opening": "We have a flower, a place for rain, and an empty planter. I think the empty planter might be the most important part.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -3602,7 +3918,15 @@
       "flag": "c_empty_planter",
       "postcard": "concept_postcard_s12",
       "arc_reward": "concept_unnamed_flower_cover",
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "fish",
+          "item_type": "",
+          "target": 4,
+          "label": "Catch 4 fish"
+        }
+      ]
     },
     {
       "id": "S13",
@@ -3613,7 +3937,8 @@
       "opening": "The instructions are all correct. They are simply correct in the wrong order. I believe that is a smaller problem.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -3670,7 +3995,15 @@
       "flag": null,
       "postcard": "concept_postcard_s13",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "plant",
+          "item_type": "",
+          "target": 10,
+          "label": "Plant 10 seeds"
+        }
+      ]
     },
     {
       "id": "S14",
@@ -3681,7 +4014,8 @@
       "opening": "It works when nobody looks at it. We have tried looking politely. Could you check the missing part?",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -3731,7 +4065,15 @@
       "flag": null,
       "postcard": "concept_postcard_s14",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "splice",
+          "item_type": "wooden_block_seed",
+          "target": 2,
+          "label": "Splice 2 Wooden Block trees (Dirt + Wood seeds)"
+        }
+      ]
     },
     {
       "id": "S15",
@@ -3742,7 +4084,8 @@
       "opening": "I wanted to save a good day for a friend. I did not intend to prevent it from ending. Those sounded more similar in the design notes.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -3799,7 +4142,15 @@
       "flag": "d_memory",
       "postcard": "concept_postcard_s15",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "plant",
+          "item_type": "",
+          "target": 10,
+          "label": "Plant 10 seeds"
+        }
+      ]
     },
     {
       "id": "S16",
@@ -3810,7 +4161,8 @@
       "opening": "The machine can remember or repeat. I think I accidentally underlined the wrong word.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -3860,7 +4212,15 @@
       "flag": null,
       "postcard": "concept_postcard_s16",
       "arc_reward": "concept_useful_mistake_badge",
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "fish",
+          "item_type": "",
+          "target": 3,
+          "label": "Catch 3 fish"
+        }
+      ]
     },
     {
       "id": "S17",
@@ -3871,7 +4231,8 @@
       "opening": "Six place cards. Five chairs. I think we should arrange the room before deciding who does not belong.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -3933,7 +4294,15 @@
       "flag": null,
       "postcard": "concept_postcard_s17",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "splice",
+          "item_type": "wooden_block_seed",
+          "target": 1,
+          "label": "Splice 1 Wooden Block tree (Dirt + Wood seeds)"
+        }
+      ]
     },
     {
       "id": "S18",
@@ -3944,7 +4313,8 @@
       "opening": "We do not need a grand event. We need one corner that looks happy to see people.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -3996,7 +4366,15 @@
       "flag": null,
       "postcard": "concept_postcard_s18",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "harvest",
+          "item_type": "",
+          "target": 10,
+          "label": "Harvest 10 mature trees"
+        }
+      ]
     },
     {
       "id": "S19",
@@ -4007,7 +4385,8 @@
       "opening": "The last lantern will not light for an instruction. I suspect it is waiting for an invitation.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -4064,7 +4443,15 @@
       "flag": null,
       "postcard": "concept_postcard_s19",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "splice",
+          "item_type": "stone_brick_seed",
+          "target": 2,
+          "label": "Splice 2 Stone Brick trees (Dirt + Stone seeds)"
+        }
+      ]
     },
     {
       "id": "S20",
@@ -4075,7 +4462,8 @@
       "opening": "We have brought your shelter and garden memories to the table. There is still one place left. That is on purpose.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -4137,7 +4525,15 @@
       "flag": "e_chair",
       "postcard": "concept_postcard_s20",
       "arc_reward": "concept_spare_chair_border",
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "harvest",
+          "item_type": "",
+          "target": 10,
+          "label": "Harvest 10 mature trees"
+        }
+      ]
     },
     {
       "id": "S21",
@@ -4148,7 +4544,8 @@
       "opening": "These scraps are not missing memories. They are the spaces around them. We may have accused the wrong part of the story.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -4210,7 +4607,15 @@
       "flag": null,
       "postcard": "concept_postcard_s21",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "splice",
+          "item_type": "grass_seed",
+          "target": 1,
+          "label": "Splice 1 Grass tree (Dirt + Leaf seeds)"
+        }
+      ]
     },
     {
       "id": "S22",
@@ -4221,7 +4626,8 @@
       "opening": "The unfinished paths all lead somewhere. We simply have to stop insisting they were meant to be finished alone.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -4278,7 +4684,15 @@
       "flag": null,
       "postcard": "concept_postcard_s22",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "harvest",
+          "item_type": "",
+          "target": 8,
+          "label": "Harvest 8 mature trees"
+        }
+      ]
     },
     {
       "id": "S23",
@@ -4289,7 +4703,8 @@
       "opening": "A memory is allowed to stay. A day is allowed to end. We can hold one without trapping the other.",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -4351,7 +4766,15 @@
       "flag": "f_keepsake",
       "postcard": "concept_postcard_s23",
       "arc_reward": null,
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "break",
+          "item_type": "",
+          "target": 10,
+          "label": "Break 10 foreground blocks"
+        }
+      ]
     },
     {
       "id": "S24",
@@ -4362,7 +4785,8 @@
       "opening": "We have the first letter, the last page, and a town willing to try tomorrow. Would you help us write the address?",
       "reward": {
         "gems": 15,
-        "stamps": 4
+        "xp": 75,
+        "stamps": 0
       },
       "minutes": [
         8,
@@ -4419,7 +4843,15 @@
       "flag": "f_signature",
       "postcard": "concept_postcard_s24",
       "arc_reward": "concept_story_goes_on_seal",
-      "content_version": 1
+      "content_version": 2,
+      "objectives": [
+        {
+          "action": "harvest",
+          "item_type": "grass_seed",
+          "target": 8,
+          "label": "Harvest 8 mature Grass trees"
+        }
+      ]
     }
   ]
 }

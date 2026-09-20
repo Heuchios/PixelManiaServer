@@ -21,6 +21,8 @@ async function main() {
  // Exercise the same migrations and ledger/hash methods used by the real store.
  await store.ensureInventorySchema();
  await store.ensurePersistenceSchema();
+ await store.ensureProgressionSchema();
+ store.progressionReady=true;
  await Quests.ensureSchema(store); await Quests.ensureSchema(store);
  store.questReady=true;
  store.withTransaction = work => db.transaction(async tx => {
@@ -37,21 +39,47 @@ async function main() {
  await call('quest_board_get');
  await call('quest_accept',{tier:'story',quest_id:board.story.id});
  const active=board.active.story;
- for(let clue=0;clue<active.puzzle.clues.length;clue++)await call('quest_inspect',{tier:'story',instance_id:active.id,clue});
+ await call('quest_choose',{tier:'story',instance_id:active.id,choice:'a'},false);
  const raw=(await db.query('SELECT state FROM pixelmania.quest_accounts')).rows[0].state;
- await call('quest_solve',{tier:'story',instance_id:active.id,answer:raw.active.story.puzzle.solution});
+ await call('quest_solve',{tier:'story',instance_id:active.id,answer:raw.active.story.puzzle.solution},false);
+ const playerId=(await db.query('SELECT player_id FROM pixelmania.quest_accounts')).rows[0].player_id;
+ const objective=active.objectives[0];
+ const action={plant:'seed_place',splice:'seed_splice',harvest:'seed_harvest',fish:'fishing_complete',break:'world_block_break'}[objective.action];
+ for(let i=0;i<objective.target;i++){
+  if(i===0&&action==='seed_place'){
+   await db.query("INSERT INTO pixelmania.inventory(player_id,item_type,item_category,amount,stack_limit) VALUES($1,'dirt_seed','seed',20,400)",[playerId]);
+   const real=await store.applyInventoryDeltaTransaction({username:'quest-sql-test',source:'seed_place',action:'seed_place',request_id:'real-plant',deltas:[{item_type:'dirt_seed',item_category:'seed',delta:-1,expected_before_amount:20}],metadata:{transaction_id:'real-plant',seed_type:'dirt_seed'}});
+   assert.equal(real.ok,true,JSON.stringify(real));continue;
+  }
+  await db.transaction(async tx=>{
+   const metadata={seed_type:objective.item_type,item_id:objective.item_type,block_type:objective.item_type,item_category:'fish',matured:true};
+   await Quests.recordGameplay(store,tx,playerId,action,metadata,'event-'+i);
+   await Quests.recordGameplay(store,tx,playerId,action,metadata,'event-'+i);
+  });
+ }
+ await call('quest_board_get');assert.equal(board.active.story.progress[0],objective.target);
+ assert.equal(Number((await db.query('SELECT count(*) FROM pixelmania.quest_gameplay_events')).rows[0].count),objective.target);
+ // Fake catches, immature trees, rejected requests and rolled-back gameplay cannot count.
+ await db.transaction(async tx=>{
+  await Quests.recordGameplay(store,tx,playerId,'seed_harvest',{seed_type:'dirt_seed',matured:false},'immature');
+  await Quests.recordGameplay(store,tx,playerId,'fishing_complete',{item_category:'block'},'junk');
+ });
+ await assert.rejects(db.transaction(async tx=>{await Quests.recordGameplay(store,tx,playerId,'seed_place',{seed_type:'dirt_seed'},'rollback-action');throw Error('rollback');}));
+ assert.equal(Number((await db.query('SELECT count(*) FROM pixelmania.quest_gameplay_events')).rows[0].count),objective.target);
  // Force a late database failure: all earlier gem, stamp, and receipt writes roll back.
  await db.exec("CREATE FUNCTION pixelmania.fail_quest_save() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN RAISE EXCEPTION 'injected save failure'; END $$; CREATE TRIGGER fail_quest_save BEFORE UPDATE ON pixelmania.quest_accounts FOR EACH ROW EXECUTE FUNCTION pixelmania.fail_quest_save();");
  await call('quest_choose',{tier:'story',instance_id:active.id,choice:'a'},false);
  assert.equal(Number((await db.query('SELECT count(*) FROM pixelmania.quest_receipts')).rows[0].count),0);
  assert.equal(Number((await db.query('SELECT count(*) FROM pixelmania.gem_ledger')).rows[0].count),0);
+ assert.equal(Number((await db.query('SELECT player_total_xp FROM pixelmania.players WHERE player_id=$1',[playerId])).rows[0].player_total_xp),0);
  await db.exec('DROP TRIGGER fail_quest_save ON pixelmania.quest_accounts');
  const revision=board.revision;
  await call('quest_choose',{tier:'story',instance_id:active.id,choice:'a'});
- assert.equal(board.stamps,4);
+ assert.equal(board.stamps,0);
+ assert.equal(Number((await db.query('SELECT player_total_xp FROM pixelmania.players WHERE player_id=$1',[playerId])).rows[0].player_total_xp),75);
  assert.equal(Number((await db.query("SELECT amount FROM pixelmania.inventory WHERE item_type='gem'")).rows[0].amount),15);
  assert.equal(Number((await db.query('SELECT count(*) FROM pixelmania.gem_ledger')).rows[0].count),1);
- assert.equal(Number((await db.query('SELECT count(*) FROM pixelmania.transaction_ledger')).rows[0].count),1);
+ assert.equal(Number((await db.query("SELECT count(*) FROM pixelmania.transaction_ledger WHERE transaction_type='QUEST_REWARD'")).rows[0].count),1);
  // Concurrent stale completions cannot mint a second reward.
  const retries=await Promise.all(Array.from({length:4},()=>Quests.apply(store,{username:'quest-sql-test',world:'START',request_id:`retry-${++seq}`,action:'quest_choose',payload:{revision,tier:'story',instance_id:active.id,choice:'a'}})));
  assert(retries.every(r=>!r.ok));
@@ -66,6 +94,40 @@ async function main() {
  await call('quest_choose',{tier:'story',instance_id:active.id,choice:'a'},false);
  assert.equal(Number((await db.query("SELECT amount FROM pixelmania.inventory WHERE item_type='gem'")).rows[0].amount),15);
  await db.query('UPDATE pixelmania.quest_accounts SET state=$1::jsonb',[JSON.stringify(persisted)]);
+ assert.equal(Number((await db.query('SELECT player_total_xp FROM pixelmania.players WHERE player_id=$1',[playerId])).rows[0].player_total_xp),75);
+ // Named objectives reject wrong species; every gameplay category is reconciled from committed rows.
+ const tracking=structuredClone(raw);
+ tracking.active.story.accepted_at=Date.now()+1000;
+ tracking.active.story.objectives=[
+  {action:'plant',item_type:'grass_seed',target:1},
+  {action:'splice',item_type:'grass_seed',target:1},
+  {action:'harvest',item_type:'grass_seed',target:1},
+  {action:'fish',item_type:'',target:1},
+  {action:'break',item_type:'stone',target:1},
+ ];
+ await db.query('UPDATE pixelmania.quest_accounts SET state=$1::jsonb WHERE player_id=$2',[JSON.stringify(tracking),playerId]);
+ await db.transaction(async tx=>{
+  for(const source of ['seed_place','seed_splice','seed_harvest'])await Quests.recordGameplay(store,tx,playerId,source,{seed_type:'dirt_seed',matured:true},'wrong-'+source);
+ });
+ await call('quest_board_get');assert.deepEqual(board.active.story.progress,[0,0,0,0,0]);
+ await db.transaction(async tx=>{
+  for(const source of ['seed_place','seed_splice','seed_harvest'])await Quests.recordGameplay(store,tx,playerId,source,{seed_type:'grass_seed',matured:true},'valid-'+source);
+  await Quests.recordGameplay(store,tx,playerId,'fishing_complete',{item_id:'trout',item_category:'fish'},'valid-fish');
+  // Exercise the actual foreground-break hook while isolating unrelated world audit writes.
+  const audit=store.recordWorldChangeAndTrackedDrops;
+  store.recordWorldChangeAndTrackedDrops=async()=>{};
+  try{
+   await store.recordWorldChangesAndTrackedDrops(tx,'test-world',[{source_type:'world_block_update',action:'break',layer:'foreground',actor_username:'quest-sql-test',block_type_before:'stone',source_id:'valid-break'}]);
+   await store.recordWorldChangesAndTrackedDrops(tx,'test-world',[{source_type:'world_block_update',action:'break',layer:'background',actor_username:'quest-sql-test',block_type_before:'stone',source_id:'invalid-background'}]);
+  }finally{store.recordWorldChangeAndTrackedDrops=audit;}
+ });
+ // Before acceptance, even matching actions do not count.
+ await call('quest_board_get');assert.deepEqual(board.active.story.progress,[0,0,0,0,0]);
+ await db.query("UPDATE pixelmania.quest_gameplay_events SET created_at=to_timestamp($1::double precision/1000)+interval '1 second' WHERE event_key LIKE '%valid-%'",[tracking.active.story.accepted_at]);
+ await call('quest_board_get');assert.deepEqual(board.active.story.progress,[1,1,1,1,1]);
+ assert.equal(board.active.story.solved,true);
+ assert.equal((await db.query("SELECT count(*)::integer AS n FROM pixelmania.quest_gameplay_events WHERE event_key LIKE '%invalid-background'")).rows[0].n,0);
+ await db.query('UPDATE pixelmania.quest_accounts SET state=$1::jsonb WHERE player_id=$2',[JSON.stringify(persisted),playerId]);
  // Account isolation and fail-closed database readiness.
  const other=await Quests.apply(store,{username:'quest-other-test',world:'START',request_id:'other',action:'quest_board_get',payload:{}});
  assert.equal(other.board.stamps,0);assert.equal(other.board.story_next,1);
@@ -74,4 +136,4 @@ async function main() {
  await db.close();
  console.log('[quest-postgres] PASS: full schema, migrations, real ledger/hash SQL, atomic rollback, four concurrent duplicate claims, durable reload');
 }
-main().catch(error=>{console.error(error);process.exitCode=1;});
+main().catch(error=>{console.error(error);process.exit(1);});

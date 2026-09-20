@@ -284,7 +284,7 @@ async function main() {
   assert.equal(lateStranger.ok, false);
   assert.equal(lateStranger.reason, "instance_locked");
   const reconnectingParticipant = system.canPlayerJoinLandfillInstance(FILLED_WORLD, "p1");
-  assert.equal(reconnectingParticipant.ok, true, "an already-recorded participant must be able to rejoin their own locked instance");
+  assert.equal(reconnectingParticipant.ok, false, "even a former participant cannot enter a started race");
 
   // --- A FORMER racer must not type their way back in ------------------------------------------
   // This is what made the door policy toothless in practice. reconcileParticipants adds every
@@ -303,9 +303,9 @@ async function main() {
   // ...but Go Green must still bring them back to that same session, re-granting admission on the
   // way, so the sanctioned route keeps working for reconnects.
   const goGreenReturn = await system.requestJoinLandfillRace("p1");
-  assert.equal(String(goGreenReturn.world_name), FILLED_WORLD, "Go Green must return a former racer to their session");
+  assert.notEqual(String(goGreenReturn.world_name), FILLED_WORLD, "Go Green must route to a new race");
   assert.equal(
-    system.canPlayerJoinLandfillInstance(FILLED_WORLD, "p1").ok,
+    system.canPlayerJoinLandfillInstance(goGreenReturn.world_name, "p1").ok,
     true,
     "Go Green must re-grant admission so the join it just authorized actually succeeds",
   );
@@ -316,7 +316,7 @@ async function main() {
   // One live session per player: pressing Join Race again must return the session they are
   // already in, never enrol them in a second one (which would persist two results for one race).
   const duplicateJoin = await system.requestJoinLandfillRace("p1");
-  assert.equal(duplicateJoin.world_name, FILLED_WORLD, "a player already in a session must be returned to it");
+  assert.equal(duplicateJoin.world_name, goGreenReturn.world_name, "a player already in a session must be returned to it");
 
   // --- Abandoned-entry slot reconciliation ----------------------------------------------------
   // recordLandfillInstanceJoin runs in handleJoinWorld BEFORE the world-route check that can still
@@ -373,18 +373,18 @@ async function main() {
   const releasedSession = abandonedSystem
     .listInstances()
     .find((/** @type {any} */ instance) => instance.worldName === abandonedWorld);
-  assert.ok(releasedSession, "the abandoned session must still exist after releasing its slots");
-  assert.equal(releasedSession.participantUsernames.size, 0, "abandoned participant slots must be released");
-  assert.equal(releasedSession.admittedUsernames.size, 0, "abandoned admissions must be released too");
+  assert.equal(releasedSession, undefined, "abandoned sessions must be retired, not recycled");
 
   // ...but it must NOT release slots while players are actually present, or it would hand out
   // capacity an occupied instance does not have.
-  abandonedSystem.recordLandfillInstanceJoin(abandonedWorld, "present_a");
-  abandonedPopulation[abandonedWorld] = 1;
+  const occupied = await abandonedSystem.requestJoinLandfillRace("present_a");
+  const occupiedWorld = String(occupied.world_name);
+  abandonedSystem.recordLandfillInstanceJoin(occupiedWorld, "present_a");
+  abandonedPopulation[occupiedWorld] = 1;
   abandonedSystem.pollInstancesOnce();
   const stillTracked = abandonedSystem
     .listInstances()
-    .find((/** @type {any} */ instance) => instance.worldName === abandonedWorld);
+    .find((/** @type {any} */ instance) => instance.worldName === occupiedWorld);
   assert.ok(stillTracked, "the instance should still exist while occupied");
   assert.equal(
     stillTracked.participantUsernames.has("present_a"),
@@ -523,6 +523,40 @@ async function main() {
 
   assert.ok(broadcasts.some((p) => p.type === "landfill_race_state"), "race state must be broadcast");
   assert.ok(broadcasts.some((p) => p.type === "landfill_race_results"), "results must be broadcast");
+
+  // Fast solo leave/rejoin before the first poll must still be a different terrain instance.
+  const fresh = LandfillEventModule.createLandfillEventSystem({
+    cleanAccountName: (/** @type {any} */ name) => String(name || "").toLowerCase(),
+    getWorldPopulationCount: () => 0,
+    isEventWindowOpen: () => true,
+    randomUnit: () => 0.5, // Exercise collision fallback and recently-retired protection too.
+    resetLandfillWorldState: async () => { await Promise.resolve(); },
+    logger: { log() {}, warn() {} },
+  });
+  const solo = await fresh.requestJoinLandfillRace("solo");
+  fresh.recordLandfillInstanceJoin(solo.world_name, "solo");
+  fresh.recordLandfillInstanceLeave(solo.world_name, "solo");
+  const again = await fresh.requestJoinLandfillRace("solo");
+  assert.notEqual(again.world_name, solo.world_name, "no polling delay may recycle a solo world");
+  assert.equal(fresh.canPlayerJoinLandfillInstance(solo.world_name, "solo").ok, false);
+  const newcomer = await fresh.requestJoinLandfillRace("newcomer");
+  assert.equal(newcomer.world_name, again.world_name, "new players can share a fresh waiting room");
+  fresh.recordLandfillInstanceJoin(again.world_name, "solo");
+  fresh.recordLandfillInstanceJoin(again.world_name, "newcomer");
+  fresh.recordLandfillInstanceLeave(again.world_name, "solo");
+  const soloThird = await fresh.requestJoinLandfillRace("solo");
+  assert.notEqual(soloThird.world_name, again.world_name, "a departing player cannot return even while others remain");
+  const waiting = fresh.listInstances().find((/** @type {any} */ instance) => instance.worldName === again.world_name);
+  assert.ok(waiting);
+  waiting.state = "racing";
+  const rerouted = await fresh.resolveLandfillInstanceJoin(again.world_name, "newcomer");
+  assert.ok("world_name" in rerouted);
+  assert.notEqual(rerouted.world_name, again.world_name, "a started race must redirect an admitted racer");
+  assert.equal(fresh.canPlayerJoinLandfillInstance(rerouted.world_name, "newcomer").ok, true);
+  const simultaneous = await Promise.all(Array.from({ length: 4 }, () => fresh.requestJoinLandfillRace("doubleclick")));
+  assert.equal(new Set(simultaneous.map((result) => result.world_name)).size, 1, "concurrent duplicate requests reserve one fresh instance");
+  fresh.pollInstancesOnce();
+  assert.equal(fresh.listInstances().some((/** @type {any} */ instance) => instance.worldName === solo.world_name), false);
 
   console.log("[check_server_landfill_event_build] all assertions passed.");
 }

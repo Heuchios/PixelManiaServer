@@ -73,5 +73,6 @@ const runtime=source.quests.map(q=>{
    flag:q.persistent_flag,postcard:q.first_completion_postcard,arc_reward:q.first_completion_arc_reward,
    content_version:1};
 });
-const out=path.join(root,'data/quests/dispatch.json');fs.writeFileSync(out,JSON.stringify({version:1,quests:runtime},null,2)+'\n');
-console.log(`[quests] compiled ${runtime.length} quests and ${runtime.reduce((n,q)=>n+q.variants.length,0)} puzzle layouts`);
+const gameplay=require('./quest_gameplay_content');
+const out=path.join(root,'data/quests/dispatch.json');fs.writeFileSync(out,JSON.stringify({version:2,quests:runtime.map(gameplay)},null,2)+'\n');
+console.log(`[quests] compiled ${runtime.length} gameplay quests with gem and XP rewards`);
