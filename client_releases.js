@@ -6,7 +6,7 @@ const path = require("node:path");
 const versionPattern = /^\d+\.\d+\.\d+$/;
 function createReleaseHandler(options = {}) {
   const shared = path.resolve(__dirname, "../../shared");
-  const folder = options.folder || process.env.CLIENT_RELEASE_FOLDER || path.join(process.env.PIXELMANIA_DATA_DIR || (fs.existsSync(shared) ? shared : __dirname), "client_releases");
+  const folder = options.folder || process.env.CLIENT_RELEASE_FOLDER || path.join(fs.existsSync(shared) ? shared : (process.env.PIXELMANIA_DATA_DIR || __dirname), "client_releases");
   const origin = (options.origin || process.env.CLIENT_RELEASE_PUBLIC_URL || "https://api.pixelmaniagame.com").replace(/\/$/, "");
   const json = (res, code, value) => { res.writeHead(code, {"Content-Type": "application/json", "Cache-Control": "no-store"}); res.end(JSON.stringify(value)); };
   return function handleRelease(req, res, url) {
