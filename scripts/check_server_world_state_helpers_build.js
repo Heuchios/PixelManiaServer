@@ -559,6 +559,9 @@ const vendState = helpers.sanitizeVendState({
 }, "WORLD", 4, 5);
 assert.equal(vendState.owner_name, "USO");
 assert.equal(vendState.listing.item_id, "dirt");
+const remainder = helpers.sanitizeVendListing({ item_id: "dirt", stock: 3, amount_per_sale: 10, price_wls: 1, listing_id: "vend-original" });
+assert.equal(remainder.stock, 3, "Remainder stock must survive sanitization and restart");
+assert.equal(remainder.listing_id, "vend-original", "Tracked stock must retain its listing identity");
 assert.equal(vendState.logs[0].buyer_username, "buyer");
 const safeState = helpers.sanitizeSafeState({
   owner_username: "Uso",

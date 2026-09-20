@@ -878,9 +878,10 @@ function createWorldStateHelpers(config) {
         const stock = clampInteger(rawListing.stock || rawListing.amount || 0, 0, stackLimit);
         const amountPerSale = clampInteger(rawListing.amount_per_sale || rawListing.per_sale || 1, 1, stackLimit);
         const priceWls = clampInteger(rawListing.price_wls || rawListing.price || 1, 1, getStackLimit("world_lock"));
-        if (stock <= 0 || amountPerSale <= 0 || stock < amountPerSale)
+        if (stock <= 0 || amountPerSale <= 0)
             return null;
         return {
+            listing_id: clampString(rawListing.listing_id || rawListing.transaction_id || "", 128),
             item_id: itemId,
             item_category: itemCategory,
             stock,

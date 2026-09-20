@@ -7745,23 +7745,24 @@ async function handleVendSetListing(socket: any, player: any, data: any, worldNa
     return;
   }
 
-  if (vend.listing) {
-    sendVendTransactionResult(socket, data, player, vend, false, "Cancel or collect the current vending machine first.");
-    return;
-  }
-
-  if (isVendAwaitingCollection(vend)) {
-    sendVendTransactionResult(socket, data, player, vend, false, "Collect the sold vending machine first.");
-    return;
-  }
-
   const vendLock = await acquireVendMutationLock(socket, player, data, worldName, vend);
   if (!vendLock) return;
 
   try {
+  vend = getVendStateAt(worldName, vend.x, vend.y);
+  if (!requireSameWorld(socket, player, worldName, "use that vending machine") || !validateVendAccess(socket, player, data, worldName, vend)) return;
+  if (!canPlayerManageVend(player, vend, worldName)) {
+    rejectVendTransaction(socket, data, "Only the world owner can manage this machine.");
+    return;
+  }
+  const previousListing = vend.listing;
   const itemId = clampString(data.item_id || data.item_type || "");
   const itemCategory = resolveInventoryCategory(itemId, data.item_category || data.category || "");
-  const stock = clampInteger(data.stock || data.amount || 0, 1, ItemDatabase.getStackLimit(itemId));
+  const stock = Number(data.stock ?? data.amount ?? 0);
+  if (!Number.isSafeInteger(stock) || stock < (previousListing ? 0 : 1) || stock > ItemDatabase.getStackLimit(itemId)) {
+    rejectVendTransaction(socket, data, "Choose a valid stock amount. Refresh the machine if its stock changed.");
+    return;
+  }
   const amountPerSale = clampInteger(data.amount_per_sale || data.per_sale || 1, 1, ItemDatabase.getStackLimit(itemId));
   const priceWls = clampInteger(data.price_wls || data.price || 1, 1, ItemDatabase.getStackLimit("world_lock"));
 
@@ -7770,8 +7771,18 @@ async function handleVendSetListing(socket: any, player: any, data: any, worldNa
     return;
   }
 
-  if (stock < amountPerSale) {
-    rejectVendTransaction(socket, data, "Stock must be at least the amount sold per purchase.");
+  if (amountPerSale > 1 && priceWls > 1) {
+    rejectVendTransaction(socket, data, "Choose World Locks per item or items per World Lock.");
+    return;
+  }
+
+  if (previousListing && (previousListing.item_id !== itemId || previousListing.item_category !== itemCategory)) {
+    rejectVendTransaction(socket, data, "Remove the current stock before selecting another item.");
+    return;
+  }
+  const totalStock = Number(previousListing?.stock || 0) + stock;
+  if (totalStock > ItemDatabase.getStackLimit(itemId)) {
+    rejectVendTransaction(socket, data, "That much stock will not fit in the machine.");
     return;
   }
 
@@ -7788,7 +7799,7 @@ async function handleVendSetListing(socket: any, player: any, data: any, worldNa
     return;
   }
 
-  if (!spendItemFromState(stagedState, itemId, itemCategory, stock)) {
+  if (stock > 0 && !spendItemFromState(stagedState, itemId, itemCategory, stock)) {
     rejectVendTransaction(socket, data, "Server inventory changed. Try again.");
     return;
   }
@@ -7797,16 +7808,16 @@ async function handleVendSetListing(socket: any, player: any, data: any, worldNa
   const vendTransactionId = makeAuditId("vend");
   vend.owner_username = player.account_username;
   vend.owner_name = player.account_username.toUpperCase();
+  const listingId = previousListing ? String(previousListing.listing_id || "") : vendTransactionId;
   vend.listing = {
-    listing_id: vendTransactionId,
+    listing_id: listingId,
     item_id: itemId,
     item_category: itemCategory,
-    stock,
+    stock: totalStock,
     amount_per_sale: amountPerSale,
     price_wls: priceWls,
     created_at: new Date().toISOString(),
   };
-  vend.pending_wls = 0;
 
   const savedVend = setVendStateAt(worldName, vend);
   const serializedWorld = serializeWorldState(worldName);
@@ -7818,7 +7829,7 @@ async function handleVendSetListing(socket: any, player: any, data: any, worldNa
     world: worldName,
     metadata: {
       transaction_id: vendTransactionId,
-      listing_transaction_id: vendTransactionId,
+      listing_transaction_id: listingId,
       x: vend.x,
       y: vend.y,
       amount_per_sale: amountPerSale,
@@ -7845,12 +7856,12 @@ async function handleVendSetListing(socket: any, player: any, data: any, worldNa
     item_category: itemCategory,
     amount: stock,
     price_wls: priceWls,
-    stock_after: stock,
-    pending_wls_after: 0,
-    details: { listing_transaction_id: vendTransactionId, amount_per_sale: amountPerSale },
+    stock_after: totalStock,
+    pending_wls_after: Number(vend.pending_wls || 0),
+    details: { listing_transaction_id: listingId, amount_per_sale: amountPerSale },
   });
   logItemLedgerForState(socket, player, player.account_username, committedState, itemId, itemCategory, -stock, "vending_list", vendTransactionId, "vend_listing", worldName, {
-    listing_transaction_id: vendTransactionId,
+    listing_transaction_id: listingId,
     x: vend.x,
     y: vend.y,
     amount_per_sale: amountPerSale,
@@ -7874,6 +7885,26 @@ async function handleVendSetListing(socket: any, player: any, data: any, worldNa
  * @returns {Promise<void>}
  */
 async function handleVendBuy(socket: any, player: any, data: any, worldName: any, vend: any) {
+  const vendActionKey = `${worldName}:${vend.x},${vend.y}`;
+  const vendLock = await acquireLiveActionLock(worldVendActionLocks, "vend", vendActionKey, player.id);
+  if (!vendLock.acquired) {
+    rejectVendTransaction(socket, data, "That vending machine is busy.");
+    return;
+  }
+
+  let inventoryLocks: any = null;
+  try {
+    inventoryLocks = await acquirePlayerInventoryLocks(
+      [player.account_username, vend.owner_username],
+      `vend:${worldName}:${vend.x},${vend.y}`
+    );
+    if (!inventoryLocks.acquired) {
+      rejectVendTransaction(socket, data, "An inventory is busy. Try again.");
+      return;
+    }
+
+    vend = getVendStateAt(worldName, vend.x, vend.y);
+    if (!requireSameWorld(socket, player, worldName, "use that vending machine") || !validateVendAccess(socket, player, data, worldName, vend)) return;
   if (!vend.listing || Number(vend.listing.stock) <= 0) {
     rejectVendTransaction(socket, data, "This vending machine is empty.");
     return;
@@ -7889,8 +7920,21 @@ async function handleVendBuy(socket: any, player: any, data: any, worldName: any
   const soldItemCategory = listing.item_category;
   const amountPerSale = Number(listing.amount_per_sale);
   const pricePerSale = Number(listing.price_wls);
-  const maxSaleCount = Math.max(1, Math.floor(Number(listing.stock) / Number(listing.amount_per_sale)));
-  const saleCount = clampInteger(data.sale_count || 1, 1, maxSaleCount);
+  const maxSaleCount = Math.floor(Number(listing.stock) / amountPerSale);
+  const saleCount = Number(data.sale_count ?? 1);
+  if (!Number.isSafeInteger(saleCount) || saleCount < 1 || saleCount > maxSaleCount) {
+    rejectVendTransaction(socket, data, "There is not enough stock for that quantity.");
+    return;
+  }
+  if (data.expected_listing_id !== undefined && (
+    String(data.expected_listing_id) !== String(listing.listing_id || "") ||
+    String(data.expected_item_id) !== soldItemId ||
+    Number(data.expected_amount_per_sale) !== amountPerSale ||
+    Number(data.expected_price_wls) !== pricePerSale
+  )) {
+    sendVendTransactionResult(socket, data, player, vend, false, "The listing changed. Please review the new price.");
+    return;
+  }
   const itemAmount = amountPerSale * saleCount;
   const priceWls = pricePerSale * saleCount;
   const pendingLimit = ItemDatabase.getStackLimit("world_lock");
@@ -7915,24 +7959,6 @@ async function handleVendBuy(socket: any, player: any, data: any, worldName: any
     rejectVendTransaction(socket, data, "Your inventory cannot hold that item.");
     return;
   }
-
-  const vendActionKey = `${worldName}:${vend.x},${vend.y}`;
-  const vendLock = await acquireLiveActionLock(worldVendActionLocks, "vend", vendActionKey, player.id);
-  if (!vendLock.acquired) {
-    rejectVendTransaction(socket, data, "That vending machine is busy.");
-    return;
-  }
-
-  let inventoryLocks: any = null;
-  try {
-    inventoryLocks = await acquirePlayerInventoryLocks(
-      [player.account_username, vend.owner_username],
-      `vend:${worldName}:${vend.x},${vend.y}`
-    );
-    if (!inventoryLocks.acquired) {
-      rejectVendTransaction(socket, data, "An inventory is busy. Try again.");
-      return;
-    }
 
     const vendTransactionId = makeAuditId("vend");
     const worldRollback = captureWorldMutationRollback(worldName);
@@ -8093,7 +8119,7 @@ async function handleVendCollect(socket: any, player: any, data: any, worldName:
     return;
   }
 
-  const pendingWls = clampInteger(vend.pending_wls || 0, 0, ItemDatabase.getStackLimit("world_lock"));
+  let pendingWls = clampInteger(vend.pending_wls || 0, 0, ItemDatabase.getStackLimit("world_lock"));
   if (pendingWls <= 0) {
     rejectVendTransaction(socket, data, "No World Locks to collect.");
     return;
@@ -8103,6 +8129,14 @@ async function handleVendCollect(socket: any, player: any, data: any, worldName:
   if (!vendLock) return;
 
   try {
+  vend = getVendStateAt(worldName, vend.x, vend.y);
+  if (!requireSameWorld(socket, player, worldName, "use that vending machine") || !validateVendAccess(socket, player, data, worldName, vend)) return;
+  if (!canPlayerManageVend(player, vend, worldName)) {
+    rejectVendTransaction(socket, data, "Only the world owner can manage this machine.");
+    return;
+  }
+  pendingWls = Number(vend.pending_wls || 0);
+  if (pendingWls <= 0) return;
   const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     rejectVendTransaction(socket, data, "Could not load your server inventory.");
@@ -8190,11 +8224,19 @@ async function handleVendCancel(socket: any, player: any, data: any, worldName: 
     return;
   }
 
-  const listing = vend.listing;
+  let listing = vend.listing;
   const vendLock = await acquireVendMutationLock(socket, player, data, worldName, vend);
   if (!vendLock) return;
 
   try {
+  vend = getVendStateAt(worldName, vend.x, vend.y);
+  if (!requireSameWorld(socket, player, worldName, "use that vending machine") || !validateVendAccess(socket, player, data, worldName, vend)) return;
+  if (!canPlayerManageVend(player, vend, worldName)) {
+    rejectVendTransaction(socket, data, "Only the world owner can manage this machine.");
+    return;
+  }
+  listing = vend.listing;
+  if (!listing) return;
   const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     rejectVendTransaction(socket, data, "Could not load your server inventory.");
