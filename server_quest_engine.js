@@ -9,7 +9,8 @@ const contentPath = path.join(__dirname, "data", "quests", "dispatch.json");
 const CATALOGUE = JSON.parse(fs.readFileSync(contentPath, "utf8")).quests;
 const BY_ID = new Map(CATALOGUE.map(q => [q.id, q]));
 const DAY = 86400000;
-const TIERS = ["favor", "trip", "story"];
+const DAILY_SLOTS = ["favor_0", "favor_1", "trip_0", "trip_1"];
+const TIERS = [...DAILY_SLOTS, "story"];
 const REWARDS = {
     favor: { gems: 10, stamps: 0, xp: 50 }, trip: { gems: 25, stamps: 0, xp: 125 }, story: { gems: 15, stamps: 0, xp: 75 },
 };
@@ -97,9 +98,44 @@ function publicInstance(instance) {
     const { solution, ...puzzle } = instance.puzzle;
     return { ...instance, puzzle, quest: publicQuest(instance.quest) };
 }
+function activateDailies(s, day, account) {
+    const board = s.days[String(day)];
+    // Preserve accepted quests and durable entitlement IDs from the two-choice board.
+    for (const tier of ["favor", "trip"]) {
+        const slot = `${tier}_0`;
+        if (board.done[tier])
+            board.done[slot] = true;
+        if (s.active[tier]) {
+            const a = s.active[tier];
+            delete s.active[tier];
+            if (a.day === day && !board.done[slot]) {
+                a.tier = slot;
+                a.expires_at = (day + 1) * DAY + 4 * 3600000;
+                s.active[slot] = a;
+                const ids = board.offers[tier];
+                board.offers[tier] = [a.quest.id, ...ids.filter((id) => id !== a.quest.id)].slice(0, 2);
+            }
+        }
+    }
+    for (const slot of DAILY_SLOTS) {
+        if (s.active[slot]?.day !== day)
+            delete s.active[slot];
+        if (board.done[slot] || s.active[slot])
+            continue;
+        const [tier, index] = slot.split("_");
+        const q = BY_ID.get(board.offers[tier][Number(index)]);
+        const variant = hash(`${account}:${day}:${q.id}`) % q.variants.length;
+        // Slot zero reuses the old receipt ID so restored legacy state cannot regrant it.
+        s.active[slot] = { id: Number(index) === 0 ? `${day}:${tier}` : `${day}:${slot}`, tier: slot, day, quest: JSON.parse(JSON.stringify(q)), variant,
+            puzzle: JSON.parse(JSON.stringify(q.variants[variant])), inspected: [], solved: false, hint: false,
+            accepted_at: day * DAY + 4 * 3600000, expires_at: (day + 1) * DAY + 4 * 3600000,
+            reward: REWARDS[tier], objectives: JSON.parse(JSON.stringify(q.objectives)), progress: q.objectives.map(() => 0) };
+    }
+}
 function view(s, day, now, account) {
     const board = s.days[String(day)];
-    return { version: 1, revision: s.revision, server_time: now, day, reset_at: (day + 1) * DAY + 4 * 3600000,
+    return { version: 1, daily_mode: "automatic", revision: s.revision, server_time: now, day, reset_at: (day + 1) * DAY + 4 * 3600000,
+        dailies: DAILY_SLOTS.map(slot => { const [tier, index] = slot.split("_"); return { slot, difficulty: tier === "favor" ? "easy" : "challenge", claimed: Boolean(board.done[slot]), quest: publicQuest(s.active[slot]?.quest || BY_ID.get(board.offers[tier][Number(index)])) }; }),
         stamps: s.stamps, offers: Object.fromEntries(["favor", "trip"].map(t => [t, board.offers[t].map((id) => publicQuest(BY_ID.get(id)))])),
         done: board.done, refresh: board.refresh, active: Object.fromEntries(Object.entries(s.active).map(([k, v]) => [k, publicInstance(v)])),
         story: publicQuest(BY_ID.get(availableStory(s, day, account)), s.flags), story_next: s.story_next, encore: s.story_next > 24,
@@ -120,10 +156,8 @@ function transition(raw, action, payload, now, account) {
             a.reward = REWARDS[a.tier];
         }
     }
-    for (const tier of ["favor", "trip"])
-        if (s.active[tier] && s.active[tier].expires_at <= now)
-            delete s.active[tier];
-    let message = "Your story waits for you.", gemDelta = 0;
+    activateDailies(s, day, account);
+    let message = "Daily quests are active. Play, then return to claim your rewards.", gemDelta = 0;
     const receipts = [];
     if (action !== "quest_board_get" && payload.revision !== s.revision)
         fail("Your board changed. Refresh it and try again.");
@@ -131,6 +165,8 @@ function transition(raw, action, payload, now, account) {
         const tier = String(payload.tier || "");
         if (!TIERS.includes(tier))
             fail("Unknown quest tier.");
+        if (tier !== "story")
+            fail("Daily quests are already active.");
         if (s.active[tier])
             fail("Finish or put away your current letter first.");
         if (board.done[tier])
@@ -148,20 +184,7 @@ function transition(raw, action, payload, now, account) {
         message = "Quest accepted. Play normally, then return to the board to claim gems and XP.";
     }
     else if (action === "quest_refresh") {
-        const tier = String(payload.tier || "");
-        if (!["favor", "trip"].includes(tier))
-            fail("Story letters do not need refreshing.");
-        if (s.active[tier] || board.done[tier] || board.refresh[tier])
-            fail("No refresh is available for this slot.");
-        const excluded = new Set(s.history.filter((h) => h.day >= day - 3).flatMap((h) => h.ids));
-        const pool = CATALOGUE.filter(q => q.tier === tier && !excluded.has(q.id));
-        if (!pool.length)
-            fail("All fresh letters are already on your board today.");
-        const q = pool[hash(`${account}:${day}:${tier}:refresh`) % pool.length];
-        board.offers[tier][1] = q.id;
-        board.refresh[tier] = 1;
-        s.history.find((h) => h.day === day).ids.push(q.id);
-        message = "A fresh letter has arrived.";
+        fail("Daily quests refresh automatically at the daily reset.");
     }
     else if (["quest_inspect", "quest_hint", "quest_solve", "quest_choose", "quest_abandon"].includes(action)) {
         const tier = String(payload.tier || "");
@@ -171,6 +194,8 @@ function transition(raw, action, payload, now, account) {
         if (!a || a.id !== payload.instance_id)
             fail("That letter is no longer active.");
         if (action === "quest_abandon") {
+            if (tier !== "story")
+                fail("Daily quests stay active until reset.");
             delete s.active[tier];
             message = "Letter put away. Your own items are unchanged.";
         }
@@ -204,7 +229,7 @@ function transition(raw, action, payload, now, account) {
         }
         if (action === "quest_choose") {
             if (!a.solved)
-                fail("Finish the puzzle before choosing its ending.");
+                fail("Complete the gameplay objective before claiming its reward.");
             const choice = a.quest.choices.find((c) => c.id === payload.choice);
             if (!choice)
                 fail("Unknown ending.");

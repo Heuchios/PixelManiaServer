@@ -37,7 +37,7 @@ async function recordGameplay(store, client, playerId, action, metadata, key) {
         return;
     const item = String(metadata.seed_type || metadata.item_id || metadata.block_type || "");
     await client.query(`INSERT INTO ${store.table("quest_gameplay_events")} (player_id,event_key,action,item_type)
- SELECT $1,$2,$3,$4 WHERE EXISTS(SELECT 1 FROM ${store.table("quest_accounts")} WHERE player_id=$1 AND state->'active'<>'{}'::jsonb)
+ SELECT $1,$2,$3,$4 WHERE EXISTS(SELECT 1 FROM ${store.table("quest_accounts")} WHERE player_id=$1)
  ON CONFLICT DO NOTHING`, [playerId, `${action}:${key}`, kind[action], item]);
 }
 async function apply(store, entry) {
@@ -53,7 +53,8 @@ async function apply(store, entry) {
                 throw new Error("Player not found.");
             await client.query(`INSERT INTO ${store.table("quest_accounts")} (player_id) VALUES($1) ON CONFLICT DO NOTHING`, [playerId]);
             const saved = await client.query(`SELECT state FROM ${store.table("quest_accounts")} WHERE player_id=$1 FOR UPDATE`, [playerId]);
-            const before = saved.rows[0].state;
+            const now = Date.now();
+            const before = Engine.transition(saved.rows[0].state, "quest_board_get", {}, now, username.toLowerCase()).state;
             // Reconcile committed gameplay on board visits and claims. Rejected actions and
             // rolled-back transactions never appear here. Exact event keys prevent retries counting twice.
             for (const active of Object.values(before.active || {})) {
@@ -67,7 +68,7 @@ async function apply(store, entry) {
                 }
                 active.solved = active.objectives.every((o, i) => active.progress[i] >= o.target);
             }
-            const changed = Engine.transition(before, entry.action, entry.payload, Date.now(), username.toLowerCase());
+            const changed = Engine.transition(before, entry.action, entry.payload, now, username.toLowerCase());
             let progression = {};
             const requestedXp = changed.receipts.reduce((sum, r) => sum + Number(r.xp || 0), 0);
             if (requestedXp) {

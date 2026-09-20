@@ -131,6 +131,28 @@ async function main() {
  // Account isolation and fail-closed database readiness.
  const other=await Quests.apply(store,{username:'quest-other-test',world:'START',request_id:'other',action:'quest_board_get',payload:{}});
  assert.equal(other.board.stamps,0);assert.equal(other.board.story_next,1);
+ // Every automatic slot is independently claimable through committed gameplay.
+ let autoBoard=other.board;
+ const autoId=(await db.query("SELECT p.player_id FROM pixelmania.players p JOIN pixelmania.accounts a ON a.account_id=p.account_id WHERE a.username='quest-other-test'")).rows[0].player_id;
+ assert.equal(autoBoard.dailies.length,4);
+ for(const [slot,letter] of Object.entries(autoBoard.active)){
+  for(const objective of letter.objectives){
+   const source={plant:'seed_place',splice:'seed_splice',harvest:'seed_harvest',fish:'fishing_complete',break:'world_block_break'}[objective.action];
+   for(let i=0;i<objective.target;i++)await db.transaction(tx=>Quests.recordGameplay(store,tx,autoId,source,{seed_type:objective.item_type,item_category:'fish',matured:true},`${slot}-${i}`));
+  }
+ }
+ autoBoard=(await Quests.apply(store,{username:'quest-other-test',world:'START',request_id:'auto-progress',action:'quest_board_get',payload:{}})).board;
+ assert(Object.values(autoBoard.active).every(a=>a.solved));
+ for(const slot of autoBoard.dailies.map(d=>d.slot)){
+  const result=await Quests.apply(store,{username:'quest-other-test',world:'START',request_id:`auto-claim-${slot}`,action:'quest_choose',payload:{revision:autoBoard.revision,tier:slot,instance_id:autoBoard.active[slot].id,choice:'a'}});
+  assert.equal(result.ok,true,result.message);autoBoard=result.board;
+ }
+ assert(autoBoard.dailies.every(d=>d.claimed));assert.equal(Object.keys(autoBoard.active).length,0);
+ assert.equal(Number((await db.query("SELECT amount FROM pixelmania.inventory WHERE player_id=$1 AND item_type='gem'",[autoId])).rows[0].amount),70);
+ assert.equal(Number((await db.query('SELECT player_total_xp FROM pixelmania.players WHERE player_id=$1',[autoId])).rows[0].player_total_xp),350);
+ // Continue recording between resets even when every quest was already claimed.
+ await db.transaction(tx=>Quests.recordGameplay(store,tx,autoId,'seed_place',{seed_type:'grass_seed'},'after-all-claimed'));
+ assert.equal((await db.query("SELECT count(*)::integer AS n FROM pixelmania.quest_gameplay_events WHERE player_id=$1 AND event_key='seed_place:after-all-claimed'",[autoId])).rows[0].n,1);
  store.questReady=false;
  assert.equal((await Quests.apply(store,{username:'quest-sql-test',action:'quest_board_get',payload:{}})).ok,false);
  await db.close();
