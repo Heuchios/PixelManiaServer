@@ -135,6 +135,11 @@ async function main() {
  let autoBoard=other.board;
  const autoId=(await db.query("SELECT p.player_id FROM pixelmania.players p JOIN pixelmania.accounts a ON a.account_id=p.account_id WHERE a.username='quest-other-test'")).rows[0].player_id;
  assert.equal(autoBoard.dailies.length,4);
+ // Existing players have a timestamptz returned as a JavaScript Date by pg.
+ // Fresh-account tests missed the resulting invalid timestamp on reward claims.
+ await db.query("UPDATE pixelmania.players SET last_level_up_at='2026-08-13T04:41:18Z' WHERE player_id=$1",[autoId]);
+ const datedPlayer=(await db.query('SELECT last_level_up_at FROM pixelmania.players WHERE player_id=$1',[autoId])).rows[0];
+ assert(datedPlayer.last_level_up_at instanceof Date);
  for(const [slot,letter] of Object.entries(autoBoard.active)){
   for(const objective of letter.objectives){
    const source={plant:'seed_place',splice:'seed_splice',harvest:'seed_harvest',fish:'fishing_complete',break:'world_block_break'}[objective.action];

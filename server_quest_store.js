@@ -75,6 +75,9 @@ async function apply(store, entry) {
                 if (!store.progressionReady)
                     throw new Error("Experience rewards are temporarily unavailable. Please try again later.");
                 const current = (await client.query(`SELECT player_level,player_xp,player_total_xp,last_level_up_at FROM ${store.table("players")} WHERE player_id=$1 FOR UPDATE`, [playerId])).rows[0];
+                // node-postgres returns timestamptz as Date; progression expects ISO text.
+                // String(Date) produces a human-readable timezone suffix PostgreSQL rejects.
+                current.last_level_up_at = current.last_level_up_at instanceof Date ? current.last_level_up_at.toISOString() : String(current.last_level_up_at || "");
                 const xp = Number(current.player_level) >= 100 ? 0 : requestedXp;
                 const next = await store.updatePlayerProgression(client, playerId, { ...current, player_xp: Number(current.player_xp) + xp, player_total_xp: Number(current.player_total_xp) + xp, player_title: "" });
                 if (next.player_level > Number(current.player_level)) {
@@ -126,6 +129,8 @@ async function apply(store, entry) {
     }
     catch (error) {
         // withTransaction rolls back on every thrown failure, including reward capacity.
+        if (error?.code)
+            store.logger("[quests] operation failed", { action: entry.action, code: error.code, constraint: error.constraint || "" });
         return { ok: false, message: error?.code ? "The Dispatch could not save your letter. Please refresh and try again." : String(error?.message || "Quest request failed.") };
     }
 }
