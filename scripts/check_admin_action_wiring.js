@@ -217,3 +217,19 @@ console.log("[admin-action-wiring] success");
   assert.match(files.server, /\["wooden_fishing_rod", \{ item_id: "wooden_fishing_rod", item_category: "tool", amount: 1, price: 10 \}\]/);
   console.log("[admin-action-wiring] removal recipient/zero-balance and wooden rod price regressions passed");
 }
+
+{
+  const assert = require("node:assert/strict");
+  const vm = require("node:vm");
+  const source = files.server.match(/const requested = (clampInteger\(removeCommand\.amount[^;]+);/);
+  assert(source, "Removal amount calculation exists");
+  for (const amount of [426, 10000, 999999]) {
+    const actual = vm.runInNewContext(source[1], {
+      removeCommand: { amount }, cleanRemoveItemId: "gem", MAX_ITEM_STACK: 400,
+      clampInteger: (value, min, max) => Math.max(min, Math.min(max, Math.trunc(value))),
+      getDeveloperItemAmountLimit: () => 1000000000,
+    });
+    assert.equal(actual, amount, "Gem removal must not be capped at a normal item stack");
+  }
+  console.log("[admin-action-wiring] gem removals above 400 preserve requested amount");
+}

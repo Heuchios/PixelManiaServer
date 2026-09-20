@@ -23155,7 +23155,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
     const cleanRemoveItemId = clampString(removeCommand.itemId || "");
     const resolvedRemoveCategory = resolveInventoryCategory(cleanRemoveItemId, removeCommand.itemCategory);
     const available = getInventoryCount(targetBeforeState, cleanRemoveItemId, resolvedRemoveCategory);
-    const requested = clampInteger(removeCommand.amount || 0, 1, MAX_ITEM_STACK);
+    const requested = clampInteger(removeCommand.amount || 0, 1, getDeveloperItemAmountLimit(cleanRemoveItemId));
     const removeAmount = Math.min(available, requested);
     const inventoryField = getInventoryFieldForCategory(resolvedRemoveCategory, cleanRemoveItemId);
     const removal: any = {
