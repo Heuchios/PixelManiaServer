@@ -22,6 +22,7 @@ function createServerInventoryEconomyRoutes(deps) {
         ["furnace_recipe", handleStationRecipeTransaction],
         ["fishing_start", handleFishingStartTransaction],
         ["fishing_complete", handleFishingCompleteTransaction],
+        ["fish_monger_prices", handleFishMongerTransaction],
         ["fish_monger_sell", handleFishMongerTransaction],
         ["fish_monger_sell_all", handleFishMongerTransaction],
         ["drop_inventory_item", handleDropInventoryItemTransaction],

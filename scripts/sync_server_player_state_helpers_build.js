@@ -18,3 +18,8 @@ const header = "// Generated from src/server_player_state_helpers.ts. Do not edi
 
 fs.writeFileSync(outputPath, `${header}${compiledSource}`, "utf8");
 console.log("[server-player-state-helpers] synced generated server_player_state_helpers.js");
+
+for (const name of ["server_fish_market", "server_fish_market_store"]) {
+  const source = path.join(repoRoot, ".tsbuild", name + ".js");
+  if (fs.existsSync(source)) fs.copyFileSync(source, path.join(repoRoot, name + ".js"));
+}

@@ -1,5 +1,38 @@
 // Generated from src/server.ts. Do not edit by hand.
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 require("dotenv").config({ quiet: true });
 const WebSocket = require("ws");
@@ -11,6 +44,8 @@ const nodemailer = require("nodemailer");
 const os = require("os");
 const path = require("path");
 const ItemDatabase = require("./server_item_database");
+const FishMarket = __importStar(require("./server_fish_market"));
+const FishMarketStore = __importStar(require("./server_fish_market_store"));
 const ItemAtlasDB = require("./item_atlas_db");
 const DropContracts = require("./server_drop_contracts");
 const InventoryContracts = require("./server_inventory_contracts");
@@ -9252,7 +9287,7 @@ async function handleDisplayWithdraw(socket, player, data, worldName, display) {
         }
         const beforeState = cloneJson(state);
         const stagedState = cloneJson(state);
-        if (!addItemToState(stagedState, slot.item_id, slot.item_category, 1)) {
+        if (!addItemToState(stagedState, slot.item_id, slot.item_category, Number(slot.amount) || 1)) {
             rejectDisplayTransaction(socket, data, "Your inventory cannot hold that item.");
             return;
         }
@@ -9322,9 +9357,9 @@ async function handleDisplayWithdraw(socket, player, data, worldName, display) {
             x: display.x,
             y: display.y,
             block_type: getWorldBlockTypeAt(worldName, display.x, display.y),
-            details: { item_id: slot.item_id, item_category: slot.item_category, amount: 1 },
+            details: { item_id: slot.item_id, item_category: slot.item_category, amount: Number(slot.amount) || 1 },
         });
-        logItemLedgerForState(socket, player, player.account_username, committedState, slot.item_id, slot.item_category, 1, "display_withdraw", displayTransactionId, "display_withdraw", worldName, {
+        logItemLedgerForState(socket, player, player.account_username, committedState, slot.item_id, slot.item_category, Number(slot.amount) || 1, "display_withdraw", displayTransactionId, "display_withdraw", worldName, {
             x: display.x,
             y: display.y,
         }, { skipPostgres: commit.postgres_committed });
@@ -9370,7 +9405,7 @@ async function prepareDisplayBreakInventoryReturn(socket, player, worldName, upd
     }
     const beforeState = cloneJson(state);
     const stagedState = cloneJson(state);
-    addItemToState(stagedState, slot.item_id, slot.item_category, 1);
+    addItemToState(stagedState, slot.item_id, slot.item_category, Number(slot.amount) || 1);
     const originalDisplay = cloneJson(display);
     const rollbackWorldState = serializeWorldState(worldName);
     display.slot = null;
@@ -9419,7 +9454,7 @@ async function prepareDisplayBreakInventoryReturn(socket, player, worldName, upd
                 itemLedgerEntries: [{
                         item_id: slot.item_id,
                         item_category: slot.item_category,
-                        amount: 1,
+                        amount: Number(slot.amount) || 1,
                         source_type: "display_break_return",
                         source_id: displayBreakTransactionId,
                         reason: "display_break_return",
@@ -9460,7 +9495,7 @@ async function prepareDisplayBreakInventoryReturn(socket, player, worldName, upd
         block_type: getWorldBlockTypeAt(worldName, display.x, display.y),
         details: { item: slot },
     });
-    logItemLedgerForState(socket, player, player.account_username, committedState, slot.item_id, slot.item_category, 1, "display_break_return", displayBreakTransactionId, "display_break_return", worldName, {
+    logItemLedgerForState(socket, player, player.account_username, committedState, slot.item_id, slot.item_category, Number(slot.amount) || 1, "display_break_return", displayBreakTransactionId, "display_break_return", worldName, {
         x: display.x,
         y: display.y,
     }, { skipPostgres: commit.postgres_committed });
@@ -12113,7 +12148,12 @@ async function handleFishingCompleteTransaction(socket, player, data) {
     const stagedState = cloneJson(state);
     const rewardItemId = clampString(session.item_id || session.fish_id || "");
     const rewardCategory = resolveInventoryCategory(rewardItemId, session.item_category || (session.fish_id ? "fish" : ""));
-    if (!addItemToState(stagedState, rewardItemId, rewardCategory, 1)) {
+    const rewardAmount = rewardCategory === "fish" ? FishMarket.catchAmount() : 1;
+    if (getInventoryCount(stagedState, rewardItemId, rewardCategory) + rewardAmount > ItemDatabase.getStackLimit(rewardItemId)) {
+        sendInventoryTransactionRejected(socket, data, "Not enough room for this catch. Fish stacks hold 2000 kg.");
+        return;
+    }
+    if (!addItemToState(stagedState, rewardItemId, rewardCategory, rewardAmount)) {
         sendInventoryTransactionRejected(socket, data, "Could not save fishing reward.");
         return;
     }
@@ -12135,6 +12175,8 @@ async function handleFishingCompleteTransaction(socket, player, data) {
         world: session.world,
         metadata: {
             transaction_id: session.session_id,
+            catch_weight_kg: rewardCategory === "fish" ? rewardAmount / 10 : 0,
+            inventory_unit: rewardCategory === "fish" ? FishMarket.UNIT : "count",
             rod_id: session.rod_id || "",
             lure_id: session.lure_id,
             item_id: rewardItemId,
@@ -12152,7 +12194,7 @@ async function handleFishingCompleteTransaction(socket, player, data) {
     }
     const committedState = commit.state;
     const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
-    logItemLedgerForState(socket, player, player.account_username, committedState, rewardItemId, rewardCategory, 1, "fishing_complete", session.session_id, "fishing_reward", session.world, {
+    logItemLedgerForState(socket, player, player.account_username, committedState, rewardItemId, rewardCategory, rewardAmount, "fishing_complete", session.session_id, "fishing_reward", session.world, {
         rod_id: session.rod_id || "",
         lure_id: session.lure_id,
         fish_id: session.fish_id,
@@ -12175,7 +12217,9 @@ async function handleFishingCompleteTransaction(socket, player, data) {
         fish_id: session.fish_id,
         rarity: getFishingRewardFxRarity(rewardItemId),
         reward_fx_sent: rewardFxSent,
-        rewards: [{ item_id: rewardItemId, item_category: rewardCategory, amount: 1 }],
+        catch_weight: rewardCategory === "fish" ? rewardAmount / 10 : 0,
+        fish_inventory_unit: FishMarket.UNIT,
+        rewards: [{ item_id: rewardItemId, item_category: rewardCategory, amount: rewardAmount }],
         progression: buildProgressionPayload(progression),
         inventory_deltas: inventoryDeltas,
     });
@@ -12245,127 +12289,105 @@ async function handleFishMongerTransaction(socket, player, data) {
         return;
     }
     const username = player.account_username;
-    const state = ensureWritablePlayerState(username);
-    if (!state) {
-        sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
+    const lock = await acquirePlayerInventoryLocks([username], "fish_monger");
+    if (!lock.acquired) {
+        sendInventoryTransactionRejected(socket, data, "Your inventory is busy. Try again.");
         return;
     }
-    const sales = [];
-    if (action === "fish_monger_sell_all") {
-        const fishInventory = state.fish_inventory && typeof state.fish_inventory === "object" && !Array.isArray(state.fish_inventory)
-            ? state.fish_inventory
-            : {};
-        for (const itemId of Object.keys(fishInventory)) {
-            const cleanItemId = clampString(itemId || "");
-            if (!isSellableFishItem(cleanItemId))
+    try {
+        const state = ensureWritablePlayerState(username);
+        if (!state) {
+            sendInventoryTransactionRejected(socket, data, "Inventory unavailable.");
+            return;
+        }
+        if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE && !isPostgresAuthoritativeReady()) {
+            sendInventoryTransactionRejected(socket, data, "Fish market is temporarily unavailable.");
+            return;
+        }
+        const ids = Object.keys(ItemDatabase.ITEMS).filter(isSellableFishItem);
+        const prices = await FishMarketStore.quotes(isPostgresAuthoritativeReady() ? postgresStore : null, ids);
+        if (cleanWorld(player.world || "START") !== worldName || !validateFishMongerAccess(socket, player, data, worldName, grid))
+            return;
+        if (action === "fish_monger_prices") {
+            sendInventoryTransactionResult(socket, { ok: true, action, request_id: requestId, username, fish_market: prices });
+            return;
+        }
+        const sales = [];
+        const selected = action === "fish_monger_sell_all" ? Object.keys(state.fish_inventory || {}) : [clampString(data.item_id || "")];
+        for (const id of selected) {
+            if (!prices[id]) {
+                if (action === "fish_monger_sell_all")
+                    continue;
+                sendInventoryTransactionRejected(socket, data, "That fish cannot be sold.");
+                return;
+            }
+            const owned = getInventoryCount(state, id, "fish");
+            const amount = action === "fish_monger_sell_all" ? owned : FishMarket.kgToUnits(data.weight_kg);
+            if (action === "fish_monger_sell_all" && amount === 0)
                 continue;
-            const amount = getInventoryCount(state, cleanItemId, "fish");
-            const sellValue = getFishSellValue(cleanItemId);
-            if (amount <= 0 || sellValue <= 0)
-                continue;
-            sales.push({
-                item_id: cleanItemId,
-                item_category: "fish",
-                amount,
-                sell_value: sellValue,
-            });
+            if (amount <= 0 || amount > owned || amount > FishMarket.STACK_LIMIT) {
+                sendInventoryTransactionRejected(socket, data, "Choose an owned weight in 0.1 kg steps, up to 2000 kg.");
+                return;
+            }
+            if (Number(data.expected_prices?.[id]) !== prices[id].price_cents) {
+                sendInventoryTransactionResult(socket, { ok: false, action, request_id: requestId, username,
+                    message: "Market prices changed. Review the updated prices and sell again.", fish_market: prices });
+                return;
+            }
+            sales.push({ ...prices[id], amount });
         }
-    }
-    else {
-        const itemId = clampString(data.item_id || data.item_type || data.item || "");
-        if (!isSellableFishItem(itemId)) {
-            sendInventoryTransactionRejected(socket, data, "That item cannot be sold here.");
+        if (!sales.length) {
+            sendInventoryTransactionRejected(socket, data, "You don't have any fish to sell.");
             return;
         }
-        const requestedAmount = Math.trunc(Number(data.amount) || 0);
-        if (requestedAmount <= 0 || requestedAmount > ItemDatabase.getStackLimit(itemId)) {
-            sendInventoryTransactionRejected(socket, data, "Choose a valid fish quantity.");
+        const totalGems = FishMarket.saleValue(sales);
+        if (getInventoryCount(state, "gem", "currency") + totalGems > ItemDatabase.getStackLimit("gem")) {
+            sendInventoryTransactionRejected(socket, data, "Your gem balance is full.");
             return;
         }
-        const amount = requestedAmount;
-        const owned = getInventoryCount(state, itemId, "fish");
-        if (owned < amount) {
-            sendInventoryTransactionRejected(socket, data, "You do not have that many fish.");
+        const totalWeight = sales.reduce((total, sale) => total + sale.amount, 0) / 10;
+        const beforeState = cloneJson(state);
+        const stagedState = cloneJson(state);
+        for (const sale of sales) {
+            if (!spendItemFromState(stagedState, sale.item_id, "fish", sale.amount)) {
+                sendInventoryTransactionRejected(socket, data, "Your inventory changed. Try again.");
+                return;
+            }
+        }
+        if (!addItemToState(stagedState, "gem", "currency", totalGems)) {
+            sendInventoryTransactionRejected(socket, data, "Your gem balance is full.");
             return;
         }
-        const sellValue = getFishSellValue(itemId);
-        if (sellValue <= 0) {
-            sendInventoryTransactionRejected(socket, data, "That fish has no sell value yet.");
-            return;
-        }
-        sales.push({
-            item_id: itemId,
-            item_category: "fish",
-            amount,
-            sell_value: sellValue,
+        const saleId = makeAuditId("fish_monger");
+        const commit = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
+            source: "fish_monger", action, reason: "fish_monger_sell", request_id: requestId, world: worldName,
+            skip_inventory_lock: true,
+            metadata: { transaction_id: saleId, x: fishMongerGrid.x, y: fishMongerGrid.y,
+                total_weight_kg: totalWeight, total_gems: totalGems, inventory_unit: FishMarket.UNIT, fish_market_sales: sales },
+            failure_message: "The inventory or market changed. Refresh prices and try again.",
         });
-    }
-    if (sales.length === 0) {
-        sendInventoryTransactionRejected(socket, data, "You don't have any fish to sell.");
-        return;
-    }
-    const totalFish = sales.reduce((total, sale) => total + sale.amount, 0);
-    const totalGems = sales.reduce((total, sale) => total + sale.amount * sale.sell_value, 0);
-    if (totalFish <= 0 || totalGems <= 0) {
-        sendInventoryTransactionRejected(socket, data, "That fish has no sell value yet.");
-        return;
-    }
-    const gemCapacity = ItemDatabase.getStackLimit("gem") - getInventoryCount(state, "gem", "currency");
-    if (totalGems > gemCapacity) {
-        sendInventoryTransactionRejected(socket, data, "Your gem balance is full.");
-        return;
-    }
-    const beforeState = cloneJson(state);
-    const stagedState = cloneJson(state);
-    for (const sale of sales) {
-        if (!spendItemFromState(stagedState, sale.item_id, sale.item_category, sale.amount)) {
-            sendInventoryTransactionRejected(socket, data, "Server inventory changed. Try again.");
+        if (!commit.ok) {
+            sendInventoryTransactionRejected(socket, data, commit.message);
             return;
         }
+        if (!commit.postgres_committed)
+            FishMarketStore.commitLocal(sales);
+        for (const sale of sales)
+            logItemLedgerForState(socket, player, username, commit.state, sale.item_id, "fish", -sale.amount, "fish_monger_sell", saleId, "fish_sold", worldName, { weight_kg: sale.amount / 10, price_cents: sale.price_cents }, { skipPostgres: commit.postgres_committed });
+        logItemLedgerForState(socket, player, username, commit.state, "gem", "currency", totalGems, "fish_monger_sell", saleId, "fish_sale_reward", worldName, { total_weight_kg: totalWeight }, { skipPostgres: commit.postgres_committed });
+        sendInventoryTransactionResult(socket, { ok: true, request_id: requestId, action, username,
+            message: `Sold ${totalWeight.toFixed(1)} kg for ${totalGems} gems.`,
+            total_weight_kg: totalWeight, total_gems: totalGems,
+            inventory_deltas: buildInventoryDeltaClientPayloads(commit.deltas, commit.state),
+            rewards: [{ item_id: "gem", item_category: "currency", amount: totalGems }] });
     }
-    if (!addItemToState(stagedState, "gem", "currency", totalGems)) {
-        sendInventoryTransactionRejected(socket, data, "Could not add gems.");
-        return;
+    catch (error) {
+        logSecurityEvent(socket, player, "fish_market_unavailable", { error: String(error) }, "warning");
+        sendInventoryTransactionRejected(socket, data, "Fish market is temporarily unavailable. Try again.");
     }
-    const saleId = makeAuditId("fish_monger");
-    const commit = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
-        source: "fish_monger",
-        action,
-        reason: "fish_monger_sell",
-        request_id: requestId,
-        world: worldName,
-        metadata: { transaction_id: saleId, x: fishMongerGrid.x, y: fishMongerGrid.y, total_fish: totalFish, total_gems: totalGems },
-        failure_message: "Server inventory changed. Try again.",
-    });
-    if (!commit.ok) {
-        sendInventoryTransactionRejected(socket, data, commit.message);
-        return;
+    finally {
+        releasePlayerInventoryLocks(lock);
     }
-    const committedState = commit.state;
-    const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
-    for (const sale of sales) {
-        logItemLedgerForState(socket, player, username, committedState, sale.item_id, sale.item_category, -sale.amount, "fish_monger_sell", saleId, "fish_sold", worldName, {
-            x: fishMongerGrid.x,
-            y: fishMongerGrid.y,
-            sell_value: sale.sell_value,
-        }, { skipPostgres: commit.postgres_committed });
-    }
-    logItemLedgerForState(socket, player, username, committedState, "gem", "currency", totalGems, "fish_monger_sell", saleId, "fish_sale_reward", worldName, {
-        x: fishMongerGrid.x,
-        y: fishMongerGrid.y,
-        total_fish: totalFish,
-    }, { skipPostgres: commit.postgres_committed });
-    sendInventoryTransactionResult(socket, {
-        ok: true,
-        request_id: requestId,
-        action,
-        message: action === "fish_monger_sell_all"
-            ? `Sold ${totalFish} fish for ${totalGems} gems.`
-            : `Sold ${sales[0].item_id} x${sales[0].amount} for ${totalGems} gems.`,
-        username,
-        rewards: [{ item_id: "gem", item_category: "currency", amount: totalGems }],
-        inventory_deltas: inventoryDeltas,
-    });
 }
 function getTransactionDropPosition(player, data) {
     const x = Number(data.x);
@@ -20187,14 +20209,15 @@ function getDisplayReturnCapacity(state, slot) {
     const displayName = clampString(definition.display_name || itemId, MAX_ITEM_ID_LENGTH);
     const stackLimit = ItemDatabase.getStackLimit(itemId);
     const currentCount = getInventoryCount(state, itemId, itemCategory);
-    if (currentCount + 1 > stackLimit) {
+    const returnAmount = Math.max(1, Number(slot.amount) || 1);
+    if (currentCount + returnAmount > stackLimit) {
         return {
             ok: false,
             reason: "stack_full",
             message: `Your ${displayName} stack is full. Clear some before taking it back.`,
         };
     }
-    if (canAddItemToState(state, itemId, itemCategory, 1)) {
+    if (canAddItemToState(state, itemId, itemCategory, returnAmount)) {
         return { ok: true, reason: "", message: "" };
     }
     const occupiedSlots = getInventoryOccupiedSlotCount(state);
@@ -26642,7 +26665,7 @@ function applyDropPickupToWorldState(worldName, update, player) {
     if (!playerState)
         return DropContracts.buildDropPickupFailure({ reason: "inventory_unavailable" });
     const stackLimit = ItemDatabase.getStackLimit(itemId);
-    const dropAmount = clampInteger(drop.amount || 0, 0, Math.min(MAX_DROP_TILE_AMOUNT, stackLimit));
+    const dropAmount = clampInteger(drop.amount || 0, 0, Math.min(itemCategory === "fish" ? 20000 : MAX_DROP_TILE_AMOUNT, stackLimit));
     if (dropAmount <= 0) {
         state.drops.delete(dropStateKey);
         recordDropRemovalTombstone(worldName, authoritativeDropId || dropStateKey, "empty_drop");
@@ -26752,7 +26775,7 @@ function prepareDropPickup(worldName, player, update) {
     if (!playerState)
         return DropContracts.buildDropPickupFailure({ reason: "inventory_unavailable", drop, world: cleanWorldName });
     const stackLimit = ItemDatabase.getStackLimit(itemType);
-    const dropAmount = clampInteger(drop.amount || 0, 0, MAX_DROP_TILE_AMOUNT);
+    const dropAmount = clampInteger(drop.amount || 0, 0, itemCategory === "fish" ? 20000 : MAX_DROP_TILE_AMOUNT);
     if (dropAmount <= 0)
         return DropContracts.buildDropPickupFailure({ reason: "not_available", world: cleanWorldName });
     const currentCount = getInventoryCount(playerState, itemType, itemCategory);

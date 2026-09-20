@@ -1,4 +1,5 @@
 "use strict";
+import * as FishMarket from "./server_fish_market";
 
 type JsonRecord = Record<string, any>;
 type ClampIntegerFunction = (value: unknown, min: number, max: number) => number;
@@ -514,9 +515,11 @@ function createPlayerStateHelpers(config: PlayerStateHelperConfig): PlayerStateH
 
     const accountUsername = cleanAccountName(username || rawState.account_username || rawState.username || "");
     if (accountUsername === "") return null;
+    FishMarket.migratePlayer(rawState);
     const progression = normalizeProgressionState(rawState);
 
     const state: JsonRecord = {
+      fish_inventory_unit: FishMarket.UNIT,
       player_data_version: Math.max(1, Math.trunc(Number(rawState.player_data_version) || 1)),
       account_username: accountUsername,
       profile_bio: clampString(rawState.profile_bio || "", maxProfileBioLength),

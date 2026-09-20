@@ -1101,7 +1101,7 @@ function createWorldStateHelpers(config) {
             item_id: itemId,
             item_type: itemId,
             item_category: itemCategory,
-            amount: 1,
+            amount: itemCategory === "fish" ? clampInteger(rawSlot.amount || 1, 1, 20000) : 1,
         };
         const sourceTransactionId = clampString(rawSlot.source_transaction_id || rawSlot.display_transaction_id || rawSlot.transaction_id || "", 96);
         if (sourceTransactionId !== "") {
@@ -2013,7 +2013,7 @@ function createWorldStateHelpers(config) {
                 item_type: itemType,
                 item_category: itemCategory,
                 is_seed: itemCategory === "seed",
-                amount: clampInteger(rawEntry.amount || 1, 1, config.maxDropTileAmount),
+                amount: clampInteger(rawEntry.amount || 1, 1, itemCategory === "fish" ? 20000 : config.maxDropTileAmount),
                 x,
                 y,
                 stack_grid_x: Number.isFinite(Number(rawEntry.stack_grid_x)) ? Math.trunc(Number(rawEntry.stack_grid_x)) : undefined,
@@ -2044,7 +2044,7 @@ function createWorldStateHelpers(config) {
             itemType,
             itemCategory,
             isSeed: itemCategory === "seed",
-            amount: clampInteger(data.amount || 1, 1, config.maxDropTileAmount),
+            amount: clampInteger(data.amount || 1, 1, itemCategory === "fish" ? 20000 : config.maxDropTileAmount),
             x,
             y,
             stackGrid,

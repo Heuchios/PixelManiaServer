@@ -369,7 +369,7 @@ function normalizeWorldDropPayload(
   if (dropId === "" || itemType === "" || !ItemDatabase.hasItem(itemType)) return null;
 
   const itemCategory = resolveItemCategory(itemType, raw.item_category || raw.category || fb.item_category || fb.category || "");
-  const amount = Math.max(0, Math.min(MAX_WORLD_DROP_AMOUNT, toInt(raw.amount ?? raw.quantity ?? fb.amount ?? 0, 0)));
+  const amount = Math.max(0, Math.min(itemCategory === "fish" ? 20000 : MAX_WORLD_DROP_AMOUNT, toInt(raw.amount ?? raw.quantity ?? fb.amount ?? 0, 0)));
   if (amount <= 0) return null;
 
   const x = Number(raw.x ?? fb.x ?? 0);
@@ -401,7 +401,7 @@ function worldDropRowToPayload(row: PixelMania.WorldDropRowInput | Record<string
     item_type: itemType,
     item_category: itemCategory || "block",
     is_seed: (itemCategory || "block") === "seed",
-    amount: Math.max(0, Math.min(MAX_WORLD_DROP_AMOUNT, toInt(data.amount, 0))),
+    amount: Math.max(0, Math.min(itemCategory === "fish" ? 20000 : MAX_WORLD_DROP_AMOUNT, toInt(data.amount, 0))),
     x: Number.isFinite(Number(data.x)) ? Number(data.x) : 0,
     y: Number.isFinite(Number(data.y)) ? Number(data.y) : 0,
     pickup_delay: Number.isFinite(Number(data.pickup_delay)) ? Math.max(0, Number(data.pickup_delay)) : 0,

@@ -79,7 +79,7 @@ assert.deepEqual(
     lure_inventory: {},
     fish_inventory: {},
     player_level: 7,
-    fish_inventory_unit: "count",
+    fish_inventory_unit: "tenths_kg",
   }
 );
 

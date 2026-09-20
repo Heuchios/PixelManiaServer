@@ -1,6 +1,39 @@
 // Generated from src/postgres_store.ts. Do not edit by hand.
 /// <reference path="../types/pixelmania-contracts.d.ts" />
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 const fs = require("fs");
 const crypto = require("crypto");
 const net = require("net");
@@ -9,6 +42,7 @@ const DropContracts = require("./server_drop_contracts");
 const InventoryContracts = require("./server_inventory_contracts");
 const PostgresContracts = require("./postgres_store_contracts");
 const ItemDatabase = require("./server_item_database");
+const FishMarketStore = __importStar(require("./server_fish_market_store"));
 const QuestStore = require("./server_quest_store");
 let PoolClass = null;
 try {
@@ -303,7 +337,7 @@ function applyCanonicalInventoryRowsToPlayerState(rawState, inventoryRows = []) 
             continue;
         state[inventoryField][itemType] = amount;
     }
-    state.fish_inventory_unit = "count";
+    state.fish_inventory_unit = "tenths_kg";
     return state;
 }
 /**
@@ -569,6 +603,7 @@ class PostgresStore {
                 }
                 try {
                     await this.ensurePersistenceSchema();
+                    await FishMarketStore.ensureSchema(this);
                 }
                 catch (error) {
                     if (isRetryablePostgresError(error) && attempt < POSTGRES_INIT_MAX_ATTEMPTS) {
@@ -1769,6 +1804,10 @@ class PostgresStore {
                 this.beginIdentityCache(client);
                 await client.query("BEGIN");
                 const result = await work(client);
+                if ((label.startsWith("fish_monger") || label.startsWith("fishing_")) && result?.ok === false) {
+                    await client.query("ROLLBACK");
+                    return result;
+                }
                 await client.query("COMMIT");
                 return result;
             }
@@ -8976,6 +9015,8 @@ class PostgresStore {
                 const ledgerEntries = [];
                 const transactionLedgerEntries = [];
                 const inventoryBeforeHash = await this.getInventorySnapshotHash(client, playerId);
+                if (source === "fish_monger")
+                    await FishMarketStore.lockSale(this, client, metadata, deltas, playerId, requestId);
                 for (const deltaEntry of deltas) {
                     const itemInventory = await client.query(`
             SELECT amount, stack_limit

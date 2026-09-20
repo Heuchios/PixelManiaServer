@@ -19,6 +19,11 @@ const header = "// Generated from src/server.ts. Do not edit by hand.\n";
 const nextSource = `${header}${compiledSource}`;
 const currentSource = fs.existsSync(outputPath) ? fs.readFileSync(outputPath, "utf8") : "";
 
+for (const name of ["server_fish_market", "server_fish_market_store"]) {
+  const source = path.join(repoRoot, ".tsbuild/server-entry", name + ".js");
+  if (fs.existsSync(source)) fs.copyFileSync(source, path.join(repoRoot, name + ".js"));
+}
+
 if (currentSource === nextSource) {
   console.log("[server-entry] generated server.js is current");
   process.exit(0);

@@ -11,6 +11,7 @@ import DropContracts = require("./server_drop_contracts");
 import InventoryContracts = require("./server_inventory_contracts");
 import PostgresContracts = require("./postgres_store_contracts");
 import ItemDatabase = require("./server_item_database");
+import * as FishMarketStore from "./server_fish_market_store";
 import QuestStore = require("./server_quest_store");
 
 type PostgresPoolConstructor = new (config?: PoolConfig) => Pool;
@@ -402,7 +403,7 @@ function applyCanonicalInventoryRowsToPlayerState(
     state[inventoryField][itemType] = amount;
   }
 
-  state.fish_inventory_unit = "count";
+  state.fish_inventory_unit = "tenths_kg";
   return state;
 }
 
@@ -731,6 +732,7 @@ class PostgresStore {
         }
         try {
           await this.ensurePersistenceSchema();
+          await FishMarketStore.ensureSchema(this);
         } catch (error) {
           if (isRetryablePostgresError(error) && attempt < POSTGRES_INIT_MAX_ATTEMPTS) {
             throw error;
@@ -1973,6 +1975,10 @@ class PostgresStore {
         this.beginIdentityCache(client);
         await client.query("BEGIN");
         const result = await work(client);
+        if ((label.startsWith("fish_monger") || label.startsWith("fishing_")) && (result as any)?.ok === false) {
+          await client.query("ROLLBACK");
+          return result;
+        }
         await client.query("COMMIT");
         return result;
       } catch (error) {
@@ -9910,6 +9916,7 @@ class PostgresStore {
         const ledgerEntries: PixelMania.PostgresInventoryLedgerEntry[] = [];
         const transactionLedgerEntries: RuntimeRecord[] = [];
         const inventoryBeforeHash = await this.getInventorySnapshotHash(client, playerId);
+        if (source === "fish_monger") await FishMarketStore.lockSale(this, client, metadata, deltas, playerId, requestId);
         for (const deltaEntry of deltas) {
           const itemInventory = await client.query(
             `
