@@ -4875,7 +4875,7 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
     shop_price: 0,
   }),
   electric_tool: item("tool", {
-    display_name: "Electric Tool",
+    display_name: "Screwdriver",
     rarity: "rare",
     texture: "electric_tool_1",
     inventory_icon: "electric_tool_icon",
@@ -4892,7 +4892,7 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
     equipment_slot: "hand",
     equipable: true,
     hand_item: true,
-    shop_price: 0,
+    shop_price: 5000,
   }),
   metal_detector: item("tool", {
     display_name: "Metal Detector",

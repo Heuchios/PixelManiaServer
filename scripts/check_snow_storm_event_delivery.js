@@ -69,6 +69,19 @@ const getEventBlockForOriginalSource = sourceBetween(
   "function getSnowStormEventBlockForOriginal",
   "function getSnowStormBlockTypeAt"
 );
+const rolls = [0, 1, 2, 6, 7, 99];
+const rollIce = compileSourceFunction(sourceBetween(serverSource,
+  "function getSnowStormIceEventBlock", "function getSnowStormEventBlockForOriginal"),
+  "getSnowStormIceEventBlock", {
+    crypto: { randomInt: (min, max) => {
+      assert.equal(min, 0);
+      assert.equal(max, 100);
+      return rolls.shift();
+    } },
+  });
+assert.deepEqual(Array.from({ length: 6 }, () => rollIce(12, 15)),
+  ["ice_fossil", "ice_fossil", "ice_treasure", "ice_treasure", "ice_block", "ice_block"],
+  "The same water cell rolls anew each storm; fossil/treasure odds remain 2%/5%");
 const gridKey = (x, y) => `${Math.trunc(Number(x) || 0)},${Math.trunc(Number(y) || 0)}`;
 const clampString = (value) => String(value || "").trim();
 const isGridInWorld = (x, y) => x >= 0 && x < 100 && y >= 0 && y < 70;
@@ -104,6 +117,7 @@ assert.equal(getSnowStormDirtEventBlock(generatedForeground, 10, 21), "snow_dirt
 assert.equal(getSnowStormDirtEventBlock(generatedForeground, 10, 22), "");
 
 async function runGeneratedTerrainRegression() {
+  let collisionInvalidations = 0;
   const eventState = {
     foreground: new Map(),
     removed_foreground: new Map(),
@@ -122,6 +136,10 @@ async function runGeneratedTerrainRegression() {
     startEventSource,
     "startSnowStormEvent",
     {
+      ServerLandfillEventModule: { isLandfillWorldName: () => false },
+      getErrorStack: (error) => error.stack,
+      getErrorMessage: (error) => error.message,
+      invalidateMovementCollisionCache: () => { collisionInvalidations += 1; },
       cleanWorld: (value) => String(value || "").trim().toUpperCase(),
       SNOW_STORM_EVENT_TYPE: "snow_storm",
       worldEventActionLocks,
@@ -158,6 +176,8 @@ async function runGeneratedTerrainRegression() {
 
   const startResult = await startSnowStormEvent("GENERATED", { reason: "regression" });
   assert.equal(startResult.ok, true);
+  assert.ok(collisionInvalidations >= 2, "Freeze invalidates movement overlay before persistence and on completion");
+  collisionInvalidations = 0;
   assert.equal(startResult.changed_tiles, 3);
   assert.equal(eventState.foreground.get(gridKey(10, 20)).block_type, "snow_block");
   assert.equal(eventState.foreground.get(gridKey(10, 21)).block_type, "snow_dirt");
@@ -167,11 +187,24 @@ async function runGeneratedTerrainRegression() {
   assert.equal(eventState.event_changed_tiles.every((tile) => tile.source === "generated"), true);
   assert.equal(startBroadcastUpdates.length, 3);
 
+  // Unbroken event water thaws; harvested/refilled and empty cells stay edited.
+  for (const x of [20, 21, 22]) {
+    eventState.event_changed_tiles.push({ x, y: 15, original_block_id: "water",
+      event_block_id: "ice_treasure", source: "explicit" });
+  }
+  eventState.foreground.set(gridKey(20, 15), { x: 20, y: 15, block_type: "ice_treasure" });
+  eventState.foreground.set(gridKey(21, 15), { x: 21, y: 15, block_type: "water" });
+  eventState.removed_foreground.set(gridKey(22, 15), { x: 22, y: 15, block_type: "ice_treasure" });
+
   const endBroadcastUpdates = [];
   const endSnowStormEvent = compileSourceFunction(
     endEventSource,
     "endSnowStormEvent",
     {
+      ServerLandfillEventModule: { isLandfillWorldName: () => false },
+      getErrorStack: (error) => error.stack,
+      getErrorMessage: (error) => error.message,
+      invalidateMovementCollisionCache: () => { collisionInvalidations += 1; },
       cleanWorld: (value) => String(value || "").trim().toUpperCase(),
       SNOW_STORM_EVENT_TYPE: "snow_storm",
       worldEventActionLocks,
@@ -203,11 +236,17 @@ async function runGeneratedTerrainRegression() {
 
   const endResult = await endSnowStormEvent("GENERATED", { reason: "regression" });
   assert.equal(endResult.ok, true);
+  assert.ok(collisionInvalidations >= 2, "Thaw invalidates movement overlay");
   assert.equal(endResult.stats.removed_generated_overrides, 3);
-  assert.equal(eventState.foreground.size, 0);
+  assert.equal(eventState.foreground.size, 2);
+  assert.equal(eventState.foreground.get(gridKey(20, 15)).block_type, "water");
+  assert.equal(eventState.foreground.get(gridKey(21, 15)).block_type, "water");
+  assert.equal(eventState.foreground.has(gridKey(22, 15)), false);
+  assert.equal(eventState.removed_foreground.has(gridKey(22, 15)), true);
   assert.equal(eventState.active_event_type, "");
   assert.equal(eventState.event_changed_tiles.length, 0);
-  assert.equal(endBroadcastUpdates.length, 3);
+  assert.equal(endBroadcastUpdates.length, 4);
+  assert.equal(endBroadcastUpdates.some(update => update.x === 21 || update.x === 22), false);
   assert.equal(
     endBroadcastUpdates.some((update) => update.x === 10 && update.y === 20 && update.block_type === "dirt"),
     true

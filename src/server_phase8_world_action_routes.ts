@@ -1303,9 +1303,9 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
             });
             return;
           }
-          if (!playerHasElectricToolEquipped(player)) {
-            sendActionRejected(socket, "request_link_generator_pad", "Equip the Electric Tool to link transformers.", {
-              reason: "electric_tool_required",
+          if (!playerHasElectricToolEquipped(player, disconnect)) {
+            sendActionRejected(socket, "request_link_generator_pad", disconnect ? "Equip the Wire Cutter to disconnect wiring." : "Equip the Screwdriver to connect wiring.", {
+              reason: disconnect ? "wire_cutter_required" : "electric_tool_required",
             });
             return;
           }
@@ -1447,9 +1447,9 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
             });
             return;
           }
-          if (!playerHasElectricToolEquipped(player)) {
-            sendActionRejected(socket, "request_link_generator_pole", "Equip the Electric Tool to link transformer outputs.", {
-              reason: "electric_tool_required",
+          if (!playerHasElectricToolEquipped(player, disconnect)) {
+            sendActionRejected(socket, "request_link_generator_pole", disconnect ? "Equip the Wire Cutter to disconnect wiring." : "Equip the Screwdriver to connect wiring.", {
+              reason: disconnect ? "wire_cutter_required" : "electric_tool_required",
             });
             return;
           }
@@ -1605,9 +1605,9 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
             });
             return;
           }
-          if (!playerHasElectricToolEquipped(player)) {
-            sendActionRejected(socket, "request_link_electric_poles", "Equip the Electric Tool to link electric poles.", {
-              reason: "electric_tool_required",
+          if (!playerHasElectricToolEquipped(player, disconnect)) {
+            sendActionRejected(socket, "request_link_electric_poles", disconnect ? "Equip the Wire Cutter to disconnect wiring." : "Equip the Screwdriver to connect wiring.", {
+              reason: disconnect ? "wire_cutter_required" : "electric_tool_required",
             });
             return;
           }

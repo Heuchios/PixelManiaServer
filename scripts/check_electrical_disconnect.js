@@ -1,6 +1,13 @@
 "use strict";
 const assert = require("node:assert/strict");
 const { createServerPhase8WorldActionRoutes } = require("../server_phase8_world_action_routes");
+const fs = require("node:fs");
+const vm = require("node:vm");
+const source = fs.readFileSync(require.resolve("../server.js"), "utf8");
+const toolHelper = source.slice(source.indexOf("function playerHasElectricToolEquipped("), source.indexOf("function canPlayerViewElectricalLayer("));
+const playerHasElectricToolEquipped = vm.runInNewContext(toolHelper + "; playerHasElectricToolEquipped", { clampString: String, ELECTRICAL_TOOL_ITEM: "electric_tool" });
+const cutter = { world: "TEST", equipment_slots: { hand: "wire_cutter" } };
+const screwdriver = { world: "TEST", equipment_slots: { hand: "electric_tool" } };
 
 function fixture(overrides = {}) {
   let state = { generator: { x: 1, y: 1, device_type: "generator", pads: ["2,2"], poles: ["3,3"] }, poles: { "3,3": { x: 3, y: 3, device_type: "electric_pole", links: ["4,4"] }, "4,4": { x: 4, y: 4, device_type: "electric_pole", links: ["3,3"] } } };
@@ -8,7 +15,7 @@ function fixture(overrides = {}) {
   const deps = {
     requireAuthenticated: () => true, requireSameWorld: () => true, rejectIfWorldBanned: async () => false,
     cleanWorld: x => x, gridKey: (x,y) => `${x},${y}`, isGridInWorld: () => true, isPlayerNearGrid: () => true,
-    canPlayerViewElectricalLayer: () => true, playerHasElectricToolEquipped: () => true, canPlayerBuildAtGrid: () => true,
+    canPlayerViewElectricalLayer: () => true, playerHasElectricToolEquipped, canPlayerBuildAtGrid: () => true,
     ensureWorldState: () => state, getGeneratorDeviceStateAt: () => state.generator,
     getMetalPadDeviceStateAt: () => ({device_type: "metal_pad"}),
     getElectricPoleDeviceStateAt: (_s,x,y) => state.poles[`${x},${y}`],
@@ -34,7 +41,7 @@ const payload={world:"TEST",generator_x:1,generator_y:1,pad_x:2,pad_y:2,pole_x:3
 (async()=>{
   for(const method of ["handleRequestLinkGeneratorPad","handleRequestLinkGeneratorPole","handleRequestLinkElectricPoles"]){
     const f=fixture();
-    await f.routes[method]({}, {world:"TEST"},payload,{});
+    await f.routes[method]({}, cutter,payload,{});
     assert.equal(f.rejections.length,0);
     if(method.endsWith("Pad")) assert.deepEqual(f.state().generator.pads,[]);
     else if(method.endsWith("Pole")) assert.deepEqual(f.state().generator.poles,[]);
@@ -42,18 +49,22 @@ const payload={world:"TEST",generator_x:1,generator_y:1,pad_x:2,pad_y:2,pole_x:3
     assert.ok(f.events.findIndex(x=>x.commit)>=0);
     assert.ok(f.events.findIndex(x=>x.commit)<f.events.indexOf("broadcast"),"persist before broadcast");
     // Reconnect is the inverse operation used by Undo, through the same validation.
-    await f.routes[method]({}, {world:"TEST"},{...payload,disconnect:false},{});
+    await f.routes[method]({}, screwdriver,{...payload,disconnect:false},{});
     assert.equal(f.rejections.length,0);
     if(method.endsWith("Pad")) assert.deepEqual(f.state().generator.pads,["2,2"]);
     else if(method.endsWith("Pole")) assert.deepEqual(f.state().generator.poles,["3,3"]);
     else assert.deepEqual(f.state().poles["3,3"].links,["4,4"]);
-    const denied=fixture({playerHasElectricToolEquipped:()=>false});
-    await denied.routes[method]({}, {world:"TEST"},payload,{});
-    assert.deepEqual(denied.rejections,["electric_tool_required"]);
+    const denied=fixture();
+    await denied.routes[method]({}, screwdriver,payload,{});
+    assert.deepEqual(denied.rejections,["wire_cutter_required"]);
     assert.equal(denied.events.length,0);
+    const wrongConnect=fixture();
+    await wrongConnect.routes[method]({}, cutter,{...payload,disconnect:false},{});
+    assert.deepEqual(wrongConnect.rejections,["electric_tool_required"]);
+    assert.equal(wrongConnect.events.length,0);
     const failed=fixture({commitWorldStateWithBlockChanges:async()=>({ok:false,reason:"db_failed"})});
     const before=structuredClone(failed.state());
-    await failed.routes[method]({}, {world:"TEST"},payload,{});
+    await failed.routes[method]({}, cutter,payload,{});
     assert.deepEqual(failed.state(),before,"failed commit restores wiring");
     assert.ok(!failed.events.includes("broadcast"));
   }

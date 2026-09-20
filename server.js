@@ -504,7 +504,6 @@ const SNOW_STORM_RANDOM_EVENTS_ENABLED = ["1", "true", "yes"].includes(String(pr
 const SNOW_STORM_RANDOM_INTERVAL_MS = Math.max(10000, Math.trunc(Number(process.env.SNOW_STORM_RANDOM_INTERVAL_MS) || 60000));
 const SNOW_STORM_RANDOM_CHANCE = Math.max(0, Math.min(1, Number(process.env.SNOW_STORM_RANDOM_CHANCE) || 0.05));
 const SNOW_STORM_PILE_OF_SNOW_CHANCE = Math.max(0, Math.min(1, Number(process.env.SNOW_STORM_PILE_OF_SNOW_CHANCE) || 0.08));
-const SNOW_STORM_ICE_VARIANT_SALT = 9047;
 const SNOW_STORM_EVENT_TILE_BATCH_SIZE = Math.max(25, Math.min(250, Math.trunc(Number(process.env.SNOW_STORM_EVENT_TILE_BATCH_SIZE) || 250)));
 const CONFIGURED_SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS = Number(process.env.SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS);
 const SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS = Math.max(0, Math.min(250, Math.trunc(Number.isFinite(CONFIGURED_SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS) ? CONFIGURED_SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS : 0)));
@@ -800,6 +799,7 @@ const SHOP_CATALOG = new Map([
     ["fertilizer", { item_id: "fertilizer", item_category: "tool", amount: 1, price: 500 }],
     ["super_fertilizer", { item_id: "super_fertilizer", item_category: "tool", amount: 1, price: 2100 }],
     ["electric_tool", { item_id: "electric_tool", item_category: "tool", amount: 1, price: 5000 }],
+    ["wire_cutter", { item_id: "wire_cutter", item_category: "tool", amount: 1, price: 5000 }],
     ["wooden_fishing_rod", { item_id: "wooden_fishing_rod", item_category: "tool", amount: 1, price: 1500 }],
     ["bamboo_fishing_rod", { item_id: "bamboo_fishing_rod", item_category: "tool", amount: 1, price: 5000 }],
     ["fishing_rod", { item_id: "bamboo_fishing_rod", item_category: "tool", amount: 1, price: 5000 }],
@@ -16611,9 +16611,9 @@ async function validateSeedUpdateAgainstServerState(socket, player, worldName, u
 async function validateElectricalLayerUpdateAgainstServerState(socket, player, worldName, update, requestId = "", options = {}) {
     if (!update)
         return { ok: false };
-    if (!playerHasElectricToolEquipped(player)) {
-        sendActionRejected(socket, "electrical_layer_update", "Equip the Electric Tool to edit wiring.", {
-            reason: "electric_tool_required",
+    if (!playerHasElectricToolEquipped(player, update.action === "break")) {
+        sendActionRejected(socket, "electrical_layer_update", update.action === "break" ? "Equip the Wire Cutter to remove wiring." : "Equip the Screwdriver to connect wiring.", {
+            reason: update.action === "break" ? "wire_cutter_required" : "electric_tool_required",
             block_type: update.block_type,
         });
         return { ok: false };
@@ -22485,11 +22485,11 @@ function getPoleLinksForClient(state, worldName, receiverPlayer = null) {
     }
     return links;
 }
-function playerHasElectricToolEquipped(player) {
+function playerHasElectricToolEquipped(player, disconnect = false) {
     const slots = player && player.equipment_slots && typeof player.equipment_slots === "object"
         ? player.equipment_slots
         : {};
-    return clampString(slots.hand || "").toLowerCase() === ELECTRICAL_TOOL_ITEM;
+    return clampString(slots.hand || "").toLowerCase() === (disconnect ? "wire_cutter" : ELECTRICAL_TOOL_ITEM);
 }
 function canPlayerViewElectricalLayer(player, worldName) {
     if (isAdmin(player))
@@ -22505,7 +22505,7 @@ function canPlayerViewElectricalLayer(player, worldName) {
     return getWorldLockRoleForPlayer(lock, player) !== "";
 }
 function canPlayerSeeElectricalLayer(player, worldName) {
-    return canPlayerViewElectricalLayer(player, worldName) && playerHasElectricToolEquipped(player);
+    return canPlayerViewElectricalLayer(player, worldName) && (playerHasElectricToolEquipped(player) || playerHasElectricToolEquipped(player, true));
 }
 function buildElectricalVisibilityPayload(worldName, player) {
     const clean = cleanWorld(worldName || player?.world || "START");
@@ -23636,9 +23636,9 @@ async function handleOilRefineryRequest(socket, player, data = {}) {
             });
             return;
         }
-        if (!playerHasElectricToolEquipped(player)) {
-            sendActionRejected(socket, "oil_refinery_request", "Equip the Electric Tool to link oil refineries.", {
-                reason: "electric_tool_required",
+        if (!playerHasElectricToolEquipped(player, data.disconnect === true)) {
+            sendActionRejected(socket, "oil_refinery_request", data.disconnect === true ? "Equip the Wire Cutter to disconnect wiring." : "Equip the Screwdriver to connect wiring.", {
+                reason: data.disconnect === true ? "wire_cutter_required" : "electric_tool_required",
             });
             return;
         }
@@ -24015,9 +24015,9 @@ async function handleBatteryChargerRequest(socket, player, data = {}) {
             });
             return;
         }
-        if (!playerHasElectricToolEquipped(player)) {
-            sendActionRejected(socket, "battery_charger_request", "Equip the Electric Tool to link battery chargers.", {
-                reason: "electric_tool_required",
+        if (!playerHasElectricToolEquipped(player, data.disconnect === true)) {
+            sendActionRejected(socket, "battery_charger_request", data.disconnect === true ? "Equip the Wire Cutter to disconnect wiring." : "Equip the Screwdriver to connect wiring.", {
+                reason: data.disconnect === true ? "wire_cutter_required" : "electric_tool_required",
             });
             return;
         }
@@ -29760,8 +29760,10 @@ function buildEffectiveBackgroundMap(worldName, state, generatedMap = null) {
     }
     return map;
 }
-function getSnowStormIceEventBlock(x, y) {
-    const roll = deterministicTileVariantIndex(x, y, 100, SNOW_STORM_ICE_VARIANT_SALT);
+function getSnowStormIceEventBlock(_x, _y) {
+    // Roll once when the storm freezes this cell; the result is persisted in
+    // event_changed_tiles. Coordinates must not provide a repeatable loot farm.
+    const roll = crypto.randomInt(0, 100);
     if (roll < 2)
         return "ice_fossil";
     if (roll < 7)
@@ -30021,6 +30023,7 @@ async function startSnowStormEvent(worldName, options = {}) {
         state.event_started_at = startedAt.toISOString();
         state.event_ends_at = endsAt.toISOString();
         state.event_changed_tiles = changedTiles;
+        invalidateMovementCollisionCache(clean);
         const commit = await commitWorldEventStateOnly(clean);
         if (!commit.ok) {
             worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
@@ -30050,6 +30053,8 @@ async function startSnowStormEvent(worldName, options = {}) {
         return { ok: false, reason: "exception", message: getErrorMessage(error) };
     }
     finally {
+        // Also discard any overlay built while persistence was pending or rolled back.
+        invalidateMovementCollisionCache(clean);
         worldEventActionLocks.delete(lockKey);
     }
 }
@@ -30142,6 +30147,7 @@ async function endSnowStormEvent(worldName, options = {}) {
             }
         }
         clearWorldEventState(state);
+        invalidateMovementCollisionCache(clean);
         const commit = await commitWorldEventStateOnly(clean);
         if (!commit.ok) {
             worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
@@ -30170,6 +30176,7 @@ async function endSnowStormEvent(worldName, options = {}) {
         return { ok: false, reason: "exception", message: getErrorMessage(error) };
     }
     finally {
+        invalidateMovementCollisionCache(clean);
         worldEventActionLocks.delete(lockKey);
     }
 }
@@ -30287,6 +30294,7 @@ async function handleFrozenTreasureOpen(socket, player, worldName, update, reque
                 source_block: "frozen_treasure",
             },
         };
+        invalidateMovementCollisionCache(clean);
         const commit = await commitWorldStateWithBlockChanges(clean, [openChange, cleanupChange, rewardChange]);
         if (!commit.ok) {
             worldStates.set(clean, deserializeWorldState(clean, previousWorldState));
@@ -30311,6 +30319,7 @@ async function handleFrozenTreasureOpen(socket, player, worldName, update, reque
         return true;
     }
     finally {
+        invalidateMovementCollisionCache(clean);
         worldFrozenTreasureOpenLocks.delete(lockKey);
     }
 }
