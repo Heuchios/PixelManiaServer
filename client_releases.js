@@ -22,7 +22,8 @@ function createReleaseHandler(options = {}) {
         if (platform === "desktop") {
           const name = `PixelMania-desktop-${manifest.latest_version}.zip`;
           if (!/^[a-f0-9]{64}$/.test(manifest.sha256) || !fs.statSync(path.join(folder, name)).isFile()) throw Error("Missing package");
-          Object.assign(result, {download_url:`${origin}/downloads/${name}`, sha256:manifest.sha256, size_bytes:fs.statSync(path.join(folder, name)).size});
+          const downloadOrigin = req.headers.host === "staging-api.pixelmaniagame.com" ? "https://staging-api.pixelmaniagame.com" : origin;
+          Object.assign(result, {download_url:`${downloadOrigin}/downloads/${name}`, sha256:manifest.sha256, size_bytes:fs.statSync(path.join(folder, name)).size});
         } else result.update_url = "https://play.google.com/store/apps/details?id=com.pixelmaniagame.pixelmania";
         json(res, 200, result);
       } else {
