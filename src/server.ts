@@ -13757,6 +13757,13 @@ async function handleDropInventoryItemTransaction(socket: any, player: any, data
     return;
   }
 
+  // Match the client's per-tile visual capacity before spending any inventory.
+  // createServerDrop reserves the space synchronously before the commit awaits.
+  const tileAmount = getDropTotalAmountOnTile(worldName, dropGrid);
+  if (tileAmount + amount > MAX_DROP_TILE_AMOUNT) {
+    sendInventoryTransactionRejected(socket, data, "That tile if full, please find empty space.");
+    return;
+  }
   const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
     sendInventoryTransactionRejected(socket, data, "Could not load your server inventory.");
@@ -17144,6 +17151,17 @@ function isGemCurrencyDrop(itemType: any, itemCategory: any = "") {
   return cleanItemId === "gem" && resolvedCategory === "currency";
 }
 
+function getDropTotalAmountOnTile(worldName: string, stackGrid: { x: number; y: number } | null): number {
+  if (!stackGrid || !isGridInWorld(stackGrid.x, stackGrid.y)) return 0;
+  let total = 0;
+  for (const drop of ensureWorldState(worldName).drops.values()) {
+    const grid = getDropStackGridFromDrop(drop);
+    if (!grid || grid.x !== stackGrid.x || grid.y !== stackGrid.y) continue;
+    total += Math.max(0, Number(drop.amount) || 0);
+    if (total >= MAX_DROP_TILE_AMOUNT) return MAX_DROP_TILE_AMOUNT;
+  }
+  return total;
+}
 function getGemDropTotalAmountOnTile(worldName: any, stackGrid: any) {
   if (!stackGrid || !isGridInWorld(stackGrid.x, stackGrid.y)) return 0;
 

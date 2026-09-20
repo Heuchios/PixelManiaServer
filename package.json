@@ -17,7 +17,7 @@
 	"check:rollback": "node scripts/check_rollback_wiring.js",
 	"check:server-validation": "node scripts/check_server_validation_wiring.js",
 	"check:anti-dupe": "node scripts/check_anti_dupe_locking_wiring.js",
-	"check:drop-pickup-item-loss": "node scripts/check_drop_pickup_item_loss.js",
+	"check:drop-pickup-item-loss": "node scripts/check_drop_pickup_item_loss.js && node scripts/check_drop_tile_capacity.js",
 	"check:admin-actions": "node scripts/check_admin_action_wiring.js",
 	"check:account-security": "node scripts/check_account_session_security_wiring.js",
 	"check:bot-rate-limits": "node scripts/check_bot_rate_limit_wiring.js",
