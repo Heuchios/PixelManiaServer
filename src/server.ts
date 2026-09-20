@@ -1103,7 +1103,7 @@ const SHOP_CATALOG: any = new Map([
   ["super_fertilizer", { item_id: "super_fertilizer", item_category: "tool", amount: 1, price: 2100 }],
   ["electric_tool", { item_id: "electric_tool", item_category: "tool", amount: 1, price: 5000 }],
     ["wire_cutter", { item_id: "wire_cutter", item_category: "tool", amount: 1, price: 5000 }],
-  ["wooden_fishing_rod", { item_id: "wooden_fishing_rod", item_category: "tool", amount: 1, price: 1500 }],
+  ["wooden_fishing_rod", { item_id: "wooden_fishing_rod", item_category: "tool", amount: 1, price: 10 }],
   ["bamboo_fishing_rod", { item_id: "bamboo_fishing_rod", item_category: "tool", amount: 1, price: 5000 }],
   ["fishing_rod", { item_id: "bamboo_fishing_rod", item_category: "tool", amount: 1, price: 5000 }],
   ["fiberglass_fishing_rod", { item_id: "fiberglass_fishing_rod", item_category: "tool", amount: 1, price: 15000 }],
@@ -23211,7 +23211,20 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
 
     const target = findOnlinePlayerByUsername(removeCommand.targetUsername);
     if (target) {
-      sendPlayerState(target.socket, target.player.account_username);
+      const recipientUsername = cleanAccountName(target.player.account_username);
+      sendInventoryTransactionResult(target.socket, {
+        ok: true,
+        request_id: requestId,
+        action: "admin_remove",
+        username: recipientUsername,
+        target_username: recipientUsername,
+        item_id: cleanRemoveItemId,
+        item_category: removal.itemCategory,
+        amount: removal.removed,
+        message: "",
+        inventory_deltas: buildInventoryDeltaClientPayloads(commit.deltas, commit.state),
+        player_data: buildPlayerStateForClient(commit.state),
+      });
       if (accountKey(target.player.account_username) !== accountKey(player.account_username)) {
         sendJson(target.socket, {
           type: "chat",

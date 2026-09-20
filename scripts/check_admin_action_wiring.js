@@ -178,3 +178,42 @@ if (failed > 0) {
 }
 
 console.log("[admin-action-wiring] success");
+
+// Execute the actual removal notification branch for self, other, and offline targets.
+{
+  const assert = require("node:assert/strict");
+  const vm = require("node:vm");
+  const start = files.server.indexOf("const target = findOnlinePlayerByUsername(removeCommand.targetUsername);");
+  const end = files.server.indexOf("const partialMessage", start);
+  assert(start >= 0 && end > start);
+  const notification = files.server.slice(start, end);
+  for (const username of ["admin", "other", null]) {
+    for (const remaining of [0, 26]) {
+      const delivered = [];
+      const state = { currency_inventory: { gem: remaining } };
+      const deltas = [{ item_id: "gem", item_category: "currency", count: remaining, amount: -400 }];
+      vm.runInNewContext(notification, {
+        removeCommand: { targetUsername: username, itemId: "gem" },
+        findOnlinePlayerByUsername: () => username ? { socket: "recipient", player: { account_username: username } } : null,
+        cleanAccountName: value => value,
+        accountKey: value => value.toLowerCase(),
+        player: { account_username: "admin" }, requestId: "remove-test",
+        cleanRemoveItemId: "gem", removal: { itemCategory: "currency", removed: 400 },
+        commit: { state, deltas },
+        buildInventoryDeltaClientPayloads: (value, current) => { assert.equal(current, state); return value; },
+        buildPlayerStateForClient: value => value,
+        sendInventoryTransactionResult: (socket, payload) => delivered.push({ socket, payload }),
+        sendJson: () => {},
+      });
+      assert.equal(delivered.length, username ? 1 : 0);
+      if (username) {
+        assert.equal(delivered[0].socket, "recipient");
+        assert.equal(delivered[0].payload.action, "admin_remove");
+        assert.equal(delivered[0].payload.player_data.currency_inventory.gem, remaining);
+        assert.equal(delivered[0].payload.inventory_deltas[0].count, remaining);
+      }
+    }
+  }
+  assert.match(files.server, /\["wooden_fishing_rod", \{ item_id: "wooden_fishing_rod", item_category: "tool", amount: 1, price: 10 \}\]/);
+  console.log("[admin-action-wiring] removal recipient/zero-balance and wooden rod price regressions passed");
+}
