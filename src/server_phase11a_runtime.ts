@@ -54,6 +54,7 @@ function installConsoleWriteGuard(runtimeProcess: any = process, runtimeConsole:
 }
 
 function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
+  const handleClientRelease = require("./client_releases").createReleaseHandler();
   const {
     ALLOW_LEGACY_WORLD_STATE_IMPORT,
     CUSTOM_TRUSTED_PLAYER_STATE_ENABLED,
@@ -792,6 +793,8 @@ function createServerPhase11aRuntime(deps: Phase11aRuntimeDeps) {
       sendHtml(response, 400, "Bad Request", "That verification link is not valid.");
       return;
     }
+
+    if (handleClientRelease(request, response, url)) return;
 
     if (request.method === "GET" && url.pathname === "/health") {
       const redisHealth = await redisStore.getHealthSnapshot();
