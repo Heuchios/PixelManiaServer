@@ -2,6 +2,32 @@
 // Rates are integer hundredths of a gem/kg; gems are rounded once per sale.
 export const UNIT = "tenths_kg";
 export const STACK_LIMIT = 20000;
+export const FISH_FAMILIES = ["pond_fish", "cat_fish", "bone_fish", "barracuda", "sea_horse", "stingray", "shark", "lava_fish", "alien_fish"];
+export const SPECIES_ALIASES: Record<string, string> = Object.fromEntries(FISH_FAMILIES.flatMap(family =>
+  [`${family}_small`, `${family}_med`, ...(family === "pond_fish" ? [family] : [])].map(id => [id, `${family}_large`])));
+
+export function mergeSpecies(inventory: Record<string, any>): Record<string, number> {
+  const merged: Record<string, number> = {};
+  for (const [id, raw] of Object.entries(inventory)) {
+    const target = SPECIES_ALIASES[id] || id;
+    merged[target] = (merged[target] || 0) + Math.max(0, Math.trunc(Number(raw) || 0));
+  }
+  if (Object.values(merged).some(amount => amount > STACK_LIMIT)) throw new Error("Fish species consolidation exceeds 2000 kg; preserve holdings and sell excess before migration.");
+  return merged;
+}
+
+export function migrateWorldSpecies(value: any): boolean {
+  if (!value || typeof value !== "object") return false;
+  let changed = false;
+  for (const key of ["item_id", "item_type", "fish_id"]) {
+    if (typeof value[key] === "string" && SPECIES_ALIASES[value[key]]) {
+      value[key] = SPECIES_ALIASES[value[key]];
+      changed = true;
+    }
+  }
+  for (const child of Object.values(value)) if (child && typeof child === "object") changed = migrateWorldSpecies(child) || changed;
+  return changed;
+}
 export type Policy = { base: number; min: number; max: number; target: number; halfLife: number };
 export type MarketRow = { item_id: string; supply: number; updated_ms: number; revision: number };
 export type Quote = MarketRow & { price_cents: number; min_price_cents: number; max_price_cents: number; quoted_ms: number };
@@ -46,13 +72,12 @@ export function kgToUnits(value: unknown): number {
 }
 
 export function migratePlayer(state: Record<string, any>): Record<string, any> {
-  if (state.fish_inventory_unit === UNIT) return state;
   const inventory = state.fish_inventory || {};
-  for (const id of Object.keys(inventory)) {
+  for (const id of state.fish_inventory_unit === UNIT ? [] : Object.keys(inventory)) {
     const count = Number(inventory[id]);
     inventory[id] = Number.isFinite(count) ? Math.max(0, Math.round(count * 10)) : 0;
   }
-  state.fish_inventory = inventory;
+  state.fish_inventory = mergeSpecies(inventory);
   state.fish_inventory_unit = UNIT;
   return state;
 }

@@ -53,6 +53,66 @@ export async function ensureSchema(store: any): Promise<void> {
         WHERE item_category = 'fish' AND status = 'active'`);
       await client.query(`INSERT INTO ${store.table("fish_weight_migrations")} (version) VALUES (1)`);
     }
+    const speciesMigration = await client.query(`SELECT version FROM ${store.table("fish_weight_migrations")} WHERE version = 2`);
+    if (!speciesMigration.rowCount) {
+      const holdings = await client.query(`SELECT player_id, item_type, amount FROM ${store.table("inventory")} WHERE item_category = 'fish' FOR UPDATE`);
+      const inventories = new Map<string, Record<string, number>>();
+      for (const row of holdings.rows) {
+        const inventory = inventories.get(row.player_id) || {};
+        inventory[row.item_type] = Number(row.amount);
+        inventories.set(row.player_id, inventory);
+      }
+      // Abort atomically rather than silently discard an over-cap combined holding.
+      for (const inventory of inventories.values()) Market.mergeSpecies(inventory);
+      const changedPlayers = new Set<string>();
+      for (const row of holdings.rows) {
+        const target = Market.SPECIES_ALIASES[row.item_type];
+        if (!target) continue;
+        const amount = Number(row.amount);
+        if (amount > 0) {
+          const targetRow = await client.query(`SELECT amount FROM ${store.table("inventory")} WHERE player_id=$1 AND item_type=$2 AND item_category='fish'`, [row.player_id, target]);
+          const before = Number(targetRow.rows[0]?.amount || 0);
+          await client.query(`INSERT INTO ${store.table("inventory")} (player_id,item_type,item_category,amount,stack_limit)
+            VALUES ($1,$2,'fish',$3,20000) ON CONFLICT (player_id,item_type,item_category)
+            DO UPDATE SET amount=$4, stack_limit=20000, row_version=${store.table("inventory")}.row_version+1, updated_at=now()`, [row.player_id,target,amount,before+amount]);
+          for (const [id, delta, oldAmount, newAmount] of [[row.item_type,-amount,amount,0],[target,amount,before,before+amount]]) {
+            await client.query(`INSERT INTO ${store.table("item_transactions")} (player_id,source,action,item_type,item_category,delta,before_amount,after_amount,metadata)
+              VALUES ($1,'system','fish_species_migration',$2,'fish',$3,$4,$5,$6::jsonb)`,
+              [row.player_id,id,delta,oldAmount,newAmount,JSON.stringify({from_item:row.item_type,to_item:target,inventory_unit:Market.UNIT})]);
+          }
+          changedPlayers.add(row.player_id);
+        }
+        await client.query(`DELETE FROM ${store.table("inventory")} WHERE player_id=$1 AND item_type=$2 AND item_category='fish'`, [row.player_id,row.item_type]);
+      }
+      for (const playerId of changedPlayers) {
+        await store.updatePlayerInventoryHash(client, playerId, await store.getInventorySnapshotHash(client, playerId));
+        await store.recordTransactionLedger(client, {player_id:playerId,source:"system",action:"fish_species_migration",transaction_type:"FISH_SPECIES_MIGRATION",status:"success",metadata:{inventory_unit:Market.UNIT}});
+      }
+      const worlds = await client.query(`SELECT world_id,world_state FROM ${store.table("worlds")} WHERE world_state <> '{}'::jsonb FOR UPDATE`);
+      for (const row of worlds.rows) {
+        const before = JSON.parse(JSON.stringify(row.world_state));
+        if (!Market.migrateWorldSpecies(row.world_state)) continue;
+        const checksumState = {...row.world_state};
+        delete checksumState.saved_at;
+        delete checksumState.last_saved_at;
+        await client.query(`UPDATE ${store.table("worlds")} SET world_state=$2::jsonb,world_checksum=$3 WHERE world_id=$1`, [row.world_id,JSON.stringify(row.world_state),PostgresContracts.jsonChecksum(checksumState)]);
+        await store.insertWorldObjectChange(client,row.world_id,{object_type:"fish_species_migration",action:"update",source_type:"system",reason:"fish_species_migration",old_data:before,new_data:row.world_state});
+      }
+      for (const [from,to] of Object.entries(Market.SPECIES_ALIASES)) {
+        await client.query(`UPDATE ${store.table("world_drops")} SET item_type=$2,metadata=metadata || '{"migration":"fish_species_v2"}'::jsonb WHERE item_type=$1 AND item_category='fish' AND status='active'`,[from,to]);
+      }
+      const marketRows = await client.query(`SELECT * FROM ${store.table("fish_market")} FOR UPDATE`);
+      const now = Date.now();
+      for (const target of new Set(Object.values(Market.SPECIES_ALIASES))) {
+        const related = marketRows.rows.filter((row: any) => (Market.SPECIES_ALIASES[row.item_id] || row.item_id) === target);
+        if (!related.some((row: any) => Market.SPECIES_ALIASES[row.item_id])) continue;
+        const supply = related.reduce((sum: number,row: any) => sum + Market.quote(row,Market.policy(ItemDatabase.getItemDefinition(row.item_id)!),now).supply,0);
+        await client.query(`INSERT INTO ${store.table("fish_market")} (item_id,supply,updated_ms,revision) VALUES ($1,$2,$3,1)
+          ON CONFLICT(item_id) DO UPDATE SET supply=$2,updated_ms=$3,revision=${store.table("fish_market")}.revision+1`,[target,supply,now]);
+      }
+      await client.query(`DELETE FROM ${store.table("fish_market")} WHERE item_id=ANY($1::text[])`,[Object.keys(Market.SPECIES_ALIASES)]);
+      await client.query(`INSERT INTO ${store.table("fish_weight_migrations")} (version) VALUES (2)`);
+    }
     await client.query("COMMIT");
   } catch (error) {
     await client.query("ROLLBACK");

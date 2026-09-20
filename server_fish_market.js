@@ -1,6 +1,8 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.STACK_LIMIT = exports.UNIT = void 0;
+exports.SPECIES_ALIASES = exports.FISH_FAMILIES = exports.STACK_LIMIT = exports.UNIT = void 0;
+exports.mergeSpecies = mergeSpecies;
+exports.migrateWorldSpecies = migrateWorldSpecies;
 exports.policy = policy;
 exports.quote = quote;
 exports.saleValue = saleValue;
@@ -12,6 +14,33 @@ exports.migrateWorldHoldings = migrateWorldHoldings;
 // Rates are integer hundredths of a gem/kg; gems are rounded once per sale.
 exports.UNIT = "tenths_kg";
 exports.STACK_LIMIT = 20000;
+exports.FISH_FAMILIES = ["pond_fish", "cat_fish", "bone_fish", "barracuda", "sea_horse", "stingray", "shark", "lava_fish", "alien_fish"];
+exports.SPECIES_ALIASES = Object.fromEntries(exports.FISH_FAMILIES.flatMap(family => [`${family}_small`, `${family}_med`, ...(family === "pond_fish" ? [family] : [])].map(id => [id, `${family}_large`])));
+function mergeSpecies(inventory) {
+    const merged = {};
+    for (const [id, raw] of Object.entries(inventory)) {
+        const target = exports.SPECIES_ALIASES[id] || id;
+        merged[target] = (merged[target] || 0) + Math.max(0, Math.trunc(Number(raw) || 0));
+    }
+    if (Object.values(merged).some(amount => amount > exports.STACK_LIMIT))
+        throw new Error("Fish species consolidation exceeds 2000 kg; preserve holdings and sell excess before migration.");
+    return merged;
+}
+function migrateWorldSpecies(value) {
+    if (!value || typeof value !== "object")
+        return false;
+    let changed = false;
+    for (const key of ["item_id", "item_type", "fish_id"]) {
+        if (typeof value[key] === "string" && exports.SPECIES_ALIASES[value[key]]) {
+            value[key] = exports.SPECIES_ALIASES[value[key]];
+            changed = true;
+        }
+    }
+    for (const child of Object.values(value))
+        if (child && typeof child === "object")
+            changed = migrateWorldSpecies(child) || changed;
+    return changed;
+}
 function policy(definition) {
     const base = Math.max(1, Math.round(Number(definition.fish_base_price_kg || definition.sell_value || 2) * 100));
     return {
@@ -50,14 +79,12 @@ function kgToUnits(value) {
     return units > 0 && units <= exports.STACK_LIMIT && Math.abs(value * 10 - units) < 1e-7 ? units : 0;
 }
 function migratePlayer(state) {
-    if (state.fish_inventory_unit === exports.UNIT)
-        return state;
     const inventory = state.fish_inventory || {};
-    for (const id of Object.keys(inventory)) {
+    for (const id of state.fish_inventory_unit === exports.UNIT ? [] : Object.keys(inventory)) {
         const count = Number(inventory[id]);
         inventory[id] = Number.isFinite(count) ? Math.max(0, Math.round(count * 10)) : 0;
     }
-    state.fish_inventory = inventory;
+    state.fish_inventory = mergeSpecies(inventory);
     state.fish_inventory_unit = exports.UNIT;
     return state;
 }

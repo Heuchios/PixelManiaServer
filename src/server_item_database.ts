@@ -6309,38 +6309,20 @@ const SPLICE_RECIPES: Readonly<Record<string, string>> = Object.freeze({
 
 const FISHING_RARITY_POOLS: Readonly<Record<string, ReadonlyArray<FishingEntry>>> = Object.freeze({
   common: Object.freeze([
-    Object.freeze({ fish_id: "pond_fish_small" }),
-    Object.freeze({ fish_id: "pond_fish_med" }),
     Object.freeze({ fish_id: "pond_fish_large" }),
-    Object.freeze({ fish_id: "cat_fish_small" }),
-    Object.freeze({ fish_id: "cat_fish_med" }),
     Object.freeze({ fish_id: "cat_fish_large" }),
-    Object.freeze({ fish_id: "sea_horse_small" }),
-    Object.freeze({ fish_id: "sea_horse_med" }),
     Object.freeze({ fish_id: "sea_horse_large" }),
   ]),
   uncommon: Object.freeze([
-    Object.freeze({ fish_id: "bone_fish_small" }),
-    Object.freeze({ fish_id: "bone_fish_med" }),
     Object.freeze({ fish_id: "bone_fish_large" }),
-    Object.freeze({ fish_id: "stingray_small" }),
-    Object.freeze({ fish_id: "stingray_med" }),
     Object.freeze({ fish_id: "stingray_large" }),
   ]),
   rare: Object.freeze([
-    Object.freeze({ fish_id: "lava_fish_small" }),
-    Object.freeze({ fish_id: "lava_fish_med" }),
     Object.freeze({ fish_id: "lava_fish_large" }),
-    Object.freeze({ fish_id: "alien_fish_small" }),
-    Object.freeze({ fish_id: "alien_fish_med" }),
     Object.freeze({ fish_id: "alien_fish_large" }),
   ]),
   epic: Object.freeze([
-    Object.freeze({ fish_id: "barracuda_small" }),
-    Object.freeze({ fish_id: "barracuda_med" }),
     Object.freeze({ fish_id: "barracuda_large" }),
-    Object.freeze({ fish_id: "shark_small" }),
-    Object.freeze({ fish_id: "shark_med" }),
     Object.freeze({ fish_id: "shark_large" }),
   ]),
   legendary: Object.freeze([

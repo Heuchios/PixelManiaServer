@@ -14962,7 +14962,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "pond_fish_large"
   },
   "pond_fish_small": {
     "quantity_type": "weight",
@@ -14975,7 +14979,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "pond_fish_large"
   },
   "pond_fish_med": {
     "quantity_type": "weight",
@@ -14988,7 +14996,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "pond_fish_large"
   },
   "pond_fish_large": {
     "quantity_type": "weight",
@@ -15001,7 +15013,9 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "display_name": "Pond Fish",
+    "fish_size": "weight"
   },
   "bluegill": {
     "quantity_type": "weight",
@@ -15053,7 +15067,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "cat_fish_large"
   },
   "cat_fish_med": {
     "quantity_type": "weight",
@@ -15066,7 +15084,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "cat_fish_large"
   },
   "cat_fish_large": {
     "quantity_type": "weight",
@@ -15079,7 +15101,9 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "display_name": "Cat Fish",
+    "fish_size": "weight"
   },
   "bone_fish_small": {
     "quantity_type": "weight",
@@ -15092,7 +15116,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "bone_fish_large"
   },
   "bone_fish_med": {
     "quantity_type": "weight",
@@ -15105,7 +15133,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "bone_fish_large"
   },
   "bone_fish_large": {
     "quantity_type": "weight",
@@ -15118,7 +15150,9 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "display_name": "Bone Fish",
+    "fish_size": "weight"
   },
   "barracuda_small": {
     "quantity_type": "weight",
@@ -15131,7 +15165,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "barracuda_large"
   },
   "barracuda_med": {
     "quantity_type": "weight",
@@ -15144,7 +15182,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "barracuda_large"
   },
   "barracuda_large": {
     "quantity_type": "weight",
@@ -15157,7 +15199,9 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "display_name": "Barracuda",
+    "fish_size": "weight"
   },
   "sea_horse_small": {
     "quantity_type": "weight",
@@ -15170,7 +15214,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "sea_horse_large"
   },
   "sea_horse_med": {
     "quantity_type": "weight",
@@ -15183,7 +15231,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "sea_horse_large"
   },
   "sea_horse_large": {
     "quantity_type": "weight",
@@ -15196,7 +15248,9 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "display_name": "Sea Horse",
+    "fish_size": "weight"
   },
   "stingray_small": {
     "quantity_type": "weight",
@@ -15209,7 +15263,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "stingray_large"
   },
   "stingray_med": {
     "quantity_type": "weight",
@@ -15222,7 +15280,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "stingray_large"
   },
   "stingray_large": {
     "quantity_type": "weight",
@@ -15235,7 +15297,9 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "display_name": "Stingray",
+    "fish_size": "weight"
   },
   "shark_small": {
     "quantity_type": "weight",
@@ -15248,7 +15312,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "shark_large"
   },
   "shark_med": {
     "quantity_type": "weight",
@@ -15261,7 +15329,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "shark_large"
   },
   "shark_large": {
     "quantity_type": "weight",
@@ -15274,7 +15346,9 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "display_name": "Shark",
+    "fish_size": "weight"
   },
   "lava_fish_small": {
     "quantity_type": "weight",
@@ -15287,7 +15361,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "lava_fish_large"
   },
   "lava_fish_med": {
     "quantity_type": "weight",
@@ -15300,7 +15378,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "lava_fish_large"
   },
   "lava_fish_large": {
     "quantity_type": "weight",
@@ -15313,7 +15395,9 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "display_name": "Lava Fish",
+    "fish_size": "weight"
   },
   "alien_fish_small": {
     "quantity_type": "weight",
@@ -15326,7 +15410,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "alien_fish_large"
   },
   "alien_fish_med": {
     "quantity_type": "weight",
@@ -15339,7 +15427,11 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "hidden": true,
+    "admin_grantable": false,
+    "deprecated_fish_variant": true,
+    "replacement_item_id": "alien_fish_large"
   },
   "alien_fish_large": {
     "quantity_type": "weight",
@@ -15352,7 +15444,9 @@
     "fish_market_target_kg": 1000,
     "fish_market_half_life_seconds": 3600,
     "min_weight_kg": 0.1,
-    "max_weight_kg": 150
+    "max_weight_kg": 150,
+    "display_name": "Alien Fish",
+    "fish_size": "weight"
   },
   "mossy_chest": {
     "quantity_type": "weight",

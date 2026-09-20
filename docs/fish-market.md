@@ -20,6 +20,10 @@ Payout is `ceil(sum(weight_units × price_cents) / 1000)`. Round once for the en
 
 The client fetches prices when opening the Monger and every 15 seconds while open. A changed quote requires reviewing the refreshed price and selling again. Refreshing preserves the selected sale weight. Rate tooltips show the configured range.
 
+Each sized species now uses its existing `_large` item ID and artwork, with a display name such as **Pond Fish**. Small and medium IDs (and the old generic Pond Fish ID) remain hidden migration aliases and are excluded from catches and the collection. Migration version 2 combines their inventory weights, renames stored world holdings/drops and combines market supply. It records inventory transfers and updates hashes atomically. Combined holdings above 2,000 kg abort the migration rather than lose fish; resolve such holdings before production rollout. Local collection records combine catch counts and preserve the largest weight and best value.
+
+Catch responses include exact kilogram weight, integer reward units and a current market quote. The catch card preserves decimal rates and can recover weight from the authoritative reward/delta if the explicit weight field is missing. Price requests time out and retry, and rejected or missing quotes display an unavailable status instead of loading forever.
+
 ## Release and verification
 
 This is a coordinated client/server change. Stop old backend writers before the first PostgreSQL migration and require the updated client when publishing it. Do not run old count-based clients or server processes against the converted inventory. Back up PostgreSQL first; rolling back the server alone does not reverse unit conversion. Historical ledger quantities retain their original units; the migration entries mark the transition.

@@ -7,6 +7,19 @@ const Store = require("../server_fish_market_store");
 const Items = require("../server_item_database");
 
 async function run() {
+  assert.deepEqual(Market.mergeSpecies({pond_fish_small: 13, pond_fish_med: 24, pond_fish_large: 57, pond_fish: 6}), {pond_fish_large: 100});
+  assert.throws(() => Market.mergeSpecies({pond_fish_small: 20000, pond_fish_large: 1}), /exceeds/);
+  const speciesWorld = {safe:{slots:[{item_id:'bone_fish_small',amount:17}]},vend:{item_id:'bone_fish_med',stock:28}};
+  assert.equal(Market.migrateWorldSpecies(speciesWorld), true);
+  assert.equal(speciesWorld.safe.slots[0].item_id, 'bone_fish_large');
+  assert.equal(speciesWorld.safe.slots[0].amount,17);
+  assert.equal(speciesWorld.vend.stock,28);
+  assert.equal(Market.migrateWorldSpecies(speciesWorld), false);
+  for (const [id,target] of Object.entries(Market.SPECIES_ALIASES)) {
+    assert.equal(Items.ITEMS[id].hidden,true);
+    assert.equal(Items.ITEMS[target].hidden,false);
+    assert.ok(!/^(Small|Medium|Large) /.test(Items.ITEMS[target].display_name));
+  }
   assert.equal(Market.saleValue([{ amount: 57, price_cents: 200 }]), 12);
   assert.equal(Market.saleValue([{ amount: 50, price_cents: 200 }]), 10);
   assert.equal(Market.saleValue([{ amount: 1, price_cents: 200 }, { amount: 1, price_cents: 200 }]), 1);
@@ -20,18 +33,18 @@ async function run() {
   for (let i = 0; i < 10000; i++) {
     const weight = Market.catchAmount(); assert.ok(Number.isInteger(weight) && weight >= 1 && weight <= 1500);
   }
-  const migrated = Market.migratePlayer({ fish_inventory: { pond_fish: 7 } });
-  assert.equal(migrated.fish_inventory.pond_fish, 70);
-  assert.equal(Market.migratePlayer(migrated).fish_inventory.pond_fish, 70);
-  const holdings = { safe: { slots: [{ item_id: "pond_fish", amount: 7 }, { item_id: "dirt", amount: 2 }] },
-    vending: { item_id: "pond_fish", stock: 10, amount_per_sale: 2 }, drops: [{ item_type: "pond_fish", amount: 400 }] };
+  const migrated = Market.migratePlayer({ fish_inventory: { pond_fish_large: 7 } });
+  assert.equal(migrated.fish_inventory.pond_fish_large, 70);
+  assert.equal(Market.migratePlayer(migrated).fish_inventory.pond_fish_large, 70);
+  const holdings = { safe: { slots: [{ item_id: "pond_fish_large", amount: 7 }, { item_id: "dirt", amount: 2 }] },
+    vending: { item_id: "pond_fish_large", stock: 10, amount_per_sale: 2 }, drops: [{ item_type: "pond_fish_large", amount: 400 }] };
   assert.equal(Market.migrateWorldHoldings(holdings, id => Items.ITEMS[id]?.category === "fish"), true);
   assert.equal(holdings.safe.slots[0].amount, 70); assert.equal(holdings.safe.slots[1].amount, 2);
   assert.equal(holdings.vending.stock, 100); assert.equal(holdings.vending.amount_per_sale, 20);
   assert.equal(holdings.drops[0].amount, 4000);
   assert.equal(Market.migrateWorldHoldings(holdings, id => Items.ITEMS[id]?.category === "fish"), false);
-  const settings = Market.policy(Items.ITEMS.pond_fish);
-  const row = { item_id: "pond_fish", supply: settings.target, updated_ms: 1000, revision: 0 };
+  const settings = Market.policy(Items.ITEMS.pond_fish_large);
+  const row = { item_id: "pond_fish_large", supply: settings.target, updated_ms: 1000, revision: 0 };
   const base = Market.quote(row, settings, 1000);
   assert.equal(base.price_cents, 200);
   assert.ok(Market.quote({ ...row, supply: row.supply * 2 }, settings, 1000).price_cents < 200);
@@ -47,8 +60,11 @@ async function run() {
   const start = server.indexOf("async function handleFishMongerTransaction(");
   const end = server.indexOf("function getTransactionDropPosition", start);
   let state; let result; let commits; let released;
+  const wire = require('../server_inventory_transaction_helpers').createServerInventoryTransactionHelpers({
+    cleanAccountName: String, inventoryContracts: require('../server_inventory_contracts')
+  });
   const context = {
-    FishMarket: Market, FishMarketStore: { quotes: async () => ({ pond_fish: base }), commitLocal: () => {} },
+    FishMarket: Market, FishMarketStore: { quotes: async () => ({ pond_fish_large: base }), commitLocal: () => {} },
     ItemDatabase: Items, POSTGRES_ENABLED: false, POSTGRES_AUTHORITATIVE: false, tradeByPlayerId: new Map(),
     makeRequestId: d => d.request_id || "request", getTransactionWorldName: () => "START", cleanWorld: v => v,
     rejectIfWorldBanned: async () => false, getTransactionGrid: () => ({ x: 1, y: 1 }), validateFishMongerAccess: () => ({ x: 1, y: 1 }),
@@ -60,24 +76,48 @@ async function run() {
     addItemToState: (s, id, category, amount) => { s.currency_inventory[id] += amount; return true; },
     makeAuditId: () => "sale", commitPlayerInventoryState: async (socket, player, name, before, after) => { commits++; state = after; return { ok: true, state, deltas: [], postgres_committed: false }; },
     buildInventoryDeltaClientPayloads: () => [], logItemLedgerForState: () => {}, logSecurityEvent: () => {},
-    sendInventoryTransactionResult: (socket, data) => { result = data; },
+    sendInventoryTransactionResult: (socket, data) => { result = JSON.parse(JSON.stringify(wire.buildInventoryTransactionResultResponse(data))); },
     sendInventoryTransactionRejected: (socket, data, message) => { result = { ok: false, message }; },
   };
   vm.createContext(context); vm.runInContext(server.slice(start, end), context);
   const sell = async (data, gems = 0) => {
-    state = { fish_inventory: { pond_fish: 57 }, currency_inventory: { gem: gems } }; commits = 0; released = 0;
+    state = { fish_inventory: { pond_fish_large: 57 }, currency_inventory: { gem: gems } }; commits = 0; released = 0;
     await context.handleFishMongerTransaction({}, { id: "p", world: "START", account_username: "p" },
-      { action: "fish_monger_sell", weight_kg: 5.7, item_id: "pond_fish", expected_prices: { pond_fish: 200 }, ...data });
+      { action: "fish_monger_sell", weight_kg: 5.7, item_id: "pond_fish_large", expected_prices: { pond_fish_large: 200 }, ...data });
     assert.equal(released, 1); return result;
   };
-  assert.equal((await sell({})).total_gems, 12); assert.equal(state.fish_inventory.pond_fish, 0); assert.equal(state.currency_inventory.gem, 12);
-  assert.equal((await sell({ weight_kg: 0.1 })).total_gems, 1); assert.equal(state.fish_inventory.pond_fish, 56);
-  for (const data of [{ weight_kg: 5.8 }, { weight_kg: -1 }, { weight_kg: 0.01 }, { expected_prices: { pond_fish: 100 } }, { expected_prices: {} }]) {
-    assert.equal((await sell(data)).ok, false); assert.equal(commits, 0); assert.equal(state.fish_inventory.pond_fish, 57);
+  assert.equal((await sell({})).total_gems, 12); assert.equal(state.fish_inventory.pond_fish_large, 0); assert.equal(state.currency_inventory.gem, 12);
+  assert.equal((await sell({ weight_kg: 0.1 })).total_gems, 1); assert.equal(state.fish_inventory.pond_fish_large, 56);
+  for (const data of [{ weight_kg: 5.8 }, { weight_kg: -1 }, { weight_kg: 0.01 }, { expected_prices: { pond_fish_large: 100 } }, { expected_prices: {} }]) {
+    assert.equal((await sell(data)).ok, false); assert.equal(commits, 0); assert.equal(state.fish_inventory.pond_fish_large, 57);
   }
   assert.equal((await sell({}, Items.getStackLimit("gem"))).ok, false); assert.equal(commits, 0);
   assert.equal((await sell({ action: "fish_monger_sell_all" })).total_gems, 12);
   assert.equal((await sell({ action: "fish_monger_prices" })).ok, true); assert.equal(commits, 0);
+  assert.equal(result.fish_market.pond_fish_large.price_cents,200, 'Price response must survive the real wire serializer');
+  const completeStart = server.indexOf('async function handleFishingCompleteTransaction(');
+  const completeEnd = server.indexOf('function isSellableFishItem(', completeStart);
+  const sessions = new Map();
+  Object.assign(context, {
+    activeFishingSessions: sessions, clearPlayerFishingPresence:()=>{}, publishPlayerPresenceUpdate:()=>{},
+    resolveInventoryCategory:()=> 'fish', getFishingXp:()=>1, grantExperienceToState:()=>({}),
+    getProgressionMessage:(_,message)=>message, buildProgressionPayload:()=>({}),
+    buildFishingRewardFxPayload:()=>null, getFishingRewardFxRarity:()=> 'common',
+    addItemToState:(s,id,category,amount)=>{s.fish_inventory[id]=(s.fish_inventory[id]||0)+amount;return true;}
+  });
+  vm.runInContext(server.slice(completeStart,completeEnd),context);
+  for (const rng of [0,0.4,0.5,0.8,1]) {
+    const units = Market.catchAmount(()=>rng);
+    context.FishMarket = {...Market,catchAmount:()=>units};
+    sessions.set('p',{session_id:'catch',world:'START',expires_at:Date.now()+10000,item_id:'pond_fish_large',fish_id:'pond_fish_large',item_category:'fish'});
+    state={fish_inventory:{},currency_inventory:{gem:0}};
+    await context.handleFishingCompleteTransaction({}, {id:'p',world:'START',account_username:'p'}, {success:true,session_id:'catch'});
+    assert.equal(result.catch_weight,units/10);
+    assert.equal(result.rewards[0].amount,units);
+    assert.equal(state.fish_inventory.pond_fish_large,units);
+    assert.equal(result.fish_inventory_unit,'tenths_kg');
+    assert.equal(result.fish_market.pond_fish_large.price_cents,200);
+  }
   // Two shard clients see the same row. A second simultaneous sale using the old revision fails.
   let marketRow = { ...row };
   const client = { query: async (sql, args) => {
@@ -86,7 +126,7 @@ async function run() {
     throw Error(sql);
   } };
   const sale = { ...base, amount: 57 };
-  const deltas = [{ item_type: "pond_fish", item_category: "fish", delta: -57 }, { item_type: "gem", item_category: "currency", delta: 12 }];
+  const deltas = [{ item_type: "pond_fish_large", item_category: "fish", delta: -57 }, { item_type: "gem", item_category: "currency", delta: 12 }];
   await Store.lockSale({ table: s => s }, client, { fish_market_sales: [sale] }, deltas);
   assert.equal(marketRow.supply, settings.target + 57);
   await assert.rejects(Store.lockSale({ table: s => s }, client, { fish_market_sales: [sale] }, deltas), /changed/);

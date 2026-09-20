@@ -12204,6 +12204,16 @@ async function handleFishingCompleteTransaction(socket, player, data) {
     }, { skipPostgres: commit.postgres_committed });
     const rewardFxPayload = buildFishingRewardFxPayload(player, session, rewardItemId, rewardCategory);
     const rewardFxSent = Boolean(rewardFxPayload);
+    let catchPrices = {};
+    if (rewardCategory === "fish") {
+        try {
+            catchPrices = await FishMarketStore.quotes(isPostgresAuthoritativeReady() ? postgresStore : null, [rewardItemId]);
+        }
+        catch (error) {
+            // The catch is already committed; a quote outage must not turn it into a failed catch.
+            logSecurityEvent(socket, player, "fish_catch_quote_unavailable", { error: String(error) }, "warning");
+        }
+    }
     sendInventoryTransactionResult(socket, {
         ok: true,
         request_id: requestId,
@@ -12219,6 +12229,7 @@ async function handleFishingCompleteTransaction(socket, player, data) {
         reward_fx_sent: rewardFxSent,
         catch_weight: rewardCategory === "fish" ? rewardAmount / 10 : 0,
         fish_inventory_unit: FishMarket.UNIT,
+        fish_market: catchPrices,
         rewards: [{ item_id: rewardItemId, item_category: rewardCategory, amount: rewardAmount }],
         progression: buildProgressionPayload(progression),
         inventory_deltas: inventoryDeltas,
