@@ -11,7 +11,7 @@ function body(name) {
   const end = /\n(?:async )?function \w+\(/.exec(rest);
   return end ? rest.slice(0, end.index) : rest;
 }
-const names = ['getSeedGrowthRemaining', 'getSeedConfiguredGrowTime', 'isSeedMature', 'registerGrowingTreeBreakHit',
+const names = ['applyRedTractorGasolineBonus', 'getSeedGrowthRemaining', 'getSeedConfiguredGrowTime', 'isSeedMature', 'registerGrowingTreeBreakHit',
   'serializeSeedForMessage', 'makeServerSeedEntry', 'applySeedUpdateToWorldState', 'getBlockTypeForSeed',
   'runSeedActionLocked', 'speedupSeedGrowthState', 'validateBlockUpdateAgainstServerState', ...['Place', 'Splice', 'Harvest'].flatMap(n => [`handleSeed${n}Transaction`, `handleSeed${n}TransactionLocked`])];
 let now = 1_000_000, commitGate = null, failCommit = false, commits = 0;
@@ -36,7 +36,11 @@ const context = {
   clampString: x => String(x || ''), resolveInventoryCategory: () => 'seed',
   ensureWorldState: () => world, gridKey: (x, y) => `${x}:${y}`,
   ensureWritablePlayerState: user => inventory[user], cloneJson: x => JSON.parse(JSON.stringify(x)),
-  spendItemFromState: state => state.seeds > 0 ? (--state.seeds, true) : false,
+  doesStateOwnEquippedItem: state => state.ownsTractor === true,
+  spendItemFromState: (state, id) => {
+    const field = id === 'gasoline' ? 'gasoline' : 'seeds';
+    return state[field] > 0 ? (--state[field], true) : false;
+  },
   makeAuditId: () => 'audit',
   worldBlockActionLocks: locks, getWorldBlockActionLockResource: (w, p) => `${w}:foreground:${p.x}:${p.y}`,
   acquireLiveActionLock: async (_set, _scope, key) => {
@@ -73,6 +77,43 @@ const place = (x = 4, player = alice) => context.handleSeedPlaceTransaction({}, 
 const hit = (x = 4, player = alice) => context.handleSeedHarvestTransaction({}, player, packet('seed_harvest', x));
 const flush = () => new Promise(resolve => setImmediate(resolve));
 async function run() {
+  let bonusTotal = 0;
+  for (let roll = 0; roll < 100; roll++) {
+    context.crypto.randomInt = () => roll;
+    const fuelState = { equipped_ride_item: 'red_tractor', ownsTractor: true, gasoline: 1 };
+    const drops = [{ item_category: 'block', amount: 1 }, { item_category: 'seed', amount: 20 }, { item_category: 'currency', amount: 10 }];
+    assert.equal(context.applyRedTractorGasolineBonus(fuelState, drops, true), true);
+    assert.equal(fuelState.gasoline, 0);
+    bonusTotal += drops[0].amount;
+    assert.equal(drops[1].amount, 23);
+    assert.equal(drops[2].amount, 10);
+  }
+  assert.equal(bonusTotal, 115, 'Small drops average exactly 15% extra');
+  context.crypto.randomInt = min => min;
+  for (const state of [
+    { gasoline: 1 }, { equipped_ride_item: 'red_tractor', gasoline: 1 },
+    { equipped_ride_item: 'red_tractor', ownsTractor: true, gasoline: 0 },
+  ]) assert.equal(context.applyRedTractorGasolineBonus(state, [], true), false);
+  inventory.alice.equipped_ride_item = 'red_tractor';
+  inventory.alice.ownsTractor = true;
+  inventory.alice.gasoline = 2;
+  await place(60);
+  await hit(60);
+  assert.equal(inventory.alice.gasoline, 2, 'Immature damage spends no gasoline');
+  now += 60000;
+  const beforeFuelDrops = world.drops.size;
+  failCommit = true;
+  await hit(60);
+  assert.equal(inventory.alice.gasoline, 2);
+  assert.equal(world.seeds.has('60:3'), true);
+  assert.equal(world.drops.size, beforeFuelDrops, 'Failed harvest rolls back bonus drops and fuel');
+  failCommit = false;
+  await hit(60);
+  assert.equal(inventory.alice.gasoline, 1);
+  assert.deepEqual(replies.at(-1).rewards.map(d => d.amount), [6, 3]);
+  await hit(60);
+  assert.equal(inventory.alice.gasoline, 1, 'Duplicate harvest cannot spend twice');
+  inventory.alice.equipped_ride_item = '';
   await place(50);
   const splice = (player = alice) => context.handleSeedSpliceTransaction({}, player, { ...packet('seed_splice', 50), spliced: false });
   failCommit = true;

@@ -14808,6 +14808,21 @@ async function handleSeedSpliceTransactionLocked(socket: unknown, player: Server
   });
 }
 
+function applyRedTractorGasolineBonus(state: ServerPacketRecord, drops: ServerPacketRecord[], mature: boolean): boolean {
+  if (!mature || state.equipped_ride_item !== "red_tractor"
+      || !doesStateOwnEquippedItem(state, "red_tractor", "ride")
+      || !spendItemFromState(state, "gasoline", "material", 1)) return false;
+  for (const drop of drops) {
+    if (drop.item_category !== "block" && drop.item_category !== "seed") continue;
+    const amount = Math.max(0, Math.trunc(Number(drop.amount) || 0));
+    const bonusHundredths = amount * 15;
+    const bonus = Math.floor(bonusHundredths / 100)
+      + (bonusHundredths % 100 > 0 && crypto.randomInt(0, 100) < bonusHundredths % 100 ? 1 : 0);
+    drop.amount = amount + bonus;
+  }
+  return true;
+}
+
 async function handleSeedHarvestTransaction(socket: any, player: any, data: any) {
   return runSeedActionLocked(socket, player, data, () => handleSeedHarvestTransactionLocked(socket, player, data));
 }
@@ -14939,6 +14954,7 @@ async function handleSeedHarvestTransactionLocked(socket: unknown, player: Serve
   const beforeState = cloneJson(state);
   const stagedState = cloneJson(state);
   const originalSeed = cloneJson(seed);
+  const gasolineConsumed = applyRedTractorGasolineBonus(stagedState, drops, maturedSeed);
   applySeedUpdateToWorldState(worldName, update);
 
   const rewards: any = [];
@@ -14982,6 +14998,8 @@ async function handleSeedHarvestTransactionLocked(socket: unknown, player: Serve
       reward_count: rewards.length,
       growing_tree_hit_count: growingTreeHitCount,
       matured: maturedSeed,
+      gasoline_consumed: gasolineConsumed ? 1 : 0,
+      tractor_bonus_percent: gasolineConsumed ? 15 : 0,
     },
     world_mutation: true,
     failure_message: "Server inventory changed. Try again.",
@@ -16063,7 +16081,7 @@ async function refreshWorldStateFromPostgresUncoalesced(
     || (WORLD_ENTRY_WARM_MEMORY_AHEAD_ENABLED && warmMemoryIsCurrent);
   timings.warm_memory_check_ms = elapsedWorldEntryMs(phaseStartedAt);
   if (canReuseWarmMemory) {
-    scheduleWorldEventEnd(clean);
+    if (!await settleWorldEventBeforeSnapshot(clean)) return finish({ ok: false, reason: "world_event_recovery_pending" });
     console.log("[world-entry]", JSON.stringify({
       event: "warm_memory_reuse",
       world_id: clean,
@@ -16169,7 +16187,7 @@ async function refreshWorldStateFromPostgresUncoalesced(
     if (reconciled !== true) {
       return finish({ ok: false, reason: "newer_memory_reconcile_failed" });
     }
-    scheduleWorldEventEnd(clean);
+    if (!await settleWorldEventBeforeSnapshot(clean)) return finish({ ok: false, reason: "world_event_recovery_pending" });
     phaseStartedAt = process.hrtime.bigint();
     const memoryState = serializeWorldState(clean);
     const memorySummary = summarizeSerializedWorldStateForLog(memoryState);
@@ -16191,7 +16209,7 @@ async function refreshWorldStateFromPostgresUncoalesced(
     worldPersistedRevisions.set(clean, 0);
     worldStates.set(clean, createEmptyWorldState());
     rememberLoadedWorldAuthority(clean, postLoadOwnershipVerification.ownership, 0);
-    scheduleWorldEventEnd(clean);
+    if (!await settleWorldEventBeforeSnapshot(clean)) return finish({ ok: false, reason: "world_event_recovery_pending" });
     console.warn("[postgres] authoritative world row missing; using empty world state", {
       world: clean,
       reason,
@@ -16209,7 +16227,7 @@ async function refreshWorldStateFromPostgresUncoalesced(
   worldUnpersistedRevisions.delete(clean);
   worldStates.set(clean, state);
   rememberLoadedWorldAuthority(clean, postLoadOwnershipVerification.ownership, databaseRevision);
-  scheduleWorldEventEnd(clean);
+  if (!await settleWorldEventBeforeSnapshot(clean)) return finish({ ok: false, reason: "world_event_recovery_pending" });
   if (seedTimestampMigrationNeeded) {
     queueWorldSave(clean, { critical: true });
     console.log("[world-state] queued legacy seed timestamp migration", {
@@ -31561,6 +31579,24 @@ async function broadcastEventTileUpdates(worldName: any, eventId: any, phase: an
       await sleepMs(SNOW_STORM_EVENT_BROADCAST_BATCH_DELAY_MS);
     }
   }
+}
+
+async function settleWorldEventBeforeSnapshot(worldName: string): Promise<boolean> {
+  const clean = cleanWorld(worldName);
+  // An in-flight event commit may have already changed memory. Never expose
+  // that intermediate state to a joining player before persistence completes.
+  if (worldEventActionLocks.has(`${clean}:${SNOW_STORM_EVENT_TYPE}`)) return false;
+  const state = ensureWorldState(clean);
+  if (state.active_event_type === SNOW_STORM_EVENT_TYPE) {
+    const endsAt = Date.parse(state.event_ends_at || "");
+    if (!Number.isFinite(endsAt) || endsAt <= Date.now()) {
+      const result = await endSnowStormEvent(clean, { reason: "world_load_expired" });
+      if (!result.ok) return false;
+      invalidateWorldEntrySnapshotCache(clean, "expired_world_event_recovered");
+    }
+  }
+  scheduleWorldEventEnd(clean);
+  return true;
 }
 
 function scheduleWorldEventEnd(worldName: any) {

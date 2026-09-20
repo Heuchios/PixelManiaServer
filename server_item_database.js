@@ -4477,7 +4477,7 @@ const ITEM_DEFINITIONS = {
     red_tractor: item("ride", {
         display_name: "Red Tractor",
         rarity: "epic",
-        description: "Automatically harvests ready seed-trees when you drive over them.",
+        description: "Automatically harvests ready seed-trees. Uses 1 gasoline per tree for 15% more block and seed drops on average.",
         texture: "res://Assets/clothes/ride/red_tractor_icon.png",
         inventory_icon: "res://Assets/clothes/ride/red_tractor_icon.png",
         ride_texture: "res://Assets/clothes/ride/red_tractor_1.png",
@@ -5959,6 +5959,7 @@ for (const [itemId, patch] of Object.entries(ITEM_DATA_OVERRIDES)) {
 const ITEMS = Object.freeze(ITEM_DEFINITIONS);
 const STATION_RECIPES = Object.freeze({
     crafting_station: Object.freeze([
+        { "id": "gasoline_from_crude_oil", "output": { "item_id": "gasoline", "category": "material", "amount": 5 }, "cost": [{ "item_id": "crude_oil", "category": "material", "amount": 1 }] },
         { "id": "sheet_melter", "output": { "item_id": "melter", "category": "block", "amount": 1 }, "cost": [{ "item_id": "scratched_banana_painting", "category": "block", "amount": 1 }, { "item_id": "vines_painting", "category": "block", "amount": 1 }] },
         { "id": "sheet_gem_driller", "output": { "item_id": "gem_driller", "category": "block", "amount": 1 }, "cost": [{ "item_id": "oil_refinery", "category": "block", "amount": 1 }, { "item_id": "amethyst_block", "category": "block", "amount": 1 }] },
         {

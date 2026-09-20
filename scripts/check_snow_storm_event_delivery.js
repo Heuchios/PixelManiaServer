@@ -253,7 +253,63 @@ async function runGeneratedTerrainRegression() {
   );
 }
 
+async function runExpiredWorldRejoinRegression() {
+  const loadSource = sourceBetween(serverSource,
+    "async function refreshWorldStateFromPostgresUncoalesced",
+    "async function refreshWorldDropsFromPostgres");
+  assert.equal((loadSource.match(/await settleWorldEventBeforeSnapshot\(clean\)/g) || []).length, 4);
+  assert.doesNotMatch(loadSource, /scheduleWorldEventEnd\(clean\)/);
+  const settleSource = sourceBetween(serverSource,
+    "async function settleWorldEventBeforeSnapshot", "function scheduleWorldEventEnd");
+  const state = { active_event_type: "snow_storm", event_ends_at: new Date(0).toISOString() };
+  const locks = new Set();
+  let releaseCommit;
+  let thawCalls = 0;
+  let scheduled = 0;
+  let invalidated = 0;
+  let commitOk = true;
+  const settle = compileSourceFunction(settleSource, "settleWorldEventBeforeSnapshot", {
+    cleanWorld: value => value.toUpperCase(),
+    SNOW_STORM_EVENT_TYPE: "snow_storm",
+    worldEventActionLocks: locks,
+    ensureWorldState: () => state,
+    endSnowStormEvent: async () => {
+      thawCalls++;
+      await new Promise(resolve => { releaseCommit = resolve; });
+      if (commitOk) state.active_event_type = "";
+      return { ok: commitOk };
+    },
+    invalidateWorldEntrySnapshotCache: () => { invalidated++; },
+    scheduleWorldEventEnd: () => { scheduled++; },
+  });
+  let joinFinished = false;
+  const join = settle("shop").then(result => { joinFinished = true; return result; });
+  await Promise.resolve();
+  assert.equal(joinFinished, false, "Snapshot must wait for the overdue thaw commit");
+  assert.equal(scheduled, 0);
+  releaseCommit();
+  assert.equal(await join, true);
+  assert.equal(state.active_event_type, "");
+  assert.equal(invalidated, 1);
+  await settle("shop");
+  assert.equal(thawCalls, 1, "Repeated joins must not thaw twice");
+  state.active_event_type = "snow_storm";
+  state.event_ends_at = new Date(Date.now() + 60000).toISOString();
+  assert.equal(await settle("shop"), true);
+  assert.equal(thawCalls, 1, "A live storm stays frozen and gets a timer");
+  locks.add("SHOP:snow_storm");
+  assert.equal(await settle("shop"), false, "Never expose an in-flight event mutation");
+  locks.clear();
+  state.event_ends_at = "invalid";
+  commitOk = false;
+  const failedJoin = settle("shop");
+  releaseCommit();
+  assert.equal(await failedJoin, false, "Failed persistence must block the stale snapshot");
+  assert.equal(invalidated, 1);
+}
+
 runGeneratedTerrainRegression()
+  .then(runExpiredWorldRejoinRegression)
   .then(() => {
     console.log("[snow-storm-event-delivery] success");
   })
