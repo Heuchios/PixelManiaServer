@@ -3854,6 +3854,18 @@ const ITEM_DEFINITIONS = {
         dropable: true,
         jump_type: "double",
     }),
+    flaming_skull: item("hat", {
+        display_name: "Flaming Skull",
+        rarity: "epic",
+        texture: "flaming_skull_1",
+        inventory_icon: "flaming_skull_icon",
+        instance_tracked: true,
+        equipment_slot: "hat",
+        equipable: true,
+        tradeable: true,
+        vendable: true,
+        dropable: true,
+    }),
     octopus_hat: item("hat", {
         display_name: "Octopus Hat",
         description: "A lively octopus caught while fishing. A 0.1% catch chance with any rod and lure.",
