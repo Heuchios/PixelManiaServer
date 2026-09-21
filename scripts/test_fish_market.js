@@ -46,15 +46,20 @@ async function run() {
   const settings = Market.policy(Items.ITEMS.pond_fish_large);
   const row = { item_id: "pond_fish_large", supply: settings.target, updated_ms: 1000, revision: 0 };
   const base = Market.quote(row, settings, 1000);
-  assert.equal(base.price_cents, 200);
-  assert.ok(Market.quote({ ...row, supply: row.supply * 2 }, settings, 1000).price_cents < 200);
-  assert.ok(Market.quote(row, settings, 1000 + settings.halfLife).price_cents > 200);
+  assert.equal(base.price_cents, 10);
+  assert.ok(Market.quote({ ...row, supply: row.supply * 2 }, settings, 1000).price_cents < settings.base);
+  assert.ok(Market.quote(row, settings, 1000 + settings.halfLife).price_cents > settings.base);
   assert.equal(Market.quote({ ...row, supply: 1e15 }, settings, 1000).price_cents, settings.min);
   assert.equal(Market.quote(row, settings, 1e15).price_cents, settings.max);
   for (const definition of Object.values(Items.ITEMS).filter(d => d.category === "fish")) {
     assert.equal(definition.stack_limit, 20000);
     const p = Market.policy(definition); assert.ok(p.min <= p.base && p.base <= p.max);
+    const peak = Market.quote({item_id:definition.id,supply:0,updated_ms:1000,revision:0},p,1000);
+    assert.ok(Market.saleValue([{amount:1500,price_cents:peak.price_cents}]) <= 250,
+      'A maximum-weight catch must stay under the 250-gem ceiling even at zero supply');
   }
+  assert.equal(Market.saleValue([{amount:1500,price_cents:Market.policy(Items.ITEMS.kraken).max}]),249);
+  assert.equal(Market.saleValue([{amount:1500,price_cents:settings.max}]),30);
   // Execute the actual route with mocked persistence and an exact authoritative inventory.
   const server = fs.readFileSync(require.resolve("../server"), "utf8");
   const start = server.indexOf("async function handleFishMongerTransaction(");
@@ -64,7 +69,8 @@ async function run() {
     cleanAccountName: String, inventoryContracts: require('../server_inventory_contracts')
   });
   const context = {
-    FishMarket: Market, FishMarketStore: { quotes: async () => ({ pond_fish_large: base }), commitLocal: () => {} },
+    // A fixed quote exercises payout arithmetic independently of balance changes.
+    FishMarket: Market, FishMarketStore: { quotes: async () => ({ pond_fish_large: {...base,price_cents:200} }), commitLocal: () => {} },
     ItemDatabase: Items, POSTGRES_ENABLED: false, POSTGRES_AUTHORITATIVE: false, tradeByPlayerId: new Map(),
     makeRequestId: d => d.request_id || "request", getTransactionWorldName: () => "START", cleanWorld: v => v,
     rejectIfWorldBanned: async () => false, getTransactionGrid: () => ({ x: 1, y: 1 }), validateFishMongerAccess: () => ({ x: 1, y: 1 }),
@@ -151,14 +157,15 @@ async function run() {
   await Store.lockSale({ table: s => s }, client, { fish_market_sales: [sale] }, deltas);
   assert.equal(marketRow.supply, settings.target + 57);
   const secondMetadata = {fish_market_sales:[{...sale,price_cents:999999}]};
+  const secondPrice = Market.quote(marketRow,settings,1000).price_cents;
   await Store.lockSale({table:s=>s},client,secondMetadata,deltas);
   assert.equal(marketRow.revision,2);
-  assert.equal(secondMetadata.fish_market_sales[0].price_cents,199);
+  assert.equal(secondMetadata.fish_market_sales[0].price_cents,secondPrice);
   assert.equal(deltas[1].delta,Market.saleValue(secondMetadata.fish_market_sales));
   Date.now = () => 1000 + settings.halfLife;
   const laterMetadata = {fish_market_sales:[sale]};
   await Store.lockSale({table:s=>s},client,laterMetadata,deltas);
-  assert.ok(laterMetadata.fish_market_sales[0].price_cents > 200);
+  assert.ok(laterMetadata.fish_market_sales[0].price_cents > settings.base);
   assert.equal(deltas[1].delta,Market.saleValue(laterMetadata.fish_market_sales));
   Date.now = () => 1000;
   await assert.rejects(Store.lockSale({ table: s => s }, { query: async () => ({ rowCount: 0 }) },

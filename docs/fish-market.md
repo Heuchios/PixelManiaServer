@@ -10,7 +10,7 @@ Each fish's settings are in `item_data_overrides.json` and the matching client `
 - `fish_market_target_kg` (default 1,000 kg)
 - `fish_market_half_life_seconds` (default one hour)
 
-Pond Fish variants start at **2 gems/kg**, bounded at **1–4 gems/kg**. Other species start at their previous numeric sell value, with bounds at 50% and 200% of that rate. These are initial balancing defaults.
+Fish prices are balanced for weight, with a **250-gem ceiling for any single 150 kg catch** at the highest market rate. Pond Fish starts at **0.10 gems/kg**, bounded at **0.05–0.20 gems/kg** (maximum 30 gems for 150 kg). Kraken is the most valuable catch: **0.83 gems/kg**, bounded at **0.42–1.66 gems/kg** (maximum 249 gems for 150 kg). Rates use two decimal places, so 1.66 is the highest rate that stays below the ceiling. Other species fall between these values; their bounds are approximately 50% and 200% of their base rate, rounded to hundredths. The ceiling applies to one maximum-weight catch; selling multiple catches together can pay more.
 
 The market starts at the base rate. Each successful sale adds its weight to recent supply; that supply decays with the configured half-life. The rate is `2 × base / (1 + recent_supply / target)`, clamped to the configured range and represented in hundredths of a gem/kg. High supply lowers the rate; lower supply raises it. Only committed sales count. Merely requesting prices, rejected requests, and failed transactions have no supply effect.
 
