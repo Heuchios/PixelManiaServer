@@ -10175,6 +10175,14 @@ class PostgresStore {
           }));
         }
 
+        if (source === "fish_monger") {
+          // The final gem payout is priced under market locks, after the route's
+          // estimate. Persist the same balances as the canonical inventory rows.
+          for (const entry of ledgerEntries) {
+            const field = entry.item_category === "fish" ? "fish_inventory" : "currency_inventory";
+            playerState[field] = {...toObject(playerState[field]), [entry.item_type]: entry.after_amount};
+          }
+        }
         if (Object.keys(playerState).length > 0) {
           const progression = await this.updatePlayerProgression(client, playerId, playerState);
           await client.query(
@@ -10268,11 +10276,10 @@ class PostgresStore {
         }
 
         await QuestStore.recordGameplay(this,client,playerId,action,metadata,String(metadata.transaction_id||requestId));
-        return InventoryContracts.buildPostgresInventoryDeltaTransactionSuccess({
-          playerId,
-          worldId,
-          ledgerEntries,
-        });
+        return {
+          ...InventoryContracts.buildPostgresInventoryDeltaTransactionSuccess({playerId, worldId, ledgerEntries}),
+          ...(source === "fish_monger" ? {fish_market_sales: metadata.fish_market_sales} : {}),
+        };
       }, action);
     } catch (error) {
       const persistenceResult = (error as Error & { world_persistence_result?: WorldPersistenceResult })?.world_persistence_result;

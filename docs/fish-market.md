@@ -18,7 +18,7 @@ All worlds and server instances use the same PostgreSQL `fish_market` rows. Row 
 
 Payout is `ceil(sum(weight_units × price_cents) / 1000)`. Round once for the entire sale, including Sell All. For example, 5.7 kg at 2 gems/kg pays 12 gems. Always rounding up allows small separate sales to earn more than selling their combined weight; this deliberately follows the requested rounding rule.
 
-The client fetches prices when opening the Monger and every 15 seconds while open. A changed quote requires reviewing the refreshed price and selling again. Refreshing preserves the selected sale weight. Rate tooltips show the configured range.
+The client fetches prices when opening the Monger and every 15 seconds while open. Displayed values are estimates. A sale locks the shared market rows, calculates the current rate, then commits that exact payout and supply together with inventory and ledgers. Changed quotes and competing sellers do not reject the sale; queued sellers receive the rate after earlier sales. Refreshing preserves the selected sale weight. Rate tooltips show the configured range.
 
 Each sized species now uses its existing `_large` item ID and artwork, with a display name such as **Pond Fish**. Small and medium IDs (and the old generic Pond Fish ID) remain hidden migration aliases and are excluded from catches and the collection. Migration version 2 combines their inventory weights, renames stored world holdings/drops and combines market supply. It records inventory transfers and updates hashes atomically. Combined holdings above 2,000 kg abort the migration rather than lose fish; resolve such holdings before production rollout. Local collection records combine catch counts and preserve the largest weight and best value.
 

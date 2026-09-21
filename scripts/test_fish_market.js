@@ -88,13 +88,32 @@ async function run() {
   };
   assert.equal((await sell({})).total_gems, 12); assert.equal(state.fish_inventory.pond_fish_large, 0); assert.equal(state.currency_inventory.gem, 12);
   assert.equal((await sell({ weight_kg: 0.1 })).total_gems, 1); assert.equal(state.fish_inventory.pond_fish_large, 56);
-  for (const data of [{ weight_kg: 5.8 }, { weight_kg: -1 }, { weight_kg: 0.01 }, { expected_prices: { pond_fish_large: 100 } }, { expected_prices: {} }]) {
+  for (const data of [{ weight_kg: 5.8 }, { weight_kg: -1 }, { weight_kg: 0.01 }]) {
     assert.equal((await sell(data)).ok, false); assert.equal(commits, 0); assert.equal(state.fish_inventory.pond_fish_large, 57);
+  }
+  for (const data of [{expected_prices:{pond_fish_large:100}}, {expected_prices:{}}, {expected_prices:null}]) {
+    assert.equal((await sell(data)).ok,true, 'A stale or missing displayed quote must not block a sale');
+    assert.equal(result.total_gems,12);
   }
   assert.equal((await sell({}, Items.getStackLimit("gem"))).ok, false); assert.equal(commits, 0);
   assert.equal((await sell({ action: "fish_monger_sell_all" })).total_gems, 12);
   assert.equal((await sell({ action: "fish_monger_prices" })).ok, true); assert.equal(commits, 0);
   assert.equal(result.fish_market.pond_fish_large.price_cents,200, 'Price response must survive the real wire serializer');
+  const originalCommit = context.commitPlayerInventoryState;
+  context.isPostgresAuthoritativeReady = () => true;
+  context.postgresStore = {};
+  context.commitPlayerInventoryState = async (socket,player,name,before,after) => {
+    assert.equal(after.currency_inventory.gem,1,'Route must defer final payout to PostgreSQL');
+    const settled = [{...base,price_cents:125,amount:57}];
+    after.currency_inventory.gem = Market.saleValue(settled);
+    state=after;commits++;
+    return {ok:true,state,deltas:[],postgres_committed:true,fish_market_sales:settled};
+  };
+  assert.equal((await sell({})).total_gems,8,'Response must report settled payout rather than the 12-gem estimate');
+  assert.equal(result.rewards[0].amount,8);
+  assert.match(result.message,/8 gems/);
+  context.commitPlayerInventoryState = originalCommit;
+  context.isPostgresAuthoritativeReady = () => false;
   const completeStart = server.indexOf('async function handleFishingCompleteTransaction(');
   const completeEnd = server.indexOf('function isSellableFishItem(', completeStart);
   const sessions = new Map();
@@ -118,7 +137,9 @@ async function run() {
     assert.equal(result.fish_inventory_unit,'tenths_kg');
     assert.equal(result.fish_market.pond_fish_large.price_cents,200);
   }
-  // Two shard clients see the same row. A second simultaneous sale using the old revision fails.
+  // Two shard clients see the same row. A queued sale reprices after the first commits.
+  const realNow = Date.now;
+  Date.now = () => 1000;
   let marketRow = { ...row };
   const client = { query: async (sql, args) => {
     if (sql.includes("FOR UPDATE")) return { rows: [{ ...marketRow }] };
@@ -129,7 +150,17 @@ async function run() {
   const deltas = [{ item_type: "pond_fish_large", item_category: "fish", delta: -57 }, { item_type: "gem", item_category: "currency", delta: 12 }];
   await Store.lockSale({ table: s => s }, client, { fish_market_sales: [sale] }, deltas);
   assert.equal(marketRow.supply, settings.target + 57);
-  await assert.rejects(Store.lockSale({ table: s => s }, client, { fish_market_sales: [sale] }, deltas), /changed/);
+  const secondMetadata = {fish_market_sales:[{...sale,price_cents:999999}]};
+  await Store.lockSale({table:s=>s},client,secondMetadata,deltas);
+  assert.equal(marketRow.revision,2);
+  assert.equal(secondMetadata.fish_market_sales[0].price_cents,199);
+  assert.equal(deltas[1].delta,Market.saleValue(secondMetadata.fish_market_sales));
+  Date.now = () => 1000 + settings.halfLife;
+  const laterMetadata = {fish_market_sales:[sale]};
+  await Store.lockSale({table:s=>s},client,laterMetadata,deltas);
+  assert.ok(laterMetadata.fish_market_sales[0].price_cents > 200);
+  assert.equal(deltas[1].delta,Market.saleValue(laterMetadata.fish_market_sales));
+  Date.now = () => 1000;
   await assert.rejects(Store.lockSale({ table: s => s }, { query: async () => ({ rowCount: 0 }) },
     { fish_market_sales: [sale] }, deltas, "player", "replayed-request"), /already completed/);
   // Exercise the real transaction wrapper: an inventory failure after market writes must roll them back.
@@ -151,6 +182,7 @@ async function run() {
   }, "fish_monger_sell");
   assert.equal(rejected.ok, false); assert.deepEqual(marketRow, row);
   assert.ok(sqlCalls.includes("ROLLBACK")); assert.ok(!sqlCalls.includes("COMMIT"));
+  Date.now = realNow;
   console.log("Fish market: weights, migration, rounding, price bounds/recovery, route validation, capacity and competing quotes passed.");
 }
 run().catch(error => { console.error(error); process.exitCode = 1; });

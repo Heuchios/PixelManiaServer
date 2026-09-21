@@ -12323,7 +12323,7 @@ async function handleFishMongerTransaction(socket, player, data) {
             sendInventoryTransactionResult(socket, { ok: true, action, request_id: requestId, username, fish_market: prices });
             return;
         }
-        const sales = [];
+        let sales = [];
         const selected = action === "fish_monger_sell_all" ? Object.keys(state.fish_inventory || {}) : [clampString(data.item_id || "")];
         for (const id of selected) {
             if (!prices[id]) {
@@ -12340,19 +12340,17 @@ async function handleFishMongerTransaction(socket, player, data) {
                 sendInventoryTransactionRejected(socket, data, "Choose an owned weight in 0.1 kg steps, up to 2000 kg.");
                 return;
             }
-            if (Number(data.expected_prices?.[id]) !== prices[id].price_cents) {
-                sendInventoryTransactionResult(socket, { ok: false, action, request_id: requestId, username,
-                    message: "Market prices changed. Review the updated prices and sell again.", fish_market: prices });
-                return;
-            }
             sales.push({ ...prices[id], amount });
         }
         if (!sales.length) {
             sendInventoryTransactionRejected(socket, data, "You don't have any fish to sell.");
             return;
         }
-        const totalGems = FishMarket.saleValue(sales);
-        if (getInventoryCount(state, "gem", "currency") + totalGems > ItemDatabase.getStackLimit("gem")) {
+        let totalGems = FishMarket.saleValue(sales);
+        // PostgreSQL calculates the actual payout under market row locks. Reserve a
+        // positive gem delta here; it also checks capacity against the final payout.
+        const stagedGems = isPostgresAuthoritativeReady() ? 1 : totalGems;
+        if (getInventoryCount(state, "gem", "currency") + stagedGems > ItemDatabase.getStackLimit("gem")) {
             sendInventoryTransactionRejected(socket, data, "Your gem balance is full.");
             return;
         }
@@ -12365,7 +12363,7 @@ async function handleFishMongerTransaction(socket, player, data) {
                 return;
             }
         }
-        if (!addItemToState(stagedState, "gem", "currency", totalGems)) {
+        if (!addItemToState(stagedState, "gem", "currency", stagedGems)) {
             sendInventoryTransactionRejected(socket, data, "Your gem balance is full.");
             return;
         }
@@ -12375,11 +12373,15 @@ async function handleFishMongerTransaction(socket, player, data) {
             skip_inventory_lock: true,
             metadata: { transaction_id: saleId, x: fishMongerGrid.x, y: fishMongerGrid.y,
                 total_weight_kg: totalWeight, total_gems: totalGems, inventory_unit: FishMarket.UNIT, fish_market_sales: sales },
-            failure_message: "The inventory or market changed. Refresh prices and try again.",
+            failure_message: "Could not complete the fish sale. Try again.",
         });
         if (!commit.ok) {
             sendInventoryTransactionRejected(socket, data, commit.message);
             return;
+        }
+        if (Array.isArray(commit.fish_market_sales)) {
+            sales = commit.fish_market_sales;
+            totalGems = FishMarket.saleValue(sales);
         }
         if (!commit.postgres_committed)
             FishMarketStore.commitLocal(sales);
@@ -14983,6 +14985,13 @@ async function commitPlayerInventoryState(socket, player, username, beforeState,
                     });
                 }
                 clearUnavailableEquipmentInState(afterState);
+                if (options.source === "fish_monger") {
+                    for (const delta of deltas) {
+                        const settled = result.ledger_entries.find((entry) => entry.item_type === delta.item_type && entry.item_category === delta.item_category);
+                        if (settled)
+                            delta.delta = settled.delta;
+                    }
+                }
             }
             setPlayerState(cleanUsername, afterState);
             writePlayerStateJsonBackup(cleanUsername, afterState);
@@ -14994,12 +15003,12 @@ async function commitPlayerInventoryState(socket, player, username, beforeState,
             if (equipmentChanged && player) {
                 publishPlayerPresenceUpdate(socket, player, options.world || player.world || "START", "player_position");
             }
-            return InventoryContracts.buildInventoryCommitSuccess({
-                state: afterState,
-                postgresCommitted: true,
-                deltas,
-                equipmentChanged,
-            });
+            return { ...InventoryContracts.buildInventoryCommitSuccess({
+                    state: afterState,
+                    postgresCommitted: true,
+                    deltas,
+                    equipmentChanged,
+                }), ...(options.source === "fish_monger" ? { fish_market_sales: result.fish_market_sales } : {}) };
         }
         if (POSTGRES_ENABLED && POSTGRES_AUTHORITATIVE && !shouldAllowPhase7DevJsonFallback(player, null, options)) {
             return InventoryContracts.buildInventoryCommitFailure({

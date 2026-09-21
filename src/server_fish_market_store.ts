@@ -157,22 +157,33 @@ export async function lockSale(store: any, client: any, metadata: any, deltas: a
   const lines = metadata.fish_market_sales;
   if (!Array.isArray(lines) || !lines.length) throw new Error("Missing fish market sale");
   const seen = new Set<string>();
+  const locked: Array<{line: any; row: Market.MarketRow; policy: Market.Policy}> = [];
+  const gem = deltas.find(d => d.item_type === "gem" && d.item_category === "currency");
+  if (!gem || deltas.length !== lines.length + 1) throw new Error("Invalid fish payout");
   for (const line of [...lines].sort((a, b) => a.item_id.localeCompare(b.item_id))) {
     if (seen.has(line.item_id)) throw new Error("Duplicate fish sale");
     seen.add(line.item_id);
     const query = await client.query(`SELECT * FROM ${store.table("fish_market")} WHERE item_id = $1 FOR UPDATE`, [line.item_id]);
     const row = query.rows[0];
-    if (!row || Number(row.revision) !== line.revision) throw new Error("Fish market changed. Refresh prices and try again.");
+    if (!row) throw new Error("Fish market unavailable.");
     const definition = ItemDatabase.getItemDefinition(line.item_id);
     if (!definition || definition.category !== "fish" || definition.hidden) throw new Error("Invalid fish");
-    const price = Market.quote(row, Market.policy(definition), line.quoted_ms);
-    if (price.price_cents !== line.price_cents || !deltas.some(d => d.item_type === line.item_id && d.item_category === "fish" && d.delta === -line.amount)) throw new Error("Invalid fish quote");
+    if (!Number.isSafeInteger(line.amount) || line.amount <= 0 || line.amount > Market.STACK_LIMIT ||
+      !deltas.some(d => d.item_type === line.item_id && d.item_category === "fish" && d.delta === -line.amount)) throw new Error("Invalid fish weight");
+    locked.push({line, row, policy: Market.policy(definition)});
+  }
+  // Price only after all rows are locked. Other sellers queue, then receive the
+  // current rate; client quotes and earlier market revisions are estimates only.
+  const now = Date.now();
+  const settled = locked.map(({line,row,policy}) => ({...Market.quote(row,policy,now),amount:line.amount}));
+  gem.delta = Market.saleValue(settled);
+  metadata.total_gems = gem.delta;
+  metadata.fish_market_sales = settled;
+  for (const line of settled) {
     // This write rolls back with inventory, gem ledger, and transaction ledger on any failure.
     await client.query(`UPDATE ${store.table("fish_market")} SET supply = $2, updated_ms = $3, revision = revision + 1 WHERE item_id = $1`,
-      [line.item_id, price.supply + line.amount, line.quoted_ms]);
+      [line.item_id, line.supply + line.amount, line.quoted_ms]);
   }
-  if (deltas.filter(d => d.item_category === "fish").length !== lines.length ||
-      !deltas.some(d => d.item_type === "gem" && d.item_category === "currency" && d.delta === Market.saleValue(lines))) throw new Error("Invalid fish payout");
 }
 
 export function commitLocal(lines: Array<Market.Quote & { amount: number }>): void {
