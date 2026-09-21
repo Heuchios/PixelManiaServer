@@ -11934,7 +11934,10 @@ function validateFishingTarget(socket, player, worldName, grid, data) {
     return true;
 }
 function rollFishingReward(lureId, rodId = "") {
-    const entry = rollWeightedReward(ItemDatabase.getFishingTable(lureId, { rod_id: rodId }));
+    // One in 1,000 catches, independent of every rod/lure's weighted reward pool.
+    const entry = crypto.randomInt(0, 1000) === 0
+        ? { item_id: "octopus_hat", item_category: "hat", difficulty: 1 }
+        : rollWeightedReward(ItemDatabase.getFishingTable(lureId, { rod_id: rodId }));
     if (!entry)
         return null;
     const itemId = clampString(entry.item_id || entry.fish_id || "");

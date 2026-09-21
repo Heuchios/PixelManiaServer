@@ -6,6 +6,7 @@ const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
 const vm = require("node:vm");
+const ItemDatabase = require("../server_item_database");
 const source = fs.readFileSync(path.join(__dirname, "..", "server.js"), "utf8");
 const start = source.indexOf("async function handleFishingCompleteTransaction(");
 const end = source.indexOf("function isSellableFishItem(", start);
@@ -16,11 +17,17 @@ async function runCase(options = {}) {
     session_id: "session-1", world: "POND", difficulty: options.difficulty || 1,
     expires_at: Date.now() + (options.expired ? -1000 : 60000),
     item_id: "pond_fish", fish_id: "pond_fish", item_category: "fish", lure_id: "worm_lure",
+    ...(options.hat ? { item_id: "octopus_hat", fish_id: "", item_category: "hat" } : {}),
   };
   const sessions = new Map(options.missing ? [] : [["player-1", session]]);
   const results = [], rejected = [];
   let commits = 0, awarded = 0, ledger = 0;
   const context = {
+    ItemDatabase,
+    FishMarket: { catchAmount: () => 10, UNIT: "decikilograms" },
+    FishMarketStore: { quotes: async () => ({}) },
+    isPostgresAuthoritativeReady: () => false,
+    getInventoryCount: () => 0,
     activeFishingSessions: sessions,
     makeRequestId: data => data.request_id,
     sendInventoryTransactionRejected: (_socket, _data, message) => rejected.push(message),
@@ -31,7 +38,14 @@ async function runCase(options = {}) {
     cloneJson: value => JSON.parse(JSON.stringify(value)),
     clampString: value => String(value || ""),
     resolveInventoryCategory: (_id, category) => category,
-    addItemToState: () => { awarded++; return !options.full; },
+    addItemToState: (_state, id, category, amount) => {
+      if (options.hat) {
+        assert.equal(id, "octopus_hat");
+        assert.equal(category, "hat");
+        assert.equal(amount, 1);
+      }
+      awarded++; return !options.full;
+    },
     getFishingXp: () => 10,
     grantExperienceToState: () => ({}),
     commitPlayerInventoryState: async (_socket, _player, _name, _before, state) => {
@@ -56,6 +70,14 @@ async function runCase(options = {}) {
 
 (async () => {
   let checks = 0;
+  const hat = await runCase({ hat: true, duplicate: true });
+  assert.equal(hat.results[0].item_id, "octopus_hat");
+  assert.equal(hat.results[0].rewards[0].amount, 1);
+  assert.equal(hat.commits, 1);
+  assert.equal(hat.ledger, 1);
+  assert.equal(hat.awarded, 1);
+  assert.equal(hat.rejected.length, 1);
+  checks += 6;
   for (let difficulty = 1; difficulty <= 10; difficulty++) {
     const result = await runCase({ difficulty, duplicate: true });
     assert.equal(result.results[0].item_id, "pond_fish");
