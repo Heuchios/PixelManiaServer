@@ -3376,6 +3376,7 @@ const ITEM_DEFINITIONS = {
     toxic_waste: item("material", { display_name: "Toxic Waste", rarity: "epic", texture: "res://Assets/items/materials/toxic_waste.png", inventory_icon: "res://Assets/items/materials/toxic_waste.png", fishing_material: true }),
     naval_mines: item("material", { display_name: "Naval Mines", rarity: "epic", texture: "res://Assets/items/materials/naval_mines.png", inventory_icon: "res://Assets/items/materials/naval_mines.png", fishing_material: true }),
     legendary_wings: item("back", {
+        display_name: "Dev Wings",
         rarity: "legendary",
         equipment_slot: "back",
         equipable: true,
@@ -3904,6 +3905,15 @@ const ITEM_DEFINITIONS = {
         vendable: true,
         dropable: true,
     }),
+    police_hat: item("hat", {
+        display_name: "Police Hat",
+        rarity: "common",
+        texture: "police_hat",
+        inventory_icon: "police_hat_icon",
+        equipment_slot: "hat",
+        equipable: true,
+        instance_tracked: true,
+    }),
     blue_baseball_cap: item("hat", {
         display_name: "Blue Baseball Cap",
         rarity: "common",
@@ -4410,6 +4420,18 @@ const ITEM_DEFINITIONS = {
         equipment_slot: "shirt",
         equipable: true,
     }),
+    police_shirt: item("shirt", {
+        display_name: "Police Shirt",
+        rarity: "common",
+        texture: "police_shirt_body",
+        shirt_body_texture: "police_shirt_body",
+        inventory_icon: "police_shirt_icon",
+        arm_texture: "police_shirt_arm",
+        left_arm_texture: "police_shirt_arm_left",
+        equipment_slot: "shirt",
+        equipable: true,
+        instance_tracked: true,
+    }),
     black_suit: item("shirt", {
         display_name: "Black Suit",
         rarity: "common",
@@ -4421,6 +4443,15 @@ const ITEM_DEFINITIONS = {
         rarity: "common",
         equipment_slot: "shirt",
         equipable: true,
+    }),
+    police_pants: item("pants", {
+        display_name: "Police Pants",
+        rarity: "common",
+        texture: "police_pants",
+        inventory_icon: "police_pants_icon",
+        equipment_slot: "pants",
+        equipable: true,
+        instance_tracked: true,
     }),
     basic_black_pants: item("pants", {
         rarity: "common",
