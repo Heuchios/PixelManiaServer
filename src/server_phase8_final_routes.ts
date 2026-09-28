@@ -898,6 +898,9 @@ function createServerPhase8FinalRoutes(deps: Phase8FinalRouteDeps) {
             player.y = position.y;
             player.facing = position.facing;
             player.animation_state = sanitizePlayerAnimationState(data.animation_state);
+            for (const key of ["jump_visual_sequence", "punch_visual_sequence"]) {
+              if (Number.isSafeInteger(data[key]) && data[key] >= 0 && data[key] <= 2147483647) player[key] = data[key];
+            }
             player.velocity_x = sanitizePlayerVelocity(data.velocity_x);
             player.velocity_y = sanitizePlayerVelocity(data.velocity_y);
             player.on_floor = data.on_floor !== false;

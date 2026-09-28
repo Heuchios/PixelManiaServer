@@ -402,7 +402,7 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       return;
     }
     if (!deps.isPlayerOwnAccount(player, username)) {
-      if (purpose === "world_lock_access_check" || purpose === "remote_player_profile") {
+      if (purpose === "world_lock_access_check" || purpose === "area_lock_access_check" || purpose === "remote_player_profile") {
         if (purpose === "remote_player_profile" && deps.ensurePlayerState(username) === null) {
           const targetRefresh = toRecord(await deps.refreshPlayerStateFromPostgres(username, "remote_player_profile"));
           if (!targetRefresh.ok) {

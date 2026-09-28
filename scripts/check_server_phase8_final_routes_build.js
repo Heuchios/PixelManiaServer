@@ -179,6 +179,36 @@ function getLegacyBody() {
   assert.equal(deps.playerNetworkStats.player_position_messages_received, 1);
   assert.ok(events.includes("debug:ignored legacy player_position in trusted movement mode"));
 
+  let acceptMotion = true;
+  const relayedActions = /** @type {Record<string, unknown>[]} */ ([]);
+  const visualRoutes = Phase8FinalRoutesModule.createServerPhase8FinalRoutes({
+    ...deps,
+    enforceStandardMovementForSocket: () => true,
+    isValidRespawnTeleportPosition: () => false,
+    acceptPlayerMovement: () => acceptMotion,
+    getEquipmentSlotsComparisonKey: () => "",
+    sanitizePlayerAnimationState: (/** @type {unknown} */ value) => String(value || "idle"),
+    sanitizePlayerVelocity: (/** @type {unknown} */ value) => Number(value) || 0,
+    sanitizePlayerDamageFlash: () => ({active:false,remaining_ms:0,token:0}),
+    refreshPlayerFishingPresence: () => {},
+    buildPublicPlayerPresencePayload: (/** @type {string} */ _type, /** @type {Record<string, unknown>} */ value) => ({jump_visual_sequence:value.jump_visual_sequence,punch_visual_sequence:value.punch_visual_sequence}),
+    getPlayerPresenceBroadcastSignature: (/** @type {unknown} */ value) => JSON.stringify(value),
+    getPlayerPositionHeartbeatIntervalMs: () => 1000,
+    queuePlayerPositionBroadcast: (/** @type {string} */ _world, /** @type {Record<string, unknown>} */ value) => relayedActions.push(value),
+    APPEARANCE_DEBUG_LOGS: false,
+  });
+  const visualPlayer = {...player, jump_visual_sequence:0, punch_visual_sequence:0};
+  await visualRoutes.handlePlayerPosition(socket, visualPlayer, {jump_visual_sequence:4,punch_visual_sequence:2}, {playerId:"p1"});
+  assert.deepEqual(relayedActions.pop(), {jump_visual_sequence:4,punch_visual_sequence:2});
+  await visualRoutes.handlePlayerPosition(socket, visualPlayer, {jump_visual_sequence:5,punch_visual_sequence:3}, {playerId:"p1"});
+  assert.deepEqual(relayedActions.pop(), {jump_visual_sequence:5,punch_visual_sequence:3});
+  await visualRoutes.handlePlayerPosition(socket, visualPlayer, {jump_visual_sequence:Infinity,punch_visual_sequence:-1}, {playerId:"p1"});
+  assert.equal(visualPlayer.jump_visual_sequence,5);
+  assert.equal(visualPlayer.punch_visual_sequence,3);
+  acceptMotion = false;
+  await visualRoutes.handlePlayerPosition(socket, visualPlayer, {jump_visual_sequence:6,punch_visual_sequence:4}, {playerId:"p1"});
+  assert.equal(visualPlayer.jump_visual_sequence,5,"Rejected movement cannot advance action visuals");
+
   const legacyBody = getLegacyBody();
   assert.doesNotMatch(legacyBody, /if \(data\.type === "world_block_update"\)/);
   assert.doesNotMatch(legacyBody, /if \(data\.type === "electrical_layer_update"\)/);

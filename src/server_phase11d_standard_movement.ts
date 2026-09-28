@@ -826,6 +826,8 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
       facing: Number(player?.facing || 1),
       world: String(worldName || player?.world || ""),
       animation_state: String(player?.animation_state || "idle"),
+      jump_visual_sequence: clampInteger(player?.jump_visual_sequence || 0, 0, 2147483647),
+      punch_visual_sequence: clampInteger(player?.punch_visual_sequence || 0, 0, 2147483647),
       movement_sequence: Math.max(0, Math.trunc(Number(player?.movement_sequence) || 0)),
       server_time_msec: Math.max(
         0,
@@ -866,6 +868,8 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
       y: Number(payload.y || 0),
       facing: Number(payload.facing || 1),
       animation_state: String(payload.animation_state || "idle"),
+      jump_visual_sequence: clampInteger(payload.jump_visual_sequence || 0, 0, 2147483647),
+      punch_visual_sequence: clampInteger(payload.punch_visual_sequence || 0, 0, 2147483647),
       velocity_x: sanitizePlayerVelocity(payload.velocity_x || 0),
       velocity_y: sanitizePlayerVelocity(payload.velocity_y || 0),
       on_floor: payload.on_floor === true,

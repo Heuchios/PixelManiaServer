@@ -168,6 +168,12 @@ const socket = {};
   assert.equal(initialStateResponse.type, "player_state");
   assert.equal(initialStateResponse.created_at, "2026-01-01T00:00:00.000Z");
   assert.equal(initialStateResponse.account.created_at, "2026-01-01T00:00:00.000Z");
+  await routes.handlePlayerStateRequest(socket, player, { username: "another-player", purpose: "area_lock_access_check", request_id: "area-lookup" }, { playerId: "p1" });
+  const areaLookup = /** @type {any} */ (sent.pop());
+  assert.equal(areaLookup.username, "another-player");
+  assert.equal(areaLookup.purpose, "area_lock_access_check");
+  assert.equal(areaLookup.request_id, "area-lookup");
+  assert.equal(areaLookup.player_data, undefined, "Other players only expose public profiles");
 
   tradeByPlayerId.set("p1", {});
   await routes.handlePlayerStateSave(socket, player, { type: "player_state_save", username: "uso" }, { playerId: "p1" });

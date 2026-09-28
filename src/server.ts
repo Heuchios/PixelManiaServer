@@ -7070,10 +7070,11 @@ function canPlayerBuildInAreaLock(player: any, worldName: any, areaLock: any) {
 }
 
 function canPlayerBuildAtGrid(player: any, worldName: any, x: any, y: any) {
-  if (!canPlayerBuildInWorld(player, worldName)) return false;
+  if (!player || !player.authenticated) return false;
   const state = ensureWorldState(worldName);
   const areaLock = getAreaLockCoveringGrid(state, x, y);
-  return !areaLock || canPlayerBuildInAreaLock(player, worldName, areaLock);
+  // Area access grants apply only to its covered tiles, including private worlds.
+  return areaLock ? canPlayerBuildInAreaLock(player, worldName, areaLock) : canPlayerBuildInWorld(player, worldName);
 }
 
 function getAreaLocksJournalData(worldName: any) {
@@ -35267,6 +35268,8 @@ function getPlayersInWorld(worldName: any, excludePlayerId: any = "", receiverPl
 	      facing: player.facing,
 	      world: player.world,
 	      animation_state: player.animation_state || "idle",
+      jump_visual_sequence: clampInteger(player.jump_visual_sequence || 0, 0, 2147483647),
+      punch_visual_sequence: clampInteger(player.punch_visual_sequence || 0, 0, 2147483647),
       movement_sequence: Math.max(0, Math.trunc(Number(player.movement_sequence) || 0)),
       server_time_msec: Math.max(0, Math.trunc(Number(player.movement_server_time_msec) || now)),
       velocity_x: sanitizePlayerVelocity(player.velocity_x || 0),

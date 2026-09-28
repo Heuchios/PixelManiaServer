@@ -110,7 +110,7 @@
 	"build:server-entry": "tsc --project tsconfig.server-entry.json && node scripts/sync_server_entry_build.js",
 	"check:server-entry": "npm run build:server-entry && node scripts/check_server_phase11e_to_11j_entry_build.js",
 	"check:world-honors": "node scripts/check_world_honors.js",
-	"check:lock-decay": "node scripts/check_lock_decay.js",
+	"check:lock-decay": "node scripts/check_lock_decay.js && node scripts/check_area_lock_settings.js",
 	"build:packet-contracts": "tsc --project tsconfig.packet-contracts.json && node scripts/sync_packet_contracts_build.js",
 	"check:packet-contracts": "npm run build:packet-contracts && node scripts/check_packet_contracts.js",
 	"build:drop-contracts": "tsc --project tsconfig.drop-contracts.json && node scripts/sync_drop_contracts_build.js",

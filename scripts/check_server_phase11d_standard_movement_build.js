@@ -503,7 +503,11 @@ fixture.activeFishingSessions.set(player.id, {
 });
 player.damage_flash_expires_at = 1500;
 player.damage_flash_token = 7;
+player.jump_visual_sequence = 3;
+player.punch_visual_sequence = 5;
 const presence = movement.buildPublicPlayerPresencePayload("player_position", player, "TEST");
+assert.equal(presence.jump_visual_sequence, 3);
+assert.equal(presence.punch_visual_sequence, 5);
 assert.equal(presence.player_id, "p1");
 assert.equal(presence.username, "uso");
 assert.equal(presence.fishing_active, true);
@@ -512,6 +516,9 @@ assert.equal(presence.equipped_tool, "wrench");
 assert.equal(presence.equipped_back_item, "cape");
 
 const signature = movement.getPlayerPresenceBroadcastSignature(presence);
+for (const key of ["jump_visual_sequence", "punch_visual_sequence"]) {
+  assert.notEqual(movement.getPlayerPresenceBroadcastSignature({ ...presence, [key]: presence[key] + 1 }), signature, "Repeated actions must not be dropped as unchanged movement");
+}
 assert.equal(
   movement.getPlayerPresenceBroadcastSignature({ ...presence, server_time_msec: 9999 }),
   signature,
