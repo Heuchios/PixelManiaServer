@@ -665,6 +665,9 @@ function isUuid(value: unknown): boolean {
 
 function normalizeLedgerSource(value: unknown): string {
   const raw = cleanName(value).toLowerCase();
+  // Keep machine-issued remotes attributable so strict PM-ITEM creation can
+  // mint their tracked instance in the same transaction as the inventory count.
+  if (raw === "magnet_machine") return "magnet_machine";
   if (raw.includes("trade")) return "trade";
   if (raw.includes("vending") || raw.includes("vend")) return "vending";
   if (raw.includes("world_drop")) return "world_drop";

@@ -187,7 +187,10 @@ function createFakePool(initialState, identity) {
     }
 
     if (sql.includes('INSERT INTO "pixelmania"."item_transactions"')) {
-      working.item_transactions.push({ item_type: params[2], delta: params[4] });
+      const inventoryDeltaLayout = /source,\s+action,\s+item_type/.test(sql);
+      working.item_transactions.push(inventoryDeltaLayout
+        ? { source: params[2], action: params[3], item_type: params[4], delta: params[6] }
+        : { item_type: params[2], delta: params[4] });
       return { rows: [{ item_transaction_id: working.item_transactions.length }], rowCount: 1 };
     }
 
@@ -256,16 +259,18 @@ function createFakePool(initialState, identity) {
     }
     if (sql.includes('INSERT INTO "pixelmania"."item_instances"')) {
       const id = crypto.randomUUID();
+      const inventoryCreation = sql.includes("'active'") && sql.includes("'inventory'");
       working.item_instances.push({
         item_instance_id: id,
         public_item_instance_id: params[0],
         item_type: params[1],
         item_category: params[2],
-        owner_player_id: null,
-        world_id: params[3],
-        state: "dropped",
-        current_location: "world_drop",
-        metadata: JSON.parse(String(params[6] || "{}")),
+        owner_player_id: inventoryCreation ? params[3] : null,
+        world_id: params[inventoryCreation ? 4 : 3],
+        state: inventoryCreation ? "active" : "dropped",
+        current_location: inventoryCreation ? "inventory" : "world_drop",
+        created_by_source: inventoryCreation ? params[5] : undefined,
+        metadata: JSON.parse(String(params[inventoryCreation ? 7 : 6] || "{}")),
       });
       return { rows: [{ item_instance_id: id }], rowCount: 1 };
     }

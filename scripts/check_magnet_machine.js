@@ -4,7 +4,10 @@ const { createMagnetSystem, sanitizeMagnetState } = require("../magnet_machine")
 const ItemDatabase = require("../server_item_database");
 const copy = v => JSON.parse(JSON.stringify(v));
 
-function fixture() {
+function fixture(durable = false) {
+  const db = durable ? require('./postgres_test_double').createStore({ inventory: [], item_instances: [], item_transactions: [], world_drops: [] }, {
+    accountId: '11111111-1111-4111-8111-111111111111', playerId: '22222222-2222-4222-8222-222222222222', worldId: '33333333-3333-4333-8333-333333333333',
+  }) : null;
   const world = { foreground: new Map([["1,2", { block_type: "magnet_machine", x: 1, y: 2 }]]), interactions: new Map(), removed_foreground: new Map() };
   const inventories = { owner: { dirt: 400, dirt_seed: 20 }, guest: {} };
   let last, failure = false, near = true, banned = false, commits = 0, sequence = 0;
@@ -32,9 +35,16 @@ function fixture() {
     canAddItemToState: (s, id, _cat, n) => (s[id] || 0) + n <= ItemDatabase.getStackLimit(id),
     addItemToState: (s, id, _cat, n) => { s[id] = (s[id] || 0) + n; return true; },
     buildWorldObjectChangeEntry: (_s, _p, _w, data) => copy(data),
-    commitPlayerInventoryState: async (_s, _p, name, _before, after, opts) => {
+    commitPlayerInventoryState: async (_s, _p, name, before, after, opts) => {
       commits++; assert.equal(opts.world_mutation, true); assert.ok(opts.world_changes.length);
       if (failure) return { ok: false };
+      if (db) {
+        const result = await db.store.applyInventoryDeltaTransaction({
+          account_username: name, world: 'TEST', source: opts.source, action: opts.action, request_id: opts.request_id,
+          deltas: [{ item_type: 'magnet_machine_remote', item_category: 'tool', delta: (after.magnet_machine_remote || 0) - (before.magnet_machine_remote || 0), stack_limit: 1 }],
+        });
+        if (!result.ok) return result;
+      }
       inventories[name] = copy(after); return { ok: true, state: after, deltas: [], postgres_committed: true };
     },
     commitWorldStateWithBlockChanges: async () => { commits++; return { ok: !failure }; },
@@ -47,7 +57,7 @@ function fixture() {
     },
   };
   const system = createMagnetSystem(deps);
-  return { system, world, inventories, messages, owner, guest, deps,
+  return { system, world, inventories, messages, owner, guest, deps, db,
     get last() { return last; }, get commits() { return commits; },
     set failure(v) { failure = v; }, set near(v) { near = v; },
     request: (action, extra = {}, p = owner) => system.handle({}, p, { type: "inventory_transaction_request", world: p.world, x: 1, y: 2, action, ...extra }),
@@ -104,5 +114,25 @@ function fixture() {
   const running = f.system.locked({}, f.owner, {}, () => hold, true);
   await Promise.resolve(); await f.request("magnet_withdraw", { amount: 1 }); assert.equal(f.last.ok, false);
   release(); await running;
+  f = fixture(true);
+  await f.request('magnet_select', { item_id: 'dirt' });
+  await f.request('magnet_update', { collecting: true, building: true });
+  await f.request('magnet_remote', {}, f.guest);
+  assert.equal(f.last.ok, true, 'The real PostgreSQL inventory transaction must accept the remote creation source');
+  assert.equal(f.db.fake.state.inventory[0].amount, 1);
+  assert.equal(f.db.fake.state.item_instances.length, 1);
+  const remoteInstance = f.db.fake.state.item_instances[0];
+  assert.equal(remoteInstance.item_type, 'magnet_machine_remote');
+  assert.equal(remoteInstance.created_by_source, 'magnet_machine');
+  assert.equal(remoteInstance.state, 'active');
+  assert.equal(remoteInstance.current_location, 'inventory');
+  assert.match(remoteInstance.public_item_instance_id, /^PM-ITEM-/);
+  assert.equal(f.db.fake.state.item_transactions[0].source, 'magnet_machine');
+  await f.request('magnet_remote', {}, f.guest);
+  assert.equal(f.db.fake.state.item_instances.length, 1, 'Reconnecting a remote must reuse its tracked instance');
+  const rejected = await f.db.store.applyInventoryDeltaTransaction({ account_username: 'owner', source: 'system', action: 'test',
+    deltas: [{ item_type: 'wrench', item_category: 'tool', delta: 1 }] });
+  assert.equal(rejected.reason, 'missing_item_instance_source', 'Vague creation sources remain blocked');
+  assert.equal(f.db.fake.state.item_instances.length, 1);
   console.log("[magnet-machine] capacity, overflow, filters, deposits, withdrawals, permissions, remotes, replacement, rollback, persistence and concurrency passed");
 })().catch(error => { console.error(error); process.exitCode = 1; });
