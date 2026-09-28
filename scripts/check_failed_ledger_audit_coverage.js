@@ -114,7 +114,9 @@ const DYNAMIC_FALLBACKS = ["request"];
 // Missing-ticket and failed ticket-commit admission rejections are audited too.
 // Three Magnet Machine guards (owner, nonempty removal, exhausted remote stock)
 // use the already-audited world_block_update action.
-const EXPECTED_LITERAL_SITES = 286;
+// Lock-decay checks add lock_changed and lock_not_decayed rejections; both use
+// world_block_update, which is already audited by the failed-ledger filter.
+const EXPECTED_LITERAL_SITES = 288;
 // Re-pinned from 10 -> 9 after tracing every current dynamic call site (2026-08-09): all
 // nine pass an `action`-shaped variable through unchanged --
 // `cleanRouteType || "request"` / `type || "request"` (both already covered by

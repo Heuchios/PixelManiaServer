@@ -5993,6 +5993,9 @@ async function getLockDecayStatus(lock, worldLock) {
     add(accountIds, [lock.owner_account_id, ...(Array.isArray(lock.allowed_account_ids) ? lock.allowed_account_ids : [])]);
     add(playerIds, [lock.owner_player_id || lock.owner_profile_id, ...(Array.isArray(lock.allowed_player_ids) ? lock.allowed_player_ids : [])]);
     const unavailable = { known: false, expired: false, days, remaining_days: days };
+    if (![lock.owner_name, lock.owner_username, lock.owner_account_id, lock.owner_player_id, lock.owner_profile_id]
+        .some((value) => String(value || "").trim() !== ""))
+        return unavailable;
     if (names.size + accountIds.size + playerIds.size === 0)
         return unavailable;
     const result = await postgresStore.getLockAccountActivity([...names], [...accountIds], [...playerIds]);

@@ -73,6 +73,7 @@ async function main() {
     assert.equal((await h.getStatus(h.lock, world)).expired, false, "Not even one ms early");
     h.state.now += 1;
     assert.equal((await h.getStatus(h.lock, world)).expired, true, "Exact boundary");
+    assert.equal((await h.getStatus({ allowed_players: ["OWNER"] }, world)).known, false, "Missing owner identity fails closed");
     h.lock.allowed_players = ["MEMBER"];
     assert.equal((await h.getStatus(h.lock, world)).known, false, "Unknown member fails closed");
     h.state.rows.push({ username: "MEMBER", account_id: "a2", player_id: "p2", last_login_at: new Date(h.state.now - DAY).toISOString() });
