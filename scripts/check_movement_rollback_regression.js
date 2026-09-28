@@ -134,6 +134,7 @@ function createPlayer(x = 1000, y = 1000) {
     movement_sequence: 0,
     movement_client_time_msec: 0,
     movement_server_time_msec: 0,
+    movement_time_credit_seconds: 0,
   };
 }
 
@@ -618,6 +619,110 @@ scenario("respawn teleport and world-entry spawn still bypass the speed budget",
   );
   assert.equal(position.x, 9000, "a respawn teleport must not be clamped");
   assert.equal(h.corrections.length, 0);
+});
+
+scenario("bunched airborne snapshots use their server-funded simulation time", () => {
+  const h = createHarness();
+  const player = createPlayer();
+  const initialTime = h.clock.value;
+  applyMovementPacket(h, player, { x: 1000, y: 1000 }, {
+    movement_sequence: 1, client_time_msec: initialTime, velocity_y: -430,
+  });
+  // A 200ms delivery stall ends with two ordered snapshots in the same read.
+  // The first is an old frame; the second covers 150ms of an ordinary ascent.
+  h.clock.value += 200;
+  applyMovementPacket(h, player, { x: 1002.5, y: 993.1 }, {
+    movement_sequence: 2, client_time_msec: initialTime + 16, velocity_x: 150, velocity_y: -413.7,
+  });
+  const result = applyMovementPacket(h, player, { x: 1025, y: 943.3 }, {
+    movement_sequence: 3, client_time_msec: initialTime + 166, velocity_x: 150, velocity_y: -266.7,
+  });
+  assert.equal(result.accepted, true);
+  assert.equal(h.corrections.length, 0, "An unobstructed jump must not be pulled back when packets bunch");
+  assert.equal(player.y, 943.3);
+});
+
+scenario("client timestamps cannot mint or reuse server movement time", () => {
+  const h = createHarness();
+  const player = createPlayer();
+  applyMovementPacket(h, player, { x: 1000, y: 1000 }, {
+    movement_sequence: 1, client_time_msec: 1000,
+  });
+  const startX = player.x;
+  for (let sequence = 2; sequence <= 12; sequence++) {
+    // No server time passes, despite the client's invented 10-second steps.
+    applyMovementPacket(h, player, { x: player.x + 500, y: 1000 }, {
+      movement_sequence: sequence, client_time_msec: sequence * 10000,
+    });
+  }
+  const priorBudget = (MAX_MOVE_PIXELS_PER_SECOND * 0.016 + MOVEMENT_DISTANCE_GRACE_PIXELS) * 11;
+  assert.ok(player.x - startX <= priorBudget + 1e-6);
+  assert.equal(h.corrections.length, 11);
+});
+
+scenario("repeated wing jumps stay correction-free through ordered network bursts", () => {
+  const h = createHarness();
+  const player = createPlayer(1000, 10000);
+  let x = player.x;
+  let y = player.y;
+  let velocityY = -430;
+  const initialTime = h.clock.value;
+  applyMovementPacket(h, player, { x, y }, {
+    movement_sequence: 1, client_time_msec: initialTime, velocity_x: 150, velocity_y: velocityY,
+  });
+  const queue = [];
+  for (let frame = 1; frame <= 360; frame++) {
+    // Real client constants: 60Hz physics, Dev Wings tapped every 0.2 seconds.
+    if (frame % 12 === 0) velocityY = -430;
+    velocityY += 980 / 60;
+    x += 150 / 60;
+    y += velocityY / 60;
+    h.clock.value = initialTime + Math.round(frame * 1000 / 60);
+    // Two sampled updates per 200ms delivery burst, including an old snapshot
+    // followed immediately by a coalesced position 100ms further into flight.
+    if (frame % 6 === 1) queue.push({ x, y, frame, velocityY });
+    if (frame % 12 === 0) {
+      for (const sample of queue.splice(0)) {
+        const result = applyMovementPacket(h, player, sample, {
+          movement_sequence: sample.frame + 1,
+          client_time_msec: initialTime + Math.round(sample.frame * 1000 / 60),
+          velocity_x: 150, velocity_y: sample.velocityY,
+        });
+        assert.equal(result.accepted, true);
+      }
+    }
+  }
+  assert.equal(h.corrections.length, 0, "Repeated wing taps in open air must not cause a network bonk");
+});
+
+scenario("saved movement time is consumed once and reset at teleports", () => {
+  const h = createHarness();
+  const player = createPlayer();
+  const initialTime = h.clock.value;
+  applyMovementPacket(h, player, { x: 1000, y: 1000 }, {
+    movement_sequence: 1, client_time_msec: initialTime,
+  });
+  h.clock.value += 200;
+  applyMovementPacket(h, player, { x: 1000, y: 1000 }, {
+    movement_sequence: 2, client_time_msec: initialTime + 16,
+  });
+  assert.ok(player.movement_time_credit_seconds > 0.18);
+  const before = player.x;
+  applyMovementPacket(h, player, { x: player.x + 100, y: 1000 }, {
+    movement_sequence: 3, client_time_msec: initialTime + 200,
+  });
+  assert.equal(player.x, before + 100);
+  assert.equal(player.movement_time_credit_seconds, 0);
+  applyMovementPacket(h, player, { x: player.x + 100, y: 1000 }, {
+    movement_sequence: 4, client_time_msec: initialTime + 400,
+  });
+  assert.equal(h.corrections.length, 1, "The same saved interval cannot be spent twice");
+  player.movement_time_credit_seconds = 0.2;
+  h.movement.acceptPlayerMovement({}, player, { x: 2000, y: 2000 }, {
+    respawnTeleport: true,
+    data: { movement_sequence: 5, client_time_msec: initialTime + 416 },
+  });
+  assert.equal(player.movement_time_credit_seconds, 0, "Respawns must clear pending time");
 });
 
 console.log(`[movement-rollback-regression] ${results.length} scenarios passed:`);

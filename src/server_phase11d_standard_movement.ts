@@ -237,14 +237,44 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
     return Math.min(time, Number.MAX_SAFE_INTEGER);
   }
 
+  function getMovementTimingBudget(player: JsonRecord, data: JsonRecord, now: number) {
+    const lastAt = Number(player.last_position_at || 0);
+    const serverElapsed = Math.max(0, (now - lastAt) / 1000);
+    const previousClientTime = sanitizeMovementClientTimeMsec({
+      client_time_msec: player.movement_client_time_msec,
+    });
+    const clientTime = sanitizeMovementClientTimeMsec(data);
+    const hasClientInterval = lastAt > 0 && previousClientTime > 0 && clientTime > previousClientTime;
+    const previousCredit = hasClientInterval
+      ? Math.max(0, Number(player.movement_time_credit_seconds) || 0)
+      : 0;
+    // TCP can deliver an old snapshot and a newer, coalesced snapshot together.
+    // Spend only the time represented by the old snapshot and retain the rest
+    // for the next one. Credit comes exclusively from the server clock, is
+    // capped, and is consumed on acceptance; client timestamps cannot mint it.
+    const available = Math.min(MOVEMENT_MAX_ELAPSED_SECONDS, serverElapsed + previousCredit);
+    const elapsed = hasClientInterval
+      ? Math.min(available, (clientTime - previousClientTime) / 1000)
+      : available;
+    const elapsedSeconds = Math.max(0.016, elapsed);
+    return {
+      elapsedSeconds,
+      remainingCredit: hasClientInterval ? Math.max(0, available - elapsedSeconds) : 0,
+    };
+  }
+
   function commitAcceptedMovementTiming(
     player: JsonRecord | null | undefined,
     data: JsonRecord | null | undefined,
     now: number,
+    resetTimeCredit = false,
   ): void {
     if (!player) return;
     const sequence = sanitizeMovementSequence(data);
     const clientTimeMsec = sanitizeMovementClientTimeMsec(data);
+    player.movement_time_credit_seconds = resetTimeCredit
+      ? 0
+      : getMovementTimingBudget(player, data || {}, now).remainingCredit;
     player.last_position_at = now;
     player.movement_server_time_msec = now;
     player.chat_typing = data?.chat_typing === true;
@@ -528,24 +558,21 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
       }
 
       clearPlayerWorldEntrySpawnGuard(player);
-      commitAcceptedMovementTiming(player, data, now);
+      commitAcceptedMovementTiming(player, data, now, true);
       return true;
     }
 
     if (respawnTeleport) {
-      commitAcceptedMovementTiming(player, data, now);
+      commitAcceptedMovementTiming(player, data, now, true);
       return true;
     }
 
     if (!lastAt || (isAdmin(player) && player.noclip_enabled)) {
-      commitAcceptedMovementTiming(player, data, now);
+      commitAcceptedMovementTiming(player, data, now, true);
       return true;
     }
 
-    const elapsedSeconds = Math.max(
-      Math.min((now - lastAt) / 1000, MOVEMENT_MAX_ELAPSED_SECONDS),
-      0.016,
-    );
+    const { elapsedSeconds } = getMovementTimingBudget(player, data, now);
     const reportedVelocityX = sanitizePlayerVelocity(data.velocity_x);
     const reportedVelocityY = sanitizePlayerVelocity(data.velocity_y);
     const reportedSpeed = Math.hypot(reportedVelocityX, reportedVelocityY);

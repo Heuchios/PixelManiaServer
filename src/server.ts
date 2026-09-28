@@ -671,7 +671,8 @@ const BONE_BLOCK_TYPE = "bone";
 const FISH_MONGER_BLOCK_TYPE = "fish_monger";
 const ENTRANCE_GATE_TYPE = "entrance_gate";
 const LEGACY_WORLD_GENERATION_VERSION = 1;
-const CURRENT_WORLD_GENERATION_VERSION = 2;
+const CURRENT_WORLD_GENERATION_VERSION = 3;
+const NATURAL_TREE_GENERATION_VERSION = 3;
 const LOWERED_ENTRANCE_GATE_GENERATION_VERSION = 2;
 const WORLD_LOCK_GRID_SENTINEL = 999999;
 const DEFAULT_TRUSTED_BUILDER_SLOT_LIMIT = 6;
@@ -1139,21 +1140,17 @@ const BASIC_ITEMS_PACK_TABLE: any = [
 ];
 const HAIR_PACK_TABLE: any = [
   { item_id: "black_afro", item_category: "hair", weight: 999 },
-  { item_id: "blonde_afro", item_category: "hair", weight: 999 },
-  { item_id: "brown_afro", item_category: "hair", weight: 999 },
-  { item_id: "pink_afro", item_category: "hair", weight: 999 },
-  { item_id: "red_afro", item_category: "hair", weight: 999 },
-  { item_id: "short_black_hair", item_category: "hair", weight: 999 },
-  { item_id: "short_blonde_hair", item_category: "hair", weight: 999 },
-  { item_id: "short_bron_hair", item_category: "hair", weight: 999 },
-  { item_id: "short_pink_hair", item_category: "hair", weight: 999 },
-  { item_id: "short_red_hair", item_category: "hair", weight: 999 },
-  { item_id: "long_black_hair", item_category: "hair", weight: 999 },
-  { item_id: "long_blonde_hair", item_category: "hair", weight: 999 },
-  { item_id: "long_grey_hair", item_category: "hair", weight: 999 },
-  { item_id: "long_pink_hair", item_category: "hair", weight: 999 },
-  { item_id: "long_red_hair", item_category: "hair", weight: 999 },
-  { item_id: "baby_hair", item_category: "hair", weight: 15 },
+  { item_id: "black_slick_hair", item_category: "hair", weight: 999 },
+  { item_id: "black_combed_hair", item_category: "hair", weight: 999 },
+  { item_id: "frosty_hair", item_category: "hair", weight: 999 },
+  { item_id: "flaming_hair", item_category: "hair", weight: 999 },
+  { item_id: "old_men_hair", item_category: "hair", weight: 999 },
+  { item_id: "brown_fringe", item_category: "hair", weight: 999 },
+  { item_id: "brown_combed_hair", item_category: "hair", weight: 999 },
+  { item_id: "blonde_hair", item_category: "hair", weight: 999 },
+  { item_id: "brunette_hair", item_category: "hair", weight: 999 },
+  { item_id: "crazy_hair", item_category: "hair", weight: 999 },
+  { item_id: "baby_hair", item_category: "hair", weight: 11 },
 ];
 const PRESTIGE_COLOURED_BLOCK_PACK_TABLE: any = [
   { item_id: "ps_blue_block", item_category: "block", weight: 100 },
@@ -32227,6 +32224,62 @@ function serverCreateTree(map: any, surface: any, generationSeed: any, rng: any,
   return true;
 }
 
+// Version 3: connected trunks and solid, tapered crowns. Build and validate the
+// entire footprint before changing the ground, so a blocked tree leaves no stump.
+function serverCreateNaturalTree(map: Map<string, { block_type: string }>, surface: Map<number, number>, generationSeed: number, rng: () => number, x: number, backgroundMap: Map<string, { block_type: string }> | null = null) {
+  if (x < 5 || x >= WORLD_WIDTH - 5) return false;
+  const surfaceY = serverSurfaceYAt(surface, x);
+  const groundType = map.get(gridKey(x, surfaceY))?.block_type || "";
+  if (!["grass", "dirt", "sand", "stone", "rose", "sunflower"].includes(groundType)) return false;
+  if (Math.abs(serverSurfaceYAt(surface, x - 1) - surfaceY) > 1 || Math.abs(serverSurfaceYAt(surface, x + 1) - surfaceY) > 1) return false;
+
+  const height = deterministicInt(rng, SERVER_TREE_MIN_HEIGHT, SERVER_TREE_MAX_HEIGHT);
+  const topY = surfaceY - height;
+  const profiles = [[1, 2, 3, 3, 2], [1, 3, 4, 4, 3, 1], [1, 2, 3, 3, 2, 1]];
+  const profile = profiles[deterministicInt(rng, 0, profiles.length - 1)];
+  const planned = new Map<string, { x: number; y: number; block_type: string }>();
+  for (let y = surfaceY - 1; y >= topY; y -= 1) {
+    planned.set(gridKey(x, y), { x, y, block_type: "wood" });
+  }
+  for (let row = 0; row < profile.length; row += 1) {
+    const y = topY - 3 + row;
+    const radius = profile[row];
+    const left = radius - (radius > 1 && serverCellNoise(generationSeed, x, y, 7401) > 0.72 ? 1 : 0);
+    const right = radius - (radius > 1 && serverCellNoise(generationSeed, x, y, 7402) > 0.72 ? 1 : 0);
+    for (let dx = -left; dx <= right; dx += 1) {
+      const key = gridKey(x + dx, y);
+      if (!planned.has(key)) planned.set(key, { x: x + dx, y, block_type: "leaf" });
+    }
+  }
+  for (const cell of planned.values()) {
+    if (!isGridInWorld(cell.x, cell.y) || isServerSpawnSafeColumn(cell.x)) return false;
+    // The generated entrance clears these columns after trees are generated.
+    if (Math.abs(cell.x - Math.floor(WORLD_WIDTH * 0.5)) <= 3) return false;
+    if (map.has(gridKey(cell.x, cell.y))) return false;
+    if (cell.block_type === "leaf") {
+      for (const [dx, dy] of [[-1, 0], [1, 0], [0, -1], [0, 1]]) {
+        if (map.has(gridKey(cell.x + dx, cell.y + dy))) return false;
+      }
+    }
+  }
+  serverMapSet(map, x, surfaceY, "dirt");
+  serverMapClear(backgroundMap, x, surfaceY);
+  for (const cell of planned.values()) serverMapSet(map, cell.x, cell.y, cell.block_type);
+  return true;
+}
+
+function serverGenerateNaturalTrees(map: Map<string, { block_type: string }>, surface: Map<number, number>, generationSeed: number, rng: () => number, backgroundMap: Map<string, { block_type: string }> | null = null) {
+  let nextTreeX = 5;
+  for (let x = 5; x < WORLD_WIDTH - 5; x += 1) {
+    if (x < nextTreeX || isServerSpawnSafeColumn(x)) continue;
+    const surfaceY = serverSurfaceYAt(surface, x);
+    if (serverCellNoise(generationSeed, x, surfaceY, 7001) > 0.42 || rng() >= 0.65) continue;
+    if (serverCreateNaturalTree(map, surface, generationSeed, rng, x, backgroundMap)) {
+      nextTreeX = x + deterministicInt(rng, 8, 12);
+    }
+  }
+}
+
 function isRefreshTokenValid(account: any, token: any) {
   return getServerAccountSessionHelpers().isRefreshTokenValid(account, token);
 }
@@ -32297,6 +32350,7 @@ const serverGeneratedBaseTerrainByWorld: Map<string, {
   foreground: Map<string, unknown>;
   background: Map<string, unknown>;
   surface: unknown;
+  generationVersion: number;
 }> = new Map();
 
 function serverPickLandfillJunkBlock(generationSeed: unknown, x: unknown, y: unknown) {
@@ -32428,10 +32482,10 @@ function serverApplyLandfillTrashOverlay(
   }
 }
 
-function getServerGeneratedBaseTerrain(worldName: unknown) {
+function getServerGeneratedBaseTerrain(worldName: unknown, generationVersion = LEGACY_WORLD_GENERATION_VERSION) {
   const clean = cleanWorld(worldName);
   const cached = serverGeneratedBaseTerrainByWorld.get(clean);
-  if (cached) return cached;
+  if (cached && cached.generationVersion === generationVersion) return cached;
 
   const foreground = new Map();
   const background = new Map();
@@ -32455,11 +32509,15 @@ function getServerGeneratedBaseTerrain(worldName: unknown) {
   if (!isLandfill) {
     serverGenerateNaturalPonds(foreground, surface, rng, background);
     serverGenerateSurfaceDecorations(foreground, surface, generationSeed, background);
-    serverGenerateTrees(foreground, surface, generationSeed, rng, background);
+    if (generationVersion >= NATURAL_TREE_GENERATION_VERSION) {
+      serverGenerateNaturalTrees(foreground, surface, generationSeed, rng, background);
+    } else {
+      serverGenerateTrees(foreground, surface, generationSeed, rng, background);
+    }
   }
   serverApplyLandfillTrashOverlay(clean, foreground, background, surface, generationSeed);
 
-  const entry = { foreground, background, surface };
+  const entry = { foreground, background, surface, generationVersion };
   serverGeneratedBaseTerrainByWorld.set(clean, entry);
   while (serverGeneratedBaseTerrainByWorld.size > SERVER_GENERATED_TERRAIN_CACHE_MAX_WORLDS) {
     const oldestKey = serverGeneratedBaseTerrainByWorld.keys().next().value;
@@ -32474,7 +32532,7 @@ function buildServerGeneratedWorldMaps(worldName: any, state: any) {
   const background = new Map();
   if (state?.cleared) return { foreground, background };
 
-  const base = getServerGeneratedBaseTerrain(worldName);
+  const base = getServerGeneratedBaseTerrain(worldName, getWorldGenerationVersion(state));
   for (const [key, entry] of base.foreground) foreground.set(key, entry);
   for (const [key, entry] of base.background) background.set(key, entry);
 
