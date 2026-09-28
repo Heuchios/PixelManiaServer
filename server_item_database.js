@@ -3377,6 +3377,8 @@ const ITEM_DEFINITIONS = {
     naval_mines: item("material", { display_name: "Naval Mines", rarity: "epic", texture: "res://Assets/items/materials/naval_mines.png", inventory_icon: "res://Assets/items/materials/naval_mines.png", fishing_material: true }),
     legendary_wings: item("back", {
         display_name: "Dev Wings",
+        texture: "dev_wings_idle_1",
+        inventory_icon: "dev_wings_icon",
         rarity: "legendary",
         equipment_slot: "back",
         equipable: true,
@@ -3696,8 +3698,8 @@ const ITEM_DEFINITIONS = {
     susanoo_wings: item("back", {
         display_name: "Susanoo Wings",
         rarity: "legendary",
-        texture: "res://Assets/items/back_items/susanoo_idle_1.png",
-        inventory_icon: "res://Assets/items/back_items/susanoo_idle_1.png",
+        texture: "susanoo_wings_idle_1",
+        inventory_icon: "susanoo_wings_icon",
         instance_tracked: true,
         equipment_slot: "back",
         equipable: true,
@@ -3722,8 +3724,8 @@ const ITEM_DEFINITIONS = {
     lucifer_wings: item("back", {
         display_name: "Lucifer Wings",
         rarity: "legendary",
-        texture: "res://Assets/items/back_items/lucifer_wings_idle_1.png",
-        inventory_icon: "res://Assets/items/back_items/lucifer_wings_icon.png",
+        texture: "lucifer_wings_idle_1",
+        inventory_icon: "lucifer_wings_icon",
         instance_tracked: true,
         equipment_slot: "back",
         equipable: true,

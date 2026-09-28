@@ -3442,6 +3442,8 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
 
   legendary_wings: item("back", {
     display_name: "Dev Wings",
+    texture: "dev_wings_idle_1",
+    inventory_icon: "dev_wings_icon",
     rarity: "legendary",
     equipment_slot: "back",
     equipable: true,
@@ -3761,8 +3763,8 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
   susanoo_wings: item("back", {
     display_name: "Susanoo Wings",
     rarity: "legendary",
-    texture: "res://Assets/items/back_items/susanoo_idle_1.png",
-    inventory_icon: "res://Assets/items/back_items/susanoo_idle_1.png",
+    texture: "susanoo_wings_idle_1",
+    inventory_icon: "susanoo_wings_icon",
     instance_tracked: true,
     equipment_slot: "back",
     equipable: true,
@@ -3787,8 +3789,8 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
   lucifer_wings: item("back", {
     display_name: "Lucifer Wings",
     rarity: "legendary",
-    texture: "res://Assets/items/back_items/lucifer_wings_idle_1.png",
-    inventory_icon: "res://Assets/items/back_items/lucifer_wings_icon.png",
+    texture: "lucifer_wings_idle_1",
+    inventory_icon: "lucifer_wings_icon",
     instance_tracked: true,
     equipment_slot: "back",
     equipable: true,
