@@ -131,6 +131,8 @@ async function main() {
  // Account isolation and fail-closed database readiness.
  const other=await Quests.apply(store,{username:'quest-other-test',world:'START',request_id:'other',action:'quest_board_get',payload:{}});
  assert.equal(other.board.stamps,0);assert.equal(other.board.story_next,1);
+ assert.deepEqual(other.board.dailies.map(d=>d.quest),board.dailies.map(d=>d.quest),'Both database accounts receive identical quests');
+ assert(Object.values(other.board.active).every(a=>a.progress.every(n=>n===0)),'Progress stays personal');
  // Every automatic slot is independently claimable through committed gameplay.
  let autoBoard=other.board;
  const autoId=(await db.query("SELECT p.player_id FROM pixelmania.players p JOIN pixelmania.accounts a ON a.account_id=p.account_id WHERE a.username='quest-other-test'")).rows[0].player_id;
@@ -146,7 +148,20 @@ async function main() {
    for(let i=0;i<objective.target;i++)await db.transaction(tx=>Quests.recordGameplay(store,tx,autoId,source,{seed_type:objective.item_type,item_category:'fish',matured:true},`${slot}-${i}`));
   }
  }
+ // Simulate a saved pre-global board. Its replacement recounts this player's
+ // committed events for the global objectives instead of copying unrelated progress.
+ const personal=(await db.query('SELECT state FROM pixelmania.quest_accounts WHERE player_id=$1',[autoId])).rows[0].state;
+ const today=autoBoard.day;
+ delete personal.days[today].assignment;
+ for(const tier of ['favor','trip']){
+  personal.days[today].offers[tier].reverse();
+  const first=personal.active[`${tier}_0`],second=personal.active[`${tier}_1`];
+  [first.quest,second.quest]=[second.quest,first.quest];
+  [first.objectives,second.objectives]=[second.objectives,first.objectives];
+ }
+ await db.query('UPDATE pixelmania.quest_accounts SET state=$1::jsonb WHERE player_id=$2',[JSON.stringify(personal),autoId]);
  autoBoard=(await Quests.apply(store,{username:'quest-other-test',world:'START',request_id:'auto-progress',action:'quest_board_get',payload:{}})).board;
+ assert.deepEqual(autoBoard.dailies.map(d=>d.quest),other.board.dailies.map(d=>d.quest));
  assert(Object.values(autoBoard.active).every(a=>a.solved));
  const dailyClaims=[];
  for(const slot of autoBoard.dailies.map(d=>d.slot)){
@@ -168,6 +183,14 @@ async function main() {
  assert.equal(Number(xpReload.state.player_total_xp),350,'XP survives canonical player-state reload');
  assert.equal(Number(xpReload.state.player_level),2,'Quest XP applies level-ups');
  assert(xpReload.state.last_level_up_at,'Quest level-up timestamp survives reload');
+ assert.equal((await db.query('SELECT count(*)::integer AS n FROM pixelmania.quest_receipts WHERE player_id=$1',[autoId])).rows[0].n,4);
+ const paid=(await db.query('SELECT state FROM pixelmania.quest_accounts WHERE player_id=$1',[autoId])).rows[0].state;
+ delete paid.days[today].assignment;paid.days[today].offers.favor.reverse();
+ await db.query('UPDATE pixelmania.quest_accounts SET state=$1::jsonb WHERE player_id=$2',[JSON.stringify(paid),autoId]);
+ const migratedPaid=await Quests.apply(store,{username:'quest-other-test',world:'START',request_id:'migrate-paid',action:'quest_board_get',payload:{}});
+ assert.equal(migratedPaid.ok,true,migratedPaid.message);
+ assert(migratedPaid.board.dailies.every(d=>d.claimed),'Migration preserves already paid slots');
+ assert.equal(Object.keys(migratedPaid.board.active).length,0);
  assert.equal((await db.query('SELECT count(*)::integer AS n FROM pixelmania.quest_receipts WHERE player_id=$1',[autoId])).rows[0].n,4);
  // Continue recording between resets even when every quest was already claimed.
  await db.transaction(tx=>Quests.recordGameplay(store,tx,autoId,'seed_place',{seed_type:'grass_seed'},'after-all-claimed'));

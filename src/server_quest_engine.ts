@@ -37,23 +37,37 @@ function normalize(raw:RecordData):RecordData {
  for(const key of ["days","active","chapters","flags","weeks"])if(!s[key]||Array.isArray(s[key])||typeof s[key]!=="object")fail("Invalid saved quest state.");
  return s;
 }
-function assigned(s:RecordData,day:number,account:string):RecordData{
- if(s.days[String(day)])return s.days[String(day)];
- const recent = new Set<string>(s.history.filter((h:RecordData)=>h.day>=day-3).flatMap((h:RecordData)=>h.ids));
+function dailyOffers(day:number):Record<string,string[]>{
+ // Every server uses the same reset day and catalogue, never account identity or history.
  const used:string[]=[];const offers:Record<string,string[]>={favor:[],trip:[]};
  for(const tier of ["favor","trip"]){
   for(let i=0;i<2;i++){
-   let pool=CATALOGUE.filter(q=>q.tier===tier&&!recent.has(q.id)&&!used.includes(q.id));
-   // Explicit degraded mode is returned if operators reduce the enabled pool.
-   if(!pool.length)pool=CATALOGUE.filter(q=>q.tier===tier&&!used.includes(q.id));
+   const pool=CATALOGUE.filter(q=>q.tier===tier&&!used.includes(q.id));
    const familyHere=new Set(offers[tier].map(id=>BY_ID.get(id)!.family));
    const familyToday=new Set(used.map(id=>BY_ID.get(id)!.family));
-   const score=(q:RecordData)=> (familyHere.has(q.family)?100:0)+(familyToday.has(q.family)?10:0)+hash(`${account}:${day}:${q.id}`)/0xffffffff;
+   const score=(q:RecordData)=> (familyHere.has(q.family)?100:0)+(familyToday.has(q.family)?10:0)+hash(`global-daily-v1:${day}:${q.id}`)/0xffffffff;
    pool.sort((a,b)=>score(a)-score(b));offers[tier].push(pool[0].id);used.push(pool[0].id);
   }
  }
- const board={offers,done:{},refresh:{favor:0,trip:0}};
- s.days[String(day)]=board;s.history.push({day,ids:used});
+ return offers;
+}
+function assigned(s:RecordData,day:number):RecordData{
+ const offers=dailyOffers(day);
+ const existing=s.days[String(day)];
+ // JSONB may reorder object keys, so compare the ordered slots within each tier.
+ if(existing?.assignment==="global_v1"&&["favor","trip"].every(tier=>JSON.stringify(existing.offers[tier])===JSON.stringify(offers[tier])))return existing;
+ // Migrate saved personal boards now. Keep slot entitlements so a new selection
+ // cannot pay an already claimed daily twice; the store recounts committed gameplay.
+ const board={offers,done:existing?.done||{},refresh:{favor:0,trip:0},assignment:"global_v1"};
+ if(existing){
+  for(const slot of DAILY_SLOTS){
+   const [tier,index]=slot.split("_");const active=s.active[slot];
+   if(active?.day===day&&active.quest.id!==offers[tier][Number(index)])delete s.active[slot];
+  }
+  s.revision++;
+ }
+ s.days[String(day)]=board;s.history=s.history.filter((h:RecordData)=>h.day!==day);
+ s.history.push({day,ids:[...offers.favor,...offers.trip]});
  s.history=s.history.filter((h:RecordData)=>h.day>=day-30);
  // Active story instances carry their original entitlement even across long absences.
  const activeDays=new Set(Object.values(s.active).map((a:any)=>String(a.day)));
@@ -87,25 +101,24 @@ function publicInstance(instance:RecordData):RecordData {
  const {solution,...puzzle}=instance.puzzle;
  return {...instance,puzzle,quest:publicQuest(instance.quest)};
 }
-function activateDailies(s:RecordData,day:number,account:string):void {
+function activateDailies(s:RecordData,day:number):void {
  const board=s.days[String(day)];
- // Preserve accepted quests and durable entitlement IDs from the two-choice board.
+ // Preserve durable entitlement IDs from the two-choice board without personal offers.
  for(const tier of ["favor","trip"]){
   const slot=`${tier}_0`;
   if(board.done[tier])board.done[slot]=true;
   if(s.active[tier]){
    const a=s.active[tier];delete s.active[tier];
-   if(a.day===day&&!board.done[slot]){
+   if(a.day===day&&!board.done[slot]&&a.quest.id===board.offers[tier][0]){
     a.tier=slot;a.expires_at=(day+1)*DAY+4*3600000;s.active[slot]=a;
-    const ids=board.offers[tier];board.offers[tier]=[a.quest.id,...ids.filter((id:string)=>id!==a.quest.id)].slice(0,2);
    }
   }
  }
  for(const slot of DAILY_SLOTS){
-  if(s.active[slot]?.day!==day)delete s.active[slot];
+  if(s.active[slot]?.day!==day||board.done[slot])delete s.active[slot];
   if(board.done[slot]||s.active[slot])continue;
   const [tier,index]=slot.split("_");const q=BY_ID.get(board.offers[tier][Number(index)])!;
-  const variant=hash(`${account}:${day}:${q.id}`)%q.variants.length;
+  const variant=hash(`global-daily-v1:${day}:${q.id}`)%q.variants.length;
   // Slot zero reuses the old receipt ID so restored legacy state cannot regrant it.
   s.active[slot]={id:Number(index)===0?`${day}:${tier}`:`${day}:${slot}`,tier:slot,day,quest:JSON.parse(JSON.stringify(q)),variant,
    puzzle:JSON.parse(JSON.stringify(q.variants[variant])),inspected:[],solved:false,hint:false,
@@ -124,11 +137,11 @@ function view(s:RecordData,day:number,now:number,account:string):RecordData {
   week_days:(s.weeks[String(weekId(day))]?.days||[]).length,weekly_reward:100};
 }
 function transition(raw:RecordData,action:string,payload:RecordData,now:number,account:string):RecordData {
- const s=normalize(raw),day=dayId(now);const board=assigned(s,day,account);
+ const s=normalize(raw),day=dayId(now);const board=assigned(s,day);
  for(const a of Object.values(s.active) as RecordData[]){
   if(!a.objectives){const q=BY_ID.get(a.quest.id)!;a.quest=JSON.parse(JSON.stringify(q));a.objectives=q.objectives;a.progress=q.objectives.map(()=>0);a.solved=false;a.accepted_at=now;a.reward=REWARDS[a.tier];}
  }
- activateDailies(s,day,account);
+ activateDailies(s,day);
  let message="Daily quests are active. Play, then return to claim your rewards.",gemDelta=0;
  const receipts:RecordData[]=[];
  if(action!=="quest_board_get" && payload.revision!==s.revision)fail("Your board changed. Refresh it and try again.");
@@ -169,7 +182,7 @@ function transition(raw:RecordData,action:string,payload:RecordData,now:number,a
   if(action==="quest_choose"){
    if(!a.solved)fail("Complete the gameplay objective before claiming its reward.");
    const choice=a.quest.choices.find((c:RecordData)=>c.id===payload.choice);if(!choice)fail("Unknown ending.");
-   const original=assigned(s,a.day,account);if(original.done[tier])fail("This reward has already been delivered.");
+   const original=assigned(s,a.day);if(original.done[tier])fail("This reward has already been delivered.");
    original.done[tier]=true;s.stamps+=a.reward.stamps;gemDelta+=a.reward.gems;
    const receipt={id:a.id,quest_id:a.quest.id,day:a.day,tier,gems:a.reward.gems,xp:a.reward.xp||0,stamps:a.reward.stamps,choice:choice.id,reply:choice.reply,at:now};
    receipts.push(receipt);

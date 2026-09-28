@@ -1,6 +1,10 @@
 # Threadlight Dispatch gameplay quests
 
-2026-09-20 automatic daily journal update.
+2026-09-28 global daily journal update.
+
+The two Easy quests and two Challenges are now identical for every player on the same reset day, across accounts and servers. Selection uses a shared date seed and catalogue; account identity and personal history do not affect it. The reset remains 04:00 UTC. Story progression, daily progress, claims and rewards remain individual.
+
+Previously saved personal boards migrate on the next board request, including today. Claimed slots and their receipt IDs stay claimed, preventing an extra payout when the selected quest changes. Unclaimed objectives are reconciled from that player's committed gameplay since the daily reset. Matching active quests retain their state; replaced quests never inherit progress for unrelated objectives. Migration advances the board revision so an old open board cannot claim a changed assignment without refreshing.
 
 Daily quests now count server-accepted gameplay: planting seeds, splicing named trees, harvesting mature trees, breaking foreground blocks, and successful fish catches. Named targets use canonical item IDs; splice descriptions show the recipe. Story chapters retain their narrative and completion choices while using gameplay objectives. All four daily quests activate together when the board is first visited; after enrollment, gameplay continues to be recorded between daily resets even when every reward has been claimed. Play, then return or refresh to reconcile progress and claim each reward independently. Story quests still require acceptance. Progress is not a live HUD feed.
 
@@ -10,7 +14,7 @@ Existing active puzzle letters migrate to gameplay objectives with progress rese
 
 ## Authority and persistence
 
-The additive quest_gameplay_events table records committed gameplay by player, action, item and unique event key. Inventory/world transactions insert events atomically with the action. Immature tree destruction and fishing junk are excluded. Foreground breaks use the persisted world change's authenticated actor. No client completion flag or puzzle answer can complete gameplay quests. Counts are capped at the objective target, from the daily reset for dailies and acceptance for stories. Same-day legacy accepted quests retain progress and their original entitlement IDs; previously completed tiers occupy the first slot to prevent duplicate payouts. Events currently have no retention job; add archival before long-term event growth becomes material.
+The additive quest_gameplay_events table records committed gameplay by player, action, item and unique event key. Inventory/world transactions insert events atomically with the action. Immature tree destruction and fishing junk are excluded. Foreground breaks use the persisted world change's authenticated actor. No client completion flag or puzzle answer can complete gameplay quests. Counts are capped at the objective target, from the daily reset for dailies and acceptance for stories. Legacy entitlement IDs survive the global selection migration; previously completed tiers occupy the first slot to prevent duplicate payouts. Events currently have no retention job; add archival before long-term event growth becomes material.
 
 Claims require an in-range quest board and reconcile events in the locked quest-account transaction. Canonical gems, XP columns and player-state snapshot, progression event, gem/transaction ledgers, unique receipt and story state commit together. Late failures roll back all rewards. Repeated requests and stale restored state cannot duplicate receipts. Existing inventory locks and session flushes apply. No JSON fallback exists when PostgreSQL is unavailable.
 
