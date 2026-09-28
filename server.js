@@ -4836,6 +4836,11 @@ async function beginWorldHonorVisit(socket, player, worldName) {
     if (existingSession) {
         await endWorldHonorVisit(player, existingSession.world, "superseded");
     }
+    // Owners and lock members should see honors too, even though their own
+    // visits cannot earn them. Do not hold up world-entry presence on a DB read.
+    void sendWorldHonorEntryChat(socket, player, cleanWorldName).catch((error) => {
+        console.warn("[world-honors] entry announcement failed:", getErrorMessage(error));
+    });
     if (!canPlayerGenerateWorldHonor(player, cleanWorldName))
         return;
     const session = {
@@ -4853,6 +4858,7 @@ async function beginWorldHonorVisit(socket, player, worldName) {
     scheduleWorldHonorQualification(player, session, WORLD_HONOR_MIN_DWELL_MS);
 }
 async function endWorldHonorVisit(player, worldName, reason) {
+    player.world_honor_entry_notice_id = Number(player.world_honor_entry_notice_id || 0) + 1;
     const playerId = getWorldHonorPlayerId(player);
     const session = activeWorldHonorVisits.get(playerId);
     if (!session)
@@ -4893,6 +4899,31 @@ async function getCachedWorldHonorLeaderboard(period) {
         entries,
     });
     return entries.map((entry) => ({ ...entry }));
+}
+async function sendWorldHonorEntryChat(socket, player, worldName) {
+    const noticeId = Number(player.world_honor_entry_notice_id || 0) + 1;
+    player.world_honor_entry_notice_id = noticeId;
+    const periods = ["today", "yesterday", "overall"];
+    const boards = await Promise.all(periods.map((period) => getCachedWorldHonorLeaderboard(period)));
+    // A slow lookup must not announce an old world after a warp, leave, or
+    // re-entry into the same world. The leave path invalidates this notice too.
+    if (player.disconnected || !player.joined_world
+        || cleanWorld(player.world || "") !== worldName
+        || player.world_honor_entry_notice_id !== noticeId)
+        return;
+    if (boards.some((board) => board === null)) {
+        sendSystemChatToPlayer(socket, player, `World Honors for ${worldName} are temporarily unavailable. Try /honors shortly.`);
+        return;
+    }
+    const titles = ["Today", "Yesterday", "Overall"];
+    const honors = [];
+    boards.forEach((board, index) => {
+        const entry = board?.find((candidate) => candidate.world_name === worldName);
+        if (entry)
+            honors.push(`${titles[index]} #${entry.rank}`);
+    });
+    const summary = honors.length > 0 ? honors.join(" | ") : `No top ${WORLD_HONOR_TOP_LIMIT} rankings yet`;
+    sendSystemChatToPlayer(socket, player, `World Honors for ${worldName}: ${summary}. Use /honors for rankings.`);
 }
 async function handleWorldHonorTopCommand(socket, player, message) {
     const tokens = String(message || "").trim().split(/\s+/);
