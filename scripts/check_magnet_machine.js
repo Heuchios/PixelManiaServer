@@ -70,10 +70,14 @@ function fixture(durable = false) {
   await f.request("magnet_select", { item_id: "dirt" }); assert.ok(f.last.ok); assert.equal(f.machine.collecting, true);
   await f.request("magnet_deposit", { amount: 300 }); assert.ok(f.last.ok); assert.equal(f.machine.count, 300); assert.equal(f.inventories.owner.dirt, 100);
   await f.request("magnet_select", { item_id: "dirt_seed" }); assert.equal(f.last.ok, false); assert.equal(f.machine.item_id, "dirt");
-  const updates = []; assert.equal(f.system.collect("TEST", "dirt", "block", 4800, updates), 100); assert.equal(f.machine.count, 5000);
+  const updates = []; assert.equal(f.system.collect("TEST", "dirt", "block", 4800, updates, { x: 320, y: 96 }), 100); assert.equal(f.machine.count, 5000);
+  assert.deepEqual(updates[0].collection_fx, { event_id: updates[0].collection_fx.event_id, x: 320, y: 96, amount: 4700 });
+  assert.ok(updates[0].collection_fx.event_id);
+  assert.equal(f.world.interactions.get('1,2').collection_fx, undefined, 'Visual events must not be persisted or replayed on joining');
   assert.equal(f.system.collect("TEST", "dirt_seed", "seed", 3, updates), 3);
   assert.equal(f.system.collect("TEST", "gem", "currency", 10, updates), 10);
   assert.equal(f.system.collect("TEST", "dirt", "block", 1, updates), 1);
+  assert.equal(updates.length, 1, 'Full or mismatched machines must not emit suction');
   await f.request("magnet_withdraw", { amount: 100 }); assert.equal(f.machine.count, 4900); assert.equal(f.inventories.owner.dirt, 200);
   const saved = copy(f.machine); f.failure = true;
   await f.request("magnet_withdraw", { amount: 100 }); assert.equal(f.last.ok, false); assert.deepEqual(f.machine, saved); assert.equal(f.inventories.owner.dirt, 200);

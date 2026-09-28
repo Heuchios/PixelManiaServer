@@ -53,7 +53,7 @@ function createMagnetSystem(d) {
   }
   // Called only for freshly generated block/tree loot, in its enclosing world
   // transaction. Remainders keep their normal drop and pickup behavior.
-  function collect(world, id, category, amount, updates) {
+  function collect(world, id, category, amount, updates, origin = null) {
     if (!eligible(id)) return amount;
     let remaining = amount;
     const state = d.ensureWorldState(world);
@@ -64,7 +64,13 @@ function createMagnetSystem(d) {
       if (!m || !m.collecting || m.item_id !== id || m.item_category !== category) continue;
       const taken = Math.min(remaining, CAPACITY - m.count);
       if (taken <= 0) continue;
-      m.count += taken; remaining -= taken; save(m); updates.push(payload(m));
+      m.count += taken; remaining -= taken; save(m);
+      const update = payload(m);
+      // Ephemeral visual, broadcast by the caller only after its transaction commits.
+      if (origin && Number.isFinite(origin.x) && Number.isFinite(origin.y)) {
+        update.collection_fx = { event_id: d.makeAuditId("magnet_fx"), x: origin.x, y: origin.y, amount: taken };
+      }
+      updates.push(update);
     }
     return remaining;
   }

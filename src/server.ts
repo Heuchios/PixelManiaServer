@@ -14960,7 +14960,8 @@ async function handleSeedHarvestTransactionLocked(socket: unknown, player: Serve
   const rewards: any = [];
   const payloads: any = [];
   for (const drop of drops) {
-    const remaining = getMagnetSystem().collect(worldName, drop.item_id, drop.item_category, drop.amount, magnetUpdates);
+    const remaining = getMagnetSystem().collect(worldName, drop.item_id, drop.item_category, drop.amount, magnetUpdates,
+      { x: dropPosition.x, y: dropPosition.y + drop.y_offset });
     rewards.push({ item_id: drop.item_id, item_category: drop.item_category, amount: drop.amount });
     if (remaining <= 0) continue;
     const payload = createServerDrop(
@@ -17398,7 +17399,7 @@ function createBreakDrops(worldName: any, update: any) {
   const createdDrops: any = [];
   update.magnet_updates = [];
   for (const drop of drops) {
-    const remaining = getMagnetSystem().collect(worldName, drop.item_id, drop.item_category, drop.amount, update.magnet_updates);
+    const remaining = getMagnetSystem().collect(worldName, drop.item_id, drop.item_category, drop.amount, update.magnet_updates, position);
     if (remaining <= 0) continue;
     const payload = createServerDrop(
       worldName,
