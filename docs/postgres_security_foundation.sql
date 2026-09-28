@@ -379,6 +379,7 @@ CREATE TABLE IF NOT EXISTS item_transactions (
 			'furnace',
 			'fishing',
 			'fish_monger',
+			'magnet_machine',
 			'admin',
 			'rollback',
 			'system'

@@ -5,6 +5,7 @@
   "main": "server.js",
   "scripts": {
     "check:magnet-machine": "node scripts/check_magnet_machine.js && node scripts/check_seed_transactions.js",
+    "check:magnet-postgres": "node scripts/test_magnet_postgres.js",
     "check:fish-market": "npm run build:item-data && npm run build:server-entry && npm run build:postgres-store && node scripts/test_fish_market.js",
     "check:runtime-audit": "node scripts/check_movement_columns.js && node scripts/check_runtime_spike_profile.js && node scripts/check_dirty_account_saves.js && node scripts/profile_collision_cache.js",
 	"check:furniture-atlas": "node scripts/check_furniture_atlas.js",

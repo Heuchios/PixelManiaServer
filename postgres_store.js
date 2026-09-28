@@ -1078,6 +1078,7 @@ class PostgresStore {
             'furnace',
             'fishing',
             'fish_monger',
+            'magnet_machine',
             'admin',
             'rollback',
             'system'
