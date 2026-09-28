@@ -5201,6 +5201,25 @@ class PostgresStore {
     return result.rows[0]?.world_id || null;
   }
 
+  async getLockAccountActivity(usernames: string[], accountIds: string[], playerIds: string[]) {
+    if (!this.isReady()) return { ok: false, entries: [] };
+    try {
+      const result = await this.queryReadWithRetry("lock decay account activity", `
+        SELECT a.account_id::text, p.player_id::text, a.username::text,
+               a.last_login_at, a.created_at, a.account_state->>'last_seen_at' AS last_seen_at
+          FROM ${this.table("accounts")} a
+          LEFT JOIN ${this.table("players")} p ON p.account_id = a.account_id
+         WHERE lower(a.username::text) = ANY($1::text[])
+            OR a.account_id::text = ANY($2::text[])
+            OR p.player_id::text = ANY($3::text[])
+      `, [usernames, accountIds, playerIds]);
+      return { ok: true, entries: result.rows };
+    } catch (error) {
+      this.logger("[postgres] lock activity lookup failed:", getErrorMessage(error));
+      return { ok: false, entries: [] };
+    }
+  }
+
   async recordWorldHonorVisit(entry: RuntimeRecord = {}) {
     if (!this.isReady()) {
       return { ok: false, recorded: false, reason: "postgres_unavailable" };

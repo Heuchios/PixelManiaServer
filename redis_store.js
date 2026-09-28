@@ -959,11 +959,23 @@ class RedisStore {
         }
     }
     /**
-     * @param {string} username
-     * @param {string} playerId
-     * @param {number} ttlMs
-     * @returns {Promise<boolean>}
+     * Checks sessions across instances; null means activity could not be verified.
      */
+    async hasActiveSessions(usernames) {
+        if (!this.isReady())
+            return null;
+        const keys = [...new Set(usernames.map((username) => clean(username)).filter(Boolean))]
+            .map((username) => this.key("active_session", username));
+        if (keys.length === 0)
+            return false;
+        try {
+            return Number(await this.client.sendCommand(["EXISTS", ...keys])) > 0;
+        }
+        catch (error) {
+            this.logFailure("lock decay active session lookup", error);
+            return null;
+        }
+    }
     async setActiveSession(username, playerId, ttlMs) {
         if (!this.isReady())
             return false;

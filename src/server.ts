@@ -6739,6 +6739,56 @@ function getEffectiveWorldLockStateInState(state: any) {
   return {};
 }
 
+// Locks retain protection until an eligible punch is committed. Activity is
+// account-wide, including access holders, and always read from PostgreSQL.
+async function getLockDecayStatus(lock: ServerPacketRecord, worldLock: boolean) {
+  const days = worldLock ? 365 : 180;
+  const names = new Set<string>();
+  const accountIds = new Set<string>();
+  const playerIds = new Set<string>();
+  const add = (target: Set<string>, values: unknown[]) => {
+    for (const value of values) {
+      const clean = String(value || "").trim().toLowerCase();
+      if (clean) target.add(clean);
+    }
+  };
+  add(names, [lock.owner_name || lock.owner_username, ...(Array.isArray(lock.allowed_players) ? lock.allowed_players : [])]);
+  add(accountIds, [lock.owner_account_id, ...(Array.isArray(lock.allowed_account_ids) ? lock.allowed_account_ids : [])]);
+  add(playerIds, [lock.owner_player_id || lock.owner_profile_id, ...(Array.isArray(lock.allowed_player_ids) ? lock.allowed_player_ids : [])]);
+  const unavailable = { known: false, expired: false, days, remaining_days: days };
+  if (names.size + accountIds.size + playerIds.size === 0) return unavailable;
+  const result = await postgresStore.getLockAccountActivity([...names], [...accountIds], [...playerIds]);
+  if (!result.ok || result.entries.length === 0) return unavailable;
+  const resolvedNames = new Set<string>();
+  const resolvedAccounts = new Set<string>();
+  const resolvedPlayers = new Set<string>();
+  let lastActivityMs = 0;
+  for (const entry of result.entries as ServerPacketRecord[]) {
+    add(resolvedNames, [entry.username]);
+    add(resolvedAccounts, [entry.account_id]);
+    add(resolvedPlayers, [entry.player_id]);
+    const cachedAccount = accounts.get(accountKey(entry.username));
+    const timestamps = [entry.last_login_at, entry.last_seen_at, entry.created_at, cachedAccount?.last_seen_at]
+      .map((value) => new Date(value || "").getTime()).filter((value) => Number.isFinite(value) && value > 0);
+    if (timestamps.length === 0) return unavailable;
+    lastActivityMs = Math.max(lastActivityMs, ...timestamps);
+    if (findOnlinePlayerByUsername(entry.username)) lastActivityMs = Math.max(lastActivityMs, Date.now());
+  }
+  // Missing/renamed identities and unavailable persistence fail closed: an
+  // inability to prove inactivity must never grant someone else's property.
+  if ([...names].some((name) => !resolvedNames.has(name))
+    || [...accountIds].some((id) => !resolvedAccounts.has(id))
+    || [...playerIds].some((id) => !resolvedPlayers.has(id))) return unavailable;
+  const expiresAtMs = lastActivityMs + days * 86400000;
+  if (Date.now() >= expiresAtMs && REDIS_ENABLED) {
+    const online = await redisStore.hasActiveSessions(result.entries.map((entry: ServerPacketRecord) => String(entry.username)));
+    if (online === null) return unavailable;
+    if (online) return { known: true, expired: false, days, remaining_days: days };
+  }
+  return { known: true, expired: Date.now() >= expiresAtMs, days,
+    remaining_days: Math.max(0, Math.ceil((expiresAtMs - Date.now()) / 86400000)) };
+}
+
 function normalizeAreaLockBlockType(blockType: any) {
   const clean = clampString(blockType || "").toLowerCase();
   return AREA_LOCK_TILE_LIMITS.has(clean) ? clean : "";
@@ -17417,6 +17467,7 @@ function isWaterBucketScoopBreak(update: any) {
 
 function createBreakDrops(worldName: any, update: any) {
   if (!update || update.action !== "break" || update.block_type === "") return [];
+  if (update.lock_decay === true) return [];
   if (isWaterBucketScoopBreak(update)) return [];
 
   const position = getGridCenterPixels(update.x, update.y);
@@ -17708,6 +17759,8 @@ async function prepareVendBreakInventoryReturn(socket: any, player: any, worldNa
  * @returns {Promise<PixelMania.WorldInventoryValidationResult>}
  */
 async function validateBlockUpdateAgainstServerState(socket: any, player: any, worldName: any, update: any, requestId: any = "", options: any = {}) {
+  // Server-only authorization; never accept a client-supplied decay flag.
+  delete update.lock_decay;
   const state = ensureWorldState(worldName);
   let key: any = gridKey(update.x, update.y);
 
@@ -17831,7 +17884,32 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
       return { ok: false };
     }
 
-    if (isWorldLockBlockType(update.block_type) && hasWorldLockProtectedStorageBlocks(worldName)) {
+    const isWorldLockTarget = update.layer === "foreground" && isWorldLockBlockType(update.block_type);
+    const isAreaLockTarget = update.layer === "foreground" && isAreaLockBlockType(update.block_type);
+    if (isWorldLockTarget || isAreaLockTarget) {
+      const targetLock = isWorldLockTarget ? getEffectiveWorldLockStateInState(state) : getAreaLockAtGrid(state, update.x, update.y);
+      const ownsLock = isWorldLockTarget ? lockOwnerMatchesPlayer(targetLock, player) : areaLockOwnerMatchesPlayer(targetLock, player);
+      const canManage = isWorldLockTarget ? canPlayerControlWorldLock(player, worldName) : canPlayerManageAreaLock(player, worldName, targetLock);
+      if (!ownsLock) {
+        const beforeLookup = JSON.stringify(targetLock);
+        const decay = await getLockDecayStatus(targetLock || {}, isWorldLockTarget);
+        const currentLock = isWorldLockTarget ? getEffectiveWorldLockStateInState(state) : getAreaLockAtGrid(state, update.x, update.y);
+        if (JSON.stringify(currentLock) !== beforeLookup || targetLayer.get(key) !== serverBlock) {
+          sendActionRejected(socket, "world_block_update", "This lock changed. Try again.", { reason: "lock_changed" });
+          return { ok: false };
+        }
+        if (!canManage && !decay.expired) {
+          const message = decay.known
+            ? `This lock is protected. Decay requires ${decay.days} days with the owner and all access holders inactive (${decay.remaining_days} days remaining).`
+            : "This lock is protected. Its inactivity could not be verified. Try again later.";
+          sendActionRejected(socket, "world_block_update", message, { reason: "lock_not_decayed", decay_days: decay.days, remaining_days: decay.remaining_days });
+          return { ok: false };
+        }
+        update.lock_decay = decay.expired;
+      }
+    }
+
+    if (isWorldLockBlockType(update.block_type) && update.lock_decay !== true && hasWorldLockProtectedStorageBlocks(worldName)) {
       sendActionRejected(socket, "world_block_update", "Remove all Safes, Donation Boxes, vending machines, Fish Mongers, and displays before breaking the World Lock.", {
         reason: "protected_storage_blocks",
         block_type: update.block_type,
@@ -17841,14 +17919,14 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
 
     if (update.layer === "foreground" && isAreaLockBlockType(update.block_type)) {
       const areaLock = getAreaLockAtGrid(state, update.x, update.y);
-      if (!areaLock || !canPlayerManageAreaLock(player, worldName, areaLock)) {
+      if (!areaLock || (update.lock_decay !== true && !canPlayerManageAreaLock(player, worldName, areaLock))) {
         sendActionRejected(socket, "world_block_update", "Only the area lock owner can break this lock.", {
           reason: "area_lock_owner_required",
           block_type: update.block_type,
         });
         return { ok: false };
       }
-    } else if (!canPlayerBuildAtGrid(player, worldName, update.x, update.y)) {
+    } else if (update.lock_decay !== true && !canPlayerBuildAtGrid(player, worldName, update.x, update.y)) {
       sendActionRejected(socket, "world_block_update", "This area is locked.", {
         reason: "area_lock_permission_denied",
         block_type: update.block_type,
@@ -17945,7 +18023,9 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
       return { ok: false };
     }
 
-    const damageResult = applyServerBlockDamage(player, worldName, update);
+    const damageResult = update.lock_decay === true
+      ? { ok: true, shouldBreak: true, hitPower: 1, damage: 1, required: 1 }
+      : applyServerBlockDamage(player, worldName, update);
     if (!damageResult.ok) return { ok: false };
     update.hit_power = clampInteger(damageResult.hitPower || 1, 1, MAX_BLOCK_HIT_METRIC);
     update.hit_count = clampInteger(damageResult.damage || 0, 0, MAX_BLOCK_HIT_METRIC);
@@ -17979,6 +18059,11 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
 
     if (!validateBlockBreakPace(socket, player, update)) {
       return { ok: false };
+    }
+
+    if (update.lock_decay === true) {
+      clearServerBlockDamage(worldName, update);
+      return { ok: true, message: "The abandoned lock crumbled. The world and its contents remain intact." };
     }
 
     if (isVendBreak) {

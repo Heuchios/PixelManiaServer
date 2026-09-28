@@ -360,8 +360,14 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
             });
             return;
           }
+          // Let the authoritative validator check inactivity on a real lock.
+          // This exception grants no rights to tiles protected by that lock.
+          const lockTargetType = update.layer === "foreground"
+            ? getWorldBlockTypeAt(worldName, update.x, update.y, "foreground") : "";
+          const lockBreakAttempt = (update.action === "break" || update.action === "hit")
+            && (isWorldLockBlockType(lockTargetType) || isAreaLockBlockType(lockTargetType));
           if (
-            !canPlayerBuildAtGrid(player, worldName, update.x, update.y) &&
+            !canPlayerBuildAtGrid(player, worldName, update.x, update.y) && !lockBreakAttempt &&
             !((update.action === "break" || update.action === "hit") && update.layer === "foreground" && getWorldBlockTypeAt(worldName, update.x, update.y, "foreground") === "toxic_waste") &&
             !canPlayerBreakOwnVendingMachine(player, worldName, update) &&
             !isFishMongerBreakAttempt(worldName, update)
@@ -372,7 +378,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
             });
             return;
           }
-          if ((update.action === "break" || update.action === "hit") && isWorldLockBlockType(update.block_type) && isWorldLocked(worldName) && !canPlayerControlWorldLock(player, worldName)) {
+          if (!lockBreakAttempt && (update.action === "break" || update.action === "hit") && isWorldLockBlockType(update.block_type) && isWorldLocked(worldName) && !canPlayerControlWorldLock(player, worldName)) {
             sendActionRejected(socket, "world_block_update", "Only the world lock owner can break the lock.", {
               reason: "world_lock_owner_required",
               block_type: update.block_type,
@@ -713,7 +719,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
               }
             ));
           }
-          const shouldAwardBreakProgression = update.action === "break" && !isWaterBucketScoopBreak(update);
+          const shouldAwardBreakProgression = update.action === "break" && !isWaterBucketScoopBreak(update) && update.lock_decay !== true;
           const progression = shouldAwardBreakProgression
             ? awardPlayerExperience(player.account_username, getBlockBreakXp(update.block_type, update.layer), "world_block_break", {
               world: worldName,
@@ -766,6 +772,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
               request_id: requestId,
               water_bucket_action: update.water_bucket_action || "",
               toggle_action: update.toggle_action || "",
+              lock_decay: update.lock_decay === true,
               toggle_from_block_type: update.toggle_from_block_type || "",
               toggle_to_block_type: update.toggle_to_block_type || "",
               killed_player_ids: Array.isArray(update.kill_player_ids) ? update.kill_player_ids : [],
@@ -914,6 +921,10 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
           }
           for (const payload of placementInteractionPayloads) {
             sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload);
+          }
+          if (update.lock_decay === true) {
+            sendJson(socket, { type: "chat", player_id: "system", name: "System", world: worldName,
+              message: "The abandoned lock crumbled. The world and its contents remain intact." });
           }
           if (worldLockStatePayload || areaLockStatePayload || electricalDeviceBlockChanged) {
             refreshElectricalVisibilityForWorld(worldName);
