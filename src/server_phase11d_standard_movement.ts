@@ -263,6 +263,23 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
     };
   }
 
+  function isWingJumpImpulse(player: JsonRecord, previousVelocityY: number, reportedVelocityY: number): boolean {
+    // player.gd sets jump velocity instantly, rather than accelerating through
+    // zero. A flap at terminal fall speed changes +520 to -430 in one frame
+    // (-494.5 in anti-gravity). Applying the continuous acceleration limit to
+    // this impulse restores the old falling velocity and causes a midair bonk.
+    if (previousVelocityY < 0 || previousVelocityY > 520
+      || reportedVelocityY >= 0 || reportedVelocityY < -430 * 1.15) return false;
+    // Use previously sanitized equipment, never equipment asserted in this
+    // movement packet. Back items default to double jump in player.gd.
+    const backItem = String(player.equipment_slots?.back || "");
+    const definition = typeof deps.getItemDefinition === "function"
+      ? deps.getItemDefinition(backItem)
+      : null;
+    return definition?.equipment_slot === "back"
+      && ["double", "infinite"].includes(String(definition.jump_type ?? "double"));
+  }
+
   function commitAcceptedMovementTiming(
     player: JsonRecord | null | undefined,
     data: JsonRecord | null | undefined,
@@ -691,7 +708,11 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
       );
       const maxVelocityDelta = MAX_MOVE_ACCEL_PIXELS_PER_SECOND2 * elapsedSeconds
         + MAX_MOVE_VELOCITY_DELTA_EXTRA;
-      if (velocityDelta > maxVelocityDelta) {
+      // Only the bounded vertical wing impulse is exempt. Horizontal changes,
+      // destination distance, world bounds, and solid collisions still validate.
+      const allowedWingImpulse = isWingJumpImpulse(player, previousVelocityY, reportedVelocityY)
+        && Math.abs(reportedVelocityX - previousVelocityX) <= maxVelocityDelta;
+      if (velocityDelta > maxVelocityDelta && !allowedWingImpulse) {
         playerNetworkStats.rejected_player_position_messages += 1;
         if (!silent) {
           sendPlayerPositionCorrection(

@@ -21,6 +21,7 @@
 const assert = require("node:assert/strict");
 
 const Phase11dStandardMovementModule = require("../server_phase11d_standard_movement");
+const ItemDatabase = require("../server_item_database");
 
 // Production defaults from server.ts (TILE_SIZE 32).
 const TILE_SIZE = 32;
@@ -80,6 +81,7 @@ function createHarness(overrides = {}) {
       x: x * TILE_SIZE,
       y: y * TILE_SIZE,
     }),
+    getItemDefinition: ItemDatabase.getItemDefinition,
     getMovementCollisionAtPosition: () => state.collision,
     getPublicPlayerIdentity: () => ({}),
     gridKey: (/** @type {number} */ x, /** @type {number} */ y) => `${x},${y}`,
@@ -130,6 +132,7 @@ function createPlayer(x = 1000, y = 1000) {
     velocity_x: 0,
     velocity_y: 0,
     on_floor: true,
+    equipment_slots: { back: "" },
     last_position_at: 0,
     movement_sequence: 0,
     movement_client_time_msec: 0,
@@ -164,6 +167,7 @@ function applyMovementPacket(harness, player, requested, data) {
   player.y = position.y;
   player.velocity_x = harness.movement.sanitizePlayerVelocity(data.velocity_x);
   player.velocity_y = harness.movement.sanitizePlayerVelocity(data.velocity_y);
+  player.on_floor = data.on_floor !== false;
   return { accepted, broadcast: true, position };
 }
 
@@ -723,6 +727,121 @@ scenario("saved movement time is consumed once and reset at teleports", () => {
     data: { movement_sequence: 5, client_time_msec: initialTime + 416 },
   });
   assert.equal(player.movement_time_credit_seconds, 0, "Respawns must clear pending time");
+});
+
+scenario("falling into a wing flap accepts the instantaneous jump impulse", () => {
+  for (const jumpVelocity of [-430, -430 + 980 / 60, -430 * 1.15, -236.5]) {
+    for (const intervalMs of [0, 1, 16, 17, 25, 50, 100]) {
+      const h = createHarness();
+      const player = createPlayer();
+      player.equipment_slots.back = "legendary_wings";
+      applyMovementPacket(h, player, player, {
+        movement_sequence: 1, client_time_msec: 1000, velocity_y: 520, on_floor: false,
+      });
+      h.clock.value += intervalMs;
+      const result = applyMovementPacket(h, player, { x: 1002.5, y: 993 }, {
+        movement_sequence: 2, client_time_msec: 1017,
+        velocity_x: 150, velocity_y: jumpVelocity, on_floor: false,
+      });
+      assert.equal(result.accepted, true, `Flap ${jumpVelocity} after ${intervalMs}ms must be accepted`);
+      assert.equal(h.corrections.length, 0, "A real flap must not restore the previous falling velocity");
+      assert.equal(player.velocity_y, jumpVelocity);
+    }
+  }
+});
+
+scenario("repeated short taps and terminal falls remain correction-free", () => {
+  for (const backItem of ["legendary_wings", "angel_wings"]) {
+    const h = createHarness();
+    const player = createPlayer(1000, 10000);
+    player.equipment_slots.back = backItem;
+    let x = player.x;
+    let y = player.y;
+    let velocityY = 520;
+    const initialTime = h.clock.value;
+    applyMovementPacket(h, player, player, {
+      movement_sequence: 1, client_time_msec: initialTime, velocity_y: velocityY, on_floor: false,
+    });
+    const queue = [];
+    for (let frame = 1; frame <= 1800; frame++) {
+      // Alternate quick taps with long falls. Normal wings get one air flap
+      // after each landing; Dev Wings can flap on every cycle in open air.
+      const cycleLength = frame < 600 ? 24 : 96;
+      const flap = frame % cycleLength === 1;
+      const landed = backItem === "angel_wings" && frame % cycleLength === 0;
+      if (flap) velocityY = -430;
+      if (frame % cycleLength === 2) velocityY = Math.max(velocityY, -236.5);
+      velocityY = landed ? 0 : Math.min(520, velocityY + 980 * (velocityY > 0 ? 0.82 : 1.12) / 60);
+      const velocityX = frame % 240 < 120 ? 150 : -150;
+      x += velocityX / 60;
+      y += velocityY / 60;
+      queue.push({ x, y, frame, velocityX, velocityY, landed });
+      h.clock.value = initialTime + Math.round(frame * 1000 / 60);
+      // Alternate ordinary delivery with packets bunched into 100ms reads.
+      if (frame % 120 < 60 || frame % 6 === 0) {
+        for (const sample of queue.splice(0)) {
+          const result = applyMovementPacket(h, player, sample, {
+            movement_sequence: sample.frame + 1,
+            client_time_msec: initialTime + Math.round(sample.frame * 1000 / 60),
+            velocity_x: sample.velocityX, velocity_y: sample.velocityY, on_floor: sample.landed,
+          });
+          assert.equal(result.accepted, true, `${backItem} frame ${sample.frame}`);
+        }
+      }
+    }
+    assert.equal(h.corrections.length, 0);
+  }
+});
+
+scenario("wing impulse allowance cannot bypass acceleration, speed, or collision checks", () => {
+  const cases = [
+    { name: "no wings", back: "", vx: 0, vy: -430, previousVy: 520 },
+    { name: "unknown back item", back: "invented_wings", vx: 0, vy: -430, previousVy: 520 },
+    { name: "wrong equipment slot", back: "world_lock", vx: 0, vy: -430, previousVy: 520 },
+    { name: "excessive upward speed", back: "legendary_wings", vx: 0, vy: -600, previousVy: 520 },
+    { name: "excessive previous fall", back: "legendary_wings", vx: 0, vy: -430, previousVy: 700 },
+    { name: "horizontal acceleration", back: "legendary_wings", vx: 1500, vy: -430, previousVy: 520 },
+    { name: "downward impulse", back: "legendary_wings", vx: 0, vy: 520, previousVy: -430 },
+  ];
+  for (const sample of cases) {
+    const h = createHarness();
+    const player = createPlayer();
+    player.equipment_slots.back = sample.back;
+    applyMovementPacket(h, player, player, {
+      movement_sequence: 1, client_time_msec: 1000, velocity_y: sample.previousVy, on_floor: false,
+    });
+    h.clock.value += 16;
+    const result = applyMovementPacket(h, player, { x: 1000, y: 993 }, {
+      movement_sequence: 2, client_time_msec: 1016,
+      velocity_x: sample.vx, velocity_y: sample.vy, on_floor: false,
+      equipment_slots: { back: "legendary_wings" }, // Must not grant the allowance.
+    });
+    assert.equal(result.accepted, false, sample.name);
+    assert.equal(h.corrections[0].reason, "movement_acceleration_too_high", sample.name);
+  }
+  for (const blocked of [false, true]) {
+    const h = createHarness();
+    const player = createPlayer();
+    player.equipment_slots.back = "legendary_wings";
+    applyMovementPacket(h, player, player, {
+      movement_sequence: 1, client_time_msec: 1000, velocity_y: 520, on_floor: false,
+    });
+    h.clock.value += 16;
+    if (blocked) h.state.collision = { block_type: "dirt", grid_x: 31, grid_y: 31 };
+    applyMovementPacket(h, player, { x: 1000, y: blocked ? 993 : 500 }, {
+      movement_sequence: 2, client_time_msec: 1016, velocity_y: -430, on_floor: false,
+    });
+    assert.equal(h.corrections.length, 1);
+    assert.equal(h.corrections[0].reason, blocked ? "movement_blocked" : "movement_too_fast");
+  }
+  const h = createHarness({ getItemDefinition: () => ({ equipment_slot: "back", jump_type: "none" }) });
+  const player = createPlayer();
+  player.equipment_slots.back = "non_jumping_back";
+  applyMovementPacket(h, player, player, { movement_sequence: 1, velocity_y: 520 });
+  h.clock.value += 16;
+  assert.equal(applyMovementPacket(h, player, { x: 1000, y: 993 }, {
+    movement_sequence: 2, velocity_y: -430,
+  }).accepted, false);
 });
 
 console.log(`[movement-rollback-regression] ${results.length} scenarios passed:`);

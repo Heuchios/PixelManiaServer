@@ -3021,6 +3021,7 @@ const ServerPhase11cTrustedMovement = ServerPhase11cTrustedMovementModule.create
 });
 
 const ServerPhase11dStandardMovement = ServerPhase11dStandardMovementModule.createServerPhase11dStandardMovement({
+  getItemDefinition: ItemDatabase.getItemDefinition,
   LAVA_REBOUND_MOVE_EXTRA_PIXELS,
   MAX_DAMAGE_FLASH_MS,
   MAX_MOVE_ACCEL_PIXELS_PER_SECOND2,
