@@ -15,7 +15,7 @@ const names = ['applyRedTractorGasolineBonus', 'getSeedGrowthRemaining', 'getSee
   'serializeSeedForMessage', 'makeServerSeedEntry', 'applySeedUpdateToWorldState', 'getBlockTypeForSeed',
   'runSeedActionLocked', 'speedupSeedGrowthState', 'validateBlockUpdateAgainstServerState', ...['Place', 'Splice', 'Harvest'].flatMap(n => [`handleSeed${n}Transaction`, `handleSeed${n}TransactionLocked`])];
 let now = 1_000_000, commitGate = null, failCommit = false, commits = 0;
-const world = { foreground: new Map(), seeds: new Map(), drops: new Map() };
+const world = { foreground: new Map(), seeds: new Map(), drops: new Map(), interactions: new Map(), removed_foreground: new Map() };
 const inventory = { alice: { seeds: 40 }, bob: { seeds: 40 } };
 const replies = [], broadcasts = [], dropCalls = [], profiles = [];
 const locks = new Set();
@@ -70,6 +70,17 @@ const context = {
 };
 vm.createContext(context);
 vm.runInContext(names.map(body).join('\n'), context);
+const magnet = require('../magnet_machine').createMagnetSystem({
+  ...context,
+  ItemDatabase: require('../server_item_database'), cleanWorld: () => 'TEST',
+  queueWorldUpdateBroadcast: (_w, update) => broadcasts.push(structuredClone(update)),
+  requireAuthenticated: () => true, tradeByPlayerId: new Map(),
+  isWorldLocked: () => true, canPlayerControlWorldLock: () => true,
+  getInventoryCount: (state, id) => id === 'magnet_machine_remote' ? 1 : state.seeds,
+  buildWorldObjectChangeEntry: () => ({}), commitWorldStateWithBlockChanges: async () => ({ ok: !failCommit }),
+  place: (socket, player, data) => context.handleSeedPlaceTransactionLocked(socket, player, data),
+});
+context.getMagnetSystem = () => magnet;
 const alice = { id: 'a', account_username: 'alice' }, bob = { id: 'b', account_username: 'bob' };
 let request = 0;
 const packet = (action, x = 4) => ({ action, request_id: `r${++request}`, x, y: 3, seed_type: 'dirt_seed', mature: true, grow_time: 0, planted_at: 1 });
@@ -209,6 +220,29 @@ async function run() {
   await legacy.handleWorldSeedUpdate({}, alice, packet('place', 41), {});
   assert.ok(world.seeds.has('41:3'));
   assert.ok(profiles.some(p => p.name === 'seed_commit_ms:seed_place' && p.value >= 150));
+  world.foreground.set('100,100', { block_type: 'magnet_machine' });
+  magnet.save({ action: 'magnet_state', world: 'TEST', x: 100, y: 100, machine_id: 'seed-machine', item_id: 'dirt_seed', item_category: 'seed', count: 10, collecting: true, building: true });
+  await magnet.handle({}, alice, { action: 'magnet_remote', x: 100, y: 100, world: 'TEST' });
+  const beforeRemoteSeeds = inventory.alice.seeds;
+  failCommit = true;
+  await magnet.handle({}, alice, { ...packet('magnet_place', 80), world: 'TEST' });
+  assert.equal(world.seeds.has('80:3'), false);
+  assert.equal(magnet.get('TEST', 100, 100).count, 10, 'Failed remote planting restores stock');
+  failCommit = false;
+  await magnet.handle({}, alice, { ...packet('magnet_place', 80), world: 'TEST' });
+  assert.ok(world.seeds.has('80:3'));
+  assert.equal(inventory.alice.seeds, beforeRemoteSeeds, 'Remote planting costs machine stock, not inventory');
+  assert.equal(magnet.get('TEST', 100, 100).count, 9);
+  now += 60000;
+  failCommit = true;
+  await hit(80);
+  assert.ok(world.seeds.has('80:3'));
+  assert.equal(magnet.get('TEST', 100, 100).count, 9, 'Failed harvesting restores collected stock and tree');
+  failCommit = false;
+  const beforeCollectedDrops = dropCalls.length;
+  await hit(80);
+  assert.equal(magnet.get('TEST', 100, 100).count, 11);
+  assert.deepEqual(dropCalls.slice(beforeCollectedDrops).map(d => d.item_id), ['dirt'], 'Only uncollected harvest rewards become world drops');
   console.log('SEED_TRANSACTIONS_OK: immediate/halfway no-refund, mature/configured/mutated rewards, damage expiry, rapid planting/breaking, delayed commits, two-player races, rollback, legacy validation.');
   console.log('DELAY_PROBE: artificial 150ms durable commit delays authoritative echo by >=150ms; prediction is required for immediate local feedback.');
 }

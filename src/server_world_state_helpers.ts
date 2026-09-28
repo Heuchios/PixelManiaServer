@@ -2269,6 +2269,8 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
           text: String(rawEntry.text || rawEntry.sign_text || "").slice(0, config.maxSignTextLength),
           world: cleanWorld(rawEntry.world || ""),
         });
+      } else if (action === "magnet_state") {
+        target.set(key, require("./magnet_machine").sanitizeMagnetState(rawEntry, worldName, grid.x, grid.y));
       } else if (action === "vend_state") {
         target.set(key, sanitizeVendState(rawEntry, rawEntry.world || worldName, grid.x, grid.y));
       } else if (action === "safe_state") {

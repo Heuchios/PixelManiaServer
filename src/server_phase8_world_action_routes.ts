@@ -46,6 +46,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
     commitPlayerInventoryState,
     commitWorldStateWithBlockChanges,
     createBreakDrops,
+    getMagnetPlacementSource,
     createElectricalBreakDrops,
     debugActionPositionFlow,
     debugNetfoxAction,
@@ -500,6 +501,7 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
           }
 
           const validation = await validateBlockUpdateAgainstServerState(socket, player, worldName, update, requestId, {
+            magnet_source: getMagnetPlacementSource?.(data),
             allow_dev_json_fallback: allowDevJsonFallback,
           });
           if (!validation.ok) {
@@ -733,6 +735,8 @@ function createServerPhase8WorldActionRoutes(deps: Phase8WorldActionDeps) {
             void awardLandfillKilogramsForBlockBreak(worldName, update.username, update.block_type);
           }
           const emittedDrops = createBreakDrops(worldName, update);
+          placementInteractionPayloads.push(...(update.magnet_updates || []));
+          delete update.magnet_updates;
           if (update.action === "break") {
             debugActionPositionFlow("world_block_update break request end", player, {
               layer: update.layer,

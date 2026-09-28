@@ -1368,6 +1368,24 @@ function getServerTradeRoutes() {
     }
     return serverTradeRoutes;
 }
+const MagnetMachineModule = require("./magnet_machine");
+let magnetSystem = null;
+function getMagnetSystem() {
+    if (!magnetSystem)
+        magnetSystem = MagnetMachineModule.createMagnetSystem({
+            ItemDatabase, ensureWorldState, cleanWorld, acquireLiveActionLock, releaseLiveActionLock, applyBlockUpdateToWorldState,
+            makeRequestId, makeAuditId, sendActionRejected, queueWorldUpdateBroadcast,
+            sendInventoryTransactionResult, requireAuthenticated, requireSameWorld, rejectIfWorldBanned,
+            tradeByPlayerId, getTransactionGrid, isPlayerNearGrid, isWorldLocked, canPlayerControlWorldLock,
+            ensureWritablePlayerState, getInventoryCount, cloneJson, spendItemFromState, canAddItemToState,
+            addItemToState, buildWorldObjectChangeEntry, commitPlayerInventoryState, commitWorldStateWithBlockChanges,
+            persistWorldStateAfterInventoryCommit, buildInventoryDeltaClientPayloads,
+            place: (socket, player, data, category) => category === "seed"
+                ? runSeedActionLocked(socket, player, data, () => handleSeedPlaceTransactionLocked(socket, player, data))
+                : getServerPhase8WorldActionRoutes().handleWorldBlockUpdate(socket, player, data, {}),
+        });
+    return magnetSystem;
+}
 let serverInventoryEconomyRoutes = null;
 function getServerInventoryEconomyRoutes() {
     if (!serverInventoryEconomyRoutes) {
@@ -1408,6 +1426,7 @@ function getServerInventoryEconomyRoutes() {
             handleStationRecipeTransaction,
             handleTrashInventoryItemTransaction,
             handleVendingTransaction,
+            handleMagnetTransaction: (socket, player, data) => getMagnetSystem().handle(socket, player, data),
             handleWorldLockConversionTransaction,
             handleWorldLockGetKeyTransaction,
             logItemLedgerForState,
@@ -1554,6 +1573,7 @@ function getServerPhase8WorldActionRoutes() {
             commitPlayerInventoryState,
             commitWorldStateWithBlockChanges,
             createBreakDrops,
+            getMagnetPlacementSource: (data) => getMagnetSystem().source(data),
             createElectricalBreakDrops,
             debugActionPositionFlow,
             debugNetfoxAction,
@@ -2064,7 +2084,7 @@ const ServerPhase7Dispatcher = ServerPhase7DispatcherModule.createServerPhase7Di
         broadcast: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleBroadcast(socket, player, data, context),
         developer_pin_unlock: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleDeveloperPinUnlockRoute(socket, player, data, context),
         developer_command_request: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleDeveloperCommandRequestRoute(socket, player, data, context),
-        world_block_update: (socket, player, data, context) => getServerPhase8WorldActionRoutes().handleWorldBlockUpdate(socket, player, data, context),
+        world_block_update: (socket, player, data, context) => getMagnetSystem().locked(socket, player, data, () => getServerPhase8WorldActionRoutes().handleWorldBlockUpdate(socket, player, data, context)),
         client_ping: (socket, player, data) => {
             if (!requireAuthenticated(socket, player, "measure connection latency"))
                 return;
@@ -6405,7 +6425,7 @@ function getWorldLockProtectedStorageBlocks(worldName) {
     const protectedBlocks = [];
     for (const block of state.foreground.values()) {
         const blockType = clampString(block?.block_type || "");
-        if (isVendBlockType(blockType) || isSafeBlockType(blockType) || isDonationBoxBlockType(blockType) || isDisplayBlockType(blockType) || isFishMongerBlockType(blockType)) {
+        if (isVendBlockType(blockType) || isSafeBlockType(blockType) || isDonationBoxBlockType(blockType) || isDisplayBlockType(blockType) || isFishMongerBlockType(blockType) || blockType === "magnet_machine") {
             protectedBlocks.push(block);
         }
     }
@@ -13226,7 +13246,7 @@ async function handleSeedFertilizeTransaction(socket, player, data) {
     });
 }
 async function handleSeedPlaceTransaction(socket, player, data) {
-    return runSeedActionLocked(socket, player, data, () => handleSeedPlaceTransactionLocked(socket, player, data));
+    return getMagnetSystem().locked(socket, player, data, () => runSeedActionLocked(socket, player, data, () => handleSeedPlaceTransactionLocked(socket, player, data)));
 }
 async function handleSeedPlaceTransactionLocked(socket, player, data) {
     const requestId = makeRequestId(data);
@@ -13268,7 +13288,9 @@ async function handleSeedPlaceTransactionLocked(socket, player, data) {
     }
     const beforeState = cloneJson(state);
     const stagedState = cloneJson(state);
-    if (!spendItemFromState(stagedState, seedType, "seed", 1)) {
+    const magnetSource = getMagnetSystem().source(data);
+    const magnetsBefore = magnetSource ? getMagnetSystem().snapshot(worldName) : [];
+    if (magnetSource ? !getMagnetSystem().consume(magnetSource, worldName, seedType) : !spendItemFromState(stagedState, seedType, "seed", 1)) {
         sendInventoryTransactionRejected(socket, data, `Not enough ${seedType}.`);
         return;
     }
@@ -13301,6 +13323,8 @@ async function handleSeedPlaceTransactionLocked(socket, player, data) {
         runtimeProfiler.observe(`seed_commit_ms:${data.action}`, performance.now() - commitStarted);
     if (!commit.ok) {
         ensureWorldState(worldName).seeds.delete(key);
+        if (magnetSource)
+            getMagnetSystem().restore(worldName, magnetsBefore);
         sendInventoryTransactionRejected(socket, data, commit.message);
         return;
     }
@@ -13322,10 +13346,11 @@ async function handleSeedPlaceTransactionLocked(socket, player, data) {
             mutated: Boolean(update.mutated),
         },
     });
-    logItemLedgerForState(socket, player, player.account_username, committedState, seedType, "seed", -1, "seed_place", seedTransactionId, "seed_plant_cost", worldName, {
-        x: grid.x,
-        y: grid.y,
-    }, { skipPostgres: commit.postgres_committed });
+    if (!magnetSource)
+        logItemLedgerForState(socket, player, player.account_username, committedState, seedType, "seed", -1, "seed_place", seedTransactionId, "seed_plant_cost", worldName, {
+            x: grid.x,
+            y: grid.y,
+        }, { skipPostgres: commit.postgres_committed });
     sendInventoryTransactionResult(socket, {
         ok: true,
         request_id: requestId,
@@ -13465,7 +13490,7 @@ function applyRedTractorGasolineBonus(state, drops, mature) {
     return true;
 }
 async function handleSeedHarvestTransaction(socket, player, data) {
-    return runSeedActionLocked(socket, player, data, () => handleSeedHarvestTransactionLocked(socket, player, data));
+    return getMagnetSystem().locked(socket, player, data, () => runSeedActionLocked(socket, player, data, () => handleSeedHarvestTransactionLocked(socket, player, data)));
 }
 async function handleSeedHarvestTransactionLocked(socket, player, data) {
     const requestId = makeRequestId(data);
@@ -13591,15 +13616,20 @@ async function handleSeedHarvestTransactionLocked(socket, player, data) {
     const beforeState = cloneJson(state);
     const stagedState = cloneJson(state);
     const originalSeed = cloneJson(seed);
+    const magnetsBefore = getMagnetSystem().snapshot(worldName);
+    const magnetUpdates = [];
     const gasolineConsumed = applyRedTractorGasolineBonus(stagedState, drops, maturedSeed);
     applySeedUpdateToWorldState(worldName, update);
     const rewards = [];
     const payloads = [];
     for (const drop of drops) {
-        const payload = createServerDrop(worldName, drop.item_id, drop.item_category, drop.amount, dropPosition.x, dropPosition.y + drop.y_offset, SERVER_DROP_PICKUP_DELAY);
+        const remaining = getMagnetSystem().collect(worldName, drop.item_id, drop.item_category, drop.amount, magnetUpdates);
+        rewards.push({ item_id: drop.item_id, item_category: drop.item_category, amount: drop.amount });
+        if (remaining <= 0)
+            continue;
+        const payload = createServerDrop(worldName, drop.item_id, drop.item_category, remaining, dropPosition.x, dropPosition.y + drop.y_offset, SERVER_DROP_PICKUP_DELAY);
         if (!payload)
             continue;
-        rewards.push({ item_id: drop.item_id, item_category: drop.item_category, amount: drop.amount });
         payloads.push(payload);
     }
     const progression = grantExperienceToState(stagedState, getSeedHarvestXp(rewards, maturedSeed), "seed_harvest", {
@@ -13637,6 +13667,7 @@ async function handleSeedHarvestTransactionLocked(socket, player, data) {
     if (!commit.ok) {
         const rollbackState = ensureWorldState(worldName);
         rollbackState.seeds.set(key, originalSeed);
+        getMagnetSystem().restore(worldName, magnetsBefore);
         for (const payload of payloads) {
             rollbackState.drops.delete(payload.drop_id);
         }
@@ -13647,7 +13678,7 @@ async function handleSeedHarvestTransactionLocked(socket, player, data) {
     const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
     persistWorldStateAfterInventoryCommit(worldName, commit.postgres_committed);
     sendWorldUpdateToRequesterAndWorld(socket, player, worldName, update);
-    for (const payload of payloads) {
+    for (const payload of [...payloads, ...magnetUpdates]) {
         sendWorldUpdateToRequesterAndWorld(socket, player, worldName, payload);
     }
     sendInventoryTransactionResult(socket, {
@@ -15863,8 +15894,12 @@ function createBreakDrops(worldName, update) {
         drops.push({ item_id: "landfill_ticket", item_category: "material", amount: 1 });
     }
     const createdDrops = [];
+    update.magnet_updates = [];
     for (const drop of drops) {
-        const payload = createServerDrop(worldName, drop.item_id, drop.item_category, drop.amount, position.x, position.y, SERVER_DROP_PICKUP_DELAY);
+        const remaining = getMagnetSystem().collect(worldName, drop.item_id, drop.item_category, drop.amount, update.magnet_updates);
+        if (remaining <= 0)
+            continue;
+        const payload = createServerDrop(worldName, drop.item_id, drop.item_category, remaining, position.x, position.y, SERVER_DROP_PICKUP_DELAY);
         if (!payload)
             continue;
         createdDrops.push(payload);
@@ -16187,6 +16222,13 @@ async function validateBlockUpdateAgainstServerState(socket, player, worldName, 
             return { ok: false };
         }
         update.block_type = blockType;
+        if (blockType === "magnet_machine") {
+            const machine = getMagnetSystem().get(worldName, update.x, update.y);
+            if (!canPlayerControlWorldLock(player, worldName) || Number(machine?.count || 0) > 0) {
+                sendActionRejected(socket, "world_block_update", "Only the owner can remove an empty Magnet Machine.", { reason: "magnet_not_empty" });
+                return { ok: false };
+            }
+        }
         if (update.block_type !== "" && !ItemDatabase.canBreakBlock(update.block_type)) {
             sendActionRejected(socket, "world_block_update", "That block cannot be broken.", {
                 reason: "unbreakable",
@@ -16596,6 +16638,19 @@ async function validateBlockUpdateAgainstServerState(socket, player, worldName, 
     }
     if (!validateBlockPlacePace(socket, player, update)) {
         return { ok: false };
+    }
+    if (update.block_type === "magnet_machine" && (!isWorldLocked(worldName) || !canPlayerControlWorldLock(player, worldName))) {
+        sendActionRejected(socket, "world_block_update", "Only the world owner can place a Magnet Machine in a locked world.", { reason: "magnet_owner_required" });
+        return { ok: false };
+    }
+    if (options.magnet_source) {
+        const rollbackWorldState = serializeWorldState(worldName);
+        const machine = getMagnetSystem().consume(options.magnet_source, worldName, update.block_type);
+        if (!machine) {
+            sendActionRejected(socket, "world_block_update", "The machine is empty or switched off.", { reason: "magnet_empty" });
+            return { ok: false };
+        }
+        return { ok: true, rollbackWorldState, inventoryDeltas: [] };
     }
     const cost = ItemDatabase.getPlacementCost(update.block_type);
     const spendResult = await spendServerInventoryCost(player.account_username, cost, {

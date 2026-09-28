@@ -112,7 +112,9 @@ const DYNAMIC_FALLBACKS = ["request"];
 // The foreground seed guard adds one world_block_update rejection. That action
 // already belongs to AUDITED, so rejecting the generic block bypass is logged.
 // Missing-ticket and failed ticket-commit admission rejections are audited too.
-const EXPECTED_LITERAL_SITES = 283;
+// Three Magnet Machine guards (owner, nonempty removal, exhausted remote stock)
+// use the already-audited world_block_update action.
+const EXPECTED_LITERAL_SITES = 286;
 // Re-pinned from 10 -> 9 after tracing every current dynamic call site (2026-08-09): all
 // nine pass an `action`-shaped variable through unchanged --
 // `cleanRouteType || "request"` / `type || "request"` (both already covered by

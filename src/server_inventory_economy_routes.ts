@@ -45,6 +45,7 @@ function createServerInventoryEconomyRoutes(deps: InventoryEconomyRoutesDeps) {
     handleStationRecipeTransaction,
     handleTrashInventoryItemTransaction,
     handleVendingTransaction,
+    handleMagnetTransaction,
     handleWorldLockConversionTransaction,
     handleWorldLockGetKeyTransaction,
     logItemLedgerForState,
@@ -63,6 +64,15 @@ function createServerInventoryEconomyRoutes(deps: InventoryEconomyRoutesDeps) {
   } = deps;
 
   const delegatedInventoryActions = new Map<string, RouteHandler>([
+    ["magnet_get_state", handleMagnetTransaction],
+    ["magnet_select", handleMagnetTransaction],
+    ["magnet_update", handleMagnetTransaction],
+    ["magnet_toggle", handleMagnetTransaction],
+    ["magnet_deposit", handleMagnetTransaction],
+    ["magnet_withdraw", handleMagnetTransaction],
+    ["magnet_remote", handleMagnetTransaction],
+    ["magnet_place", handleMagnetTransaction],
+    ["magnet_remove", handleMagnetTransaction],
     ["vend_get_state", handleVendingTransaction],
     ["vend_set_listing", handleVendingTransaction],
     ["vend_buy", handleVendingTransaction],
