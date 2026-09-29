@@ -219,13 +219,7 @@ function createServerSocketDeliveryHelpers(config: SocketDeliveryConfig) {
     const rawLength = config.getRawLength(raw);
     const safeDetails = cleanDetails(details);
     const detailsMessageType = String(safeDetails.message_type || "").trim();
-    config.recordPacketTypeSize(
-      "outbound",
-      config.normalizePacketTypeName(detailsMessageType || context || "send"),
-      rawLength
-    );
     config.playerNetworkStats.outbound_packets_attempted += 1;
-    config.playerNetworkStats.outbound_bytes_sent += Math.max(0, Math.trunc(rawLength || 0));
 
     if (rawLength > config.maxPacketBytes) {
       config.playerNetworkStats.outbound_oversize_packets += 1;
@@ -290,6 +284,14 @@ function createServerSocketDeliveryHelpers(config: SocketDeliveryConfig) {
 
     try {
       socket?.send(raw);
+      // Bytes accepted by ws, not an acknowledgement of remote delivery. Failed
+      // or intentionally skipped sends must not inflate bandwidth telemetry.
+      config.playerNetworkStats.outbound_bytes_sent += Math.max(0, Math.trunc(rawLength || 0));
+      config.recordPacketTypeSize(
+        "outbound",
+        config.normalizePacketTypeName(detailsMessageType || context || "send"),
+        rawLength
+      );
       return true;
     } catch (error) {
       config.playerNetworkStats.outbound_send_failures += 1;

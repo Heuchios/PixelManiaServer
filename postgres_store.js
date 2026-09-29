@@ -4919,6 +4919,7 @@ class PostgresStore {
             ? requestedPeriod
             : "today";
         const limit = Math.max(1, Math.min(50, toInt(options.limit, 10)));
+        const targetWorld = cleanName(options.world_name || "").toUpperCase();
         const halfLifeDays = Math.max(1, Math.min(365, toInt(options.half_life_days, 30)));
         const inactivityDays = Math.max(1, Math.min(730, toInt(options.inactivity_days, 60)));
         try {
@@ -4965,9 +4966,10 @@ class PostgresStore {
                  qualified_visitors,
                  last_honored_on::text AS last_honored_on
             FROM ranked
+           WHERE ($4::text = '' OR world_name = $4::text)
            ORDER BY rank ASC
            LIMIT $3
-          `, [halfLifeDays, inactivityDays, limit]);
+          `, [halfLifeDays, inactivityDays, limit, targetWorld]);
             }
             else {
                 const dayOffset = normalizedPeriod === "yesterday" ? 1 : 0;
@@ -5007,9 +5009,10 @@ class PostgresStore {
                  qualified_visitors,
                  last_honored_on::text AS last_honored_on
             FROM ranked
+           WHERE ($3::text = '' OR world_name = $3::text)
            ORDER BY rank ASC
            LIMIT $2
-          `, [dayOffset, limit]);
+          `, [dayOffset, limit, targetWorld]);
             }
             return {
                 ok: true,

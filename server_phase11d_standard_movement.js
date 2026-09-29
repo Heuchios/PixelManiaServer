@@ -467,9 +467,10 @@ function createServerPhase11dStandardMovement(deps) {
         const { elapsedSeconds } = getMovementTimingBudget(player, data, now);
         const reportedVelocityX = sanitizePlayerVelocity(data.velocity_x);
         const reportedVelocityY = sanitizePlayerVelocity(data.velocity_y);
-        const reportedSpeed = Math.hypot(reportedVelocityX, reportedVelocityY);
-        const expectedSpeed = Math.max(MAX_MOVE_PIXELS_PER_SECOND, reportedSpeed);
-        let maxDistance = expectedSpeed * elapsedSeconds + MOVEMENT_DISTANCE_GRACE_PIXELS;
+        // Client velocity describes animation/acceleration; it cannot increase the
+        // server's speed allowance. Trusted teleports and lava allowances are
+        // handled explicitly above/below, using authoritative world state.
+        let maxDistance = MAX_MOVE_PIXELS_PER_SECOND * elapsedSeconds + MOVEMENT_DISTANCE_GRACE_PIXELS;
         const distance = Math.hypot(position.x - player.x, position.y - player.y);
         if (distance > maxDistance && isMovementNearLavaRebound(player, position)) {
             maxDistance += LAVA_REBOUND_MOVE_EXTRA_PIXELS;
@@ -681,6 +682,8 @@ function createServerPhase11dStandardMovement(deps) {
             equipped_hat_item: clampString(equipmentSlots.hat || ""),
             equipped_hair_item: clampString(equipmentSlots.hair || ""),
             equipped_eyewear_item: clampString(equipmentSlots.eyewear || ""),
+            equipped_beard_item: clampString(equipmentSlots.beard || ""),
+            equipped_body_accessory_item: clampString(equipmentSlots.body_accessory || ""),
             equipped_shirt_item: clampString(equipmentSlots.shirt || ""),
             equipped_pants_item: clampString(equipmentSlots.pants || ""),
             equipped_shoes_item: clampString(equipmentSlots.shoes || ""),
@@ -722,6 +725,8 @@ function createServerPhase11dStandardMovement(deps) {
             equipped_hat_item: clampString(payload.equipped_hat_item || ""),
             equipped_hair_item: clampString(payload.equipped_hair_item || ""),
             equipped_eyewear_item: clampString(payload.equipped_eyewear_item || ""),
+            equipped_beard_item: clampString(payload.equipment_slots?.beard ?? payload.equipped_beard_item ?? ""),
+            equipped_body_accessory_item: clampString(payload.equipment_slots?.body_accessory ?? payload.equipped_body_accessory_item ?? ""),
             equipped_shirt_item: clampString(payload.equipped_shirt_item || ""),
             equipped_pants_item: clampString(payload.equipped_pants_item || ""),
             equipped_shoes_item: clampString(payload.equipped_shoes_item || ""),

@@ -844,5 +844,27 @@ scenario("wing impulse allowance cannot bypass acceleration, speed, or collision
   }).accepted, false);
 });
 
+scenario("reported velocity cannot enlarge the server distance budget", () => {
+  const h = createHarness();
+  const player = createPlayer();
+  applyMovementPacket(h, player, player, { movement_sequence: 1, client_time_msec: 1000 });
+  const origin = { x: player.x, y: player.y };
+  h.clock.value += 100;
+  applyMovementPacket(h, player, { x: origin.x + 220, y: origin.y }, {
+    movement_sequence: 2, client_time_msec: 1100, velocity_x: 2000, velocity_y: 0,
+  });
+  assert.ok(player.x - origin.x <= MAX_MOVE_PIXELS_PER_SECOND * 0.1 + MOVEMENT_DISTANCE_GRACE_PIXELS + 0.001);
+  assert.equal(h.corrections[0].reason, "movement_too_fast");
+});
+
+scenario("beard and body accessory changes invalidate idle presence signature", () => {
+  const h = createHarness();
+  const original = { player_id: "p", equipment_slots: { beard: "", body_accessory: "" } };
+  for (const slot of ["beard", "body_accessory"]) {
+    const equipped = { ...original, equipment_slots: { ...original.equipment_slots, [slot]: "owned_item" } };
+    assert.notEqual(h.movement.getPlayerPresenceBroadcastSignature(original), h.movement.getPlayerPresenceBroadcastSignature(equipped));
+  }
+});
+
 console.log(`[movement-rollback-regression] ${results.length} scenarios passed:`);
 for (const name of results) console.log(`  - ${name}`);

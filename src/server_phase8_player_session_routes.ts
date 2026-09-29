@@ -342,6 +342,7 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       world_revision: Number(player.world_entry_revision || 0),
       block_revision: Number(player.world_entry_block_revision || 0),
       controls_unlocked: true,
+      world_entry_notice_v1: true,
     });
 
     console.log("[world-entry-server]", JSON.stringify({
@@ -979,6 +980,7 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
         world_revision: Number(player.world_entry_revision || 0),
         block_revision: Number(player.world_entry_block_revision || 0),
         controls_unlocked: true,
+        world_entry_notice_v1: true,
       });
       return;
     }

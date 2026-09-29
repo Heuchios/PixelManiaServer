@@ -2507,7 +2507,7 @@ const localLoginAttemptBuckets: any = new Map();
 const punishmentCache: any = new Map();
 const activeFishingSessions: any = new Map();
 const activeWorldHonorVisits = new Map<string, WorldHonorVisitSession>();
-const worldHonorLeaderboardCache = new Map<WorldHonorPeriod, WorldHonorLeaderboardCacheEntry>();
+const worldHonorLeaderboardCache = new Map<string, WorldHonorLeaderboardCacheEntry>();
 const worldHonorTopCommandCooldowns = new Map<string, number>();
 const blockDamage: any = new Map();
 const netfoxMovementRoutes: any = new Map();
@@ -5461,8 +5461,6 @@ async function beginWorldHonorVisit(
   if (String(worldName || "").trim() === "") return;
   const cleanWorldName = cleanWorld(worldName || "");
   if (
-    !WORLD_HONORS_ENABLED ||
-    !postgresStore.isReady() ||
     playerId === "" ||
     username === "" ||
     cleanWorldName === ""
@@ -5471,16 +5469,17 @@ async function beginWorldHonorVisit(
   }
 
   const existingSession = activeWorldHonorVisits.get(playerId);
-  if (existingSession?.world === cleanWorldName) return;
+  if (existingSession?.world === cleanWorldName || player.world_honor_entry_notice_world === cleanWorldName) return;
   if (existingSession) {
     await endWorldHonorVisit(player, existingSession.world, "superseded");
   }
+  player.world_honor_entry_notice_world = cleanWorldName;
   // Owners and lock members should see honors too, even though their own
   // visits cannot earn them. Do not hold up world-entry presence on a DB read.
   void sendWorldHonorEntryChat(socket, player, cleanWorldName).catch((error: unknown) => {
     console.warn("[world-honors] entry announcement failed:", getErrorMessage(error));
   });
-  if (!canPlayerGenerateWorldHonor(player, cleanWorldName)) return;
+  if (!postgresStore.isReady() || !canPlayerGenerateWorldHonor(player, cleanWorldName)) return;
 
   const session: WorldHonorVisitSession = {
     playerId,
@@ -5503,6 +5502,7 @@ async function endWorldHonorVisit(
   reason: string
 ): Promise<void> {
   player.world_honor_entry_notice_id = Number(player.world_honor_entry_notice_id || 0) + 1;
+  player.world_honor_entry_notice_world = "";
   const playerId = getWorldHonorPlayerId(player);
   const session = activeWorldHonorVisits.get(playerId);
   if (!session) return;
@@ -5520,10 +5520,12 @@ async function endWorldHonorVisit(
 }
 
 async function getCachedWorldHonorLeaderboard(
-  period: WorldHonorPeriod
+  period: WorldHonorPeriod,
+  worldName = ""
 ): Promise<WorldHonorLeaderboardEntry[] | null> {
   const nowMs = Date.now();
-  const cached = worldHonorLeaderboardCache.get(period);
+  const cacheKey = worldName ? `${period}:${worldName}` : period;
+  const cached = worldHonorLeaderboardCache.get(cacheKey);
   if (cached && cached.expiresAtMs > nowMs) {
     return cached.entries.map((entry) => ({ ...entry }));
   }
@@ -5532,6 +5534,7 @@ async function getCachedWorldHonorLeaderboard(
     limit: WORLD_HONOR_TOP_LIMIT,
     half_life_days: WORLD_HONOR_OVERALL_HALF_LIFE_DAYS,
     inactivity_days: WORLD_HONOR_INACTIVE_DAYS,
+    world_name: worldName,
   });
   if (!result.ok) return null;
 
@@ -5542,7 +5545,9 @@ async function getCachedWorldHonorLeaderboard(
     qualified_visitors: Math.max(0, Math.trunc(Number(entry.qualified_visitors) || 0)),
     last_honored_on: String(entry.last_honored_on || ""),
   }));
-  worldHonorLeaderboardCache.set(period, {
+  // Bound per-world entry lookups as players explore new worlds.
+  if (worldHonorLeaderboardCache.size >= 512) worldHonorLeaderboardCache.clear();
+  worldHonorLeaderboardCache.set(cacheKey, {
     expiresAtMs: nowMs + WORLD_HONOR_LEADERBOARD_CACHE_MS,
     entries,
   });
@@ -5557,24 +5562,37 @@ async function sendWorldHonorEntryChat(
   const noticeId = Number(player.world_honor_entry_notice_id || 0) + 1;
   player.world_honor_entry_notice_id = noticeId;
   const periods: WorldHonorPeriod[] = ["today", "yesterday", "overall"];
-  const boards = await Promise.all(periods.map((period) => getCachedWorldHonorLeaderboard(period)));
+  const boards = WORLD_HONORS_ENABLED && postgresStore.isReady()
+    ? await Promise.all(periods.map((period) => getCachedWorldHonorLeaderboard(period, worldName).catch(() => null)))
+    : null;
   // A slow lookup must not announce an old world after a warp, leave, or
   // re-entry into the same world. The leave path invalidates this notice too.
   if (player.disconnected || !player.joined_world
     || cleanWorld(player.world || "") !== worldName
     || player.world_honor_entry_notice_id !== noticeId) return;
-  if (boards.some((board) => board === null)) {
-    sendSystemChatToPlayer(socket, player, `World Honors for ${worldName} are temporarily unavailable. Try /honors shortly.`);
-    return;
-  }
-  const titles = ["Today", "Yesterday", "Overall"];
   const honors: string[] = [];
-  boards.forEach((board, index) => {
+  boards?.forEach((board, index) => {
     const entry = board?.find((candidate) => candidate.world_name === worldName);
-    if (entry) honors.push(`${titles[index]} #${entry.rank}`);
+    if (entry) honors.push(`#${entry.rank} ${periods[index]}`);
   });
-  const summary = honors.length > 0 ? honors.join(" | ") : `No top ${WORLD_HONOR_TOP_LIMIT} rankings yet`;
-  sendSystemChatToPlayer(socket, player, `World Honors for ${worldName}: ${summary}. Use /honors for rankings.`);
+  const summary = !WORLD_HONORS_ENABLED ? "disabled"
+    : !boards || boards.some((board) => board === null) ? "temporarily unavailable"
+    : honors.length > 0 ? honors.join(", ") : "unranked";
+  const flags: string[] = [];
+  if (isWorldAntiPunchEnabled(worldName)) flags.push("NOPUNCH");
+  if (isWorldAntiTalkEnabled(worldName)) flags.push("NOTALK");
+  if (isWorldAntiGravityEnabled(worldName)) flags.push("NOGRAVITY");
+  if (hasSnowRepellentBlock(worldName)) flags.push("SNOWREPELLENT");
+  const status = flags.length ? ` [${flags.join(", ")}]` : "";
+  const lock = getEffectiveWorldLockStateInState(ensureWorldState(worldName));
+  const owner = String(lock.owner_name || "").trim();
+  const lockText = lock.is_locked
+    ? owner ? `This world is locked by ${owner}.` : "This world is locked."
+    : "This world is unlocked.";
+  const others = Math.max(0, getWorldPopulationCount(worldName, player.id));
+  const username = String(player.name || getWorldHonorUsername(player));
+  sendSystemChatToPlayer(socket, player,
+    `${username} entered, ${worldName}${status} (Honors: ${summary}). ${lockText} ${others} ${others === 1 ? "other" : "others"} here.`);
 }
 
 async function handleWorldHonorTopCommand(
@@ -32786,6 +32804,57 @@ function makeSnowStormWorldChange(worldName: any, tile: any, action: any, source
   };
 }
 
+// Select once from the water cells actually converted by this event. A body
+// can span several tiles; attach one death to one update per player, and send
+// those updates first so a large terrain batch cannot leave them trapped.
+function buildSnowStormFreezeDeathTargets(
+  worldName: string,
+  eventId: string,
+  changedTiles: Array<{ x: number; y: number; original_block_id: string; event_block_id: string }>,
+  updates: Array<{
+    action: string; layer: string; x: number; y: number; block_type: string;
+    instant_death?: boolean; kill_reason?: string; kill_event_id?: string;
+    kill_block_type?: string; kill_player_ids?: string[]; kill_usernames?: string[];
+  }>,
+) {
+  const frozenKeys = new Set(changedTiles
+    .filter(tile => tile.original_block_id === "water" && ["ice_block", "ice_treasure"].includes(tile.event_block_id))
+    .map(tile => gridKey(tile.x, tile.y)));
+  if (frozenKeys.size === 0) return [];
+  const frozenUpdates = new Map(updates
+    .filter(update => update.action === "place" && update.layer === "foreground" && frozenKeys.has(gridKey(update.x, update.y)))
+    .map(update => [gridKey(update.x, update.y), update]));
+  const killed: ReturnType<typeof getWorldPlayerRecords> = [];
+  const seen = new Set();
+  for (const { player, socket, playerId } of getWorldPlayerRecords(worldName, { includeSocket: true })) {
+    if (!player || ["dead", "dead_spirit"].includes(player.animation_state)) continue;
+    const id = String(playerId || player.id || socket?.playerId || "");
+    const username = cleanAccountName(player.account_username || player.name || "");
+    const identity = id || username;
+    if (!identity || seen.has(identity)) continue;
+    const position = getPlayerValidationPosition(player, { action: "snow_storm_freeze", world: cleanWorld(worldName) });
+    if (!position.ok || !Number.isFinite(Number(position.x)) || !Number.isFinite(Number(position.y))) continue;
+    const cells = getGridPositionsOverlappingRect(getPlayerMovementCollisionRect(position));
+    for (const cell of cells) {
+      const update = frozenUpdates.get(gridKey(cell.x, cell.y));
+      if (!update) continue;
+      update.instant_death = true;
+      update.kill_reason = "snow_storm_freeze";
+      update.kill_event_id = eventId;
+      update.kill_block_type = update.block_type;
+      update.kill_player_ids ||= [];
+      update.kill_usernames ||= [];
+      if (id) update.kill_player_ids.push(id);
+      if (username) update.kill_usernames.push(username);
+      killed.push({ playerId: id, username, player, socket });
+      seen.add(identity);
+      break;
+    }
+  }
+  updates.sort((a, b) => Number(b.instant_death === true) - Number(a.instant_death === true));
+  return killed;
+}
+
 async function startSnowStormEvent(worldName: any, options: any = {}) {
   const clean = cleanWorld(worldName);
   // Landfill worlds never get Snow Storm -- neither the random picker (filtered out above in
@@ -32964,6 +33033,7 @@ async function startSnowStormEvent(worldName: any, options: any = {}) {
     state.event_ends_at = endsAt.toISOString();
     state.event_changed_tiles = changedTiles;
 
+    const frozenPlayers = buildSnowStormFreezeDeathTargets(clean, eventId, changedTiles, updates);
     invalidateMovementCollisionCache(clean);
     const commit = await commitWorldEventStateOnly(clean);
     if (!commit.ok) {
@@ -32973,6 +33043,7 @@ async function startSnowStormEvent(worldName: any, options: any = {}) {
 
     scheduleWorldEventEnd(clean);
     if (options.broadcast !== false) {
+      applyPunchToggleInstantDeathPresence(frozenPlayers, clean);
       broadcastToWorld(clean, buildWorldEventStartedMessage(clean, state));
       broadcastEventSystemMessage(clean, eventId, SNOW_STORM_SYSTEM_MESSAGE);
       await broadcastEventTileUpdates(clean, eventId, "start", updates);

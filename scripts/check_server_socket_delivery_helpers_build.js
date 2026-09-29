@@ -127,8 +127,12 @@ assert.equal(lastWarning().payload.max_packet_bytes, 64);
 // A presence batch may still be skipped: the next tick re-sends the current position, and
 // sendPlayerPositionBatch keeps its own coalescing retry queue for it.
 const droppableBufferedSocket = makeSocket({ bufferedAmount: 64 });
+const bytesBeforeSkippedSend = stats.outbound_bytes_sent;
+const samplesBeforeSkippedSend = packetStats.length;
 assert.equal(helpers.sendRawJsonToSocket(droppableBufferedSocket, "small", "movement", { message_type: "player_position_batch" }), false);
 assert.equal(droppableBufferedSocket.sent.length, 0);
+assert.equal(stats.outbound_bytes_sent, bytesBeforeSkippedSend, "Skipped traffic is not sent bandwidth");
+assert.equal(packetStats.length, samplesBeforeSkippedSend, "Skipped traffic is not a sent packet sample");
 assert.equal(stats.outbound_backpressure_skips, 1);
 assert.equal(lastWarning().label, "[socket_backpressure_skip]");
 
@@ -167,7 +171,9 @@ const failingSocket = makeSocket({
     throw new Error("boom");
   },
 });
+const bytesBeforeFailedSend = stats.outbound_bytes_sent;
 assert.equal(helpers.sendRawJsonToSocket(failingSocket, "small", "direct_send", { message_type: "chat" }), false);
+assert.equal(stats.outbound_bytes_sent, bytesBeforeFailedSend, "Failed traffic is not sent bandwidth");
 assert.equal(stats.outbound_send_failures, 1);
 assert.equal(lastWarning().label, "[socket_send_error]");
 assert.match(String(lastWarning().payload.message), /boom/);

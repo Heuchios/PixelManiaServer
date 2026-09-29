@@ -9,8 +9,8 @@ const start = source.indexOf("function getWorldHonorPlayerId(");
 const end = source.indexOf("function serializeTradeSlots(", start);
 assert.ok(start > 0 && end > start);
 
-function harness() {
-  const state = { now: 100000, locked: true, role: "", level: 1, fail: false, pending: null };
+function harness(honorsEnabled = true, databaseReady = true) {
+  const state = { now: 100000, locked: true, role: "", level: 1, fail: false, pending: null, others: 0, flags: false };
   const messages = [], visits = [], timers = [];
   const boards = {
     today: [{ rank: 1, world_name: "SHOP", honor_score: 2, qualified_visitors: 2 }],
@@ -18,7 +18,7 @@ function harness() {
     overall: [{ rank: 3, world_name: "SHOP", honor_score: 4.5, qualified_visitors: 6 }],
   };
   const deps = {
-    WORLD_HONORS_ENABLED: true, WORLD_HONOR_MIN_PLAYER_LEVEL: 1,
+    WORLD_HONORS_ENABLED: honorsEnabled, WORLD_HONOR_MIN_PLAYER_LEVEL: 1,
     WORLD_HONOR_MIN_DWELL_MS: 60000, WORLD_HONOR_NETWORK_HASH_SECRET: "",
     WORLD_HONOR_MAX_ACCOUNTS_PER_NETWORK_PER_WORLD_DAY: 3,
     WORLD_HONOR_TOP_LIMIT: 10, WORLD_HONOR_OVERALL_HALF_LIFE_DAYS: 30,
@@ -33,27 +33,32 @@ function harness() {
     cleanWorld: (name) => String(name).trim().toUpperCase(),
     ensurePlayerState: () => ({ player_level: state.level }),
     ensureWorldState: () => ({}),
-    getEffectiveWorldLockStateInState: () => ({ is_locked: state.locked }),
+    getEffectiveWorldLockStateInState: () => ({ is_locked: state.locked, owner_name: "Alice" }),
+    getWorldPopulationCount: (_world, excluded) => { assert.equal(excluded, "socket1"); return state.others; },
+    isWorldAntiPunchEnabled: () => state.flags,
+    isWorldAntiTalkEnabled: () => state.flags,
+    isWorldAntiGravityEnabled: () => state.flags,
+    hasSnowRepellentBlock: () => state.flags,
     getWorldLockRoleForPlayer: () => state.role,
     getErrorMessage: (error) => error.message,
     console: { log() {}, warn() {} },
     sendSystemChatToPlayer: (_socket, player, message) => messages.push({ world: player.world, message }),
     postgresStore: {
-      isReady: () => true,
+      isReady: () => databaseReady,
       recordWorldHonorVisit: async (entry) => {
         visits.push(entry);
         return state.fail ? { ok: false } : { ok: true, recorded: true, honor_date: "2026-09-28" };
       },
-      getWorldHonorLeaderboard: async (period) => {
+      getWorldHonorLeaderboard: async (period, options) => {
         if (state.pending) await state.pending;
-        return state.fail ? { ok: false } : { ok: true, entries: boards[period] };
+        return state.fail ? { ok: false } : { ok: true, entries: boards[period].filter(e => !options.world_name || e.world_name === options.world_name) };
       },
     },
   };
   const api = new Function(...Object.keys(deps), `${source.slice(start, end)}
     return {beginWorldHonorVisit,endWorldHonorVisit,handleWorldHonorTopCommand};`)(...Object.values(deps));
   const player = { id: "socket1", account_username: "visitor", authenticated: true, joined_world: true, world: "SHOP" };
-  return { ...api, deps, state, messages, visits, timers, player };
+  return { ...api, deps, state, messages, visits, timers, player, boards };
 }
 
 const flush = () => new Promise((resolve) => setImmediate(resolve));
@@ -64,7 +69,7 @@ async function main() {
   await flush();
   assert.equal(h.visits.length, 0);
   assert.equal(h.timers[0].delay, 60000);
-  assert.match(h.messages[0].message, /Today #1 \| Yesterday #2 \| Overall #3/);
+  assert.equal(h.messages[0].message, "visitor entered, SHOP (Honors: #1 today, #2 yesterday, #3 overall). This world is locked by Alice. 0 others here.");
   await h.beginWorldHonorVisit({}, h.player, "SHOP");
   await flush();
   assert.equal(h.messages.length, 1, "Duplicate begin must not repeat the notice");
@@ -81,6 +86,8 @@ async function main() {
     await own.beginWorldHonorVisit({}, own.player, "SHOP"); await flush();
     assert.equal(own.timers.length, 0, `${role} must not earn self honors`);
     assert.equal(own.messages.length, 1, `${role} must still see honors`);
+    await own.beginWorldHonorVisit({}, own.player, "SHOP"); await flush();
+    assert.equal(own.messages.length, 1, `${role} must not see duplicate notices`);
   }
   const short = harness();
   await short.beginWorldHonorVisit({}, short.player, "SHOP");
@@ -100,10 +107,24 @@ async function main() {
 
   const empty = harness(); empty.player.world = "UNRANKED";
   await empty.beginWorldHonorVisit({}, empty.player, "UNRANKED"); await flush();
-  assert.match(empty.messages[0].message, /No top 10 rankings yet/);
+  assert.match(empty.messages[0].message, /Honors: unranked/);
+  const ranked = harness(); ranked.state.others = 1; ranked.state.flags = true;
+  ranked.boards.today[0].rank = 151; ranked.boards.yesterday[0].rank = 309;
+  await ranked.beginWorldHonorVisit({}, ranked.player, "SHOP"); await flush();
+  assert.match(ranked.messages[0].message, /SHOP \[NOPUNCH, NOTALK, NOGRAVITY, SNOWREPELLENT\] \(Honors: #151 today, #309 yesterday, #3 overall\)/);
+  assert.match(ranked.messages[0].message, /1 other here\./);
+  await flush();
+  assert.match(unlocked.messages[0].message, /This world is unlocked/);
   const failed = harness(); failed.state.fail = true;
   await failed.beginWorldHonorVisit({}, failed.player, "SHOP"); await flush();
   assert.match(failed.messages[0].message, /temporarily unavailable/);
+  for (const [enabled, ready, expected] of [[false, true, "disabled"], [true, false, "temporarily unavailable"]]) {
+    const offline = harness(enabled, ready);
+    await offline.beginWorldHonorVisit({}, offline.player, "SHOP"); await flush();
+    assert.equal(offline.messages.length, 1, "Always send the entry even when honors cannot load");
+    assert.ok(offline.messages[0].message.includes(`Honors: ${expected}`));
+    assert.match(offline.messages[0].message, /locked by Alice/);
+  }
   for (const leaving of ["warp", "disconnect", "reenter"]) {
     const late = harness(); let release;
     late.state.pending = new Promise((resolve) => { release = resolve; });
@@ -124,6 +145,22 @@ async function main() {
   command.state.now += 1500;
   await command.handleWorldHonorTopCommand({}, command.player, "/top yesterday");
   assert.match(command.messages.at(-1).message, /#2 SHOP/);
+  // Exercise the real store query builder: filtering must happen AFTER ranking,
+  // so a world outside the public top ten retains its actual rank.
+  const PostgresStore = require("../postgres_store");
+  const store = new PostgresStore({ enabled: false, schema: "pixel_mania_test", logger() {} });
+  store.isReady = () => true;
+  for (const period of ["today", "yesterday", "overall"]) {
+    store.queryReadWithRetry = async (_label, sql, args) => {
+      assert.match(sql, /ROW_NUMBER\(\) OVER/);
+      assert.match(sql, /FROM ranked\s+WHERE \(\$[34]::text = '' OR world_name = \$[34]::text\)\s+ORDER BY rank ASC\s+LIMIT/);
+      assert.equal(args.at(-1), "SHOP");
+      return { rows: [{ rank: 309, world_name: "SHOP", honor_score: 1, qualified_visitors: 1 }] };
+    };
+    const result = await store.getWorldHonorLeaderboard(period, { world_name: "shop", limit: 10 });
+    assert.equal(result.ok, true);
+    assert.equal(result.entries[0].rank, 309);
+  }
   console.log("[world-honors] dwell, eligibility, retries, lifecycle, entry chat, stale notices, and commands passed");
 }
 main().catch((error) => { console.error(error); process.exitCode = 1; });

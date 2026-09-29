@@ -4,6 +4,9 @@
   "description": "",
   "main": "server.js",
   "scripts": {
+    "check:network-audit": "node scripts/check_network_audit.js",
+    "test:network-game": "node scripts/network_game_smoke.js",
+    "audit:network-messages": "node scripts/audit_network_messages.js",
     "check:magnet-machine": "node scripts/check_magnet_machine.js && node scripts/check_seed_transactions.js",
     "check:magnet-postgres": "node scripts/test_magnet_postgres.js",
     "check:fish-market": "npm run build:item-data && npm run build:server-entry && npm run build:postgres-store && node scripts/test_fish_market.js",

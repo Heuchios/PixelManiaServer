@@ -160,6 +160,8 @@ async function runGeneratedTerrainRegression() {
       SNOW_STORM_PILE_OF_SNOW_CHANCE: 0,
       canSpawnSnowStormPileAt: () => false,
       getSnowStormIceEventBlock: () => "ice_block",
+      buildSnowStormFreezeDeathTargets: () => [],
+      applyPunchToggleInstantDeathPresence: () => {},
       commitWorldEventStateOnly: async () => ({ ok: true }),
       worldStates,
       deserializeWorldState: () => eventState,
