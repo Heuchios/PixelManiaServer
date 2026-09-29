@@ -22,6 +22,7 @@ const DROP_PICKUP_INVENTORY_LOCK_RETRY_MS = Math.max(5, Math.trunc(Number(proces
 
 function createServerPhase8FinalRoutes(deps: Phase8FinalRouteDeps) {
   const {
+    ItemDatabase,
     DropContracts,
     InventoryContracts,
     acceptPlayerMovement,
@@ -900,6 +901,14 @@ function createServerPhase8FinalRoutes(deps: Phase8FinalRouteDeps) {
             player.animation_state = sanitizePlayerAnimationState(data.animation_state);
             for (const key of ["jump_visual_sequence", "punch_visual_sequence"]) {
               if (Number.isSafeInteger(data[key]) && data[key] >= 0 && data[key] <= 2147483647) player[key] = data[key];
+            }
+            if (Object.prototype.hasOwnProperty.call(data, "selected_hand_item")) {
+              const itemId = String(data.selected_hand_item || "").slice(0, 128);
+              const category = ItemDatabase.resolveItemCategory(itemId);
+              const state = ensureWritablePlayerState(player.account_username);
+              const valid = ["block", "seed"].includes(category) && getInventoryCount(state, itemId, category) > 0;
+              player.selected_hand_item = valid ? itemId : "";
+              player.selected_hand_category = valid ? category : "";
             }
             player.velocity_x = sanitizePlayerVelocity(data.velocity_x);
             player.velocity_y = sanitizePlayerVelocity(data.velocity_y);

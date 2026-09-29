@@ -808,6 +808,7 @@ const AREA_LOCK_TILE_LIMITS = new Map([
 ]);
 const SUPER_WORLD_LOCK_EXCHANGE_RATE = 100;
 const SHOP_CATALOG = new Map([
+    ["appreciation_wings", { item_id: "appreciation_wings", item_category: "back", amount: 1, price: 0, once_per_account: true }],
     ["small_lock", { item_id: "small_lock", item_category: "block", amount: 1, price: 500 }],
     ["medium_lock", { item_id: "medium_lock", item_category: "block", amount: 1, price: 1000 }],
     ["big_lock", { item_id: "big_lock", item_category: "block", amount: 1, price: 1500 }],
@@ -1719,6 +1720,7 @@ let serverPhase8FinalRoutes = null;
 function getServerPhase8FinalRoutes() {
     if (!serverPhase8FinalRoutes) {
         serverPhase8FinalRoutes = ServerPhase8FinalRoutesModule.createServerPhase8FinalRoutes({
+            ItemDatabase,
             DropContracts,
             InventoryContracts,
             acceptPlayerMovement,
@@ -15024,6 +15026,9 @@ function getPostgresInventoryFailureMessage(result, fallback = "Server inventory
  * @returns {Promise<PixelMania.InventoryCommitResult>}
  */
 async function commitPlayerInventoryState(socket, player, username, beforeState, afterState, options = {}) {
+    if (options.metadata?.once_per_account === true && !isPostgresAuthoritativeReady()) {
+        return InventoryContracts.buildInventoryCommitFailure({ reason: "postgres_unavailable", message: "Gift claims are temporarily unavailable. Try again shortly." });
+    }
     if (!afterState) {
         return InventoryContracts.buildInventoryCommitFailure({ message: "Could not load your server inventory." });
     }
@@ -15277,14 +15282,14 @@ async function prepareWaterBucketScoopInventoryReturn(socket, player, worldName,
         });
         return { ok: false };
     }
-    if (getInventoryCount(state, WATER_BUCKET_ITEM_TYPE, "block") <= 0) {
+    if (getInventoryCount(state, WATER_BUCKET_ITEM_TYPE, "material") <= 0) {
         sendActionRejected(socket, "world_block_update", "Equip a Water Bucket first.", {
             reason: "water_bucket_required",
             block_type: update.block_type,
         });
         return { ok: false };
     }
-    if (!canAddItemToState(state, WATER_BUCKET_ITEM_TYPE, "block", 1)) {
+    if (!canAddItemToState(state, WATER_BUCKET_ITEM_TYPE, "material", 1)) {
         sendActionRejected(socket, "world_block_update", "Your inventory cannot hold more Water Buckets.", {
             reason: "inventory_full",
             block_type: update.block_type,
@@ -15294,7 +15299,7 @@ async function prepareWaterBucketScoopInventoryReturn(socket, player, worldName,
     }
     const beforeState = cloneJson(state);
     const stagedState = cloneJson(state);
-    const addResult = addItemToState(stagedState, WATER_BUCKET_ITEM_TYPE, "block", 1);
+    const addResult = addItemToState(stagedState, WATER_BUCKET_ITEM_TYPE, "material", 1);
     if (!addResult) {
         sendActionRejected(socket, "world_block_update", "Could not add water to your bucket stack.", {
             reason: "inventory_add_failed",
@@ -15309,7 +15314,7 @@ async function prepareWaterBucketScoopInventoryReturn(socket, player, worldName,
         removed_block: WATER_BLOCK_TYPE,
         layer: update.layer,
         item_id: WATER_BUCKET_ITEM_TYPE,
-        item_category: "block",
+        item_category: "material",
         amount: 1,
     };
     if (isPostgresAuthoritativeReady()) {
@@ -32634,6 +32639,8 @@ function getPlayersInWorld(worldName, excludePlayerId = "", receiverPlayer = nul
             world: player.world,
             animation_state: player.animation_state || "idle",
             jump_visual_sequence: clampInteger(player.jump_visual_sequence || 0, 0, 2147483647),
+            selected_hand_item: String(player.selected_hand_item || ""),
+            selected_hand_category: String(player.selected_hand_category || ""),
             punch_visual_sequence: clampInteger(player.punch_visual_sequence || 0, 0, 2147483647),
             movement_sequence: Math.max(0, Math.trunc(Number(player.movement_sequence) || 0)),
             server_time_msec: Math.max(0, Math.trunc(Number(player.movement_server_time_msec) || now)),

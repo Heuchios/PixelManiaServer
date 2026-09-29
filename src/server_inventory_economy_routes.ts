@@ -114,6 +114,7 @@ function createServerInventoryEconomyRoutes(deps: InventoryEconomyRoutesDeps) {
   }
 
   function getShopPurchaseMessage(itemId: string, listing: PacketRecord): string {
+    if (itemId === "appreciation_wings") return "Appreciation Wings claimed! Thank you for playing PixelMania.";
     if (itemId === "lure_pack") return "Purchased and opened Lure Pack.";
     if (itemId === "basic_items_pack") return "Purchased and opened Basic Items Pack.";
     if (itemId === "hairpack") return "Purchased and opened Hair Pack.";
@@ -374,7 +375,11 @@ function createServerInventoryEconomyRoutes(deps: InventoryEconomyRoutesDeps) {
     const beforeState = cloneJson(state);
     const stagedState = cloneJson(state);
     stagedState.inventory_slot_count = resolveInventorySlotCount(state);
-    if (!spendItemFromState(stagedState, "gem", "currency", listing.price)) {
+    if (listing.once_per_account && (state.shop_claims || []).includes(itemId)) {
+      sendInventoryTransactionRejected(socket, data, "You already claimed this gift.");
+      return;
+    }
+    if (listing.price > 0 && !spendItemFromState(stagedState, "gem", "currency", listing.price)) {
       sendInventoryTransactionRejected(socket, data, "Not enough gems.");
       return;
     }
@@ -412,16 +417,22 @@ function createServerInventoryEconomyRoutes(deps: InventoryEconomyRoutesDeps) {
     }
 
     const purchaseId = makeAuditId("shop");
+    if (listing.once_per_account) stagedState.shop_claims = [...new Set([...(state.shop_claims || []), itemId])];
     const commit = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
       source: "shop",
       action: "shop_purchase",
       reason: "shop_buy",
       request_id: requestId,
       world: player.world || "START",
-      metadata: { listing_id: itemId, purchase_id: purchaseId },
+      metadata: { listing_id: itemId, purchase_id: purchaseId, once_per_account: listing.once_per_account === true },
       failure_message: "Shop inventory changed. Try again.",
     });
     if (!commit.ok) {
+      if (commit.reason === "shop_already_claimed") {
+        sendInventoryTransactionResult(socket, {ok: false, action: "shop_buy", request_id: requestId, item_id: itemId,
+          message: "You already claimed this gift.", shop_claims: stagedState.shop_claims});
+        return;
+      }
       sendInventoryTransactionRejected(socket, data, commit.message);
       return;
     }
@@ -474,6 +485,7 @@ function createServerInventoryEconomyRoutes(deps: InventoryEconomyRoutesDeps) {
       action: "shop_buy",
       item_id: itemId,
       message: getShopPurchaseMessage(itemId, listing),
+      shop_claims: committedState.shop_claims || [],
       username,
       rewards: combinedRewards,
       inventory_deltas: inventoryDeltas,

@@ -522,6 +522,7 @@ function createPlayerStateHelpers(config: PlayerStateHelperConfig): PlayerStateH
       fish_inventory_unit: FishMarket.UNIT,
       player_data_version: Math.max(1, Math.trunc(Number(rawState.player_data_version) || 1)),
       account_username: accountUsername,
+      shop_claims: sanitizeStringArray(rawState.shop_claims, 32).filter((id) => id === "appreciation_wings"),
       profile_bio: clampString(rawState.profile_bio || "", maxProfileBioLength),
       player_level: progression.player_level,
       player_xp: progression.player_xp,

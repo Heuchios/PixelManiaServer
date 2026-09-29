@@ -835,6 +835,16 @@ class PostgresStore {
     }
 
     await this.db.query(`
+      CREATE TABLE IF NOT EXISTS ${this.table("account_shop_claims")} (
+        account_id uuid NOT NULL REFERENCES ${this.table("accounts")}(account_id) ON DELETE CASCADE,
+        listing_id text NOT NULL,
+        claimed_at timestamptz NOT NULL DEFAULT now(),
+        request_id text NOT NULL DEFAULT '',
+        PRIMARY KEY (account_id, listing_id)
+      );
+    `);
+
+    await this.db.query(`
       ALTER TABLE ${this.table("accounts")}
         ADD COLUMN IF NOT EXISTS password_salt text NOT NULL DEFAULT '',
         ADD COLUMN IF NOT EXISTS password_algorithm text NOT NULL DEFAULT 'legacy_scrypt',
@@ -5069,7 +5079,8 @@ class PostgresStore {
           p.player_total_xp,
           p.player_title,
           p.last_level_up_at,
-          p.player_state
+          p.player_state,
+          ARRAY(SELECT c.listing_id FROM ${this.table("account_shop_claims")} c WHERE c.account_id = a.account_id ORDER BY c.listing_id) AS shop_claims
         FROM ${this.table("players")} p
         JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
         WHERE lower(a.username::text) = lower($1)
@@ -5097,6 +5108,7 @@ class PostgresStore {
         username: cleanName(row.username || cleanUsername),
         state: {
           ...state,
+          shop_claims: row.shop_claims || [],
           account_username: cleanName(state.account_username || row.username || cleanUsername),
           player_health: toInt(state.player_health, toInt(row.player_health, 100)),
           player_level: toInt(state.player_level, toInt(row.player_level, 1)),
@@ -5128,7 +5140,8 @@ class PostgresStore {
           p.player_total_xp,
           p.player_title,
           p.last_level_up_at,
-          p.player_state
+          p.player_state,
+          ARRAY(SELECT c.listing_id FROM ${this.table("account_shop_claims")} c WHERE c.account_id = a.account_id ORDER BY c.listing_id) AS shop_claims
         FROM ${this.table("players")} p
         JOIN ${this.table("accounts")} a ON a.account_id = p.account_id
         WHERE p.player_state IS NOT NULL
@@ -5169,6 +5182,7 @@ class PostgresStore {
           username: cleanName(row.username),
           state: {
             ...state,
+          shop_claims: row.shop_claims || [],
             account_username: cleanName(state.account_username || row.username),
             player_health: toInt(state.player_health, toInt(row.player_health, 100)),
             player_level: toInt(state.player_level, toInt(row.player_level, 1)),
@@ -9924,6 +9938,22 @@ class PostgresStore {
           return InventoryContracts.buildPostgresInventoryDeltaTransactionFailure({ reason: "player_not_found" });
         }
 
+        // Serialize account gift claims across worlds/processes, before inventory writes.
+        // Insert the claim only after all reward writes succeed in this transaction.
+        let shopClaimAccountId: string | null = null;
+        const giftListing = source === "shop" && action === "shop_purchase" && metadata.once_per_account === true
+          ? cleanName(metadata.listing_id) : "";
+        if (giftListing) {
+          const identity = await client.query(`SELECT a.account_id::text AS account_id
+            FROM ${this.table("accounts")} a JOIN ${this.table("players")} p ON p.account_id = a.account_id
+            WHERE p.player_id = $1 FOR UPDATE OF a`, [playerId]);
+          shopClaimAccountId = identity.rows[0]?.account_id || null;
+          if (!shopClaimAccountId) throw new Error("Gift claim account missing");
+          const priorClaim = await client.query(`SELECT 1 FROM ${this.table("account_shop_claims")}
+            WHERE account_id = $1 AND listing_id = $2`, [shopClaimAccountId, giftListing]);
+          if (priorClaim.rows.length) return InventoryContracts.buildPostgresInventoryDeltaTransactionFailure({reason: "shop_already_claimed"});
+        }
+
         const worldResult = await client.query(
           `
           INSERT INTO ${this.table("worlds")} (world_name, width, height, world_data_version, is_active, created_at, updated_at)
@@ -10298,6 +10328,10 @@ class PostgresStore {
           }
         }
 
+        if (shopClaimAccountId) {
+          await client.query(`INSERT INTO ${this.table("account_shop_claims")} (account_id, listing_id, request_id)
+            VALUES ($1, $2, $3)`, [shopClaimAccountId, giftListing, requestId]);
+        }
         await QuestStore.recordGameplay(this,client,playerId,action,metadata,String(metadata.transaction_id||requestId));
         return {
           ...InventoryContracts.buildPostgresInventoryDeltaTransactionSuccess({playerId, worldId, ledgerEntries}),

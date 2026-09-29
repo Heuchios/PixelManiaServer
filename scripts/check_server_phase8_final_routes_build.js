@@ -183,6 +183,9 @@ function getLegacyBody() {
   const relayedActions = /** @type {Record<string, unknown>[]} */ ([]);
   const visualRoutes = Phase8FinalRoutesModule.createServerPhase8FinalRoutes({
     ...deps,
+    ItemDatabase: require('../server_item_database'),
+    ensureWritablePlayerState: () => ({inventory: {dirt: 1}, seed_inventory: {dirt_seed: 1}}),
+    getInventoryCount: (/** @type {any} */ state, /** @type {string} */ id, /** @type {string} */ category) => state[category === 'seed' ? 'seed_inventory' : 'inventory']?.[id] || 0,
     enforceStandardMovementForSocket: () => true,
     isValidRespawnTeleportPosition: () => false,
     acceptPlayerMovement: () => acceptMotion,
@@ -197,7 +200,7 @@ function getLegacyBody() {
     queuePlayerPositionBroadcast: (/** @type {string} */ _world, /** @type {Record<string, unknown>} */ value) => relayedActions.push(value),
     APPEARANCE_DEBUG_LOGS: false,
   });
-  const visualPlayer = {...player, jump_visual_sequence:0, punch_visual_sequence:0};
+  const visualPlayer = /** @type {Record<string, any>} */ ({...player, jump_visual_sequence:0, punch_visual_sequence:0});
   await visualRoutes.handlePlayerPosition(socket, visualPlayer, {jump_visual_sequence:4,punch_visual_sequence:2}, {playerId:"p1"});
   assert.deepEqual(relayedActions.pop(), {jump_visual_sequence:4,punch_visual_sequence:2});
   await visualRoutes.handlePlayerPosition(socket, visualPlayer, {jump_visual_sequence:5,punch_visual_sequence:3}, {playerId:"p1"});
@@ -208,6 +211,17 @@ function getLegacyBody() {
   acceptMotion = false;
   await visualRoutes.handlePlayerPosition(socket, visualPlayer, {jump_visual_sequence:6,punch_visual_sequence:4}, {playerId:"p1"});
   assert.equal(visualPlayer.jump_visual_sequence,5,"Rejected movement cannot advance action visuals");
+  acceptMotion = true;
+  for (const id of ['dirt', 'dirt_seed']) {
+    await visualRoutes.handlePlayerPosition(socket, visualPlayer, {selected_hand_item:id, selected_hand_category:'tool'}, {playerId:'p1'});
+    assert.equal(visualPlayer.selected_hand_item, id);
+    assert.equal(visualPlayer.selected_hand_category, id === 'dirt' ? 'block' : 'seed', 'Server derives category from the item');
+  }
+  for (const id of ['stone', 'dev_wings', 'unknown_item', '']) {
+    await visualRoutes.handlePlayerPosition(socket, visualPlayer, {selected_hand_item:id}, {playerId:'p1'});
+    assert.equal(visualPlayer.selected_hand_item, '', 'Unowned, unsupported and cleared selections never show');
+    assert.equal(visualPlayer.selected_hand_category, '');
+  }
 
   const legacyBody = getLegacyBody();
   assert.doesNotMatch(legacyBody, /if \(data\.type === "world_block_update"\)/);
