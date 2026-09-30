@@ -391,6 +391,15 @@ assert.equal(actionPlayer.x, 400);
 assert.equal(actionPlayer.y, 420);
 assert.equal(movement.getRegistryStats().state_count, 1);
 
+const resetPlayer = {
+  ...actionPlayer,
+  movement_time_credit_seconds: 0.25,
+  movement_distance_budget: { pixels: 249 },
+};
+movement.resetPlayerMovementTracking(resetPlayer, fixture.clock.value);
+assert.equal(resetPlayer.movement_time_credit_seconds, 0, "server teleport clears saved timing credit");
+assert.equal(resetPlayer.movement_distance_budget, null, "server teleport clears the old distance budget");
+
 const requiredBridges = [
   "acceptTrustedMovementState",
   "applyTrustedActionPositionFromPayload",

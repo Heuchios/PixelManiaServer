@@ -1427,6 +1427,8 @@ function createServerPhase11cTrustedMovement(deps: Phase11cTrustedMovementDeps) 
     player.movement_sequence = 0;
     player.movement_client_time_msec = 0;
     player.movement_server_time_msec = now;
+    player.movement_time_credit_seconds = 0;
+    player.movement_distance_budget = null;
   }
 
   function getRegistryStats(): JsonRecord {

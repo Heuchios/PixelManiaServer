@@ -132,6 +132,7 @@ function createPlayer(x = 1000, y = 1000) {
     velocity_x: 0,
     velocity_y: 0,
     on_floor: true,
+    noclip_enabled: false,
     equipment_slots: { back: "" },
     last_position_at: 0,
     movement_sequence: 0,
@@ -398,7 +399,7 @@ scenario("speed limit is preserved - a teleporting client is still clamped", () 
   const elapsedSeconds = (h.clock.value - startClock) / 1000;
   const travelled = player.x - startX;
   const legalCeiling = MAX_MOVE_PIXELS_PER_SECOND * elapsedSeconds
-    + MOVEMENT_DISTANCE_GRACE_PIXELS * 60;
+    + MOVEMENT_DISTANCE_GRACE_PIXELS;
   assert.ok(
     travelled <= legalCeiling + 1e-6,
     `cheating client travelled ${Math.round(travelled)}px, ceiling ${Math.round(legalCeiling)}px`,
@@ -864,6 +865,201 @@ scenario("beard and body accessory changes invalidate idle presence signature", 
     const equipped = { ...original, equipment_slots: { ...original.equipment_slots, [slot]: "owned_item" } };
     assert.notEqual(h.movement.getPlayerPresenceBroadcastSignature(original), h.movement.getPlayerPresenceBroadcastSignature(equipped));
   }
+});
+
+scenario("same-tick packet floods cannot mint distance, including forged client clocks", () => {
+  for (const withTimestamps of [false, true]) {
+    const h = createHarness();
+    const player = createPlayer();
+    const start = player.x;
+    for (let i = 1; i <= 1000; i++) {
+      applyMovementPacket(h, player, { x: player.x + 20, y: player.y }, {
+        movement_sequence: i,
+        ...(withTimestamps ? { client_time_msec: i * 1000000 } : {}),
+      });
+    }
+    assert.ok(player.x - start <= MOVEMENT_DISTANCE_GRACE_PIXELS + 1e-6);
+  }
+});
+
+scenario("sustained packet-rate changes share one server-clock speed cap", () => {
+  for (const packetMs of [1, 8, 16, 50, 125]) {
+    const h = createHarness();
+    const player = createPlayer();
+    applyMovementPacket(h, player, player, { movement_sequence: 1 });
+    const start = player.x;
+    const startedAt = h.clock.value;
+    for (let i = 2; i <= 1002; i++) {
+      h.clock.value += packetMs;
+      applyMovementPacket(h, player, { x: player.x + 300, y: player.y }, { movement_sequence: i });
+    }
+    const ceiling = MAX_MOVE_PIXELS_PER_SECOND * (h.clock.value - startedAt) / 1000
+      + MOVEMENT_DISTANCE_GRACE_PIXELS;
+    assert.ok(player.x - start <= ceiling + 1e-6, `${packetMs}ms flood exceeds server-clock cap`);
+  }
+});
+
+scenario("action-position packets cannot obtain a second movement allowance", () => {
+  /** @type {any[][]} */
+  const violations = [];
+  const h = createHarness({ recordSecurityViolation: (/** @type {any[]} */ ...args) => violations.push(args) });
+  const player = createPlayer();
+  const start = player.x;
+  for (let i = 1; i <= 100; i++) {
+    applyMovementPacket(h, player, { x: player.x + 10, y: player.y }, { movement_sequence: i });
+    const actionPosition = { x: player.x + 10, y: player.y, world: player.world };
+    if (h.movement.acceptPlayerMovement({}, player, actionPosition, { silent: true })) {
+      player.x = actionPosition.x;
+      player.y = actionPosition.y;
+    }
+  }
+  assert.ok(player.x - start <= MOVEMENT_DISTANCE_GRACE_PIXELS + 1e-6);
+  assert.ok(violations.length > 0, "silent action abuse must reach the security ledger");
+});
+
+scenario("zigzag movement spends actual distance instead of net displacement", () => {
+  const h = createHarness();
+  const player = createPlayer();
+  let distance = 0;
+  for (let i = 1; i <= 100; i++) {
+    const before = player.x;
+    applyMovementPacket(h, player, { x: before + (i % 2 ? 10 : -10), y: player.y }, { movement_sequence: i });
+    distance += Math.abs(player.x - before);
+  }
+  assert.ok(distance <= MOVEMENT_DISTANCE_GRACE_PIXELS + 1e-6);
+});
+
+scenario("idle time cannot bank an unlimited teleport", () => {
+  const h = createHarness();
+  const player = createPlayer();
+  applyMovementPacket(h, player, player, { movement_sequence: 1 });
+  h.clock.value += 3600000;
+  const start = player.x;
+  for (let i = 2; i <= 100; i++) {
+    applyMovementPacket(h, player, { x: player.x + 5000, y: player.y }, { movement_sequence: i });
+  }
+  assert.ok(player.x - start <= MAX_MOVE_PIXELS_PER_SECOND * MOVEMENT_MAX_ELAPSED_SECONDS
+    + MOVEMENT_DISTANCE_GRACE_PIXELS + 1e-6);
+});
+
+scenario("backward server-clock adjustment cannot replenish already-spent time", () => {
+  const h = createHarness();
+  const player = createPlayer();
+  applyMovementPacket(h, player, { x: 1024, y: 1000 }, { movement_sequence: 1 });
+  const start = player.x;
+  h.clock.value -= 1000;
+  applyMovementPacket(h, player, { x: start + 20, y: 1000 }, { movement_sequence: 2 });
+  h.clock.value += 1000;
+  applyMovementPacket(h, player, { x: start + 20, y: 1000 }, { movement_sequence: 3 });
+  assert.equal(player.x, start);
+});
+
+scenario("first movement packet cannot skip validation after spawn guard expiry", () => {
+  const h = createHarness();
+  const player = createPlayer();
+  applyMovementPacket(h, player, { x: 8000, y: player.y }, { movement_sequence: 1 });
+  assert.ok(player.x <= 1000 + MOVEMENT_DISTANCE_GRACE_PIXELS);
+});
+
+scenario("a free destination beyond a solid wall is rejected on normal and clamped paths", () => {
+  for (const requestedX of [1200, 8000]) {
+    const h = createHarness({
+      getMovementCollisionAtPosition: (/** @type {string} */ _world, /** @type {{x:number,y:number}} */ p) => p.x >= 1100 && p.x <= 1132
+        ? { grid_x: 34, grid_y: 31, block_type: "stone" } : null,
+    });
+    const player = createPlayer();
+    applyMovementPacket(h, player, player, { movement_sequence: 1 });
+    h.clock.value += 250;
+    assert.equal(applyMovementPacket(h, player, { x: requestedX, y: player.y }, { movement_sequence: 2 }).accepted, false);
+    assert.equal(player.x, 1000, "must not move through the wall to an empty endpoint");
+  }
+});
+
+scenario("silent action positions cannot cross walls and still record evidence", () => {
+  /** @type {any[][]} */
+  const violations = [];
+  const h = createHarness({
+    recordSecurityViolation: (/** @type {any[]} */ ...args) => violations.push(args),
+    getMovementCollisionAtPosition: (/** @type {string} */ _world, /** @type {{x:number,y:number}} */ p) => p.x >= 1100 && p.x <= 1132
+      ? { grid_x: 34, grid_y: 31, block_type: "stone" } : null,
+  });
+  const player = createPlayer();
+  applyMovementPacket(h, player, player, { movement_sequence: 1 });
+  h.clock.value += 250;
+  assert.equal(h.movement.acceptPlayerMovement({}, player, { x: 1200, y: 1000, world: "START" }, { silent: true }), false);
+  assert.equal(player.x, 1000);
+  assert.equal(h.corrections.length, 0);
+  assert.equal(violations[0][1], "movement_rejected_collision");
+});
+
+scenario("corner sliding remains valid when an axis path around the corner is clear", () => {
+  const h = createHarness({
+    getMovementCollisionAtPosition: (/** @type {string} */ _world, /** @type {{x:number,y:number}} */ p) => p.x >= 1040 && p.x <= 1072 && p.y >= 1040 && p.y <= 1072
+      ? { grid_x: 32, grid_y: 32, block_type: "stone" } : null,
+  });
+  const player = createPlayer();
+  applyMovementPacket(h, player, player, { movement_sequence: 1 });
+  h.clock.value += 250;
+  assert.equal(applyMovementPacket(h, player, { x: 1080, y: 1080 }, { movement_sequence: 2 }).accepted, true);
+  assert.equal(h.corrections.length, 0);
+});
+
+scenario("a player can escape a block placed onto them but cannot cross the next block", () => {
+  const h = createHarness({
+    getMovementCollisionAtPosition: (/** @type {string} */ _world, /** @type {{x:number,y:number}} */ p) => p.x >= 992 && p.x <= 1024
+      ? { grid_x: 31, grid_y: 31, block_type: "stone" }
+      : p.x >= 1064 && p.x <= 1096 ? { grid_x: 33, grid_y: 31, block_type: "stone" } : null,
+  });
+  const player = createPlayer();
+  player.last_position_at = h.clock.value - 250;
+  assert.equal(applyMovementPacket(h, player, { x: 1110, y: 1000 }, { movement_sequence: 1 }).accepted, false);
+  assert.equal(applyMovementPacket(h, player, { x: 1040, y: 1000 }, { movement_sequence: 2 }).accepted, true);
+});
+
+scenario("world mismatch and forged noclip flags do not bypass authority", () => {
+  const h = createHarness();
+  const player = createPlayer();
+  player.noclip_enabled = true;
+  assert.equal(applyMovementPacket(h, player, { x: 1001, y: 1000, world: "OTHER" }, { movement_sequence: 1 }).accepted, false);
+  applyMovementPacket(h, player, { x: 8000, y: 1000 }, { movement_sequence: 2, noclip_enabled: true, admin: true });
+  assert.ok(player.x <= 1000 + MOVEMENT_DISTANCE_GRACE_PIXELS);
+});
+
+scenario("server-authorized noclip and respawns still work without minting extra budget", () => {
+  const h = createHarness({ isAdmin: () => true });
+  const player = createPlayer();
+  player.noclip_enabled = true;
+  assert.equal(applyMovementPacket(h, player, { x: 8000, y: 1000 }, { movement_sequence: 1 }).accepted, true);
+  player.noclip_enabled = false;
+  for (let i = 2; i <= 12; i += 2) {
+    const spawn = { x: 1000, y: 1000, world: player.world };
+    assert.equal(h.movement.acceptPlayerMovement({}, player, spawn, { respawnTeleport: true, data: { movement_sequence: i } }), true);
+    player.x = spawn.x;
+    player.y = spawn.y;
+    applyMovementPacket(h, player, { x: 1020, y: 1000 }, { movement_sequence: i + 1 });
+    assert.equal(player.x, 1000);
+  }
+});
+
+scenario("lava rebound allowance cannot be renewed by packet spam", () => {
+  const h = createHarness({ isMovementNearLavaRebound: () => true });
+  const player = createPlayer();
+  const start = player.x;
+  for (let i = 1; i <= 100; i++) {
+    applyMovementPacket(h, player, { x: player.x + 300, y: player.y }, { movement_sequence: i });
+  }
+  assert.ok(player.x - start <= MOVEMENT_DISTANCE_GRACE_PIXELS + 64 + 1e-6);
+});
+
+scenario("stale network packets remain diagnostics without cheating attribution", () => {
+  /** @type {any[][]} */
+  const violations = [];
+  const h = createHarness({ recordSecurityViolation: (/** @type {any[]} */ ...args) => violations.push(args) });
+  const player = createPlayer();
+  applyMovementPacket(h, player, player, { movement_sequence: 5 });
+  for (let i = 0; i < 100; i++) applyMovementPacket(h, player, player, { movement_sequence: 4 });
+  assert.equal(h.playerNetworkStats.stale_player_position_messages, 100);
+  assert.equal(violations.length, 0);
 });
 
 console.log(`[movement-rollback-regression] ${results.length} scenarios passed:`);

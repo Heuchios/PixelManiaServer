@@ -89,13 +89,6 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
   ): void {
     if (!player) return;
     const now = nowMs();
-    // Recorded BEFORE the log throttling below, so a sustained offender does not
-    // look quieter than a sporadic one just because most of its lines were
-    // suppressed. The ledger counts every anomaly; the log still rate limits.
-    if (typeof deps.recordSecurityViolation === "function") {
-      const violationSubject = getMovementViolationSubject(player);
-      if (violationSubject !== "") deps.recordSecurityViolation(violationSubject, label, { player });
-    }
     const lastAt = Math.max(0, Math.trunc(Number(player.movement_anomaly_logged_at) || 0));
     const suppressed = Math.max(0, Math.trunc(Number(player.movement_anomaly_suppressed) || 0));
     if (lastAt > 0 && now - lastAt < MOVEMENT_ANOMALY_LOG_INTERVAL_MS) {
@@ -135,6 +128,91 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
     });
   }
 
+  function recordMovementViolation(socket: unknown, player: JsonRecord, label: string): void {
+    if (typeof deps.recordSecurityViolation !== "function") return;
+    const subject = getMovementViolationSubject(player);
+    if (subject !== "") deps.recordSecurityViolation(subject, label, { socket, player });
+  }
+
+  // One allowance per player, shared by movement and action-position packets.
+  // Only elapsed SERVER time refills it. Per-packet grace and the 16ms timing
+  // floor below must never become extra distance by sending more packets.
+  function getMovementDistanceBudget(player: JsonRecord, now: number): JsonRecord {
+    const world = cleanWorld(player.world || "START");
+    const session = String(player.world_entry_session_id || "");
+    const capacity = MAX_MOVE_PIXELS_PER_SECOND * MOVEMENT_MAX_ELAPSED_SECONDS
+      + MOVEMENT_DISTANCE_GRACE_PIXELS;
+    let budget = player.movement_distance_budget;
+    if (!budget || budget.world !== world || budget.session !== session) {
+      budget = {
+        world, session,
+        at: Number(player.last_position_at) > 0 ? Number(player.last_position_at) : now,
+        pixels: MOVEMENT_DISTANCE_GRACE_PIXELS,
+        lava_at: null,
+      };
+      player.movement_distance_budget = budget;
+    }
+    const elapsed = Math.max(0, now - Number(budget.at)) / 1000;
+    budget.pixels = Math.min(capacity, Math.max(0, Number(budget.pixels) || 0)
+      + MAX_MOVE_PIXELS_PER_SECOND * elapsed);
+    // A backwards wall-clock adjustment cannot earn time a second time.
+    budget.at = Math.max(Number(budget.at), now);
+    return budget;
+  }
+
+  function resetMovementDistanceBudget(player: JsonRecord, now: number): void {
+    const lavaAt = player.movement_distance_budget?.lava_at ?? null;
+    player.movement_distance_budget = {
+      world: cleanWorld(player.world || "START"),
+      session: String(player.world_entry_session_id || ""),
+      at: now,
+      pixels: 0,
+      lava_at: lavaAt,
+    };
+  }
+
+  // Reuse the server's collision map and player hitbox at <= 8px intervals.
+  // Check both axis orders when a diagonal crosses a corner: snapshots do not
+  // contain the exact path and a legitimate move_and_slide can round a corner.
+  // Every candidate path must be clear; a free destination alone is not enough.
+  function getMovementPathCollision(player: JsonRecord, position: JsonRecord): JsonRecord | null {
+    const world = position.world || player.world || "START";
+    const destinationCollision = getMovementCollisionAtPosition(world, position);
+    if (destinationCollision) return destinationCollision;
+    const origin = { x: Number(player.x), y: Number(player.y) };
+    const initialCollision = getMovementCollisionAtPosition(world, origin);
+    const stepSize = Math.max(1, Math.min(8, TILE_SIZE / 4));
+    function checkPath(points: JsonRecord[]): JsonRecord | null {
+      let from: JsonRecord = origin;
+      let escapingInitialBlock = Boolean(initialCollision);
+      for (const to of points) {
+        const steps = Math.ceil(Math.hypot(to.x - from.x, to.y - from.y) / stepSize);
+        // Bound work even if an operator configures an excessive speed limit.
+        if (!Number.isFinite(steps) || steps > 256) return { path_check_limit: true };
+        for (let step = 1; step <= steps; step += 1) {
+          const collision = getMovementCollisionAtPosition(world, {
+            x: from.x + (to.x - from.x) * step / steps,
+            y: from.y + (to.y - from.y) * step / steps,
+          });
+          if (!collision) {
+            escapingInitialBlock = false;
+          } else if (!escapingInitialBlock
+            || collision.grid_x !== initialCollision?.grid_x
+            || collision.grid_y !== initialCollision?.grid_y) {
+            return collision;
+          }
+        }
+        from = to;
+      }
+      return null;
+    }
+    const collision = checkPath([position]);
+    if (!collision || origin.x === position.x || origin.y === position.y) return collision;
+    if (!checkPath([{ x: position.x, y: origin.y }, position])) return null;
+    if (!checkPath([{ x: origin.x, y: position.y }, position])) return null;
+    return collision;
+  }
+
   /**
    * Projects a rejected movement request back onto the furthest point the server
    * is willing to authorise this tick. Returning a clamped point (instead of
@@ -164,10 +242,7 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
 
     const clampedPosition: JsonRecord = { ...position, x: clampedX, y: clampedY };
     // Never advance the authority through solid geometry, even by a partial step.
-    if (getMovementCollisionAtPosition(
-      clampedPosition.world || player.world || "START",
-      clampedPosition,
-    )) {
+    if (getMovementPathCollision(player, clampedPosition)) {
       return null;
     }
     return clampedPosition;
@@ -552,9 +627,16 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
 
     if (!isPositionInWorldBounds(Number(position?.x), Number(position?.y))) {
       playerNetworkStats.rejected_player_position_messages += 1;
+      recordMovementViolation(socket, player, "movement_outside_world_bounds");
       if (!silent) {
         sendPlayerPositionCorrection(socket, player, position, "outside_world_bounds", { data });
       }
+      return false;
+    }
+
+    if (cleanWorld(position.world || player.world) !== cleanWorld(player.world)) {
+      playerNetworkStats.rejected_player_position_messages += 1;
+      recordMovementViolation(socket, player, "movement_wrong_world");
       return false;
     }
 
@@ -575,16 +657,19 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
       }
 
       clearPlayerWorldEntrySpawnGuard(player);
+      resetMovementDistanceBudget(player, now);
       commitAcceptedMovementTiming(player, data, now, true);
       return true;
     }
 
     if (respawnTeleport) {
+      resetMovementDistanceBudget(player, now);
       commitAcceptedMovementTiming(player, data, now, true);
       return true;
     }
 
-    if (!lastAt || (isAdmin(player) && player.noclip_enabled)) {
+    if (isAdmin(player) && player.noclip_enabled) {
+      resetMovementDistanceBudget(player, now);
       commitAcceptedMovementTiming(player, data, now, true);
       return true;
     }
@@ -595,14 +680,22 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
     // Client velocity describes animation/acceleration; it cannot increase the
     // server's speed allowance. Trusted teleports and lava allowances are
     // handled explicitly above/below, using authoritative world state.
-    let maxDistance = MAX_MOVE_PIXELS_PER_SECOND * elapsedSeconds + MOVEMENT_DISTANCE_GRACE_PIXELS;
+    const distanceBudget = getMovementDistanceBudget(player, now);
+    const originX = Number(player.x);
+    const originY = Number(player.y);
+    let maxDistance = Math.min(Number(distanceBudget.pixels),
+      MAX_MOVE_PIXELS_PER_SECOND * elapsedSeconds + MOVEMENT_DISTANCE_GRACE_PIXELS);
     const distance = Math.hypot(position.x - player.x, position.y - player.y);
-    if (distance > maxDistance && isMovementNearLavaRebound(player, position)) {
+    if (distance > maxDistance && isMovementNearLavaRebound(player, position)
+      && (distanceBudget.lava_at === null || now - Number(distanceBudget.lava_at) >= 1000)) {
+      distanceBudget.lava_at = now;
+      distanceBudget.pixels += LAVA_REBOUND_MOVE_EXTRA_PIXELS;
       maxDistance += LAVA_REBOUND_MOVE_EXTRA_PIXELS;
     }
 
     if (distance > maxDistance) {
       playerNetworkStats.rejected_player_position_messages += 1;
+      recordMovementViolation(socket, player, "movement_speed_budget_exceeded");
       const requestedPosition: JsonRecord = { ...position };
       let clampedPosition = clampMovementTowardAuthoritative(
         player,
@@ -615,10 +708,13 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
         // active for this world right now. Applied AFTER the speed clamp on purpose -- see
         // applyLandfillEntryPenClamp's doc comment for why doing this before would let an
         // overshooting request skip straight to the pen boundary regardless of the speed cap.
+        const beforePen = clampedPosition;
         clampedPosition = applyLandfillEntryPenClamp(
           clampedPosition.world || player.world || "START",
           clampedPosition,
         );
+        if (clampedPosition && clampedPosition !== beforePen
+          && getMovementPathCollision(player, clampedPosition)) clampedPosition = null;
       }
 
       if (clampedPosition) {
@@ -632,6 +728,8 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
         // needing a matching field in the shared runtime stats object.
         playerNetworkStats.clamped_player_position_messages =
           (Number(playerNetworkStats.clamped_player_position_messages) || 0) + 1;
+        distanceBudget.pixels = Math.max(0, distanceBudget.pixels
+          - Math.hypot(clampedPosition.x - originX, clampedPosition.y - originY));
         player.x = clampedPosition.x;
         player.y = clampedPosition.y;
         position.x = clampedPosition.x;
@@ -715,6 +813,7 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
         && Math.abs(reportedVelocityX - previousVelocityX) <= maxVelocityDelta;
       if (velocityDelta > maxVelocityDelta && !allowedWingImpulse) {
         playerNetworkStats.rejected_player_position_messages += 1;
+        recordMovementViolation(socket, player, "movement_acceleration_too_high");
         if (!silent) {
           sendPlayerPositionCorrection(
             socket,
@@ -756,27 +855,14 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
       return false;
     }
     if (penClampedPosition !== position) {
-      // The pen actually pulled this request in. Update player.x/y here (not just
-      // position.x/y) so sendPlayerPositionCorrection below reports the new authoritative point
-      // as server_x/server_y, exactly like the speed-clamp branch above does.
-      player.x = penClampedPosition.x;
-      player.y = penClampedPosition.y;
       position.x = penClampedPosition.x;
       position.y = penClampedPosition.y;
-      if (!silent) {
-        sendPlayerPositionCorrection(socket, player, requestedNormalPosition, "landfill_entry_area_confined", {
-          data,
-          extra: { correction_clamped: true },
-        });
-      }
     }
 
-    const collision = getMovementCollisionAtPosition(
-      position.world || player.world || "START",
-      position,
-    );
+    const collision = getMovementPathCollision(player, position);
     if (collision) {
       playerNetworkStats.rejected_player_position_messages += 1;
+      recordMovementViolation(socket, player, "movement_rejected_collision");
       if (!silent) {
         sendPlayerPositionCorrection(socket, player, position, "movement_blocked", {
           data,
@@ -795,6 +881,18 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
       return false;
     }
 
+    distanceBudget.pixels = Math.max(0, distanceBudget.pixels
+      - Math.hypot(position.x - originX, position.y - originY));
+    if (penClampedPosition !== position) {
+      player.x = position.x;
+      player.y = position.y;
+      if (!silent) {
+        sendPlayerPositionCorrection(socket, player, requestedNormalPosition, "landfill_entry_area_confined", {
+          data,
+          extra: { correction_clamped: true },
+        });
+      }
+    }
     commitAcceptedMovementTiming(player, data, now);
     return true;
   }
