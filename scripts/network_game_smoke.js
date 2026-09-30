@@ -9,6 +9,7 @@ const output = path.resolve(process.env.AUDIT_OUTPUT_DIR || path.join(root, "tes
 const engine = process.env.GODOT_BIN || path.resolve(root, "../Godot/Godot_v4.7.1-stable_win64_console.exe");
 const wait = ms => new Promise(resolve => setTimeout(resolve, ms));
 const children = [], proxies = [], links = [];
+const worldRejoin = process.argv.includes("--world-rejoin");
 let monitor;
 async function freePort() {
   const listener = net.createServer();
@@ -118,7 +119,7 @@ async function main() {
     const appdata = path.join(output, role + "-appdata"); fs.mkdirSync(appdata, { recursive: true });
     const args = [...(render ? ["--rendering-method", "gl_compatibility", "--resolution", "960x540", "--windowed"] : ["--headless"]),
       "--max-fps", role === "observer" ? String(process.env.AUDIT_OBSERVER_FPS || 30) : "60",
-      "--path", client, "--script", "tests/network_game_smoke.gd", "--", "--pixelmania-ws-url", `ws://127.0.0.1:${relay.port}`,
+      "--path", client, "--script", worldRejoin ? "tests/world_rejoin_edit_smoke.gd" : "tests/network_game_smoke.gd", "--", "--pixelmania-ws-url", `ws://127.0.0.1:${relay.port}`,
       "--pixelmania-api-base", `http://127.0.0.1:${port}`, "--audit-output", output, "--audit-role", role, ...(render ? ["--audit-render"] : [])];
     runs.push(launch(engine, args, { ...process.env, APPDATA: appdata, PIXELMANIA_RUNTIME_PROFILE: "1" }, role));
   }
@@ -134,7 +135,7 @@ async function main() {
   const result = { codes, interrupted, proxy: proxyStats, model: "ordered application RTT/jitter/recovery; not kernel packet loss", output };
   fs.writeFileSync(path.join(output, "summary.json"), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result));
-  if (codes.some(code => code !== 0) || !interrupted) throw Error("Game assertions failed; inspect actor/observer results");
+  if (codes.some(code => code !== 0) || (!worldRejoin && !interrupted)) throw Error("Game assertions failed; inspect actor/observer results");
 }
 main().catch(error => { console.error(error); process.exitCode = 1; }).finally(() => {
   clearInterval(monitor);
