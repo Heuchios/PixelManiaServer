@@ -23,14 +23,21 @@ and [Epic Anti-Cheat integration guidance](https://dev.epicgames.com/docs/epic-o
   and positional grace are now also constrained by the cumulative budget.
   Accepted distance is charged even when the requested movement is clamped.
 - Idle time has a bounded allowance. Respawns and world-entry acknowledgements
-  discard accumulated credit. Server-issued movement resets clear both timing
+  cap retained, already-funded credit at the small burst tolerance so the next
+  honest snapshot can arrive in the same TCP burst. Repeated respawns cannot
+  refill spent tolerance. Server-issued movement resets clear both timing
   and distance state. An expired spawn guard no longer makes the first movement
   packet exempt from validation.
-- Normal and speed-clamped movement validate the path through the existing
+- Normal and speed-clamped movement inspect the path through the existing
   authoritative collision map, including embedded action positions. Sampling
   intervals are at most 8px. Diagonal moves may use either clear axis order to
-  accommodate corner sliding between snapshots. Players can escape a block
-  placed onto them, but cannot continue through another block.
+  accommodate corner sliding between snapshots. These new path checks are
+  **observation-only by default**: a legitimate jump hidden by lag or a block
+  placed behind a moving player can make the guessed path cross solid geometry.
+  They emit throttled `movement_path_unverified` diagnostics without correcting
+  the player or adding security violations. Destination collisions still enforce.
+  `MOVEMENT_PATH_GUARD_MODE=enforce` explicitly opts into the experimental path
+  rejection behavior; it requires further staging validation.
 - Lava rebound grace requires the existing server-side proximity check and is
   granted at most once per second, rather than once per packet. Admin noclip
   still requires the existing server-authorized role and noclip state.
@@ -64,6 +71,10 @@ The existing settings continue to apply:
 | `MOVEMENT_MAX_ELAPSED_SECONDS` | 0.25 | Maximum saved movement interval |
 | `MOVEMENT_DISTANCE_GRACE_PIXELS` | 24 | Bounded initial/burst tolerance |
 | `MOVEMENT_COLLISION_GUARD_ENABLED` | true | Authoritative solid collision checks |
+| `MOVEMENT_PATH_GUARD_MODE` | observe | Observe guessed paths; `enforce` is explicit opt-in |
+
+The network configuration snapshot in `/health` exposes `movement_path_guard_mode`
+so operators can verify the active behavior.
 
 Without a server-approved teleport or lava rebound allowance, a continuously
 active player can spend at most the initial burst plus 900 pixels per elapsed
@@ -73,11 +84,14 @@ The standard idle capacity is 249 pixels, not unlimited stored travel time.
 ## Validation
 
 `npm run check:anti-cheat` builds the movement module and runs its behavior checks
-plus 36 regression scenarios. The scenarios include same-tick and sustained
+plus 38 regression scenarios. The scenarios include same-tick and sustained
 packet floods, timestamp forgery, alternating action/movement messages, zigzag
 travel, idle banking, clock rollback, first-packet teleporting, solid-wall
 crossing, corner sliding, escape from a newly placed block, lava spam, respawns,
-admin noclip, stale packets, wing impulses, and network stall recovery.
+admin noclip, stale packets, wing impulses, and network stall recovery. Two
+additional false-positive regressions cover a jump arc hidden by coalesced
+snapshots and movement arriving in the same burst as a spawn acknowledgement.
+Strict wall-crossing tests explicitly enable experimental path enforcement.
 
 These tests also run through the existing `check:typescript` and
 `check:security` chains. A real two-client headless Godot smoke test passed with

@@ -44,6 +44,7 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
   } = deps;
 
   const nowMs = typeof deps.nowMs === "function" ? deps.nowMs : () => Date.now();
+  const enforceMovementPaths = deps.MOVEMENT_PATH_GUARD_MODE === "enforce";
   const MOVEMENT_SEQUENCE_MAX = 2147483647;
   const MOVEMENT_SEQUENCE_WRAP_WINDOW = 1073741824;
   // Development/ops diagnostics for rollback investigations are rate limited per
@@ -161,20 +162,24 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
   }
 
   function resetMovementDistanceBudget(player: JsonRecord, now: number): void {
-    const lavaAt = player.movement_distance_budget?.lava_at ?? null;
+    const previous = getMovementDistanceBudget(player, now);
+    // Keep a small, already-funded burst for a spawn ACK and movement snapshot
+    // delivered together. Repeated respawns cannot replenish spent tolerance.
+    const pixels = Math.min(MOVEMENT_DISTANCE_GRACE_PIXELS, Number(previous.pixels));
     player.movement_distance_budget = {
       world: cleanWorld(player.world || "START"),
       session: String(player.world_entry_session_id || ""),
       at: now,
-      pixels: 0,
-      lava_at: lavaAt,
+      pixels,
+      lava_at: previous.lava_at,
     };
   }
 
   // Reuse the server's collision map and player hitbox at <= 8px intervals.
   // Check both axis orders when a diagonal crosses a corner: snapshots do not
   // contain the exact path and a legitimate move_and_slide can round a corner.
-  // Every candidate path must be clear; a free destination alone is not enough.
+  // Endpoints cannot prove the path taken. Observe by default: a missing jump
+  // arc or a block placed after departure can make every guessed path collide.
   function getMovementPathCollision(player: JsonRecord, position: JsonRecord): JsonRecord | null {
     const world = position.world || player.world || "START";
     const destinationCollision = getMovementCollisionAtPosition(world, position);
@@ -207,9 +212,22 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
       return null;
     }
     const collision = checkPath([position]);
-    if (!collision || origin.x === position.x || origin.y === position.y) return collision;
-    if (!checkPath([{ x: position.x, y: origin.y }, position])) return null;
-    if (!checkPath([{ x: origin.x, y: position.y }, position])) return null;
+    if (!collision) return null;
+    if (origin.x !== position.x && origin.y !== position.y) {
+      if (!checkPath([{ x: position.x, y: origin.y }, position])) return null;
+      if (!checkPath([{ x: origin.x, y: position.y }, position])) return null;
+    }
+    if (!enforceMovementPaths) {
+      // This diagnostic deliberately does not enter the security-violation
+      // ledger. An unobserved path is not evidence of client misconduct.
+      reportMovementAnomaly(player, "movement_path_unverified", {
+        observation_only: true,
+        requested_x: Number(position.x),
+        requested_y: Number(position.y),
+        ...collision,
+      });
+      return null;
+    }
     return collision;
   }
 

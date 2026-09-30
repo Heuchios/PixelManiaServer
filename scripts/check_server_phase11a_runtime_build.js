@@ -337,6 +337,7 @@ assert.equal(networkSnapshot.rate_limit_last_rejection.capacity, 300);
 assert.equal(networkSnapshot.config.position_max_buffered_amount, 262144);
 assert.equal(networkSnapshot.config.position_resume_buffered_amount, 65536);
 assert.equal(networkSnapshot.config.position_delivery_retry_ms, 25);
+assert.equal(networkSnapshot.config.movement_path_guard_mode, "observe", "path enforcement must be opt-in");
 assert.equal(Object.hasOwn(networkSnapshot.rate_limit_checks_by_bucket, "empty"), false);
 
 runtime.writeCrashReport("phase11a_test", { detail: "ok" });

@@ -964,6 +964,7 @@ scenario("first movement packet cannot skip validation after spawn guard expiry"
 scenario("a free destination beyond a solid wall is rejected on normal and clamped paths", () => {
   for (const requestedX of [1200, 8000]) {
     const h = createHarness({
+      MOVEMENT_PATH_GUARD_MODE: "enforce",
       getMovementCollisionAtPosition: (/** @type {string} */ _world, /** @type {{x:number,y:number}} */ p) => p.x >= 1100 && p.x <= 1132
         ? { grid_x: 34, grid_y: 31, block_type: "stone" } : null,
     });
@@ -979,6 +980,7 @@ scenario("silent action positions cannot cross walls and still record evidence",
   /** @type {any[][]} */
   const violations = [];
   const h = createHarness({
+    MOVEMENT_PATH_GUARD_MODE: "enforce",
     recordSecurityViolation: (/** @type {any[]} */ ...args) => violations.push(args),
     getMovementCollisionAtPosition: (/** @type {string} */ _world, /** @type {{x:number,y:number}} */ p) => p.x >= 1100 && p.x <= 1132
       ? { grid_x: 34, grid_y: 31, block_type: "stone" } : null,
@@ -1006,6 +1008,7 @@ scenario("corner sliding remains valid when an axis path around the corner is cl
 
 scenario("a player can escape a block placed onto them but cannot cross the next block", () => {
   const h = createHarness({
+    MOVEMENT_PATH_GUARD_MODE: "enforce",
     getMovementCollisionAtPosition: (/** @type {string} */ _world, /** @type {{x:number,y:number}} */ p) => p.x >= 992 && p.x <= 1024
       ? { grid_x: 31, grid_y: 31, block_type: "stone" }
       : p.x >= 1064 && p.x <= 1096 ? { grid_x: 33, grid_y: 31, block_type: "stone" } : null,
@@ -1031,14 +1034,16 @@ scenario("server-authorized noclip and respawns still work without minting extra
   player.noclip_enabled = true;
   assert.equal(applyMovementPacket(h, player, { x: 8000, y: 1000 }, { movement_sequence: 1 }).accepted, true);
   player.noclip_enabled = false;
+  let totalExtraTravel = 0;
   for (let i = 2; i <= 12; i += 2) {
     const spawn = { x: 1000, y: 1000, world: player.world };
     assert.equal(h.movement.acceptPlayerMovement({}, player, spawn, { respawnTeleport: true, data: { movement_sequence: i } }), true);
     player.x = spawn.x;
     player.y = spawn.y;
     applyMovementPacket(h, player, { x: 1020, y: 1000 }, { movement_sequence: i + 1 });
-    assert.equal(player.x, 1000);
+    totalExtraTravel += player.x - 1000;
   }
+  assert.ok(totalExtraTravel <= MOVEMENT_DISTANCE_GRACE_PIXELS + 1e-6);
 });
 
 scenario("lava rebound allowance cannot be renewed by packet spam", () => {
@@ -1060,6 +1065,38 @@ scenario("stale network packets remain diagnostics without cheating attribution"
   for (let i = 0; i < 100; i++) applyMovementPacket(h, player, player, { movement_sequence: 4 });
   assert.equal(h.playerNetworkStats.stale_player_position_messages, 100);
   assert.equal(violations.length, 0);
+});
+
+scenario("a jump hidden by snapshot coalescing is observed without correcting or accusing the player", () => {
+  /** @type {any[][]} */
+  const violations = [];
+  const h = createHarness({
+    recordSecurityViolation: (/** @type {any[]} */ ...args) => violations.push(args),
+    // Player-hitbox overlap region for a short obstacle. A normal jump can
+    // pass above it, but the server receives only the two grounded endpoints.
+    getMovementCollisionAtPosition: (/** @type {string} */ _world, /** @type {{x:number,y:number}} */ p) =>
+      p.x >= 1040 && p.x <= 1072 && p.y >= 960 && p.y <= 1020
+        ? { grid_x: 32, grid_y: 30, block_type: "stone" } : null,
+  });
+  const player = createPlayer();
+  applyMovementPacket(h, player, player, { movement_sequence: 1 });
+  h.clock.value += 800;
+  assert.equal(applyMovementPacket(h, player, { x: 1120, y: 1000 }, { movement_sequence: 2 }).accepted, true);
+  assert.equal(player.x, 1120);
+  assert.equal(h.corrections.length, 0);
+  assert.equal(violations.length, 0);
+  assert.ok(h.anomalies.some(row => row.label === "movement_path_unverified"));
+});
+
+scenario("spawn acknowledgement and the next honest snapshot can arrive in one TCP burst", () => {
+  let spawning = true;
+  const h = createHarness({ checkPlayerWorldEntrySpawnGuard: () => ({ active: spawning, accepted: spawning }) });
+  const player = createPlayer();
+  applyMovementPacket(h, player, player, { movement_sequence: 1 });
+  spawning = false;
+  assert.equal(applyMovementPacket(h, player, { x: 1002.4, y: 1000 }, { movement_sequence: 2 }).accepted, true);
+  assert.equal(player.x, 1002.4);
+  assert.equal(h.corrections.length, 0);
 });
 
 console.log(`[movement-rollback-regression] ${results.length} scenarios passed:`);

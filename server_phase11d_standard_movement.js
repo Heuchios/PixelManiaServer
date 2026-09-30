@@ -3,6 +3,7 @@
 function createServerPhase11dStandardMovement(deps) {
     const { LAVA_REBOUND_MOVE_EXTRA_PIXELS, MAX_DAMAGE_FLASH_MS, MAX_MOVE_ACCEL_PIXELS_PER_SECOND2, MAX_MOVE_PIXELS_PER_SECOND, MAX_MOVE_VELOCITY_DELTA_EXTRA, MOVEMENT_CORRECTION_SMOOTH_MS, MOVEMENT_CORRECTION_SNAP_DISTANCE, MOVEMENT_DISTANCE_GRACE_PIXELS, MOVEMENT_MAX_ELAPSED_SECONDS, TILE_SIZE, activeFishingSessions, checkPlayerWorldEntrySpawnGuard, cleanAccountName, cleanWorld, clampInteger, clampString, clearPlayerWorldEntrySpawnGuard, debugNetfoxAction, ensureWorldState, getDefaultEntranceGateSpawnForWorld, getEntranceGateSpawnForWorld, getGridCenterPixels, getLandfillEntryPenBounds, getMovementCollisionAtPosition, getPublicPlayerIdentity, gridKey, isAdmin, isCheckpointBlockType, isGridInWorld, isMovementNearLavaRebound, isPositionInWorldBounds, playerNetworkStats, sendActionRejected, } = deps;
     const nowMs = typeof deps.nowMs === "function" ? deps.nowMs : () => Date.now();
+    const enforceMovementPaths = deps.MOVEMENT_PATH_GUARD_MODE === "enforce";
     const MOVEMENT_SEQUENCE_MAX = 2147483647;
     const MOVEMENT_SEQUENCE_WRAP_WINDOW = 1073741824;
     // Development/ops diagnostics for rollback investigations are rate limited per
@@ -106,19 +107,23 @@ function createServerPhase11dStandardMovement(deps) {
         return budget;
     }
     function resetMovementDistanceBudget(player, now) {
-        const lavaAt = player.movement_distance_budget?.lava_at ?? null;
+        const previous = getMovementDistanceBudget(player, now);
+        // Keep a small, already-funded burst for a spawn ACK and movement snapshot
+        // delivered together. Repeated respawns cannot replenish spent tolerance.
+        const pixels = Math.min(MOVEMENT_DISTANCE_GRACE_PIXELS, Number(previous.pixels));
         player.movement_distance_budget = {
             world: cleanWorld(player.world || "START"),
             session: String(player.world_entry_session_id || ""),
             at: now,
-            pixels: 0,
-            lava_at: lavaAt,
+            pixels,
+            lava_at: previous.lava_at,
         };
     }
     // Reuse the server's collision map and player hitbox at <= 8px intervals.
     // Check both axis orders when a diagonal crosses a corner: snapshots do not
     // contain the exact path and a legitimate move_and_slide can round a corner.
-    // Every candidate path must be clear; a free destination alone is not enough.
+    // Endpoints cannot prove the path taken. Observe by default: a missing jump
+    // arc or a block placed after departure can make every guessed path collide.
     function getMovementPathCollision(player, position) {
         const world = position.world || player.world || "START";
         const destinationCollision = getMovementCollisionAtPosition(world, position);
@@ -154,12 +159,25 @@ function createServerPhase11dStandardMovement(deps) {
             return null;
         }
         const collision = checkPath([position]);
-        if (!collision || origin.x === position.x || origin.y === position.y)
-            return collision;
-        if (!checkPath([{ x: position.x, y: origin.y }, position]))
+        if (!collision)
             return null;
-        if (!checkPath([{ x: origin.x, y: position.y }, position]))
+        if (origin.x !== position.x && origin.y !== position.y) {
+            if (!checkPath([{ x: position.x, y: origin.y }, position]))
+                return null;
+            if (!checkPath([{ x: origin.x, y: position.y }, position]))
+                return null;
+        }
+        if (!enforceMovementPaths) {
+            // This diagnostic deliberately does not enter the security-violation
+            // ledger. An unobserved path is not evidence of client misconduct.
+            reportMovementAnomaly(player, "movement_path_unverified", {
+                observation_only: true,
+                requested_x: Number(position.x),
+                requested_y: Number(position.y),
+                ...collision,
+            });
             return null;
+        }
         return collision;
     }
     /**

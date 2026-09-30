@@ -298,6 +298,9 @@ const MAX_MOVE_VELOCITY_DELTA_EXTRA = Math.max(0, Math.trunc(Number(process.env.
 const MOVEMENT_DISTANCE_GRACE_PIXELS = Math.max(0, Math.trunc(Number(process.env.MOVEMENT_DISTANCE_GRACE_PIXELS) || TILE_SIZE * 0.75));
 const MOVEMENT_MAX_ELAPSED_SECONDS = Math.max(0.05, Math.min(1, Number(process.env.MOVEMENT_MAX_ELAPSED_SECONDS) || 0.25));
 const MOVEMENT_COLLISION_GUARD_ENABLED = !["0", "false", "no", "off"].includes(String(process.env.MOVEMENT_COLLISION_GUARD_ENABLED || "true").trim().toLowerCase());
+// Snapshot endpoints cannot prove the intervening jump/slide path. Enforce only
+// after an explicit staging decision; missing or invalid settings stay observational.
+const MOVEMENT_PATH_GUARD_MODE = String(process.env.MOVEMENT_PATH_GUARD_MODE || "observe").trim().toLowerCase() === "enforce" ? "enforce" : "observe";
 const MOVEMENT_COLLISION_CACHE_MAX_WORLDS = Math.max(1, Math.trunc(Number(process.env.MOVEMENT_COLLISION_CACHE_MAX_WORLDS) || 128));
 // Bounds the generated-base-terrain cache (see getServerGeneratedBaseTerrain). Each entry
 // holds two Maps of roughly WORLD_WIDTH x WORLD_HEIGHT tile records for one world.
@@ -2538,6 +2541,7 @@ const ServerPhase11aRuntime = ServerPhase11aRuntimeModule.createServerPhase11aRu
     MIN_CLIENT_VERSION,
     MIN_PASSWORD_LENGTH,
     MOVEMENT_COLLISION_GUARD_ENABLED,
+    MOVEMENT_PATH_GUARD_MODE,
     MOVEMENT_CORRECTION_SNAP_DISTANCE,
     MOVEMENT_DISTANCE_GRACE_PIXELS,
     MOVEMENT_MAX_ELAPSED_SECONDS,
@@ -2706,6 +2710,7 @@ const ServerPhase11cTrustedMovement = ServerPhase11cTrustedMovementModule.create
     touchLivePresence,
 });
 const ServerPhase11dStandardMovement = ServerPhase11dStandardMovementModule.createServerPhase11dStandardMovement({
+    MOVEMENT_PATH_GUARD_MODE,
     getItemDefinition: ItemDatabase.getItemDefinition,
     LAVA_REBOUND_MOVE_EXTRA_PIXELS,
     MAX_DAMAGE_FLASH_MS,
