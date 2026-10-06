@@ -75,27 +75,38 @@ async function main() {
   assert.equal(Number((await Names.status(store,"SHOP")).paid_gems),750000,"Transfer must retain original receipt");
   assert.equal((await Names.status(store,"SHOP")).owner_account_id,bobAccount);
 
-  // New locks reserve one name; further worlds remain owned under generated names.
+  // Every newly locked world retains its entered name for the full payment window.
   const first = await Names.resolve(store,"FISHING");
   const firstId = (await db.query("SELECT world_id FROM pixelmania.worlds WHERE world_name=$1",[first])).rows[0].world_id;
   await store.withTransaction(client=>Names.mirrorOwner(store,client,firstId,lock(aliceAccount,"namealice"),aliceAccount));
   const second = await Names.resolve(store,"HELLO123");
   const secondId = (await db.query("SELECT world_id FROM pixelmania.worlds WHERE world_name=$1",[second])).rows[0].world_id;
   await store.withTransaction(client=>Names.mirrorOwner(store,client,secondId,lock(aliceAccount,"namealice"),aliceAccount));
-  assert.equal((await Names.status(store,second)).status,"generated");
-  await assert.rejects(Names.reserve(store,second,aliceAccount,"MYNEWNAME"),/pending/);
+  const secondRow = await Names.status(store,second);
+  assert.equal(secondRow.status,"reserved"); assert.equal(secondRow.public_name,"HELLO123");
+  assert.equal(new Date(secondRow.expires_at)-new Date(secondRow.reserved_at),604800000);
+  assert.equal((await Names.status(store,first)).public_name,"FISHING");
+  assert.equal(Number(secondRow.quoted_gems),500);
+  await store.withTransaction(client=>Names.mirrorOwner(store,client,secondId,lock(aliceAccount,"namealice"),aliceAccount));
+  assert.equal(new Date((await Names.status(store,second)).expires_at).getTime(),new Date(secondRow.expires_at).getTime());
+  await assert.rejects(Names.reserve(store,second,aliceAccount,"MYNEWNAME"),/already/);
+  // Occupied names count even when unowned; suffix generation must skip all of them.
+  for (let suffix=0;suffix<10;suffix++) await Names.resolve(store,"FISHING"+suffix);
   const beforeWorld = (await db.query("SELECT * FROM pixelmania.worlds WHERE world_id=$1",[firstId])).rows[0];
   await db.query("UPDATE pixelmania.world_name_registry SET expires_at=clock_timestamp()-interval '1 second' WHERE world_id=$1",[firstId]);
   await Names.sweep(store);
   row = await Names.status(store,first);
   assert.equal(row.status,"generated"); assert.equal(row.owner_account_id,aliceAccount);
-  assert.match(row.public_name,/^W[A-F0-9]{30}$/);
+  assert.match(row.public_name,/^FISHING[1-9][0-9]$/);
   assert.deepEqual((await db.query("SELECT * FROM pixelmania.worlds WHERE world_id=$1",[firstId])).rows[0],beforeWorld,"Expiry must not modify terrain, routing identity or snapshot row");
   assert.equal(await Names.resolve(store,row.public_name),first,"Generated alias reaches the original world");
   await assert.rejects(Names.reserve(store,first,aliceAccount,"FISHING"),/seven days/);
   const reused = await Names.resolve(store,"fishing");
   assert.notEqual(reused,first,"Released name points to a different identity");
   assert.equal(await Names.resolve(store,"FISHING"),reused);
+  const reusedId = (await db.query("SELECT world_id FROM pixelmania.worlds WHERE world_name=$1",[reused])).rows[0].world_id;
+  await assert.rejects(store.withTransaction(client=>Names.mirrorOwner(store,client,reusedId,lock(aliceAccount,"namealice"),aliceAccount)),/seven days/);
+  assert.equal((await Names.status(store,reused)).status,"unowned","Cooldown cannot be bypassed by locking a fresh world");
   assert.equal((await Names.resolveEntry(store,"FISHING",first)).internal,first,"Reconnect by identity keeps the original world after expiry");
   assert.equal((await Names.resolveEntry(store,"FISHING")).internal,reused,"Fresh name entry reaches the new owner");
   await Names.reserve(store,first,aliceAccount,"ANOTHER123");
@@ -105,7 +116,18 @@ async function main() {
   const owned = await Names.owned(store,aliceAccount);
   assert(owned.some(w=>w.world_name==="ANOTHER123"));
   await assert.rejects(Names.reserve(store,second,aliceAccount,"START"),/cannot/);
+  const legacyId = await store.withTransaction(client=>store.ensureWorldIdentity(client,"LEGACYABC"));
+  await store.withTransaction(client=>Names.mirrorOwner(store,client,legacyId,lock(aliceAccount,"namealice"),aliceAccount));
+  assert.equal((await Names.status(store,"LEGACYABC")).public_name,"LEGACYABC");
+  assert.equal((await Names.status(store,"LEGACYABC")).status,"reserved");
+  const occupiedShort = {query:async(_sql,[names])=>({rows:names.filter(name=>/^ABC\d{1,2}$/.test(name)).map(name=>({name}))})};
+  assert.match(await Names.availableFallbackName(store,occupiedShort,"ABC"),/^ABC[1-9][0-9]{2}$/);
+  const occupiedAll = {query:async(_sql,[names])=>({rows:names.map(name=>({name}))})};
+  assert.equal(await Names.availableFallbackName(store,occupiedAll,"ABC"),null,"Exhaustion must not steal a name");
+  const noNames = {query:async()=>({rows:[]})};
+  assert.match(await Names.availableFallbackName(store,noNames,"ABC"),/^ABC\d$/);
+  assert.match(await Names.availableFallbackName(store,noNames,"A".repeat(32)),/^A{31}\d$/,"Fallback stays within 32 characters");
   await db.close();
-  console.log("[world-name-postgres] PASS: activation, restart, ownership, price validation, atomic rollback, duplicate claims, ledgers, transfer receipt, pending limit, expiry, cooldown and alias reuse");
+  console.log("[world-name-postgres] PASS: activation, restart, ownership, price validation, atomic rollback, duplicate claims, ledgers, transfer receipt, multiple pending names, numeric expiry suffixes, collisions, cooldown and alias reuse");
 }
 main().catch(error=>{console.error(error);process.exit(1);});

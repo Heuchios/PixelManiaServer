@@ -3,6 +3,7 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.enabled = void 0;
 exports.systemName = systemName;
 exports.ensureSchema = ensureSchema;
+exports.availableFallbackName = availableFallbackName;
 exports.sweep = sweep;
 exports.resolve = resolve;
 exports.resolveEntry = resolveEntry;
@@ -101,11 +102,31 @@ async function freshName(store, client) {
             return name;
     }
 }
+// Public fallback names retain the original name; UUIDs are storage identities only.
+async function availableFallbackName(store, client, original) {
+    const candidates = [];
+    for (const [start, end] of [[0, 9], [10, 99], [100, 999]]) {
+        const suffixes = Array.from({ length: end - start + 1 }, (_, index) => String(start + index));
+        for (let index = suffixes.length - 1; index > 0; index--) {
+            const other = (0, node_crypto_1.randomInt)(index + 1);
+            [suffixes[index], suffixes[other]] = [suffixes[other], suffixes[index]];
+        }
+        candidates.push(...suffixes.map(suffix => original.slice(0, 32 - suffix.length) + suffix));
+    }
+    const found = await client.query(`SELECT public_name AS name FROM ${store.table("world_name_registry")} WHERE public_name=ANY($1::text[])
+    UNION SELECT world_name::text AS name FROM ${store.table("worlds")} WHERE world_name::text=ANY($1::text[])`, [candidates]);
+    const occupied = new Set(found.rows.map((row) => row.name));
+    return candidates.find(name => name !== original && !systemName(name) && !occupied.has(name)) || null;
+}
 async function expire(store, client) {
     const due = await client.query(`SELECT * FROM ${store.table("world_name_registry")}
     WHERE status='reserved' AND expires_at <= clock_timestamp() FOR UPDATE`);
     for (const row of due.rows) {
-        const replacement = await freshName(store, client);
+        const replacement = await availableFallbackName(store, client, row.public_name);
+        // Exhausted suffixes must never overwrite another world or block all name operations.
+        // The expired reservation remains unclaimable and the next sweep retries it.
+        if (!replacement)
+            continue;
         await client.query(`INSERT INTO ${store.table("world_name_cooldowns")}(account_id,name,until_at)
       VALUES($1,$2,clock_timestamp()+interval '7 days') ON CONFLICT(account_id,name)
       DO UPDATE SET until_at=EXCLUDED.until_at`, [row.owner_account_id, row.public_name]);
@@ -190,25 +211,25 @@ async function mirrorOwner(store, client, worldId, lock, ownerId) {
     let row = (await client.query(`SELECT * FROM ${store.table("world_name_registry")} WHERE world_id=$1 FOR UPDATE`, [worldId])).rows[0];
     if (!row) {
         // Covers worlds first created by legacy/admin paths after activation.
-        const alias = await freshName(store, client);
+        const occupied = await client.query(`SELECT 1 FROM ${store.table("world_name_registry")} WHERE public_name=$1`, [internal]);
+        if (occupied.rows.length)
+            throw new Error("This name is already in use. Enter the world by its public name before locking it.");
         row = (await client.query(`INSERT INTO ${store.table("world_name_registry")}(world_id,public_name,status)
-      VALUES($1,$2,'generated') RETURNING *`, [worldId, alias])).rows[0];
+      VALUES($1,$2,'unowned') RETURNING *`, [worldId, internal])).rows[0];
     }
     if (row.status === "unowned") {
         await expire(store, client);
-        const other = await client.query(`SELECT 1 FROM ${store.table("world_name_registry")}
-      WHERE owner_account_id=$1 AND status='reserved' AND world_id<>$2`, [ownerId, worldId]);
         const cooldown = await client.query(`SELECT 1 FROM ${store.table("world_name_cooldowns")}
       WHERE account_id=$1 AND name=$2 AND until_at>clock_timestamp()`, [ownerId, row.public_name]);
+        if (cooldown.rows.length)
+            throw new Error("You must wait seven days before reserving this expired name again.");
         const quote = (0, world_name_pricing_1.quoteWorldName)(row.public_name);
-        const canReserve = !other.rows.length && !cooldown.rows.length;
-        await client.query(`UPDATE ${store.table("world_name_registry")} SET public_name=$2,status=$3,
-      quoted_gems=$4,pricing_version=$5,reserved_at=clock_timestamp(),
-      expires_at=CASE WHEN $3='reserved' THEN clock_timestamp()+interval '7 days' ELSE NULL END WHERE world_id=$1`, [worldId, canReserve ? row.public_name : await freshName(store, client), canReserve ? "reserved" : "generated", quote.price_gems, quote.pricing_version]);
-        await store.recordTransactionLedger(client, { transaction_type: canReserve ? "WORLD_NAME_RESERVED" : "WORLD_NAME_GENERATED",
+        await client.query(`UPDATE ${store.table("world_name_registry")} SET status='reserved',
+      quoted_gems=$2,pricing_version=$3,reserved_at=now(),expires_at=now()+interval '7 days' WHERE world_id=$1`, [worldId, quote.price_gems, quote.pricing_version]);
+        await store.recordTransactionLedger(client, { transaction_type: "WORLD_NAME_RESERVED",
             source: "world_name", action: "world_lock_name_assignment", world_id: worldId, status: "success",
             metadata: { requested_name: row.public_name, quoted_gems: quote.price_gems, owner_account_id: ownerId,
-                reservation_created: canReserve, duration_ms: canReserve ? world_name_pricing_1.RESERVATION_DURATION_MS : 0 } });
+                reservation_created: true, duration_ms: world_name_pricing_1.RESERVATION_DURATION_MS } });
     }
     await client.query(`UPDATE ${store.table("world_name_registry")} SET owner_account_id=$2,owner_lock=$3::jsonb,
     updated_at=clock_timestamp() WHERE world_id=$1`, [worldId, ownerId, JSON.stringify(lock)]);
@@ -230,8 +251,6 @@ async function reserve(store, internal, account, rawName) {
             throw new Error("This world already has a reserved or claimed name.");
         if ((await client.query(`SELECT 1 FROM ${store.table("world_name_registry")} WHERE public_name=$1`, [quote.name])).rows.length)
             throw new Error("That name is in use.");
-        if ((await client.query(`SELECT 1 FROM ${store.table("world_name_registry")} WHERE owner_account_id=$1 AND status='reserved'`, [account])).rows.length)
-            throw new Error("Claim your pending name before reserving another.");
         if ((await client.query(`SELECT 1 FROM ${store.table("world_name_cooldowns")} WHERE account_id=$1 AND name=$2 AND until_at>clock_timestamp()`, [account, quote.name])).rows.length)
             throw new Error("You must wait seven days before reserving this expired name again.");
         await client.query(`UPDATE ${store.table("world_name_registry")} SET public_name=$2,status='reserved',quoted_gems=$3,

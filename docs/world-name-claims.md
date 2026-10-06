@@ -15,7 +15,11 @@ local implementation/testing does not activate claims or start production deadli
   price or an estimate of market value.
 - Payment permanently claims the name. A transfer retains its original receipt.
   No recurring world tax has been introduced.
-- Unpaid expiry changes only the public name to a generated `W...` name. The
+- Unpaid expiry changes only the public name to its original name plus 1–3 random
+  digits (for example `ABC7`, `ABC42`, or `ABC315`). All occupied names are skipped,
+  trying one-digit suffixes first, then two and three. Names at the 32-character
+  limit are shortened only enough to fit the suffix. If all 1,000 suffixes are
+  occupied, expiry retries later; payment remains blocked and no name is stolen. The
   world row, terrain seed/routing identity, snapshots, contents, and ownership
   stay intact. The former public name can identify a fresh world. Owned Worlds
   lists the original owner's new public name.
@@ -25,8 +29,8 @@ local implementation/testing does not activate claims or start production deadli
   The owner can place a replacement physical lock; other players cannot take
   ownership by placing one. World-lock inactivity decay is disabled while this
   permanent-ownership system is active. Area-lock decay is unchanged.
-- New reservations are limited to one pending name per account. Additional
-  locked worlds receive generated names. After an unpaid expiry, that account
+- Each newly locked world keeps its entered public name for seven days, even if
+  its owner already has other pending names. After an unpaid expiry, that account
   cannot reserve that same name for seven more days. Unpaid names cannot be
   transferred by issuing or trading World Lock Keys.
 - Existing owned worlds all receive the same seven-day deadline at initial
@@ -35,7 +39,7 @@ local implementation/testing does not activate claims or start production deadli
   price inclusion does not make an official/system name available for purchase.
 
 These controls discourage unpaid blocking, not all hoarding. Multiple accounts
-can evade account-level limits, and paid claims are permanent regardless of how
+can evade account-level cooldowns, and paid claims are permanent regardless of how
 many names an account already owns.
 
 ## Persistence and protocol
@@ -87,7 +91,8 @@ No production deployment or activation is performed by the local tests.
 `npm run test:world-name-postgres` uses an isolated PGlite PostgreSQL database
 (set `WORLD_NAME_TEST_PGLITE_PATH` to its installed package directory). It exercises
 real store migrations, inventory/ledger SQL, rollback, duplicate claims, ownership,
-frozen deadlines, transfer receipts, pending limits, expiry, cooldowns and alias reuse.
+frozen deadlines, transfer receipts, multiple pending names, numeric expiry suffixes,
+collision avoidance, cooldowns and alias reuse.
 PGlite serializes concurrent transactions; a real multi-process PostgreSQL/Redis
 staging check is still required before rollout.
 
