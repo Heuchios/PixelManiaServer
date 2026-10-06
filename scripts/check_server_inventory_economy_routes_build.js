@@ -254,6 +254,7 @@ const routeDeps = {
   handleVendingTransaction: delegate("vending"),
   handleWorldLockConversionTransaction: delegate("world_lock_conversion"),
   handleWorldLockGetKeyTransaction: delegate("world_lock_get_key"),
+  handleWorldNameTransaction: delegate("world_names"),
   logItemLedgerForState: captureItemLedger,
   logRewardLedgers: captureRewardLedger,
   logShopPurchase: (
@@ -306,6 +307,10 @@ const routes = InventoryEconomyRoutesModule.createServerInventoryEconomyRoutes(r
     request_id: "lock-1",
   });
   assert.deepEqual(delegated.pop(), { name: "world_lock_get_key", action: "world_lock_get_key" });
+  for (const action of ["world_name_status", "world_name_search", "world_name_reserve", "world_name_claim"]) {
+    await routes.handleInventoryTransactionRequest(socket, player, {action,world:"TEST",name:"SHOP"});
+    assert.deepEqual(delegated.pop(), {name:"world_names",action});
+  }
 
   await routes.handleInventoryTransactionRequest(socket, player, {
     action: "not_real",

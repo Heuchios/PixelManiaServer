@@ -24,6 +24,12 @@ local implementation/testing does not activate claims or start production deadli
   stay intact. The former public name can identify a fresh world. Owned Worlds
   lists the original owner's new public name.
 - A generated-name world can reserve an unused public name in its lock window.
+  Search shows a server-verified claim price and availability without reserving
+  anything. Owners confirm a free seven-day reservation after searching; the
+  server rechecks the quoted price, availability and cooldown before renaming the
+  same world. Editing the search clears the previous quote. Visitors and owners
+  of permanently claimed worlds may search but cannot replace a permanent name.
+  Expiry after a replacement reservation uses that replacement name plus digits.
   Exact, case-insensitive rarity pricing is in `src/world_name_pricing.ts`.
 - Breaking/replacing the lock never clears ownership or resets the deadline.
   The owner can place a replacement physical lock; other players cannot take
@@ -60,7 +66,7 @@ unique public-name constraint. Ownership and quotes survive server restarts.
 Database timestamps govern expiry. The five-second sweep is only background
 cleanup: name resolution and claim validation also enforce expiry on demand.
 
-Client inventory actions are `world_name_status`, `world_name_reserve`, and
+Client inventory actions are `world_name_status`, `world_name_search`, `world_name_reserve`, and
 `world_name_claim`. Claim sends the name and price the user confirmed; the server
 checks these against the stored quote, never uses them as the authority.
 `world_name_redirect` changes the client's routing identity before the join
@@ -92,7 +98,9 @@ No production deployment or activation is performed by the local tests.
 (set `WORLD_NAME_TEST_PGLITE_PATH` to its installed package directory). It exercises
 real store migrations, inventory/ledger SQL, rollback, duplicate claims, ownership,
 frozen deadlines, transfer receipts, multiple pending names, numeric expiry suffixes,
-collision avoidance, cooldowns and alias reuse.
+collision avoidance, cooldowns and alias reuse. Search tests cover availability,
+system/invalid names, price changes, names taken after a search, replacement
+reservations and their subsequent expiry.
 PGlite serializes concurrent transactions; a real multi-process PostgreSQL/Redis
 staging check is still required before rollout.
 

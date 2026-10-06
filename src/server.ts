@@ -14193,6 +14193,7 @@ async function removeWorldLockKeysFromPlayerInventory(socket: any, player: any, 
  */
 async function handleWorldNameTransaction(socket: unknown, player: ServerPacketRecord, data: ServerPacketRecord) {
   const action = String(data.action || "");
+  const readOnly = action === "world_name_status" || action === "world_name_search";
   const requestId = makeRequestId(data);
   const worldName = getPlayerCurrentWorldName(player);
   const reply = (payload: ServerPacketRecord) => sendInventoryTransactionResult(socket, {request_id:requestId,action,world:worldName,...payload});
@@ -14205,7 +14206,7 @@ async function handleWorldNameTransaction(socket: unknown, player: ServerPacketR
   if (await rejectIfWorldBanned(socket,player,worldName,"world_name")) return;
   let locks: Awaited<ReturnType<typeof acquirePlayerInventoryLocks>> | null = null;
   try {
-    if (action !== "world_name_status") {
+    if (!readOnly) {
       if (tradeByPlayerId.has(player.id)) throw new Error("Finish or cancel your trade first.");
       locks = await acquirePlayerInventoryLocks([player.account_username], `world_name:${requestId}`);
       if (!locks.acquired) throw new Error("Your inventory is busy. Try again.");
@@ -14215,10 +14216,17 @@ async function handleWorldNameTransaction(socket: unknown, player: ServerPacketR
     let row = await WorldNames.status(postgresStore, worldName);
     if (!row) throw new Error("This world uses a system name and does not require a claim.");
     const identity = getPlayerLockIdentity(player);
-    if (action !== "world_name_status" && row.owner_account_id !== identity.account_id) throw new Error("Only the owner can reserve or claim this name.");
+    if (!readOnly && row.owner_account_id !== identity.account_id) throw new Error("Only the owner can reserve or claim this name.");
+    if (action === "world_name_search") {
+      const result = await WorldNames.search(postgresStore, identity.account_id, String(data.name || ""));
+      const canManage = row.owner_account_id === identity.account_id;
+      reply({ok:true,world_name_claim:WorldNames.publicStatus(row),can_manage:canManage,
+        world_name_search:{...result,can_reserve:result.available && canManage && row.status === "generated"}});
+      return;
+    }
     let inventoryPayload: ServerPacketRecord = {};
     if (action === "world_name_reserve") {
-      await WorldNames.reserve(postgresStore, worldName, identity.account_id, String(data.name || ""));
+      await WorldNames.reserve(postgresStore, worldName, identity.account_id, String(data.name || ""), Number(data.price_gems));
     } else if (action === "world_name_claim") {
       if (row.status !== "reserved") throw new Error("This world has no unpaid reservation.");
       if (String(data.name || "").toUpperCase() !== row.public_name || Number(data.price_gems) !== Number(row.quoted_gems)) throw new Error("The name or quote changed. Open the lock again.");
@@ -14242,7 +14250,7 @@ async function handleWorldNameTransaction(socket: unknown, player: ServerPacketR
     if (action !== "world_name_status") broadcastToWorld(worldName,{type:"world_name_status",world:worldName,world_name_claim:info});
   } catch (error) {
     const message = getErrorMessage(error);
-    if (action !== "world_name_status") queueFailedTransactionLedger(socket,"inventory_transaction_request",message,{request_id:requestId,world:worldName,action});
+    if (!readOnly) queueFailedTransactionLedger(socket,"inventory_transaction_request",message,{request_id:requestId,world:worldName,action});
     reply({ok:false,message});
   } finally { releasePlayerInventoryLocks(locks); }
 }

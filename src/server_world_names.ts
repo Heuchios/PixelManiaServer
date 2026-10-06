@@ -202,8 +202,22 @@ export async function mirrorOwner(store: any, client: any, worldId: string, lock
     updated_at=clock_timestamp() WHERE world_id=$1`, [worldId,ownerId,JSON.stringify(lock)]);
 }
 
-export async function reserve(store: any, internal: string, account: string, rawName: string): Promise<void> {
+export async function search(store: any, account: string, rawName: string): Promise<RecordData> {
   const quote = quoteWorldName(rawName);
+  if (!enabled || !store.isReady()) throw new Error("Name service unavailable.");
+  return await store.withTransaction(async (client: any) => {
+    await mutex(store, client); await expire(store, client);
+    let reason = "";
+    if (systemName(quote.name)) reason = "This name is reserved for the game.";
+    else if ((await client.query(`SELECT 1 FROM ${store.table("world_name_registry")} WHERE public_name=$1`, [quote.name])).rows.length) reason = "This name is already in use.";
+    else if ((await client.query(`SELECT 1 FROM ${store.table("world_name_cooldowns")} WHERE account_id=$1 AND name=$2 AND until_at>clock_timestamp()`, [account,quote.name])).rows.length) reason = "You must wait seven days before reserving this expired name again.";
+    return {name:quote.name,price_gems:quote.price_gems,pricing_version:quote.pricing_version,available:!reason,reason};
+  }, "world_name_search");
+}
+
+export async function reserve(store: any, internal: string, account: string, rawName: string, expectedPrice?: number): Promise<void> {
+  const quote = quoteWorldName(rawName);
+  if (expectedPrice !== undefined && expectedPrice !== quote.price_gems) throw new Error("The claim price changed. Search for the name again.");
   if (!enabled || systemName(quote.name)) throw new Error("This name cannot be reserved.");
   const result = await store.withTransaction(async (client: any) => {
     await mutex(store, client); await expire(store, client);
@@ -215,7 +229,7 @@ export async function reserve(store: any, internal: string, account: string, raw
     if ((await client.query(`SELECT 1 FROM ${store.table("world_name_registry")} WHERE public_name=$1`, [quote.name])).rows.length) throw new Error("That name is in use.");
     if ((await client.query(`SELECT 1 FROM ${store.table("world_name_cooldowns")} WHERE account_id=$1 AND name=$2 AND until_at>clock_timestamp()`, [account,quote.name])).rows.length) throw new Error("You must wait seven days before reserving this expired name again.");
     await client.query(`UPDATE ${store.table("world_name_registry")} SET public_name=$2,status='reserved',quoted_gems=$3,
-      pricing_version=$4,reserved_at=clock_timestamp(),expires_at=clock_timestamp()+interval '7 days',updated_at=clock_timestamp()
+      pricing_version=$4,reserved_at=now(),expires_at=now()+interval '7 days',updated_at=clock_timestamp()
       WHERE world_id=$1`, [row.world_id,quote.name,quote.price_gems,quote.pricing_version]);
     await store.recordTransactionLedger(client, { transaction_type: "WORLD_NAME_RESERVED", source: "world_name", action: "world_name_reserve",
       world_id: row.world_id, status: "success", metadata: { name:quote.name, quoted_gems:quote.price_gems,owner_account_id:account,duration_ms:RESERVATION_DURATION_MS } });

@@ -39,6 +39,7 @@ function createServerInventoryEconomyRoutes(deps) {
         ["convert_world_lock", handleWorldLockConversionTransaction],
         ["world_lock_get_key", handleWorldLockGetKeyTransaction],
         ["world_name_status", handleWorldNameTransaction],
+        ["world_name_search", handleWorldNameTransaction],
         ["world_name_reserve", handleWorldNameTransaction],
         ["world_name_claim", handleWorldNameTransaction],
         ["seed_place", handleSeedPlaceTransaction],
