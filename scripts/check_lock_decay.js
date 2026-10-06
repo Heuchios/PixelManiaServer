@@ -12,13 +12,14 @@ function compile(name, deps) {
   return new Function(...Object.keys(deps), `${rest.slice(0, next)};return ${name};`)(...Object.values(deps));
 }
 const DAY = 86400000;
-function activityHarness(ageDays = 365) {
+function activityHarness(ageDays = 365, claimsEnabled = false) {
   const now = Date.parse("2027-10-01T00:00:00Z");
   const state = { now, ready: true, redisOnline: false, online: false, rows: [
     { username: "OWNER", account_id: "a1", player_id: "p1", last_login_at: new Date(now - ageDays * DAY).toISOString() },
   ] };
   const accounts = new Map();
   const getStatus = compile("getLockDecayStatus", {
+    WorldNames: { enabled: claimsEnabled },
     postgresStore: { getLockAccountActivity: async () => ({ ok: state.ready, entries: state.rows }) },
     accounts, accountKey: (v) => String(v || "").toLowerCase(),
     findOnlinePlayerByUsername: () => state.online,
@@ -67,6 +68,9 @@ function validationHarness(type, expired) {
   return { validate, update, controls, rejected, state };
 }
 async function main() {
+  const permanent = activityHarness(1000, true);
+  assert.equal((await permanent.getStatus(permanent.lock, true)).expired, false, "Permanent world ownership never decays");
+  assert.equal((await permanent.getStatus(permanent.lock, false)).expired, true, "Area-lock decay remains enabled");
   for (const [world, days] of [[false, 180], [true, 365]]) {
     const h = activityHarness(days);
     h.state.now -= 1;

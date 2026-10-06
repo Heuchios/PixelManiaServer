@@ -98,7 +98,7 @@ assert.equal(
 );
 assert.equal(packageJson.scripts["check:postgres-store"], "npm run build:postgres-store && node scripts/check_postgres_store_build.js");
 assert.match(packageJson.scripts["check:typescript"], /npm run check:postgres-store/);
-assert.deepEqual(postgresStoreBuildConfig.include, ["src/postgres_store.ts"]);
+assert.deepEqual(postgresStoreBuildConfig.include, ["src/postgres_store.ts", "src/server_fish_market.ts", "src/server_fish_market_store.ts"]);
 
 // tsconfig.postgres-store.json extends ./tsconfig.json, so most of these options
 // are inherited and are absent from its own JSON. Reading the raw file would make

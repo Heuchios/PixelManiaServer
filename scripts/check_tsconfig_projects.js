@@ -77,6 +77,12 @@ const EMIT_SHAPE_OPTIONS = [
 
 /** @type {Record<string, ProjectPin>} */
 const PROJECTS = {
+  "world-name-pricing": {
+    include: ["src/world_name_pricing.ts", "src/server_world_names.ts"],
+    outDir: ".tsbuild/world-name-pricing",
+    localOptions: { noEmitOnError: true },
+    references: [],
+  },
   "drop-contracts": {
     include: ["src/server_drop_contracts.ts"],
     outDir: ".tsbuild",
@@ -109,11 +115,11 @@ const PROJECTS = {
     inlineDependencies: ["item-data"],
   },
   "postgres-store": {
-    include: ["src/postgres_store.ts"],
+    include: ["src/postgres_store.ts", "src/server_fish_market.ts", "src/server_fish_market_store.ts"],
     outDir: ".tsbuild",
     localOptions: {"allowJs":false},
     references: [],
-    inlineDependencies: ["drop-contracts", "inventory-contracts", "postgres-contracts", "item-data", "quests"],
+    inlineDependencies: ["drop-contracts", "inventory-contracts", "postgres-contracts", "item-data", "quests", "world-name-pricing"],
   },
   "quests": {
     include: ["src/server_quest_engine.ts", "src/server_quest_store.ts"],
@@ -266,6 +272,7 @@ const PROJECTS = {
     outDir: ".tsbuild",
     localOptions: {},
     references: [],
+    inlineDependencies: ["server-helpers"],
   },
   "server-phase8-world-action-routes": {
     include: ["src/server_phase8_world_action_routes.ts"],
@@ -284,6 +291,7 @@ const PROJECTS = {
     outDir: ".tsbuild",
     localOptions: {},
     references: [],
+    inlineDependencies: ["postgres-store"],
   },
   "server-punishment-helpers": {
     include: ["src/server_punishment_helpers.ts"],

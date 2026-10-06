@@ -262,6 +262,8 @@ function normalizeTransactionLedgerType(entry = {}) {
     const delta = toInt(e.delta ?? e.quantity ?? e.amount ?? 0, 0);
     if (source === "shop")
         return "SHOP_PURCHASE";
+    if (source === "world_name")
+        return "WORLD_NAME_CLAIM";
     if (source === "trade")
         return "TRADE_COMPLETE";
     if (source === "vending") {
@@ -675,6 +677,8 @@ function isUuid(value) {
 }
 function normalizeLedgerSource(value) {
     const raw = cleanName(value).toLowerCase();
+    if (raw === "world_name")
+        return "world_name";
     // Keep machine-issued remotes attributable so strict PM-ITEM creation can
     // mint their tracked instance in the same transaction as the inventory count.
     if (raw === "magnet_machine")

@@ -35,6 +35,7 @@ var __importStar = (this && this.__importStar) || (function () {
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
 require("dotenv").config({ quiet: true });
+const WorldNames = __importStar(require("./server_world_names"));
 const WebSocket = require("ws");
 const childProcess = require("child_process");
 const crypto = require("crypto");
@@ -1430,6 +1431,7 @@ function getServerInventoryEconomyRoutes() {
             handleMagnetTransaction: (socket, player, data) => getMagnetSystem().handle(socket, player, data),
             handleWorldLockConversionTransaction,
             handleWorldLockGetKeyTransaction,
+            handleWorldNameTransaction,
             logItemLedgerForState,
             logRewardLedgers,
             logShopPurchase,
@@ -1509,6 +1511,9 @@ function getServerPhase8PlayerSessionRoutes() {
             recordLandfillInstanceJoin: (worldName, username) => getServerLandfillEventSystem().recordLandfillInstanceJoin(worldName, username),
             refreshPlayerStateFromPostgres,
             refreshWorldStateFromPostgres,
+            resolvePublicWorldName: (name, identity) => WorldNames.resolveEntry(postgresStore, name, identity),
+            worldNameClaimsEnabled: WorldNames.enabled,
+            getPublicWorldNameInfo: (name) => WorldNames.status(postgresStore, name).then(WorldNames.publicStatus),
             refreshWorldDropsFromPostgres,
             rejectIfWorldBanned,
             rejectWorldCapacity,
@@ -2842,6 +2847,36 @@ let duckTimer = setInterval(() => {
 }, DUCK_TICK_MS);
 if (typeof duckTimer.unref === "function")
     duckTimer.unref();
+let worldNameRefreshRunning = false;
+const worldNameRefreshTimer = setInterval(async () => {
+    if (!WorldNames.enabled || !isPostgresAuthoritativeReady() || worldNameRefreshRunning)
+        return;
+    worldNameRefreshRunning = true;
+    try {
+        await WorldNames.sweep(postgresStore);
+        const activeNames = new Set(Array.from(players.values()).filter(player => player.joined_world).map(player => player.world));
+        for (const [name, state] of worldStates.entries()) {
+            if (!activeNames.has(name))
+                continue;
+            const row = await WorldNames.status(postgresStore, name, false);
+            const info = WorldNames.publicStatus(row);
+            const previous = state.world_name_claim;
+            if (info && (previous?.name !== info.name || previous?.status !== info.status || previous?.original_paid_gems !== info.original_paid_gems)) {
+                state.world_name_claim = info;
+                if (row?.owner_account_id)
+                    state.world_name_owner = row.owner_lock;
+                broadcastToWorld(name, { type: "world_name_status", world: name, world_name_claim: info });
+            }
+        }
+    }
+    catch (error) {
+        console.warn("[world-names] refresh failed", getErrorMessage(error));
+    }
+    finally {
+        worldNameRefreshRunning = false;
+    }
+}, 5000);
+worldNameRefreshTimer.unref();
 ensureDataFolders();
 bootstrapServer().catch((error) => {
     fatalCrashReportWritten = true;
@@ -5627,6 +5662,15 @@ async function executeTrade(trade) {
             return;
         }
         const worldKeyValidation = validateTradeWorldLockKeyTransfers(trade, validation.offersA, validation.offersB, requesterRecord, targetRecord);
+        if (WorldNames.enabled && worldKeyValidation.ok && worldKeyValidation.transfers?.length) {
+            for (const transfer of worldKeyValidation.transfers) {
+                const nameRecord = await WorldNames.status(postgresStore, cleanWorld(transfer.world || trade.world));
+                if (!nameRecord || nameRecord.status === "reserved") {
+                    cancelTrade(trade, "Claim the world name before transferring its key.");
+                    return;
+                }
+            }
+        }
         if (!worldKeyValidation.ok) {
             if (worldKeyValidation.owner_message && worldKeyValidation.owner_player_id) {
                 sendTradeChat(worldKeyValidation.owner_player_id, worldKeyValidation.message);
@@ -5972,20 +6016,22 @@ function reconcileWorldLockStateWithBlocks(worldName) {
     if (hasWorldLockBlockInState(state)) {
         return false;
     }
+    if (WorldNames.enabled && state.world_name_owner?.is_locked)
+        return false;
     state.world_lock = {};
     return true;
 }
 function isWorldLockPlacementBlocked(worldName) {
     reconcileWorldLockStateWithBlocks(worldName);
     const state = ensureWorldState(worldName);
-    return Boolean(state.world_lock?.is_locked) || hasWorldLockBlockInState(state);
+    return (!WorldNames.enabled && Boolean(state.world_lock?.is_locked)) || hasWorldLockBlockInState(state);
 }
 /**
  * @param {PixelMania.RuntimeWorldState | Record<string, any> | null | undefined} state
  * @returns {PixelMania.WorldLockState}
  */
 function getEffectiveWorldLockStateInState(state) {
-    const lock = sanitizeWorldLockState(state?.world_lock || {});
+    const lock = sanitizeWorldLockState(state?.world_lock?.is_locked ? state.world_lock : (WorldNames.enabled ? state?.world_name_owner || {} : {}));
     if (!lock.is_locked)
         return {};
     const lockBlock = getWorldLockBlockEntry(state);
@@ -6001,12 +6047,14 @@ function getEffectiveWorldLockStateInState(state) {
     if (hasWorldLockBlockInState(state)) {
         return lock;
     }
-    return {};
+    return WorldNames.enabled && state?.world_name_owner?.is_locked ? lock : {};
 }
 // Locks retain protection until an eligible punch is committed. Activity is
 // account-wide, including access holders, and always read from PostgreSQL.
 async function getLockDecayStatus(lock, worldLock) {
     const days = worldLock ? 365 : 180;
+    if (WorldNames.enabled && worldLock)
+        return { known: true, expired: false, days, remaining_days: days };
     const names = new Set();
     const accountIds = new Set();
     const playerIds = new Set();
@@ -6530,11 +6578,15 @@ function applyWorldLockStateForBlockUpdate(worldName, update, player, shouldAppl
     const state = ensureWorldState(worldName);
     if (update.action === "place") {
         state.world_lock = makeWorldLockStateForPlacement(player, update);
+        if (WorldNames.enabled)
+            state.world_name_owner = { ...state.world_lock };
         return makeWorldLockStatePayload(worldName, state.world_lock);
     }
     if (update.action === "break") {
+        if (WorldNames.enabled && state.world_lock?.is_locked)
+            state.world_name_owner = { ...state.world_lock };
         state.world_lock = {};
-        return makeWorldLockStatePayload(worldName, state.world_lock);
+        return makeWorldLockStatePayload(worldName, getEffectiveWorldLockStateInState(state));
     }
     return null;
 }
@@ -6699,6 +6751,8 @@ function mergeOwnedWorldLockEntry(entriesByWorld, entry) {
 async function listOwnedWorldLocksForAccount(username, player = null) {
     const ownerKey = accountKey(username || "");
     const identity = getPlayerLockIdentity(player || { account_username: username });
+    if (WorldNames.enabled && identity.account_id)
+        return WorldNames.owned(postgresStore, identity.account_id);
     if (ownerKey === "" && identity.account_id === "" && identity.player_id === "")
         return [];
     const entriesByWorld = new Map();
@@ -12884,6 +12938,81 @@ async function removeWorldLockKeysFromPlayerInventory(socket, player, worldName 
  * @param {Record<string, unknown>} data
  * @returns {Promise<void>}
  */
+async function handleWorldNameTransaction(socket, player, data) {
+    const action = String(data.action || "");
+    const requestId = makeRequestId(data);
+    const worldName = getPlayerCurrentWorldName(player);
+    const reply = (payload) => sendInventoryTransactionResult(socket, { request_id: requestId, action, world: worldName, ...payload });
+    if (!WorldNames.enabled || !isPostgresAuthoritativeReady()) {
+        reply({ ok: false, message: "World name claims are not active on this server." });
+        return;
+    }
+    if (!player.joined_world || String(data.world || "") !== worldName) {
+        reply({ ok: false, message: "Join this world before checking its name." });
+        return;
+    }
+    if (await rejectIfWorldBanned(socket, player, worldName, "world_name"))
+        return;
+    let locks = null;
+    try {
+        if (action !== "world_name_status") {
+            if (tradeByPlayerId.has(player.id))
+                throw new Error("Finish or cancel your trade first.");
+            locks = await acquirePlayerInventoryLocks([player.account_username], `world_name:${requestId}`);
+            if (!locks.acquired)
+                throw new Error("Your inventory is busy. Try again.");
+            const flush = await flushPendingSessionPersistence(player.account_username, worldName, "before_world_name_claim");
+            if (!flush.ok || player.disconnected || getPlayerCurrentWorldName(player) !== worldName)
+                throw new Error("Your session changed. Open the lock again.");
+        }
+        let row = await WorldNames.status(postgresStore, worldName);
+        if (!row)
+            throw new Error("This world uses a system name and does not require a claim.");
+        const identity = getPlayerLockIdentity(player);
+        if (action !== "world_name_status" && row.owner_account_id !== identity.account_id)
+            throw new Error("Only the owner can reserve or claim this name.");
+        let inventoryPayload = {};
+        if (action === "world_name_reserve") {
+            await WorldNames.reserve(postgresStore, worldName, identity.account_id, String(data.name || ""));
+        }
+        else if (action === "world_name_claim") {
+            if (row.status !== "reserved")
+                throw new Error("This world has no unpaid reservation.");
+            if (String(data.name || "").toUpperCase() !== row.public_name || Number(data.price_gems) !== Number(row.quoted_gems))
+                throw new Error("The name or quote changed. Open the lock again.");
+            const before = cloneJson(ensureWritablePlayerState(player.account_username));
+            const staged = cloneJson(before);
+            if (!spendItemFromState(staged, "gem", "currency", Number(row.quoted_gems)))
+                throw new Error("You do not have enough gems to claim this name.");
+            const committed = await commitPlayerInventoryState(socket, player, player.account_username, before, staged, {
+                source: "world_name", action: "world_name_claim", reason: "permanent_world_name_claim", request_id: requestId,
+                world: worldName, skip_inventory_lock: true,
+                metadata: { claim_name: row.public_name, claim_price: Number(row.quoted_gems), pricing_version: row.pricing_version },
+            });
+            if (!committed.ok)
+                throw new Error(committed.message || "The name payment could not be completed.");
+            inventoryPayload = { player_data: buildPlayerStateForClient(committed.state), inventory_deltas: buildInventoryDeltaClientPayloads(committed.deltas, committed.state) };
+        }
+        row = await WorldNames.status(postgresStore, worldName);
+        const info = WorldNames.publicStatus(row);
+        ensureWorldState(worldName).world_name_claim = info;
+        if (row?.owner_account_id)
+            ensureWorldState(worldName).world_name_owner = row.owner_lock;
+        reply({ ok: true, ...inventoryPayload, world_name_claim: info, can_manage: row?.owner_account_id === identity.account_id,
+            message: action === "world_name_claim" ? "Name claimed permanently. The original payment is recorded publicly." : action === "world_name_reserve" ? "Name reserved for seven days." : "" });
+        if (action !== "world_name_status")
+            broadcastToWorld(worldName, { type: "world_name_status", world: worldName, world_name_claim: info });
+    }
+    catch (error) {
+        const message = getErrorMessage(error);
+        if (action !== "world_name_status")
+            queueFailedTransactionLedger(socket, "inventory_transaction_request", message, { request_id: requestId, world: worldName, action });
+        reply({ ok: false, message });
+    }
+    finally {
+        releasePlayerInventoryLocks(locks);
+    }
+}
 async function handleWorldLockConversionTransaction(socket, player, data) {
     const requestId = makeRequestId(data);
     if (tradeByPlayerId.has(player.id)) {
@@ -12970,6 +13099,10 @@ async function handleWorldLockConversionTransaction(socket, player, data) {
 async function handleWorldLockGetKeyTransaction(socket, player, data) {
     const requestId = makeRequestId(data);
     const worldName = getTransactionWorldName(player, data);
+    if (WorldNames.enabled && (await WorldNames.status(postgresStore, worldName))?.status === "reserved") {
+        sendInventoryTransactionRejected(socket, data, "Claim the name before trading this world.");
+        return;
+    }
     const traceBase = {
         request_id: requestId,
         username: cleanAccountName(player?.account_username || player?.name || ""),
@@ -13758,6 +13891,34 @@ async function handleSeedHarvestTransactionLocked(socket, player, data) {
         y: grid.y,
     });
     const seedTransactionId = makeAuditId("seed");
+    // Persist each reward's origin and tracked identities in the same transaction
+    // as removing the tree. A world snapshot alone only mirrors visible drops;
+    // it does not mint the identities that authoritative pickup requires.
+    const harvestDropChanges = payloads.map((drop) => ({
+        actor_username: player.account_username,
+        source_type: "seed_harvest",
+        source_id: seedTransactionId,
+        request_id: requestId,
+        world: worldName,
+        action: "harvest_drop",
+        layer: "foreground",
+        x: grid.x,
+        y: grid.y,
+        block_type: drop.item_type,
+        details: {
+            drop_id: drop.drop_id,
+            item_type: drop.item_type,
+            item_category: drop.item_category,
+            amount: drop.amount,
+            x: drop.x,
+            y: drop.y,
+            stack_grid_x: drop.stack_grid_x,
+            stack_grid_y: drop.stack_grid_y,
+            pickup_delay: drop.pickup_delay,
+            seed_type: seed.seed_type,
+            matured: maturedSeed,
+        },
+    }));
     const commitStarted = performance.now();
     const commit = await commitPlayerInventoryState(socket, player, player.account_username, beforeState, stagedState, {
         source: "seed_harvest",
@@ -13777,6 +13938,7 @@ async function handleSeedHarvestTransactionLocked(socket, player, data) {
             gasoline_consumed: gasolineConsumed ? 1 : 0,
             tractor_bonus_percent: gasolineConsumed ? 15 : 0,
         },
+        world_changes: harvestDropChanges,
         world_mutation: true,
         failure_message: "Server inventory changed. Try again.",
     });
@@ -17218,6 +17380,11 @@ function prepareWoodenEntranceStateUpdate(socket, player, worldName, update) {
     return true;
 }
 function prepareDoorStateUpdate(socket, player, worldName, update) {
+    const destination = update.destination ?? update.door_destination ?? "";
+    if (!IdentityHelpers.isValidDoorDestinationWorld(destination)) {
+        sendActionRejected(socket, "world_interaction_update", "World names must be 1-32 letters or numbers (A-Z, 0-9). No spaces or symbols.", { reason: "invalid_world_name" });
+        return false;
+    }
     const state = ensureWorldState(worldName);
     const block = state.foreground.get(gridKey(update.x, update.y));
     if (!block || !isDoorBlockType(block.block_type)) {
@@ -17364,12 +17531,23 @@ async function handleDoorEnterRequest(socket, player, data) {
     if (sourceDoor.destination === "") {
         return rejectDoorEnter(socket, "Door is not linked.");
     }
-    const targetWorld = cleanWorld(sourceDoor.target_world || sourceWorld);
+    let targetWorld = cleanWorld(sourceDoor.target_world || sourceWorld);
+    if (!IdentityHelpers.isValidDoorDestinationWorld(sourceDoor.destination) || !IdentityHelpers.isValidWorldName(sourceDoor.target_world || sourceWorld)) {
+        return rejectDoorEnter(socket, "World names must be 1-32 letters or numbers (A-Z, 0-9). No spaces or symbols.", { reason: "invalid_world_name" });
+    }
     if (targetWorld !== sourceWorld && ServerLandfillEventModule.isLandfillWorldName(targetWorld)) {
         rejectDoorEnter(socket, "Join the Landfill event from the lobby to enter a fresh race.", {
             reason: "join_race_required", target_world: targetWorld,
         });
         return false;
+    }
+    if (WorldNames.enabled && !String(sourceDoor.destination).toLowerCase().startsWith("door:")) {
+        try {
+            targetWorld = await WorldNames.resolve(postgresStore, targetWorld);
+        }
+        catch {
+            return rejectDoorEnter(socket, "World names are temporarily unavailable. Try again.");
+        }
     }
     const targetDoorId = cleanDoorId(sourceDoor.target_door_id || "");
     const worldOnlyDestination = targetDoorId === "";
@@ -17487,6 +17665,7 @@ async function handleDoorEnterRequest(socket, player, data) {
         postgresStore.mirrorPlayerWorld(player.account_username, targetWorld);
         const response = {
             type: "door_enter_ok",
+            world_name_claim: WorldNames.publicStatus(await WorldNames.status(postgresStore, targetWorld)),
             request_id: request.request_id,
             world: targetWorld,
             source_world: oldWorld,
@@ -22732,6 +22911,7 @@ function getGeneratorLinksForClient(state, worldName, receiverPlayer = null) {
                 target_type: ELECTRICAL_DEVICE_METAL_PAD,
                 generator_x: generatorX,
                 generator_y: generatorY,
+                generator_watts: Math.max(0, Math.trunc(Number(entry.watts) || 0)),
                 pad_x: padGrid.x,
                 pad_y: padGrid.y,
             });
@@ -22752,6 +22932,7 @@ function getGeneratorLinksForClient(state, worldName, receiverPlayer = null) {
                 target_type: ELECTRICAL_DEVICE_POLE,
                 generator_x: generatorX,
                 generator_y: generatorY,
+                generator_watts: Math.max(0, Math.trunc(Number(entry.watts) || 0)),
                 pole_x: poleGrid.x,
                 pole_y: poleGrid.y,
             });
@@ -23985,6 +24166,12 @@ async function handleOilRefineryRequest(socket, player, data = {}) {
             return;
         }
         const poleKey = gridKey(gridPoleX, gridPoleY);
+        if (data.disconnect !== true && oilState.linked_pole_key) {
+            sendActionRejected(socket, "oil_refinery_request", "This machine already has a power wire. Use the Wire Cutter to remove it first.", {
+                reason: "machine_input_occupied",
+            });
+            return;
+        }
         // A stale disconnect must never remove a replacement connection.
         if (data.disconnect === true && oilState.linked_pole_key !== poleKey) {
             sendActionRejected(socket, "oil_refinery_request", "Connection changed. Select the current wire.", { reason: "link_changed" });
@@ -24364,6 +24551,12 @@ async function handleBatteryChargerRequest(socket, player, data = {}) {
             return;
         }
         const poleKey = gridKey(gridPoleX, gridPoleY);
+        if (data.disconnect !== true && chargerState.linked_pole_key) {
+            sendActionRejected(socket, "battery_charger_request", "This machine already has a power wire. Use the Wire Cutter to remove it first.", {
+                reason: "machine_input_occupied",
+            });
+            return;
+        }
         // A stale disconnect must never remove a replacement connection.
         if (data.disconnect === true && chargerState.linked_pole_key !== poleKey) {
             sendActionRejected(socket, "battery_charger_request", "Connection changed. Select the current wire.", { reason: "link_changed" });
@@ -26201,6 +26394,7 @@ function sanitizeWorldLockState(state) {
         : DEFAULT_TRUSTED_BUILDER_SLOT_LIMIT;
     return {
         is_locked: isLocked,
+        persistent_ownership: WorldNames.enabled && isLocked,
         owner_name: ownerName,
         owner_account_id: ownerAccountId,
         owner_player_id: ownerPlayerId,
@@ -31175,7 +31369,7 @@ function removePlayerFromWorldIndex(playerOrId, worldName = "") {
         const set = worldPlayers.get(clean);
         if (set) {
             const removed = set.delete(playerId);
-            if (removed && serverLandfillEventSystem && /^LANDFILL_/i.test(clean)) {
+            if (removed && serverLandfillEventSystem && /^LANDFILL(?:_|[0-9])/i.test(clean)) {
                 serverLandfillEventSystem.recordLandfillInstanceLeave(clean, player?.account_username || player?.name || "");
             }
             if (set.size === 0)
@@ -31188,7 +31382,7 @@ function removePlayerFromWorldIndex(playerOrId, worldName = "") {
     }
     for (const [indexedWorld, set] of worldPlayers.entries()) {
         const removed = set.delete(playerId);
-        if (removed && serverLandfillEventSystem && /^LANDFILL_/i.test(indexedWorld)) {
+        if (removed && serverLandfillEventSystem && /^LANDFILL(?:_|[0-9])/i.test(indexedWorld)) {
             serverLandfillEventSystem.recordLandfillInstanceLeave(indexedWorld, player?.account_username || player?.name || "");
         }
         if (set.size === 0)
@@ -31214,7 +31408,7 @@ function updatePlayerWorldIndex(player) {
     }
     getWorldPlayerIdSet(nextWorld, true).add(playerId);
     player.indexed_world = nextWorld;
-    if (previousWorld !== nextWorld && serverLandfillEventSystem && /^LANDFILL_/i.test(nextWorld)) {
+    if (previousWorld !== nextWorld && serverLandfillEventSystem && /^LANDFILL(?:_|[0-9])/i.test(nextWorld)) {
         serverLandfillEventSystem.recordLandfillInstanceJoin(nextWorld, player.account_username || player.name || "");
     }
 }
@@ -31898,6 +32092,7 @@ async function handleWorldPopulationRequest(socket, player, _data, _context) {
     sendJson(socket, {
         type: "world_population",
         world_counts: worldCounts,
+        world_aliases: await WorldNames.aliases(postgresStore, Object.keys(worldCounts)),
         clear_unreported: true,
         global: true,
         generated_at: new Date().toISOString(),

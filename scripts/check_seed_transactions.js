@@ -51,6 +51,25 @@ const context = {
   commitPlayerInventoryState: async (_socket, _player, user, _before, after, options) => {
     assert.equal(options.world_mutation, true);
     assert.equal(options.world_state, undefined, 'Do not serialize the full world twice');
+    if (options.source === 'seed_harvest') {
+      const changes = options.world_changes;
+      assert.ok(Array.isArray(changes), 'Harvest must persist explicit drop creation records');
+      for (const change of changes) {
+        const drop = world.drops.get(change.details.drop_id);
+        assert.ok(drop, 'Only real, uncollected rewards get tracking records');
+        assert.equal(change.source_type, 'seed_harvest');
+        assert.equal(change.action, 'harvest_drop');
+        assert.equal(change.block_type, drop.item_type);
+        assert.equal(change.details.amount, drop.amount);
+        assert.equal(change.details.item_category, drop.item_category);
+        assert.equal(change.details.x, drop.x);
+        assert.equal(change.details.y, drop.y);
+      }
+      assert.deepEqual(Array.from(changes, c => c.details.drop_id),
+        dropCalls.filter(d => world.drops.has(d.drop_id) && !d.committed).map(d => d.drop_id),
+        'Every emitted reward must receive identities in the harvest transaction');
+      if (!failCommit) for (const change of changes) world.drops.get(change.details.drop_id).committed = true;
+    }
     if (commitGate) await commitGate;
     if (failCommit) return { ok: false, message: 'simulated database failure' };
     inventory[user] = after; commits++;
@@ -62,8 +81,8 @@ const context = {
   sendInventoryTransactionRejected: (_s, data, message) => replies.push({ ok: false, request_id: data.request_id, message }),
   logWorldChange: () => {}, logItemLedgerForState: () => {}, getGridCenterPixels: (x, y) => ({ x: x * 32, y: y * 32 }),
   getTreeHarvestDropsForBlock: block => [{ item_id: block, item_category: 'block', amount: 5 }, { item_id: block + '_seed', item_category: 'seed', amount: 2 }],
-  createServerDrop: (_w, id, category, amount) => {
-    const drop = { drop_id: `d${dropCalls.length}`, item_id: id, item_category: category, amount };
+  createServerDrop: (_w, id, category, amount, x, y) => {
+    const drop = { drop_id: `d${dropCalls.length}`, item_id: id, item_type: id, item_category: category, amount, x, y };
     dropCalls.push(drop); world.drops.set(drop.drop_id, drop); return drop;
   },
   grantExperienceToState: () => ({}), getSeedHarvestXp: () => 0, getProgressionMessage: (_p, m) => m, buildProgressionPayload: p => p,

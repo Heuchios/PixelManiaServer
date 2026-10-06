@@ -116,7 +116,9 @@ const DYNAMIC_FALLBACKS = ["request"];
 // use the already-audited world_block_update action.
 // Lock-decay checks add lock_changed and lock_not_decayed rejections; both use
 // world_block_update, which is already audited by the failed-ledger filter.
-const EXPECTED_LITERAL_SITES = 288;
+// World-name validation adds one audited world_interaction_update rejection.
+// Single-input wiring adds two rejections to the existing refinery/charger gaps.
+const EXPECTED_LITERAL_SITES = 291;
 // Re-pinned from 10 -> 9 after tracing every current dynamic call site (2026-08-09): all
 // nine pass an `action`-shaped variable through unchanged --
 // `cleanRouteType || "request"` / `type || "request"` (both already covered by
@@ -312,11 +314,13 @@ function run() {
     const queueCallSites = [...source.matchAll(/queueFailedTransactionLedger\(/g)].length;
     assert.equal(
       queueCallSites,
-      3,
-      `expected the rejection caller, quest-result caller and declaration, found ${queueCallSites} occurrences. Audit any new direct caller.`,
+      4,
+      `expected rejection, quest-result, name-claim callers and declaration, found ${queueCallSites} occurrences. Audit any new direct caller.`,
     );
     assert.match(source, /if \(!result\.ok && \["quest_choose", "quest_redeem"\]\.includes\(String\(data\.action\)\)\)\s*\{\s*queueFailedTransactionLedger\(socket, "inventory_transaction_request", result\.message/,
       "quest failures must use the audited inventory action and only log valuable completion/redemption failures");
+    assert.match(source, /if \(action !== "world_name_status"\)\s*queueFailedTransactionLedger\(socket, "inventory_transaction_request", message/,
+      "name reservation/payment failures must use the audited inventory action; status reads do not write failure ledgers");
   });
 
   console.log("");

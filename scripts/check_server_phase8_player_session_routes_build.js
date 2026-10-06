@@ -224,6 +224,13 @@ const socket = {};
   playerRefreshSucceeds = true;
 
   const joiningPlayer = /** @type {any} */ ({ id: "p2", account_username: "joiner", account_email: "j@example.com", name: "Joiner", world: "", joined_world: false });
+  for (const invalidName of ["BAD WORLD", "BAD_WORLD", "BAD-WORLD", "BAD!", " TEST", "TEST\n", "", "A".repeat(33)]) {
+    const beforeEvents = events.length;
+    await routes.handleJoinWorld(socket, joiningPlayer, { world: invalidName }, { playerId: "p2" });
+    assert.equal(rejected.pop()?.action, "join_world");
+    assert.equal(events.length, beforeEvents, "Invalid names must not load, create, or leave a world");
+    assert.equal(joiningPlayer.world, "");
+  }
   const joinEventStart = events.length;
   await routes.handleJoinWorld(socket, joiningPlayer, {
     type: "join_world",
@@ -512,7 +519,7 @@ const socket = {};
   // Exercise the real join route, not only the event helper: direct names fail closed.
   const landfillPlayer = /** @type {any} */ ({ account_username: "landfill", name: "landfill", world: "", joined_world: false });
   const sentBeforeLandfill = sent.length;
-  await routes.handleJoinWorld(socket, landfillPlayer, { world: "LANDFILL_100001", join_request_id: "lf-denied" }, { playerId: "lf" });
+  await routes.handleJoinWorld(socket, landfillPlayer, { world: "LANDFILL100001", join_request_id: "lf-denied" }, { playerId: "lf" });
   assert.equal(landfillPlayer.joined_world, false);
   assert.equal(sent.length, sentBeforeLandfill, "missing landfill admission must not deliver a snapshot");
 
@@ -522,16 +529,16 @@ const socket = {};
   const landfillRoutes = Phase8RoutesModule.createServerPhase8PlayerSessionRoutes({
     ...deps,
     authorizeLandfillTicket: async (/** @type {unknown} */ _socket, /** @type {unknown} */ _player, /** @type {unknown} */ _world, /** @type {boolean} */ consume) => { if (consume) ticketsSpent += 1; return true; },
-    resolveLandfillInstanceJoin: async () => ({ ok: true, world_name: ++resolved === 1 ? "LANDFILL_100002" : "LANDFILL_100003" }),
+    resolveLandfillInstanceJoin: async () => ({ ok: true, world_name: ++resolved === 1 ? "LANDFILL100002" : "LANDFILL100003" }),
     checkLandfillInstanceJoinEligibility: () => ++activationChecks === 1 ? { ok: false, reason: "instance_locked" } : { ok: true },
   });
-  await landfillRoutes.handleJoinWorld(socket, landfillPlayer, { world: "LANDFILL_100001", join_request_id: "lf-redirect" }, { playerId: "lf" });
+  await landfillRoutes.handleJoinWorld(socket, landfillPlayer, { world: "LANDFILL100001", join_request_id: "lf-redirect" }, { playerId: "lf" });
   // Legacy immediate activation discovers GO during loading and starts a replacement snapshot.
-  assert.equal(landfillPlayer.world, "LANDFILL_100003");
+  assert.equal(landfillPlayer.world, "LANDFILL100003");
   assert.equal(landfillPlayer.joined_world, false, "replacement waits for its own ready acknowledgement");
-  assert.ok(sent.some((/** @type {any} */ packet) => packet.type === "landfill_instance_redirect" && packet.target_world === "LANDFILL_100002"));
-  assert.ok(sent.some((/** @type {any} */ packet) => packet.type === "landfill_instance_redirect" && packet.target_world === "LANDFILL_100003"));
-  assert.ok(!sent.some((/** @type {any} */ packet) => packet.type === "world_entry_active" && packet.world === "LANDFILL_100002"), "a race that started during loading never activates the late player");
+  assert.ok(sent.some((/** @type {any} */ packet) => packet.type === "landfill_instance_redirect" && packet.target_world === "LANDFILL100002"));
+  assert.ok(sent.some((/** @type {any} */ packet) => packet.type === "landfill_instance_redirect" && packet.target_world === "LANDFILL100003"));
+  assert.ok(!sent.some((/** @type {any} */ packet) => packet.type === "world_entry_active" && packet.world === "LANDFILL100002"), "a race that started during loading never activates the late player");
 
   assert.equal(ticketsSpent, 0, "redirected snapshots must not consume tickets");
   const ready = { world: landfillPlayer.world, world_entry_session_id: landfillPlayer.world_entry_session_id, world_revision: worldRevision, block_revision: worldBlockRevision };
@@ -542,8 +549,23 @@ const socket = {};
   assert.equal(ticketsSpent, 1, "duplicate ready packets must not spend another ticket");
   const noTicketRoutes = Phase8RoutesModule.createServerPhase8PlayerSessionRoutes({ ...deps, authorizeLandfillTicket: async () => false });
   const noTicketSent = sent.length;
-  await noTicketRoutes.handleJoinWorld(socket, { account_username: "empty", world: "", joined_world: false }, { world: "LANDFILL_100001" }, { playerId: "empty" });
+  await noTicketRoutes.handleJoinWorld(socket, { account_username: "empty", world: "", joined_world: false }, { world: "LANDFILL100001" }, { playerId: "empty" });
   assert.equal(sent.length, noTicketSent, "missing tickets must reject before a snapshot");
+  const namedRoutes = Phase8RoutesModule.createServerPhase8PlayerSessionRoutes({
+    ...deps, worldNameClaimsEnabled:true,
+    resolvePublicWorldName: async (/** @type {string} */ name, /** @type {string} */ identity) => ({internal:identity || "W123456",name}),
+    getPublicWorldNameInfo: async () => ({name:"SHOP",status:"claimed",original_paid_gems:750000}),
+  });
+  const namedPlayer = {account_username:"namejoin",world:"",joined_world:false};
+  const beforeNamed = sent.length;
+  await namedRoutes.handleJoinWorld(socket,namedPlayer,{world:"SHOP",join_request_id:"named-1",world_entry_ready_v1:true,world_name_claims_v1:true},{playerId:"namejoin"});
+  const namedPackets = /** @type {any[]} */ (sent.slice(beforeNamed));
+  assert.equal(namedPlayer.world,"W123456");
+  assert(namedPackets.findIndex(p=>p.type==="world_name_redirect") < namedPackets.findIndex(p=>p.type==="join_world_ok"));
+  assert.equal(namedPackets.find(p=>p.type==="join_world_ok").world_name_claim.original_paid_gems,750000);
+  const beforeOldClient = sent.length;
+  await namedRoutes.handleJoinWorld(socket,{account_username:"oldclient",world:"",joined_world:false},{world:"SHOP",join_request_id:"old-1"},{playerId:"oldclient"});
+  assert.equal(sent.length,beforeOldClient,"Old clients cannot enter aliased worlds without protocol support");
   console.log("[server-phase8-player-session-routes] success");
 })().catch((error) => {
   console.error(error);

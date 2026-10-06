@@ -226,6 +226,42 @@ function trackedInstancesFor(state, dropId) {
 async function run() {
   console.log("drop pickup item-loss invariants");
 
+  await checkAsync("harvest rewards create claimable identities before pickup, including partial stacks", async () => {
+    const { store, fake } = createStore(baseState({ world_drops: [] }));
+    const change = {
+      source_type: "seed_harvest", action: "harvest_drop", block_type: "snow_block",
+      details: { drop_id: "harvest-snow", item_type: "snow_block", item_category: "block", amount: 3, x: 160, y: 96 },
+    };
+    await store.withTransaction((/** @type {any} */ client) => store.recordWorldChangesAndTrackedDrops(client, WORLD_ID, [change]));
+    assert.equal(activeDrop(fake.state, "harvest-snow").metadata.origin_source, "seed_harvest");
+    assert.equal(trackedInstancesFor(fake.state, "harvest-snow").length, 3);
+    assert.ok(fake.log.some((/** @type {string} */ entry) => entry.includes('INSERT INTO "pixelmania"."item_instances"')),
+      "The real persistence path must create identities, not merely pass mocked tracking");
+    for (const amount of [1, 2]) {
+      const result = await store.applyDropPickupTransaction(pickupEntry({
+        drop_id: "harvest-snow", item_type: "snow_block", item_category: "block", amount,
+        expected_before_amount: amount === 1 ? 0 : 1, allow_world_drop_repair: false,
+      }));
+      assert.equal(result.ok, true, JSON.stringify(result));
+    }
+    assert.equal(inventoryAmount(fake.state, "snow_block"), 3);
+    assert.equal(activeDrop(fake.state, "harvest-snow"), null);
+    assert.equal(trackedInstancesFor(fake.state, "harvest-snow").length, 3, "Pickup must reuse identities");
+  });
+
+  await checkAsync("failed harvest persistence rolls back both rewards and identities", async () => {
+    const { store, fake } = createStore(baseState({ world_drops: [] }));
+    await assert.rejects(store.withTransaction(async (/** @type {any} */ client) => {
+      await store.recordWorldChangesAndTrackedDrops(client, WORLD_ID, [{
+        source_type: "seed_harvest", action: "harvest_drop", block_type: "snow_block",
+        details: { drop_id: "failed-harvest", item_category: "block", amount: 2 },
+      }]);
+      throw new Error("simulated harvest save failure");
+    }), /simulated harvest save failure/);
+    assert.equal(fake.state.world_drops.length, 0);
+    assert.equal(fake.state.item_instances.length, 0);
+  });
+
   await checkAsync("happy path: inventory gains the item and the drop is consumed once", async () => {
     const { store, fake } = createStore(baseState({ item_instances: [trackedInstance("drop-server-1")] }));
     const result = asRecord(await store.applyDropPickupTransaction(pickupEntry()));

@@ -43,6 +43,7 @@ const InventoryContracts = require("./server_inventory_contracts");
 const PostgresContracts = require("./postgres_store_contracts");
 const ItemDatabase = require("./server_item_database");
 const FishMarketStore = __importStar(require("./server_fish_market_store"));
+const WorldNames = __importStar(require("./server_world_names"));
 const QuestStore = require("./server_quest_store");
 let PoolClass = null;
 try {
@@ -604,6 +605,7 @@ class PostgresStore {
                 try {
                     await this.ensurePersistenceSchema();
                     await FishMarketStore.ensureSchema(this);
+                    await WorldNames.ensureSchema(this);
                 }
                 catch (error) {
                     if (isRetryablePostgresError(error) && attempt < POSTGRES_INIT_MAX_ATTEMPTS) {
@@ -1066,6 +1068,7 @@ class PostgresStore {
             'world_block_place',
             'world_lock_conversion',
             'world_lock_key',
+            'world_name',
             'world_interaction',
             'drop_pickup',
             'drop_inventory',
@@ -5730,6 +5733,7 @@ class PostgresStore {
             owner_player_id: ownerPlayerId || cleanName(lock.owner_player_id || lock.owner_profile_id || ""),
             owner_profile_id: ownerPlayerId || cleanName(lock.owner_player_id || lock.owner_profile_id || ""),
         });
+        await WorldNames.mirrorOwner(this, client, worldId, lockMetadata, ownerAccountId);
         const allowedPlayers = Array.isArray(lock.allowed_players) ? lock.allowed_players : [];
         const roles = toObject(lock.player_roles);
         // Rebuild identity access from the current member list so removed members
@@ -6520,6 +6524,10 @@ class PostgresStore {
                 this.loadActiveWorldDrops(cleanWorldName),
             ]);
             const normalizedWorldLock = worldLockResult.rows[0] ? worldLockRowToPayload(worldLockResult.rows[0]) : {};
+            const nameRecord = await WorldNames.status(this, cleanWorldName);
+            if (nameRecord?.owner_account_id)
+                state.world_name_owner = nameRecord.owner_lock;
+            state.world_name_claim = WorldNames.publicStatus(nameRecord);
             const savedWorldLock = toObject(state.world_lock);
             if (Object.keys(normalizedWorldLock).length > 0 && (!savedWorldLock.is_locked || cleanName(savedWorldLock.owner_name || "") === "")) {
                 state.world_lock = normalizedWorldLock;
@@ -9069,6 +9077,8 @@ class PostgresStore {
                 const ledgerEntries = [];
                 const transactionLedgerEntries = [];
                 const inventoryBeforeHash = await this.getInventorySnapshotHash(client, playerId);
+                const nameClaim = action === "world_name_claim"
+                    ? await WorldNames.prepareClaim(this, client, worldId, playerId, deltas, metadata) : null;
                 if (source === "fish_monger")
                     await FishMarketStore.lockSale(this, client, metadata, deltas, playerId, requestId);
                 for (const deltaEntry of deltas) {
@@ -9396,6 +9406,8 @@ class PostgresStore {
             VALUES ($1, $2, $3)`, [shopClaimAccountId, giftListing, requestId]);
                 }
                 await QuestStore.recordGameplay(this, client, playerId, action, metadata, String(metadata.transaction_id || requestId));
+                if (nameClaim)
+                    await WorldNames.finishClaim(this, client, nameClaim, requestId);
                 return {
                     ...InventoryContracts.buildPostgresInventoryDeltaTransactionSuccess({ playerId, worldId, ledgerEntries }),
                     ...(source === "fish_monger" ? { fish_market_sales: metadata.fish_market_sales } : {}),

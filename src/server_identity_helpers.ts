@@ -28,6 +28,16 @@ function stableIdentityEquals(left: unknown, right: unknown): boolean {
   return leftKey !== "" && leftKey === rightKey;
 }
 
+function isValidWorldName(value: unknown): boolean {
+  return typeof value === "string" && value.length >= 1 && value.length <= 32 && !/[^A-Za-z0-9]/.test(value);
+}
+
+function isValidDoorDestinationWorld(value: unknown): boolean {
+  return typeof value === "string" && (value === "" || /^door:/i.test(value) || isValidWorldName(value.split(":")[0]));
+}
+
+// Internal normalization also reads legacy persisted world identifiers. Validate
+// user input before calling this, so invalid names never alias another world.
 function cleanWorld(value: unknown, maxWorldNameLength = 32): string {
   const clean = String(value || "START").trim().toUpperCase().replace(/\s+/g, "_");
   const safe = clean.replace(/[^A-Z0-9_-]/g, "").slice(0, maxWorldNameLength);
@@ -41,6 +51,8 @@ function cleanStaticNetfoxWorld(value: unknown, maxWorldNameLength = 32): string
 }
 
 export = {
+  isValidWorldName,
+  isValidDoorDestinationWorld,
   cleanAccountName,
   cleanEmail,
   cleanName,

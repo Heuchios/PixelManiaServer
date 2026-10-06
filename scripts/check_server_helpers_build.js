@@ -36,6 +36,18 @@ assert.equal(IdentityHelpers.stableIdentityEquals(" PlayerOne ", "playerone"), t
 assert.equal(IdentityHelpers.stableIdentityEquals("", ""), false);
 assert.equal(IdentityHelpers.cleanWorld(" my world!* ", 32), "MY_WORLD");
 assert.equal(IdentityHelpers.cleanWorld("!!!", 32), "START");
+for (const name of ["START", "world123", "123", "A".repeat(32), "LANDFILL123456"]) {
+  assert.equal(IdentityHelpers.isValidWorldName(name), true);
+}
+for (const name of ["", "MY WORLD", "MY_WORLD", "MY-WORLD", " TEST", "TEST ", "TE!ST", "TEST\n", "é", "Ａ", "A".repeat(33), 123, null]) {
+  assert.equal(IdentityHelpers.isValidWorldName(name), false);
+}
+for (const destination of ["", "START", "WORLD2:door:A1", "door:A1"]) {
+  assert.equal(IdentityHelpers.isValidDoorDestinationWorld(destination), true);
+}
+for (const destination of ["BAD WORLD:A1", "BAD_WORLD:door:A1", "BAD!", "START :A1"]) {
+  assert.equal(IdentityHelpers.isValidDoorDestinationWorld(destination), false);
+}
 assert.equal(IdentityHelpers.cleanStaticNetfoxWorld("*", 32), "");
 assert.equal(IdentityHelpers.cleanStaticNetfoxWorld("arena 1", 32), "ARENA_1");
 

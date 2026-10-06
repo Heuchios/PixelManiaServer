@@ -168,7 +168,7 @@ interface PrizeItem {
   amount: number;
 }
 
-const LANDFILL_WORLD_PREFIX = "landfill_";
+const LANDFILL_WORLD_PREFIX = "landfill";
 
 // ---------------------------------------------------------------------------------------------
 // Default trash weights: block key -> Kilograms awarded per break.
@@ -237,7 +237,7 @@ function getCurrentSeasonKey(): string {
 }
 
 function isLandfillWorldName(worldName: unknown): boolean {
-  return String(worldName || "").toLowerCase().startsWith(LANDFILL_WORLD_PREFIX);
+  return /^LANDFILL(?:_|[0-9])/i.test(String(worldName || ""));
 }
 
 // THE single normalization used for every `instances` Map key in this module -- see the Map

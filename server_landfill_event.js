@@ -1,6 +1,6 @@
 // Generated from src/server_landfill_event.ts. Do not edit by hand.
 "use strict";
-const LANDFILL_WORLD_PREFIX = "landfill_";
+const LANDFILL_WORLD_PREFIX = "landfill";
 // ---------------------------------------------------------------------------------------------
 // Default trash weights: block key -> Kilograms awarded per break.
 // ---------------------------------------------------------------------------------------------
@@ -60,7 +60,7 @@ function getCurrentSeasonKey() {
     return getSeasonKeyForDate(new Date());
 }
 function isLandfillWorldName(worldName) {
-    return String(worldName || "").toLowerCase().startsWith(LANDFILL_WORLD_PREFIX);
+    return /^LANDFILL(?:_|[0-9])/i.test(String(worldName || ""));
 }
 // THE single normalization used for every `instances` Map key in this module -- see the Map
 // access helpers (getInstance/hasInstance/deleteInstance) inside createLandfillEventSystem.

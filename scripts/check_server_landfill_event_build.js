@@ -142,7 +142,7 @@ async function main() {
   // Names are minted randomly per session now (see mintSessionWorldName): terrain is a pure
   // function of the world name, so a reused name means a reused map. Assert the SHAPE and the
   // round-trip property rather than a fixed literal.
-  assert.match(FIRST_WORLD, /^LANDFILL_\d+$/, "instance names must be canonical LANDFILL_<n>");
+  assert.match(FIRST_WORLD, /^LANDFILL\d+$/, "new instance names must contain only letters and numbers");
 
   // --- Round-trip regression guard (the actual production failure) ---------------------------
   // The Join Race button's whole contract is: requestJoinLandfillRace hands a world name to the
@@ -189,7 +189,7 @@ async function main() {
   const third = await system.requestJoinLandfillRace();
   const SECOND_WORLD = String(third.world_name);
   assert.notEqual(SECOND_WORLD, FIRST_WORLD, "a full instance should overflow joiners to a NEW world");
-  assert.match(SECOND_WORLD, /^LANDFILL_\d+$/);
+  assert.match(SECOND_WORLD, /^LANDFILL\d+$/);
 
   // --- Progress is session-scoped and only counts while RACING ---------------------------------
   // Progress no longer touches the database at all (it used to open a transaction per block

@@ -7,7 +7,9 @@
     "allowJs": false
   },
   "include": [
-    "src/postgres_store.ts"
+    "src/postgres_store.ts",
+    "src/server_fish_market.ts",
+    "src/server_fish_market_store.ts"
   ],
   "exclude": []
 }

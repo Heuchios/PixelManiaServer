@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "noEmit": false,
+    "outDir": ".tsbuild/world-name-pricing",
+    "rootDir": "src",
+    "noEmitOnError": true
+  },
+  "include": ["src/world_name_pricing.ts", "src/server_world_names.ts"],
+  "exclude": []
+}

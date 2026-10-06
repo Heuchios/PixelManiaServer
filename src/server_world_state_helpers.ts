@@ -561,6 +561,8 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
       electrical_network_version: 0,
       interactions: new Map(),
       world_lock: {},
+      world_name_owner: {},
+      world_name_claim: null,
       area_locks: [],
       cctv_state: config.makeEmptyCctvWorldState("START"),
       drops: new Map(),
@@ -1115,6 +1117,8 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
     loadDropsIntoMap(getStateMap(state, "drops"), data.drops || data.item_drops);
 
     const worldLock = isRecord(data.world_lock) ? data.world_lock : null;
+    state.world_name_owner = config.sanitizeWorldLockState(data.world_name_owner || {});
+    state.world_name_claim = isRecord(data.world_name_claim) ? data.world_name_claim : null;
     if (worldLock) {
       state.world_lock = config.sanitizeWorldLockState(worldLock);
     }
@@ -2576,6 +2580,8 @@ function createWorldStateHelpers(config: WorldStateHelperConfig): WorldStateHelp
       interactions: Array.from((state.interactions instanceof Map ? state.interactions : new Map()).values()),
       background_theme: config.getActiveWorldBackgroundTheme(state),
       world_lock: config.getEffectiveWorldLockStateInState(state),
+      world_name_owner: state.world_name_owner || {},
+      world_name_claim: state.world_name_claim || null,
       area_locks: config.sanitizeAreaLocksList(state.area_locks || []),
       cctv_state: config.sanitizeCctvWorldState(state.cctv_state || {}, worldName),
       drops: Array.from((state.drops instanceof Map ? state.drops : new Map()).values()),

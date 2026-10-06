@@ -1,4 +1,5 @@
 "use strict";
+import IdentityHelpers = require("./server_identity_helpers");
 
 
 type PacketRecord = Record<string, unknown>;
@@ -36,6 +37,9 @@ interface PostgresStoreLike {
 }
 
 interface Phase8PlayerSessionDeps {
+  worldNameClaimsEnabled?: boolean;
+  resolvePublicWorldName?(name: string, identity: string): Promise<{internal:string;name:string}>;
+  getPublicWorldNameInfo?(name: string): Promise<PacketRecord | null>;
   activeFishingSessions: MapLike;
   adminInventoryLookupPurpose: string;
   adminItemInstanceHistoryLookupPurpose: string;
@@ -297,7 +301,7 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
 
     // Loading may outlast the countdown. Recheck immediately before publishing presence;
     // no await separates this guard from the index insertion below.
-    if (/^LANDFILL_/i.test(worldName)) {
+    if (/^LANDFILL(?:_|[0-9])/i.test(worldName)) {
       const check = deps.checkLandfillInstanceJoinEligibility?.(worldName, player.account_username || player.name);
       if (!check?.ok) {
         const requestId = player.world_entry_join_request_id;
@@ -313,7 +317,7 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
         return;
       }
     }
-    if (/^LANDFILL_/i.test(worldName)) {
+    if (/^LANDFILL(?:_|[0-9])/i.test(worldName)) {
       player.world_entry_ticket_pending = true;
       let paid = false;
       try {
@@ -554,7 +558,19 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
     const joinProfileStartedAt = process.hrtime.bigint();
     if (!deps.requireAuthenticated(socket, player, "join worlds")) return;
 
+    if (!IdentityHelpers.isValidWorldName(data.world)) {
+      deps.sendActionRejected(socket, "join_world", "World names must be 1-32 letters or numbers (A-Z, 0-9). No spaces or symbols.", {
+        reason: "invalid_world_name",
+        join_request_id: deps.clampString(data.join_request_id || data.request_id || "", 128),
+      });
+      return;
+    }
+
     let newWorld = deps.cleanWorld(data.world);
+    if (deps.worldNameClaimsEnabled && data.world_name_claims_v1 !== true) {
+      deps.sendActionRejected(socket,"join_world","Update PixelMania to use world name claims.", {reason:"client_update_required",join_request_id:String(data.join_request_id || data.request_id || "")});
+      return;
+    }
     const joinRequestId = deps.clampString(data.join_request_id || data.request_id || "", 128);
     const worldEntryReadySupported = data.world_entry_ready_v1 === true
       || ["1", "true", "yes", "on"].includes(String(data.world_entry_ready_v1 || "").trim().toLowerCase());
@@ -597,7 +613,7 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
       // player.world -- so the join below correctly sees no previous world to leave.
       await cancelProvisionalWorldEntry(player, pendingWorld, context, "provisional_entry_timeout");
     }
-    if (/^LANDFILL_/i.test(newWorld)) {
+    if (/^LANDFILL(?:_|[0-9])/i.test(newWorld)) {
       if (!await deps.authorizeLandfillTicket(socket, player, newWorld, false)) return;
       const result = deps.resolveLandfillInstanceJoin
         ? await deps.resolveLandfillInstanceJoin(newWorld, player.account_username || player.name)
@@ -616,6 +632,23 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
         });
       }
       newWorld = targetWorld;
+    }
+    const requestedPublicWorld = newWorld;
+    let resolvedPublicWorld = newWorld;
+    if (deps.resolvePublicWorldName) {
+      try {
+        const resolution = await deps.resolvePublicWorldName(newWorld, String(data.world_identity || ""));
+        newWorld = resolution.internal;
+        resolvedPublicWorld = resolution.name;
+      }
+      catch {
+        deps.sendActionRejected(socket, "join_world", "World names are temporarily unavailable. Try again.", {reason:"world_name_unavailable",join_request_id:joinRequestId});
+        return;
+      }
+      if (newWorld !== requestedPublicWorld) deps.sendJson(socket, {
+        type:"world_name_redirect",world:requestedPublicWorld,target_world:newWorld,
+        public_name:resolvedPublicWorld,join_request_id:joinRequestId,
+      });
     }
     const oldWorld = player.world;
     const worldEntryProfile = beginWorldEntryServerProfile(newWorld, joinRequestId);
@@ -790,6 +823,7 @@ function createServerPhase8PlayerSessionRoutes(deps: Phase8PlayerSessionDeps) {
 
       const joinWorldPayload: PacketRecord = {
         type: "join_world_ok",
+        world_name_claim: deps.getPublicWorldNameInfo ? await deps.getPublicWorldNameInfo(player.world as string) : null,
         world: player.world,
         players: existingPlayers,
         username: player.account_username,

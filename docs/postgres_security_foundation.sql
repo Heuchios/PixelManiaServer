@@ -358,6 +358,7 @@ CREATE TABLE IF NOT EXISTS item_transactions (
 			'world_block_break',
 			'world_block_place',
 			'world_lock_conversion',
+			'world_name',
 			'world_interaction',
 			'drop_pickup',
 			'drop_inventory',
