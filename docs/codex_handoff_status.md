@@ -26,6 +26,8 @@ The backend has a World Change Journal split between block and object entries.
 
 ## Monitoring dashboard
 
+The ops Players tab is implemented in `ops_player_audit.js` and `ops_dashboard_public/players.*`. Reads use PostgreSQL snapshots; `ops_player_access_audit` retains hash-linked request/result receipts. `docs/ops_player_audit.md` documents coverage limits, tests and the ops-only release override. Preserve the shared ops admin account and active ops artifact when deploying.
+
 `check:monitoring-dashboard` covers admin/PIN-gated runtime, economy, suspicious account, duplicate warning, integrity audit, and developer panel monitoring status.
 
 ## Anti-Dupe Transaction Locking

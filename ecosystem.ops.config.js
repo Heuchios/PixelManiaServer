@@ -1,6 +1,12 @@
+const fs = require("fs");
 const path = require("path");
 
-require("dotenv").config({ path: path.join(__dirname, ".env"), quiet: true });
+const dotenv = require("dotenv");
+// Manual ops reloads must use the same durable account as release activation,
+// even when the caller has not sourced the release environment in its shell.
+const releaseEnvPath = path.join(__dirname, ".release-env");
+if (fs.existsSync(releaseEnvPath)) dotenv.config({ path: releaseEnvPath, quiet: true });
+dotenv.config({ path: path.join(__dirname, ".env"), quiet: true });
 
 function env(name, fallback = "") {
   const value = process.env[name];
@@ -25,7 +31,7 @@ module.exports = {
   apps: [
     {
       name: "pixelmania-ops",
-      script: "ops_dashboard_server.js",
+      script: path.join(__dirname, "ops_dashboard_server.js"),
       cwd: __dirname,
       exec_mode: "fork",
       instances: 1,
@@ -34,6 +40,8 @@ module.exports = {
       max_memory_restart: "256M",
       env: {
         NODE_ENV: env("NODE_ENV", "production"),
+        PIXELMANIA_RELEASE_ROOT: releaseRoot,
+        PIXELMANIA_RELEASE_ID: env("PIXELMANIA_RELEASE_ID"),
         OPS_DASHBOARD_HOST: env("OPS_DASHBOARD_HOST", "127.0.0.1"),
         OPS_DASHBOARD_PORT: env("OPS_DASHBOARD_PORT", "9090"),
         OPS_DASHBOARD_TOKEN: env("OPS_DASHBOARD_TOKEN"),

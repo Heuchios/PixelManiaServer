@@ -311,4 +311,6 @@ assertCheck(
 assertCheck(packageJson.scripts && packageJson.scripts["check:release-deploy"] === "node scripts/check_release_deployment_wiring.js", "package exposes the release deployment gate");
 assertCheck(String(packageJson.scripts["check:security"] || "").includes("check:release-deploy"), "security gate includes release deployment wiring");
 
+require("./check_ops_release_config.js");
+
 console.log("[release-deploy] success");

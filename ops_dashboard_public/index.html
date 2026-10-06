@@ -5,6 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1">
     <title>PixelMania Ops</title>
     <link rel="stylesheet" href="/styles.css?v=20260715-debug-tabs">
+    <link rel="stylesheet" href="/players.css?v=20261006-1">
   </head>
   <body>
     <main class="shell">
@@ -36,6 +37,7 @@
 
       <nav class="view-tabs" aria-label="Dashboard views">
         <button class="view-tab active" data-view-tab="overview" type="button" aria-pressed="true">Overview</button>
+        <button class="view-tab" data-view-tab="players" type="button" aria-pressed="false">Players</button>
         <button class="view-tab" data-view-tab="worlds" type="button" aria-pressed="false">Worlds</button>
         <button class="view-tab" data-view-tab="logs" type="button" aria-pressed="false">Logs</button>
         <button class="view-tab" data-view-tab="deploy" type="button" aria-pressed="false">Deploy</button>
@@ -43,6 +45,21 @@
         <button class="view-tab" data-view-tab="account" type="button" aria-pressed="false">Account</button>
         <button class="view-tab" data-view-tab="audit" type="button" aria-pressed="false">Audit</button>
       </nav>
+
+      <section class="panel hidden player-audit" data-view-panel="players" aria-label="Player audit">
+        <div class="panel-header"><div><h2>Players &amp; evidence</h2><p>Accounts, inventory and the history behind every tracked item.</p></div><button id="playersRefresh" class="outline-button" type="button">Refresh players</button></div>
+        <p class="player-coverage">Read-only investigation. Flags identify records to review; they do not establish player intent. Historical coverage begins with the records retained by the server.</p>
+        <div class="player-toolbar"><label>Find an account<input id="playersSearch" type="search" placeholder="Username, display name, account or player ID" autocomplete="off"></label><label>Trace an item instance<input id="playersInstance" type="search" placeholder="PM-ITEM-…" autocomplete="off"></label><button id="playersTrace" class="outline-button" type="button">Trace item</button><button id="playersAccess" class="outline-button" type="button">Access audit</button></div>
+        <p id="playersMessage" role="status" aria-live="polite"></p>
+        <div class="player-layout"><aside class="player-directory"><p id="playersCount" class="muted">Loading accounts…</p><div id="playersList"></div><div class="player-pager"><button id="playersPrevious" class="outline-button" type="button">Previous</button><button id="playersNext" class="outline-button" type="button">Next</button></div></aside>
+          <div class="player-case"><div id="playersProfile"><p class="muted">Select a player to inspect their account and inventory.</p></div>
+            <div id="playersHistory" class="hidden"><div class="player-toolbar"><label>Evidence<select id="playersSection"><option value="flags">Red flags</option><option value="worlds">Worlds &amp; access</option><option value="punishments">Punishment history</option><option value="ledger">Transaction ledger</option><option value="items">Item balance ledger</option><option value="gems">Gem ledger</option><option value="instances">Item instances</option><option value="security">Security events</option><option value="moderation">Admin actions</option><option value="blocks">World block journal</option><option value="objects">World object journal</option><option value="rollbacks">Rollbacks</option></select></label><button id="playersExport" class="outline-button" type="button">Export this evidence</button></div>
+              <form id="playersFilters" class="player-toolbar"><label>Item type<input id="playersItemFilter" placeholder="e.g. world_lock"></label><label>Reference / correlation<input id="playersRefFilter" placeholder="Transaction, request or instance ID"></label><label>From<input id="playersSince" type="datetime-local"></label><label>Through<input id="playersUntil" type="datetime-local"></label><button class="outline-button" type="submit">Apply filters</button><button id="playersClear" class="outline-button" type="button">Clear</button></form>
+              <p id="playersEvidenceTitle"></p><div id="playersInstanceViews" class="player-toolbar hidden"><button id="playersLifecycle" class="outline-button" type="button">Instance lifecycle</button><button id="playersInstanceLedger" class="outline-button" type="button">Ledger across owners</button></div><p id="playersEvidenceCoverage" class="player-coverage"></p><div id="playersEvidence"></div><div class="player-pager"><button id="playersEvidencePrevious" class="outline-button" type="button">Previous evidence</button><span id="playersEvidencePage"></span><button id="playersEvidenceNext" class="outline-button" type="button">Next evidence</button></div><p id="playersReceipt" class="player-coverage"></p>
+            </div>
+          </div>
+        </div>
+      </section>
 
       <section class="metrics-grid" data-view-panel="overview" aria-label="Server metrics">
         <article class="metric-card">
@@ -417,6 +434,7 @@
       </form>
     </div>
 
-    <script src="/app.js?v=20260715-debug-tabs"></script>
+    <script src="/players.js?v=20261006-1"></script>
+    <script src="/app.js?v=20261006-players"></script>
   </body>
 </html>

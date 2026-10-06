@@ -307,6 +307,7 @@ function unlock() {
 
 function lock() {
   clearTimers();
+  window.OpsPlayers?.reset();
   document.body.classList.remove("unlocked");
   elements.loginCard.classList.remove("hidden");
   elements.resetCard.classList.add("hidden");
@@ -345,6 +346,7 @@ function clearTimers() {
 }
 
 async function refreshAll() {
+  if (activeView === "players") window.OpsPlayers?.load();
   await Promise.allSettled([
     loadStatus(),
     loadLogs(),
@@ -756,6 +758,7 @@ function renderViewTabs() {
   for (const panel of viewPanels) {
     panel.classList.toggle("hidden", panel.dataset.viewPanel !== activeView);
   }
+  if (activeView === "players" && document.body.classList.contains("unlocked")) window.OpsPlayers?.load();
 }
 
 async function loadActions() {

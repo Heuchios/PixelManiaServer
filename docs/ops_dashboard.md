@@ -2,6 +2,8 @@
 
 The ops dashboard is a private control surface for PixelMania server status, PM2 controls, logs, deploy, and rollback.
 
+The **Players** tab adds authenticated account search, inventory/world/punishment inspection, duplication and integrity signals, ledgers, item-instance tracing and durable access receipts. See [Player evidence and coverage](ops_player_audit.md).
+
 ## Safety defaults
 
 - The dashboard refuses to start unless `OPS_DASHBOARD_ADMIN_PASSWORD_HASH`, `OPS_DASHBOARD_TOKEN`, or `OPS_DASHBOARD_TOKEN_HASH` is set.

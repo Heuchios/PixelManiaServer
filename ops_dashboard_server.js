@@ -96,6 +96,7 @@ const loginFailures = new Map();
 const loginChallenges = new Map();
 let adminAccount = null;
 let mailTransporter = null;
+let playerAudit = null;
 adminAccount = loadAdminAccount();
 
 if (!isAuthConfigured()) {
@@ -210,6 +211,24 @@ async function handleRequest(request, response) {
     if (!requireAuth(request, response)) return;
     const result = handleLogoutAll(request, response);
     sendJson(response, result.status, result.body);
+    return;
+  }
+
+  if (url.pathname === "/api/players" || url.pathname.startsWith("/api/players/")) {
+    if (!requireAuth(request, response)) return;
+    if (request.method !== "GET") {
+      sendJson(response, 405, {ok:false,error:"Player auditing is read-only."});
+      return;
+    }
+    try {
+      if (!playerAudit) playerAudit = new (require("./ops_player_audit").PlayerAudit)();
+      const snapshot = await playerAudit.request(url, {...request.opsAuth,remote:getRemoteAddress(request)});
+      sendJson(response, 200, snapshot);
+    } catch (error) {
+      const status = error.status || 503;
+      console.warn("[ops-player-audit] request failed", error.code || error.status || "unavailable");
+      sendJson(response, status, {ok:false,error:error.status ? error.message : "Player evidence is unavailable. Database reads and durable access auditing must both succeed; try again shortly."});
+    }
     return;
   }
 
