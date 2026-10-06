@@ -6514,7 +6514,7 @@ function getItemDefinition(itemId: unknown): Readonly<ItemDefinition> | null {
   if (!definition) {
     const atlasDefinition = getAtlasItemDefinition(clean);
     if (!atlasDefinition) return null;
-    return Object.freeze({ item_id: clean, ...atlasDefinition });
+    return Object.freeze({ item_id: clean, ...atlasDefinition, ...ITEM_DATA_OVERRIDES[clean] });
   }
   return Object.freeze({ item_id: clean, ...definition });
 }

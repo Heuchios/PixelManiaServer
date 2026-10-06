@@ -2,6 +2,11 @@ const assert = require('node:assert/strict');
 const db = require('../server_item_database');
 const report = require('../../pixel-mania/docs/item-gem-rates.json');
 for (const { id, average } of report.applied) {
+  // Bucket water is freely reusable and cannot be a currency farming source.
+  if (id === 'water') {
+    assert.deepEqual(db.getItemDefinition(id).drop_rules.fixed_drops, []);
+    continue;
+  }
   const drops = db.getItemDefinition(id).drop_rules.fixed_drops.filter(d => d.item_id === 'gem');
   assert(drops.every(d => Number.isInteger(d.amount) && d.amount > 0), `${id}: integer currency`);
   const expected = drops.reduce((n, d) => n + d.amount * (d.chance ?? 1), 0);

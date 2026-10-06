@@ -5,6 +5,8 @@
   "main": "server.js",
   "scripts": {
     "check:mail-transport": "node scripts/check_mail_transport.js",
+    "build:farming-balance": "node scripts/sync_farming_balance.cjs && node scripts/build_farming_guide.cjs",
+    "check:farming-balance": "node scripts/sync_farming_balance.cjs --check && node scripts/build_farming_guide.cjs --check && node scripts/check_farming_balance.cjs",
     "check:anti-cheat": "npm run check:server-phase11d-standard-movement && npm run check:movement-rollback",
     "check:water-bucket": "node scripts/check_water_bucket_actions.js",
     "check:appreciation-claim": "node scripts/test_appreciation_claim.js",
@@ -40,7 +42,7 @@
 	"check:machine-break-return": "node scripts/check_machine_break_inventory_return.js",
 	"check:block-placement-consistency": "npm run build:server-world-state-helpers && npm run build:server-phase7-dispatcher && npm run build:server-entry && node scripts/check_block_placement_consistency.js",
 	"build:item-data": "tsc --project tsconfig.item-data.json && node scripts/sync_item_data_build.js",
-	"check:item-data": "npm run build:item-data && node scripts/check_item_data_build.js",
+	"check:item-data": "npm run build:item-data && node scripts/check_item_data_build.js && npm run check:farming-balance",
 	"build:redis-store": "tsc --project tsconfig.redis-store.json && node scripts/sync_redis_store_build.js",
 	"check:redis-store": "npm run build:redis-store && node scripts/check_redis_store_build.js",
 	"build:postgres-store": "tsc --project tsconfig.postgres-store.json && node scripts/sync_postgres_store_build.js",
