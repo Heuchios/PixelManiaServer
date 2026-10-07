@@ -310,6 +310,9 @@ function createServerPhase8PlayerSessionRoutes(deps) {
         });
         deps.setPlayerState(username, serverState);
         player.equipment_slots = deps.sanitizeEquipmentSlots(deps.getEquipmentSlotsFromPlayerState(serverState), username, serverState);
+        if (player.joined_world && player.world) {
+            deps.publishPlayerPresenceUpdate(socket, player, player.world, "player_position", context.playerId);
+        }
         deps.queuePlayerSave(username);
         deps.sendJson(socket, {
             type: "player_state",
@@ -534,6 +537,17 @@ function createServerPhase8PlayerSessionRoutes(deps) {
                     join_request_id: joinRequestId,
                 });
                 return;
+            }
+            // A reconnect may follow a failed disconnect cleanup; temporary world
+            // tools never carry into a fresh world session, including the same world.
+            if (!player.joined_world) {
+                const cleanup = toRecord(await deps.removeWorldLockKeysFromPlayerInventory(socket, player, oldWorld || newWorld, "session_entry"));
+                if (!cleanup.ok) {
+                    deps.sendActionRejected(socket, "join_world", String(cleanup.message || "Could not clear temporary world items. Try again."), {
+                        reason: cleanup.reason || "world_exit_items_cleanup_failed", world: newWorld, join_request_id: joinRequestId,
+                    });
+                    return;
+                }
             }
             if (oldWorld && oldWorld !== newWorld) {
                 const transitionStartedAt = process.hrtime.bigint();

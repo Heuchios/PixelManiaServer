@@ -98,6 +98,17 @@ async function main() {
     assert.equal(inventory.dirt, 40); assert.equal(inventory.magnet_machine, 1);
     const sources = (await db.query("SELECT DISTINCT source FROM pixelmania.item_transactions WHERE action LIKE 'magnet_%'")).rows;
     assert.deepEqual(sources, [{ source: 'magnet_machine' }]);
+    const key = await persist('world_lock_get_key', [{item_type:'world_lock_key', item_category:'material', delta:1}], 'world_lock_key');
+    assert.equal(key.ok, true, JSON.stringify(key));
+    const cleanup = await persist('world_exit_items_auto_remove', [
+      {item_type:'world_lock_key', item_category:'material', delta:-1},
+      {item_type:'magnet_machine_remote', item_category:'tool', delta:-1},
+    ], 'system');
+    assert.equal(cleanup.ok, true, JSON.stringify(cleanup));
+    const remaining = await db.query("SELECT item_type, amount FROM pixelmania.inventory WHERE item_type IN ('world_lock_key', 'magnet_machine_remote') AND amount > 0");
+    assert.equal(remaining.rows.length, 0);
+    const active = await db.query("SELECT item_type FROM pixelmania.item_instances WHERE item_type IN ('world_lock_key', 'magnet_machine_remote') AND state='active' AND current_location='inventory'");
+    assert.equal(active.rows.length, 0, 'World-exit cleanup must retire both tracked item types');
     console.log('MAGNET_POSTGRES_OK: startup migration, deposit, withdraw, remote PM-ITEM creation/reuse, late-save rollback and empty-machine removal');
   } finally { await db.close(); }
 }

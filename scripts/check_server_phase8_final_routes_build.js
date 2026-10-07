@@ -180,9 +180,11 @@ function getLegacyBody() {
   assert.ok(events.includes("debug:ignored legacy player_position in trusted movement mode"));
 
   let acceptMotion = true;
+  let magnetPreview = "";
   const relayedActions = /** @type {Record<string, unknown>[]} */ ([]);
   const visualRoutes = Phase8FinalRoutesModule.createServerPhase8FinalRoutes({
     ...deps,
+    canPreviewMagnetItem: (/** @type {unknown} */ _player, /** @type {string} */ id) => id === magnetPreview,
     ItemDatabase: require('../server_item_database'),
     ensureWritablePlayerState: () => ({inventory: {dirt: 1}, seed_inventory: {dirt_seed: 1}}),
     getInventoryCount: (/** @type {any} */ state, /** @type {string} */ id, /** @type {string} */ category) => state[category === 'seed' ? 'seed_inventory' : 'inventory']?.[id] || 0,
@@ -222,6 +224,14 @@ function getLegacyBody() {
     assert.equal(visualPlayer.selected_hand_item, '', 'Unowned, unsupported and cleared selections never show');
     assert.equal(visualPlayer.selected_hand_category, '');
   }
+
+  magnetPreview = 'stone';
+  await visualRoutes.handlePlayerPosition(socket, visualPlayer, {selected_hand_item:'stone'}, {playerId:'p1'});
+  assert.equal(visualPlayer.selected_hand_item, 'stone', 'Authorized machine stock is visible to peers without player stock');
+  assert.equal(visualPlayer.selected_hand_category, 'block');
+  magnetPreview = '';
+  await visualRoutes.handlePlayerPosition(socket, visualPlayer, {selected_hand_item:'stone'}, {playerId:'p1'});
+  assert.equal(visualPlayer.selected_hand_item, '', 'Lost machine stock or binding clears the preview');
 
   const legacyBody = getLegacyBody();
   assert.doesNotMatch(legacyBody, /if \(data\.type === "world_block_update"\)/);

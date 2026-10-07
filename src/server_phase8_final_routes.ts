@@ -906,7 +906,8 @@ function createServerPhase8FinalRoutes(deps: Phase8FinalRouteDeps) {
               const itemId = String(data.selected_hand_item || "").slice(0, 128);
               const category = ItemDatabase.resolveItemCategory(itemId);
               const state = ensureWritablePlayerState(player.account_username);
-              const valid = ["block", "seed"].includes(category) && getInventoryCount(state, itemId, category) > 0;
+              const valid = ["block", "seed"].includes(category)
+                && (getInventoryCount(state, itemId, category) > 0 || deps.canPreviewMagnetItem?.(player, itemId) === true);
               player.selected_hand_item = valid ? itemId : "";
               player.selected_hand_category = valid ? category : "";
             }

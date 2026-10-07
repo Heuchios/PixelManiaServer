@@ -1730,6 +1730,7 @@ let serverPhase8FinalRoutes = null;
 function getServerPhase8FinalRoutes() {
     if (!serverPhase8FinalRoutes) {
         serverPhase8FinalRoutes = ServerPhase8FinalRoutesModule.createServerPhase8FinalRoutes({
+            canPreviewMagnetItem: (player, itemId) => getMagnetSystem().canPreview(player, itemId),
             ItemDatabase,
             DropContracts,
             InventoryContracts,
@@ -3183,7 +3184,7 @@ wss.on("connection", (socket, request = null) => {
                     broadcastToWorld(reindexedWorld, buildPublicPlayerPresencePayload("player_left", player, reindexedWorld), playerId);
                     broadcastWorldPopulationUpdate(reindexedWorld);
                 }
-                if (player.joined_world) {
+                if (player.account_username) {
                     try {
                         await removeWorldLockKeysFromPlayerInventory(socket, player, player.world, "disconnect", { silent: true });
                     }
@@ -12856,12 +12857,18 @@ async function removeWorldLockKeysFromPlayerInventory(socket, player, worldName 
         };
     }
     const keyCount = getInventoryCount(state, WORLD_LOCK_KEY_ITEM_TYPE, WORLD_LOCK_KEY_ITEM_CATEGORY);
-    if (keyCount <= 0) {
+    const remoteCount = getInventoryCount(state, "magnet_machine_remote", "tool");
+    const exitItems = [
+        { id: WORLD_LOCK_KEY_ITEM_TYPE, category: WORLD_LOCK_KEY_ITEM_CATEGORY, count: keyCount, source: "world_lock_key" },
+        { id: "magnet_machine_remote", category: "tool", count: remoteCount, source: "magnet_machine" },
+    ].filter(item => item.count > 0);
+    if (exitItems.length === 0) {
+        getMagnetSystem().clearBinding(player);
         return { ok: true, removed: 0, reason: "no_key" };
     }
     const beforeState = cloneJson(state);
     const stagedState = cloneJson(state);
-    if (!spendItemFromState(stagedState, WORLD_LOCK_KEY_ITEM_TYPE, WORLD_LOCK_KEY_ITEM_CATEGORY, keyCount)) {
+    if (!exitItems.every(item => spendItemFromState(stagedState, item.id, item.category, item.count))) {
         return {
             ok: false,
             removed: 0,
@@ -12877,18 +12884,19 @@ async function removeWorldLockKeysFromPlayerInventory(socket, player, worldName 
         key_count: keyCount,
     });
     const commit = await commitPlayerInventoryState(socket, player, username, beforeState, stagedState, {
-        source: "world_lock_key",
-        action: "world_lock_key_auto_remove",
+        source: remoteCount > 0 ? "system" : "world_lock_key",
+        action: "world_exit_items_auto_remove",
         reason: cleanupReason,
-        request_id: "",
+        request_id: cleanupTransactionId,
         world: cleanWorldName,
         metadata: {
             transaction_id: cleanupTransactionId,
             world_name: cleanWorldName,
             removed_count: keyCount,
+            removed_items: exitItems,
             cleanup_reason: cleanupReason,
         },
-        failure_message: "Could not remove your World Lock Key. Try again.",
+        failure_message: "Could not remove your world key and machine remote. Try again.",
     });
     if (!commit.ok) {
         console.warn("[world-lock-key] auto-remove inventory commit failed", {
@@ -12906,6 +12914,9 @@ async function removeWorldLockKeysFromPlayerInventory(socket, player, worldName 
         };
     }
     const committedState = commit.state;
+    getMagnetSystem().clearBinding(player);
+    player.selected_hand_item = "";
+    player.selected_hand_category = "";
     const inventoryDeltas = buildInventoryDeltaClientPayloads(commit.deltas, committedState);
     const keyInventoryDelta = inventoryDeltas.find((entry) => entry &&
         entry.item_type === WORLD_LOCK_KEY_ITEM_TYPE &&
@@ -12916,12 +12927,13 @@ async function removeWorldLockKeysFromPlayerInventory(socket, player, worldName 
         after_count: getInventoryCount(committedState, WORLD_LOCK_KEY_ITEM_TYPE, WORLD_LOCK_KEY_ITEM_CATEGORY),
         stack_limit: ItemDatabase.getStackLimit(WORLD_LOCK_KEY_ITEM_TYPE),
     };
-    logItemLedgerForState(socket, player, username, committedState, WORLD_LOCK_KEY_ITEM_TYPE, WORLD_LOCK_KEY_ITEM_CATEGORY, -keyCount, "world_lock_key", cleanupTransactionId, cleanupReason, cleanWorldName, {
-        world_name: cleanWorldName,
-        removed_count: keyCount,
-        cleanup_reason: cleanupReason,
-        auto_removed_on_world_exit: true,
-    }, { skipPostgres: commit.postgres_committed });
+    for (const item of exitItems)
+        logItemLedgerForState(socket, player, username, committedState, item.id, item.category, -item.count, item.source, cleanupTransactionId, cleanupReason, cleanWorldName, {
+            world_name: cleanWorldName,
+            removed_count: item.count,
+            cleanup_reason: cleanupReason,
+            auto_removed_on_world_exit: true,
+        }, { skipPostgres: commit.postgres_committed });
     traceWorldLockKeyFlow("auto_remove_success", {
         username,
         world: cleanWorldName,
@@ -12933,17 +12945,16 @@ async function removeWorldLockKeysFromPlayerInventory(socket, player, worldName 
     if (options.silent !== true) {
         sendInventoryTransactionResult(socket, {
             ok: true,
-            action: "world_lock_key_auto_remove",
-            message: "World Lock Key removed because you left the world.",
+            action: "world_exit_items_auto_remove",
+            message: "World key and machine remote cleared on leaving the world.",
             username,
             player_data: buildPlayerStateForClient(committedState),
-            inventory_delta: keyInventoryDelta,
             inventory_deltas: inventoryDeltas,
         });
     }
     return {
         ok: true,
-        removed: keyCount,
+        removed: keyCount + remoteCount,
         state: committedState,
         inventory_deltas: inventoryDeltas,
     };

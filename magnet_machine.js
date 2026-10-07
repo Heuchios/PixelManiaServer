@@ -3,6 +3,7 @@
 const BLOCK = "magnet_machine";
 const REMOTE = "magnet_machine_remote";
 const CAPACITY = 5000;
+const OUT_OF_STOCK_MESSAGE = "Magnet Machine is out of stock. Please refill it.";
 const integer = (v, max = CAPACITY) => Math.max(0, Math.min(max, Math.trunc(Number(v) || 0)));
 
 function sanitizeMagnetState(raw = {}, world = "", x = 0, y = 0) {
@@ -84,6 +85,16 @@ function createMagnetSystem(d) {
     for (const m of machines) save(m);
   }
   function source(data) { return placementSources.get(data) || null; }
+  function canPreview(player, itemId) {
+    const binding = bindings.get(player);
+    const world = d.cleanWorld(player.world);
+    if (!binding || binding.world !== world) return false;
+    const machine = get(world, binding.x, binding.y);
+    const inventory = d.ensureWritablePlayerState(player.account_username);
+    return !!machine && machine.machine_id === binding.machine_id && machine.building
+      && machine.count > 0 && machine.item_id === itemId && eligible(itemId)
+      && !!inventory && d.getInventoryCount(inventory, REMOTE, "tool") > 0;
+  }
   function consume(machine, world, id) {
     const current = get(world, machine.x, machine.y);
     if (!current || current.machine_id !== machine.machine_id || !current.building || current.item_id !== id || current.count < 1) return null;
@@ -109,8 +120,9 @@ function createMagnetSystem(d) {
       const m = binding?.world === world ? get(world, binding.x, binding.y) : null;
       const inv = d.ensureWritablePlayerState(player.account_username);
       if (!m || m.machine_id !== binding.machine_id || !m.building || !eligible(m.item_id)
-          || !inv || d.getInventoryCount(inv, REMOTE, "tool") < 1 || m.count < 1)
+          || !inv || d.getInventoryCount(inv, REMOTE, "tool") < 1)
         return reject("Get a remote from an active machine with stock in this world.");
+      if (m.count < 1) return reject(OUT_OF_STOCK_MESSAGE);
       const packet = { ...data, action: m.item_category === "seed" ? "seed_place" : "place",
         type: m.item_category === "seed" ? "inventory_transaction_request" : "world_block_update",
         block_type: m.item_id, seed_type: m.item_id, item_id: m.item_id,
@@ -120,7 +132,11 @@ function createMagnetSystem(d) {
       finally { placementSources.delete(packet); }
       const after = get(world, m.x, m.y);
       if (after) broadcast(after);
-      return reply(socket, player, data, after, !!after && after.count === m.count - 1, "");
+      const placed = !!after && after.count === m.count - 1;
+      // Placement has finished committing (or rolling back). Notify only the
+      // remote user, never everyone receiving the machine's state broadcast.
+      return reply(socket, player, data, after, placed,
+        placed && after.count === 0 ? OUT_OF_STOCK_MESSAGE : "");
     }
     const grid = d.getTransactionGrid(data);
     if (!grid || !d.isPlayerNearGrid(player, grid.x, grid.y)) return reject("Too far away.");
@@ -214,7 +230,7 @@ function createMagnetSystem(d) {
       remote_bound: data.action === "magnet_remote" });
   }
   return { get, save, eligible, payload, broadcast, locked, collect, snapshot, restore, source, consume, handle,
-    clearBinding: player => bindings.delete(player) };
+    canPreview, clearBinding: player => bindings.delete(player) };
 }
 
 module.exports = { BLOCK, REMOTE, CAPACITY, sanitizeMagnetState, createMagnetSystem };

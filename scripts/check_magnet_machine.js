@@ -53,7 +53,9 @@ function fixture(durable = false) {
     place: async (_s, p, packet) => {
       const source = system.source(packet); assert.ok(source);
       if (packet.x === 99) return; // Occupied/out-of-reach canonical placement rejects.
+      const before = system.snapshot(p.world);
       assert.ok(system.consume(source, p.world, packet.block_type));
+      if (failure) system.restore(p.world, before); // Canonical late-save rollback.
     },
   };
   const system = createMagnetSystem(deps);
@@ -67,6 +69,8 @@ function fixture(durable = false) {
 
 (async () => {
   let f = fixture();
+  assert.equal(ItemDatabase.getItemDefinition("magnet_machine_remote").equipable, false);
+  assert.equal(ItemDatabase.getItemDefinition("magnet_machine_remote").hand_item, false);
   await f.request("magnet_select", { item_id: "dirt" }); assert.ok(f.last.ok); assert.equal(f.machine.collecting, true);
   await f.request("magnet_deposit", { amount: 300 }); assert.ok(f.last.ok); assert.equal(f.machine.count, 300); assert.equal(f.inventories.owner.dirt, 100);
   await f.request("magnet_select", { item_id: "dirt_seed" }); assert.equal(f.last.ok, false); assert.equal(f.machine.item_id, "dirt");
@@ -100,6 +104,50 @@ function fixture(durable = false) {
   f.near = false; await f.request("magnet_withdraw", { amount: 1 }); assert.equal(f.last.ok, false); f.near = true;
   assert.equal(f.system.source({ magnet_source: f.machine }), null, "A client cannot forge a stock source");
   const persisted = sanitizeMagnetState(copy(f.machine), "TEST", 1, 2); assert.deepEqual(persisted, f.machine);
+  for (const item_id of ["dirt", "dirt_seed"]) {
+    const emptyMessage = "Magnet Machine is out of stock. Please refill it.";
+    const stock = fixture();
+    await stock.request("magnet_select", { item_id });
+    await stock.request("magnet_deposit", { amount: 2 });
+    await stock.request("magnet_update", { collecting: true, building: true });
+    await stock.request("magnet_remote", {}, stock.guest);
+    assert.ok(stock.system.canPreview(stock.guest, item_id), "Bound machine stock authorizes a preview without player stock");
+    assert.equal(stock.system.canPreview(stock.owner, item_id), false, "Unbound players cannot preview machine stock");
+    assert.equal(stock.system.canPreview(stock.guest, "stone"), false, "The preview must match the machine's configured item");
+    stock.guest.world = "OTHER";
+    assert.equal(stock.system.canPreview(stock.guest, item_id), false);
+    stock.guest.world = "TEST";
+    assert.notEqual(stock.last.message, emptyMessage, "Binding must not emit a depletion popup");
+    await stock.request("magnet_place", { x: 4 }, stock.guest);
+    assert.equal(stock.machine.count, 1);
+    assert.equal(stock.last.message, "", "Stock remaining must not emit a popup");
+    await stock.request("magnet_place", { x: 99 }, stock.guest);
+    assert.equal(stock.last.ok, false);
+    assert.equal(stock.last.message, "", "Rejected placement must not announce depletion");
+    stock.failure = true;
+    await stock.request("magnet_place", { x: 5 }, stock.guest);
+    assert.equal(stock.machine.count, 1);
+    assert.equal(stock.last.ok, false);
+    assert.equal(stock.last.message, "", "Rolled-back last-item placement must not announce depletion");
+    stock.failure = false;
+    await stock.request("magnet_place", { x: 5 }, stock.guest);
+    assert.equal(stock.machine.count, 0);
+    assert.equal(stock.system.canPreview(stock.guest, item_id), false, "Empty machines cannot authorize a hand preview");
+    assert.equal(stock.last.ok, true);
+    assert.equal(stock.last.message, emptyMessage, "Last-item placement must immediately request a refill");
+    const broadcasts = stock.messages.length;
+    await stock.request("magnet_place", { x: 6 }, stock.guest);
+    assert.equal(stock.last.ok, false);
+    assert.equal(stock.last.message, emptyMessage, "Empty remote use must explain how to resume");
+    assert.equal(stock.messages.length, broadcasts, "Empty attempts must not broadcast world updates");
+    assert.ok(stock.messages.every(message => !message.message), "Other players must not receive the popup");
+    await stock.request("magnet_deposit", { amount: 1 });
+    assert.ok(stock.system.canPreview(stock.guest, item_id));
+    assert.equal(stock.last.message, "");
+    await stock.request("magnet_place", { x: 6 }, stock.guest);
+    assert.equal(stock.last.ok, true);
+    assert.equal(stock.last.message, emptyMessage, "Refilling must allow building and a new depletion notice");
+  }
   f = fixture(); await f.request("magnet_select", { item_id: "dirt_seed" });
   await f.request("magnet_deposit", { amount: 10 });
   await f.request("magnet_update", { collecting: true, building: true });
@@ -138,5 +186,5 @@ function fixture(durable = false) {
     deltas: [{ item_type: 'wrench', item_category: 'tool', delta: 1 }] });
   assert.equal(rejected.reason, 'missing_item_instance_source', 'Vague creation sources remain blocked');
   assert.equal(f.db.fake.state.item_instances.length, 1);
-  console.log("[magnet-machine] capacity, overflow, filters, deposits, withdrawals, permissions, remotes, replacement, rollback, persistence and concurrency passed");
+  console.log("[magnet-machine] capacity, overflow, filters, deposits, withdrawals, permissions, remotes, stock notifications, replacement, rollback, persistence and concurrency passed");
 })().catch(error => { console.error(error); process.exitCode = 1; });

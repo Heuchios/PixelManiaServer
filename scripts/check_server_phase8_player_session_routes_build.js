@@ -184,6 +184,14 @@ const socket = {};
   assert.deepEqual(player.equipment_slots, { hand: "wrench" });
   assert.equal(/** @type {any} */ (sent.pop()).type, "player_state");
 
+  player.world = "START";
+  player.joined_world = true;
+  await routes.handlePlayerStateSave(socket, player, {username:"uso"}, {playerId:"p1"});
+  assert.ok(events.includes("presence:player_position:START"), "Stationary equipment saves must publish appearance immediately");
+  sent.pop();
+  player.world = "";
+  player.joined_world = false;
+
   await routes.handlePlayerProfileUpdate(socket, player, {
     type: "player_profile_update",
     request_id: "bio-1",
