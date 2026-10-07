@@ -170,7 +170,7 @@ export async function lockSale(store: any, client: any, metadata: any, deltas: a
     if (!row) throw new Error("Fish market unavailable.");
     const definition = ItemDatabase.getItemDefinition(line.item_id);
     if (!definition || definition.category !== "fish" || definition.hidden) throw new Error("Invalid fish");
-    if (!Number.isSafeInteger(line.amount) || line.amount <= 0 || line.amount > Market.STACK_LIMIT ||
+    if (!Number.isSafeInteger(line.amount) || line.amount <= 0 || line.amount > Market.LEGACY_HOLDING_LIMIT ||
       !deltas.some(d => d.item_type === line.item_id && d.item_category === "fish" && d.delta === -line.amount)) throw new Error("Invalid fish weight");
     locked.push({line, row, policy: Market.policy(definition)});
   }

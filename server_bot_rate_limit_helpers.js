@@ -71,6 +71,7 @@ function createServerBotRateLimitTables(deps = {}) {
         join_world: { limit: 40, windowMs: 10000 },
         leave_world: { limit: 60, windowMs: 10000 },
         chat: botRateLimits.chat_message,
+        player_emote: { limit: 3, windowMs: 1000 },
         broadcast: { limit: 70, windowMs: 10000 },
         developer_pin_unlock: { limit: 5, windowMs: 15000 },
         developer_command_request: { limit: 60, windowMs: 5000 },

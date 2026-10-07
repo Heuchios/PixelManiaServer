@@ -192,7 +192,7 @@ function createPlayerStateHelpers(config) {
         const inventory = state[inventoryField];
         if (!isRecord(inventory))
             return 0;
-        return clampInteger(inventory[cleanItemId] || 0, 0, itemDatabase.getStackLimit(cleanItemId));
+        return clampInteger(inventory[cleanItemId] || 0, 0, (resolvedCategory === "fish" ? FishMarket.LEGACY_HOLDING_LIMIT : itemDatabase.getStackLimit(cleanItemId)));
     }
     function getInventoryOccupiedSlotCount(state) {
         if (!isRecord(state))
@@ -363,7 +363,7 @@ function createPlayerStateHelpers(config) {
                 continue;
             if (expectedCategory !== "" && resolvedCategory !== expectedCategory)
                 continue;
-            safe[itemId] = clampInteger(rawCount || 0, 0, itemDatabase.getStackLimit(itemId));
+            safe[itemId] = clampInteger(rawCount || 0, 0, resolvedCategory === "fish" ? FishMarket.LEGACY_HOLDING_LIMIT : itemDatabase.getStackLimit(itemId));
         }
         return safe;
     }

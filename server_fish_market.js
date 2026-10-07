@@ -33,7 +33,7 @@ var __importStar = (this && this.__importStar) || (function () {
     };
 })();
 Object.defineProperty(exports, "__esModule", { value: true });
-exports.SPECIES_ALIASES = exports.FISH_FAMILIES = exports.STACK_LIMIT = exports.UNIT = void 0;
+exports.SPECIES_ALIASES = exports.FISH_FAMILIES = exports.LEGACY_HOLDING_LIMIT = exports.STACK_LIMIT = exports.UNIT = void 0;
 exports.mergeSpecies = mergeSpecies;
 exports.migrateWorldSpecies = migrateWorldSpecies;
 exports.policy = policy;
@@ -47,7 +47,9 @@ const FishingCatalog = __importStar(require("./server_fishing_catalog"));
 // Fish inventory quantities are integer tenths of a kilogram, including on the wire.
 // Rates are integer hundredths of a gem/kg; gems are rounded once per sale.
 exports.UNIT = "tenths_kg";
-exports.STACK_LIMIT = 20000;
+exports.STACK_LIMIT = 9990;
+// Read legacy holdings without truncating them; new additions use STACK_LIMIT.
+exports.LEGACY_HOLDING_LIMIT = 20000;
 exports.FISH_FAMILIES = ["pond_fish", "cat_fish", "bone_fish", "barracuda", "sea_horse", "stingray", "shark", "lava_fish", "alien_fish"];
 exports.SPECIES_ALIASES = Object.fromEntries(exports.FISH_FAMILIES.flatMap(family => [`${family}_small`, `${family}_med`, ...(family === "pond_fish" ? [family] : [])].map(id => [id, `${family}_large`])));
 function mergeSpecies(inventory) {
@@ -56,7 +58,7 @@ function mergeSpecies(inventory) {
         const target = exports.SPECIES_ALIASES[id] || id;
         merged[target] = (merged[target] || 0) + Math.max(0, Math.trunc(Number(raw) || 0));
     }
-    if (Object.values(merged).some(amount => amount > exports.STACK_LIMIT))
+    if (Object.values(merged).some(amount => amount > exports.LEGACY_HOLDING_LIMIT))
         throw new Error("Fish species consolidation exceeds 2000 kg; preserve holdings and sell excess before migration.");
     return merged;
 }
@@ -106,11 +108,11 @@ function catchAmount(random = Math.random) {
     // Cubic distribution makes heavy catches less frequent, with inclusive 0.1–150 kg bounds.
     return Math.min(1500, 1 + Math.floor(Math.pow(Math.max(0, Math.min(1, random())), 3) * 1500));
 }
-function kgToUnits(value) {
+function kgToUnits(value, limit = exports.STACK_LIMIT) {
     if (typeof value !== "number" || !Number.isFinite(value))
         return 0;
     const units = Math.round(value * 10);
-    return units > 0 && units <= exports.STACK_LIMIT && Math.abs(value * 10 - units) < 1e-7 ? units : 0;
+    return units > 0 && units <= limit && Math.abs(value * 10 - units) < 1e-7 ? units : 0;
 }
 function migratePlayer(state) {
     FishingCatalog.migratePlayer(state);

@@ -2108,6 +2108,7 @@ const ServerPhase7Dispatcher = ServerPhase7DispatcherModule.createServerPhase7Di
         world_entry_ready: (socket, player, data, context) => getServerPhase8PlayerSessionRoutes().handleWorldEntryReady(socket, player, data, context),
         leave_world: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleLeaveWorld(socket, player, data, context),
         chat: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleChat(socket, player, data, context),
+        player_emote: (socket, player, data, context) => getServerPhase9RemainingRoutes().handlePlayerEmote(socket, player, data, context),
         broadcast: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleBroadcast(socket, player, data, context),
         developer_pin_unlock: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleDeveloperPinUnlockRoute(socket, player, data, context),
         developer_command_request: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleDeveloperCommandRequestRoute(socket, player, data, context),
@@ -12379,7 +12380,7 @@ async function handleFishingCompleteTransaction(socket, player, data) {
     const rewardCategory = resolveInventoryCategory(rewardItemId, session.item_category || (session.fish_id ? "fish" : ""));
     const rewardAmount = rewardCategory === "fish" ? FishMarket.catchAmount() : 1;
     if (getInventoryCount(stagedState, rewardItemId, rewardCategory) + rewardAmount > ItemDatabase.getStackLimit(rewardItemId)) {
-        sendInventoryTransactionRejected(socket, data, "Not enough room for this catch. Fish stacks hold 2000 kg.");
+        sendInventoryTransactionRejected(socket, data, "Not enough room for this catch. Fish stacks hold 999 kg.");
         return;
     }
     if (!addItemToState(stagedState, rewardItemId, rewardCategory, rewardAmount)) {
@@ -12562,11 +12563,11 @@ async function handleFishMongerTransaction(socket, player, data) {
                 return;
             }
             const owned = getInventoryCount(state, id, "fish");
-            const amount = action === "fish_monger_sell_all" ? owned : FishMarket.kgToUnits(data.weight_kg);
+            const amount = action === "fish_monger_sell_all" ? owned : FishMarket.kgToUnits(data.weight_kg, FishMarket.LEGACY_HOLDING_LIMIT);
             if (action === "fish_monger_sell_all" && amount === 0)
                 continue;
-            if (amount <= 0 || amount > owned || amount > FishMarket.STACK_LIMIT) {
-                sendInventoryTransactionRejected(socket, data, "Choose an owned weight in 0.1 kg steps, up to 2000 kg.");
+            if (amount <= 0 || amount > owned || amount > FishMarket.LEGACY_HOLDING_LIMIT) {
+                sendInventoryTransactionRejected(socket, data, "Choose an owned weight in 0.1 kg steps.");
                 return;
             }
             sales.push({ ...prices[id], amount });
@@ -20740,7 +20741,9 @@ function addItemToState(state, itemId, itemCategory, amount) {
         state[inventoryField] = {};
     }
     const stackLimit = ItemDatabase.getStackLimit(cleanItemId);
-    const currentCount = clampInteger(state[inventoryField][cleanItemId] || 0, 0, stackLimit);
+    const currentCount = getInventoryCount(state, cleanItemId, resolvedCategory);
+    if (resolvedCategory === "fish" && currentCount + Number(amount) > stackLimit)
+        return null;
     const safeAmount = clampInteger(amount || 0, 0, stackLimit);
     state[inventoryField][cleanItemId] = clampInteger(currentCount + safeAmount, 0, stackLimit);
     return {

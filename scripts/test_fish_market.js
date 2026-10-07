@@ -19,10 +19,12 @@ async function run() {
   assert.equal(Market.saleValue([{ amount: 50, price_cents: 200 }]), 10);
   assert.equal(Market.saleValue([{ amount: 1, price_cents: 200 }, { amount: 1, price_cents: 200 }]), 1);
   assert.equal(Market.saleValue([{ amount: 29, price_cents: 1000 }]), 29);
-  for (const invalid of [NaN, Infinity, -1, 0, 0.01, 5.71, 2000.1, "5.7", true, {}]) assert.equal(Market.kgToUnits(invalid), 0);
+  for (const invalid of [NaN, Infinity, -1, 0, 0.01, 5.71, 999.1, 2000.1, "5.7", true, {}]) assert.equal(Market.kgToUnits(invalid), 0);
   assert.equal(Market.kgToUnits(5.7), 57);
   assert.equal(Market.kgToUnits(0.1), 1);
-  assert.equal(Market.kgToUnits(2000), 20000);
+  assert.equal(Market.kgToUnits(999), 9990);
+  assert.equal(Market.kgToUnits(1500, Market.LEGACY_HOLDING_LIMIT), 15000);
+  assert.equal(Market.mergeSpecies({bass: 15000}).bass, 15000);
   assert.equal(Market.catchAmount(() => 0), 1);
   assert.equal(Market.catchAmount(() => 1), 1500);
   for (let i = 0; i < 10000; i++) {
@@ -49,7 +51,7 @@ async function run() {
   assert.equal(Market.quote({ ...row, supply: 1e15 }, settings, 1000).price_cents, settings.min);
   assert.equal(Market.quote(row, settings, 1e15).price_cents, settings.max);
   for (const definition of Object.values(Items.ITEMS).filter(d => d.category === "fish")) {
-    assert.equal(definition.stack_limit, 20000);
+    assert.equal(definition.stack_limit, 9990);
     const p = Market.policy(definition); assert.ok(p.min <= p.base && p.base <= p.max);
     const peak = Market.quote({item_id:definition.id,supply:0,updated_ms:1000,revision:0},p,1000);
     assert.ok(Market.saleValue([{amount:1500,price_cents:peak.price_cents}]) <= 250,
@@ -139,6 +141,16 @@ async function run() {
     assert.equal(state.fish_inventory.guppy,units);
     assert.equal(result.fish_inventory_unit,'tenths_kg');
     assert.equal(result.fish_market.guppy.price_cents,200);
+  }
+  // New catches respect the 999 kg boundary, including grandfathered stacks.
+  for (const owned of [9989, 9990, 15000]) {
+    context.FishMarket = {...Market, catchAmount:()=>1};
+    sessions.set('p',{session_id:'cap',world:'START',expires_at:Date.now()+10000,item_id:'guppy',fish_id:'guppy',item_category:'fish'});
+    state={fish_inventory:{guppy:owned},currency_inventory:{gem:0}};
+    commits=0;
+    await context.handleFishingCompleteTransaction({}, {id:'p',world:'START',account_username:'p'}, {success:true,session_id:'cap'});
+    assert.equal(commits, owned < 9990 ? 1 : 0);
+    assert.equal(state.fish_inventory.guppy, owned < 9990 ? 9990 : owned);
   }
   // Two shard clients see the same row. A queued sale reprices after the first commits.
   const realNow = Date.now;

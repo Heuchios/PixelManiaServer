@@ -218,6 +218,27 @@ function createServerPhase9RemainingRoutes(deps: Phase9RemainingRouteDeps) {
     return await getPhase8PlayerSessionRoutes().handleLeaveWorld(socket, player, data, context);
   }
 
+  async function handlePlayerEmote(socket: unknown, player: PacketRecord, data: PacketRecord, context: RouteContext): Promise<void> {
+    if (!requireAuthenticated(socket, player, "player_emote")) return;
+    if (!player.joined_world || !player.world) return;
+    const world = cleanWorld(player.world);
+    if (typeof data.world !== "string" || cleanWorld(data.world) !== world) return;
+    if (!["wave", "laugh", "sad"].includes(data.emote)) return;
+    const now = Date.now();
+    if (now - Number(player.last_emote_at || 0) < 1000) return;
+    player.last_emote_at = now;
+    player.emote_sequence = Number(player.emote_sequence || 0) + 1;
+    // Ephemeral cosmetics only. Identity, membership and rate are server-owned.
+    broadcastToWorld(world, {
+      type: "player_emote",
+      player_id: getContextPlayerId(player, context),
+      name: player.name,
+      world,
+      emote: data.emote,
+      sequence: player.emote_sequence,
+    });
+  }
+
   async function handleChat(socket: unknown, player: PacketRecord, data: PacketRecord, context: RouteContext): Promise<void> {
     if (!requireAuthenticated(socket, player, "chat")) return;
 
@@ -353,6 +374,7 @@ function createServerPhase9RemainingRoutes(deps: Phase9RemainingRouteDeps) {
     handleJoinWorld,
     handleLeaveWorld,
     handleChat,
+    handlePlayerEmote,
     handleBroadcast,
     handleDeveloperPinUnlockRoute,
     handleDeveloperCommandRequestRoute,

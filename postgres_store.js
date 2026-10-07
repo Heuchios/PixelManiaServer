@@ -9102,7 +9102,7 @@ class PostgresStore {
                     let repairedFromAmount = null;
                     const requestedStackLimit = getInventoryStackLimitForItem(deltaEntry.item_type, deltaEntry.stack_limit);
                     const existingStackLimit = clampStackLimit(existing?.stack_limit || requestedStackLimit, requestedStackLimit);
-                    const stackLimit = Math.max(existingStackLimit, requestedStackLimit);
+                    const stackLimit = resolveItemCategory(deltaEntry.item_type) === "fish" ? requestedStackLimit : Math.max(existingStackLimit, requestedStackLimit);
                     if (allowStateRepair &&
                         deltaEntry.expected_before_amount !== null &&
                         storedBeforeAmount !== deltaEntry.expected_before_amount) {
@@ -9119,7 +9119,7 @@ class PostgresStore {
                             delta: deltaEntry.delta,
                         });
                     }
-                    if (afterAmount > stackLimit) {
+                    if (afterAmount > stackLimit && !(deltaEntry.item_category === "fish" && deltaEntry.delta <= 0)) {
                         return InventoryContracts.buildPostgresInventoryDeltaTransactionFailure({
                             reason: "insufficient_capacity",
                             itemType: deltaEntry.item_type,
@@ -9139,7 +9139,7 @@ class PostgresStore {
                WHERE player_id = $1
                  AND item_type = $2
                  AND item_category = $3
-              `, [playerId, deltaEntry.item_type, deltaEntry.item_category, afterAmount, stackLimit]);
+              `, [playerId, deltaEntry.item_type, deltaEntry.item_category, afterAmount, Math.max(stackLimit, afterAmount)]);
                     }
                     else {
                         await client.query(`
@@ -9153,7 +9153,7 @@ class PostgresStore {
                 updated_at
               )
               VALUES ($1, $2, $3, $4, $5, 1, now())
-              `, [playerId, deltaEntry.item_type, deltaEntry.item_category, afterAmount, stackLimit]);
+              `, [playerId, deltaEntry.item_type, deltaEntry.item_category, afterAmount, Math.max(stackLimit, afterAmount)]);
                     }
                     const itemTransactionResult = await client.query(`
             INSERT INTO ${this.table("item_transactions")} (
@@ -10017,7 +10017,7 @@ class PostgresStore {
                 let beforeAmount = storedBeforeAmount;
                 let repairedFromAmount = null;
                 const existingStackLimit = clampStackLimit(existing?.stack_limit || requestedStackLimit, requestedStackLimit);
-                const stackLimit = Math.max(existingStackLimit, requestedStackLimit);
+                const stackLimit = resolveItemCategory(itemType) === "fish" ? requestedStackLimit : Math.max(existingStackLimit, requestedStackLimit);
                 if (allowStateRepair && hasExpectedBefore && storedBeforeAmount !== expectedBeforeAmount) {
                     repairedFromAmount = storedBeforeAmount;
                     beforeAmount = expectedBeforeAmount;
