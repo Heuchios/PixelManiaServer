@@ -48,8 +48,11 @@ async function main() {
   const firstDue = info.next_due_at;
   await Tax.ensureSchema(store);
   assert.equal((await Tax.status(store,a)).next_due_at,firstDue,"Restart must not reset the weekly cycle");
-  // Remove physical lock; then transfer two worlds away. Current week peak survives.
+  // Remove unpaid physical lock: release ownership without erasing this week's peak.
   await store.withTransaction(c=>Names.mirrorOwner(store,c,worlds[0].id,{},null));
+  assert.equal((await Tax.status(store,a)).owned_count,4);
+  assert.equal((await Tax.status(store,a)).current_bill_gems,1000);
+  await store.withTransaction(c=>Names.mirrorOwner(store,c,worlds[0].id,lock(a),a));
   assert.equal((await Tax.status(store,a)).owned_count,5);
   for (const w of worlds.slice(0,2)) await store.withTransaction(c=>Names.mirrorOwner(store,c,w.id,lock(b),b));
   info=await Tax.status(store,a);

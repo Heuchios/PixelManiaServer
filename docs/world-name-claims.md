@@ -32,10 +32,19 @@ local implementation/testing does not activate claims or start production deadli
   worlds hide search controls, and the server rejects searches from those worlds.
   Expiry after a replacement reservation uses that replacement name plus digits.
   Exact, case-insensitive rarity pricing is in `src/world_name_pricing.ts`.
-- Breaking/replacing the lock never clears ownership or resets the deadline.
-  The owner can place a replacement physical lock; other players cannot take
-  ownership by placing one. World-lock inactivity decay is disabled while this
-  permanent-ownership system is active. Area-lock decay is unchanged.
+- Breaking an unpaid world's physical lock immediately releases ownership and
+  the reservation. The world keeps its public name, becomes unowned, and has no
+  expiry deadline. Anyone, including the former owner, can enter and lock it
+  again immediately for a fresh seven-day reservation; voluntary release creates
+  no cooldown. Search marks such a name available and directs players to enter
+  that unlocked world and place a lock. It cannot be taken onto another world
+  while remaining that world's address. Paid names retain permanent ownership
+  after lock removal; only their owner can replace the physical lock.
+  World-lock inactivity decay remains disabled; area-lock decay is unchanged.
+- Creating/entering a new world preserves the entered public name. It does not
+  start a payment deadline or generate a replacement name. The seven-day clock
+  starts with lock placement; numeric fallback names are assigned only on unpaid
+  expiry. Internal routing UUIDs are not public fallback names.
 - Each newly locked world keeps its entered public name for seven days, even if
   its owner already has other pending names. After an unpaid expiry, that account
   cannot reserve that same name for seven more days. Unpaid names cannot be

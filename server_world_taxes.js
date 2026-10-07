@@ -114,7 +114,7 @@ async function beforeOwnerChange(store, client, oldOwner, newOwner, worldId) {
         await settle(store, client, oldOwner);
     const permit = (await client.query(`SELECT * FROM ${store.table("world_tax_transfer_permits")} WHERE world_id=$1`, [worldId])).rows[0];
     if (permit) {
-        if (permit.from_account_id !== oldOwner || permit.to_account_id !== newOwner)
+        if (!newOwner || permit.from_account_id !== oldOwner || permit.to_account_id !== newOwner)
             throw new Error("A committed world key trade is awaiting its ownership transfer.");
         // The buyer already passed the check inside the committed trade. Honor that
         // purchase even if a grace deadline passes before the world save completes.
@@ -122,7 +122,8 @@ async function beforeOwnerChange(store, client, oldOwner, newOwner, worldId) {
         await client.query(`DELETE FROM ${store.table("world_tax_transfer_permits")} WHERE world_id=$1`, [worldId]);
         return;
     }
-    await assertCanAcquire(store, client, newOwner);
+    if (newOwner)
+        await assertCanAcquire(store, client, newOwner);
 }
 async function authorizeTrade(store, client, worldId, fromPlayer, toPlayer, requestId) {
     if (!exports.enabled)

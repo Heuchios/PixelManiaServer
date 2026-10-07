@@ -83,20 +83,20 @@ export async function assertCanAcquire(store: any, client: any, account: string)
     WHERE account_id=$1 AND paid_at IS NULL AND grace_until<=now() LIMIT 1`,[account]);
   if (overdue.rows.length) throw new Error("Pay overdue world tax in Profile > Taxes before acquiring worlds or reserving/claiming names.");
 }
-export async function beforeOwnerChange(store: any, client: any, oldOwner: string | null, newOwner: string, worldId: string): Promise<void> {
+export async function beforeOwnerChange(store: any, client: any, oldOwner: string | null, newOwner: string | null, worldId: string): Promise<void> {
   if (!enabled || oldOwner === newOwner) return;
   await lock(store,client);
   if (oldOwner) await settle(store,client,oldOwner);
   const permit = (await client.query(`SELECT * FROM ${store.table("world_tax_transfer_permits")} WHERE world_id=$1`,[worldId])).rows[0];
   if (permit) {
-    if (permit.from_account_id !== oldOwner || permit.to_account_id !== newOwner) throw new Error("A committed world key trade is awaiting its ownership transfer.");
+    if (!newOwner || permit.from_account_id !== oldOwner || permit.to_account_id !== newOwner) throw new Error("A committed world key trade is awaiting its ownership transfer.");
     // The buyer already passed the check inside the committed trade. Honor that
     // purchase even if a grace deadline passes before the world save completes.
     await settle(store,client,newOwner);
     await client.query(`DELETE FROM ${store.table("world_tax_transfer_permits")} WHERE world_id=$1`,[worldId]);
     return;
   }
-  await assertCanAcquire(store,client,newOwner);
+  if (newOwner) await assertCanAcquire(store,client,newOwner);
 }
 export async function authorizeTrade(store:any,client:any,worldId:string,fromPlayer:string,toPlayer:string,requestId:string):Promise<void> {
   if (!enabled) return;
@@ -110,7 +110,7 @@ export async function authorizeTrade(store:any,client:any,worldId:string,fromPla
   await client.query(`INSERT INTO ${store.table("world_tax_transfer_permits")}(world_id,from_account_id,to_account_id,request_id)
     VALUES($1,$2,$3,$4)`,[worldId,owners.from_account,owners.to_account,requestId]);
 }
-export async function afterOwnerChange(store: any, client: any, oldOwner: string | null, newOwner: string): Promise<void> {
+export async function afterOwnerChange(store: any, client: any, oldOwner: string | null, newOwner: string | null): Promise<void> {
   if (!enabled || oldOwner === newOwner) return;
   for (const account of [...new Set([oldOwner,newOwner].filter(Boolean))]) {
     await client.query(`UPDATE ${store.table("world_tax_accounts")} SET owned_count=q.n,

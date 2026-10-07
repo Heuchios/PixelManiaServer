@@ -6527,8 +6527,7 @@ class PostgresStore {
             ]);
             const normalizedWorldLock = worldLockResult.rows[0] ? worldLockRowToPayload(worldLockResult.rows[0]) : {};
             const nameRecord = await WorldNames.status(this, cleanWorldName);
-            if (nameRecord?.owner_account_id)
-                state.world_name_owner = nameRecord.owner_lock;
+            state.world_name_owner = nameRecord?.owner_account_id ? nameRecord.owner_lock : {};
             state.world_name_claim = WorldNames.publicStatus(nameRecord);
             const savedWorldLock = toObject(state.world_lock);
             if (Object.keys(normalizedWorldLock).length > 0 && (!savedWorldLock.is_locked || cleanName(savedWorldLock.owner_name || "") === "")) {

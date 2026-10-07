@@ -19,7 +19,9 @@ Do not roll back to a pre-tax binary after activation without a billing migratio
 - Manual PAY in Profile > TAXES pays all due bills with confirmation. No automatic
   gem deductions, interest, late fees, world deletion or loss of permanent names.
 - All owned worlds count, including generated names and unpaid name reservations.
-  Physical lock removal and public name changes do not change the durable owner.
+  Removing an unpaid world's physical lock releases its durable owner and lowers
+  that account's current count. The week's peak and accrued bills remain intact.
+  Paid names retain ownership after lock removal; renaming never changes ownership.
   Shared access/admin rights are not ownership. System worlds are excluded.
 - Separate accounts can each use an allowance; this does not prevent alt-account
   hoarding. A transfer within one week can result in charges to both owners if

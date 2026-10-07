@@ -3199,10 +3199,12 @@ const worldNameRefreshTimer = setInterval(async () => {
       const row = await WorldNames.status(postgresStore, name, false);
       const info = WorldNames.publicStatus(row);
       const previous = state.world_name_claim;
-      if (info && (previous?.name !== info.name || previous?.status !== info.status || previous?.original_paid_gems !== info.original_paid_gems)) {
+      if (info && (previous?.name !== info.name || previous?.status !== info.status || previous?.original_paid_gems !== info.original_paid_gems || previous?.expires_at !== info.expires_at)) {
         state.world_name_claim = info;
-        if (row?.owner_account_id) state.world_name_owner = row.owner_lock;
+        state.world_name_owner = row?.owner_account_id ? row.owner_lock : {};
         broadcastToWorld(name,{type:"world_name_status",world:name,world_name_claim:info});
+        reconcileWorldLockStateWithBlocks(name);
+        broadcastToWorld(name,makeWorldLockStatePayload(name,getEffectiveWorldLockStateInState(state)));
       }
     }
   } catch (error) { console.warn("[world-names] refresh failed",getErrorMessage(error)); }
@@ -6768,7 +6770,7 @@ function reconcileWorldLockStateWithBlocks(worldName: any) {
     return false;
   }
 
-  if (WorldNames.enabled && state.world_name_owner?.is_locked) return false;
+  if (WorldNames.enabled && state.world_name_claim?.status === "claimed" && state.world_name_owner?.is_locked) return false;
   state.world_lock = {};
   return true;
 }
@@ -6784,7 +6786,8 @@ function isWorldLockPlacementBlocked(worldName: any) {
  * @returns {PixelMania.WorldLockState}
  */
 function getEffectiveWorldLockStateInState(state: any) {
-  const lock: any = sanitizeWorldLockState(state?.world_lock?.is_locked ? state.world_lock : (WorldNames.enabled ? state?.world_name_owner || {} : {}));
+  const persistent = WorldNames.enabled && state?.world_name_claim?.status === "claimed";
+  const lock: any = sanitizeWorldLockState({...((state?.world_lock?.is_locked ? state.world_lock : (persistent ? state?.world_name_owner || {} : {}))),persistent_ownership:persistent});
   if (!lock.is_locked) return {};
 
   const lockBlock = getWorldLockBlockEntry(state);
@@ -6802,7 +6805,7 @@ function getEffectiveWorldLockStateInState(state: any) {
     return lock;
   }
 
-  return WorldNames.enabled && state?.world_name_owner?.is_locked ? lock : {};
+  return persistent && state?.world_name_owner?.is_locked ? lock : {};
 }
 
 // Locks retain protection until an eligible punch is committed. Activity is
@@ -7300,7 +7303,7 @@ function makeWorldLockStatePayload(worldName: any, state: any) {
     type: "world_interaction_update",
     world: cleanWorld(worldName),
     action: "world_lock_state",
-    state: sanitizeWorldLockState(state || {}),
+    state: sanitizeWorldLockState({...state,persistent_ownership:WorldNames.enabled && ensureWorldState(worldName).world_name_claim?.status === "claimed"}),
   };
 }
 
@@ -7322,7 +7325,8 @@ function applyWorldLockStateForBlockUpdate(worldName: any, update: any, player: 
   }
 
   if (update.action === "break") {
-    if (WorldNames.enabled && state.world_lock?.is_locked) state.world_name_owner = { ...state.world_lock };
+    if (WorldNames.enabled && state.world_name_claim?.status === "claimed" && state.world_lock?.is_locked) state.world_name_owner = { ...state.world_lock };
+    else state.world_name_owner = {};
     state.world_lock = {};
     return makeWorldLockStatePayload(worldName, getEffectiveWorldLockStateInState(state));
   }
@@ -14247,7 +14251,7 @@ async function handleWorldNameTransaction(socket: unknown, player: ServerPacketR
       const result = await WorldNames.search(postgresStore, identity.account_id, String(data.name || ""));
       const canManage = row.owner_account_id === identity.account_id;
       reply({ok:true,world_name_claim:WorldNames.publicStatus(row),can_manage:canManage,
-        world_name_search:{...result,can_reserve:result.available && canManage && row.status === "generated"}});
+        world_name_search:{...result,can_reserve:result.available && !result.requires_world_lock && canManage && row.status === "generated"}});
       return;
     }
     let inventoryPayload: ServerPacketRecord = {};
@@ -14270,7 +14274,7 @@ async function handleWorldNameTransaction(socket: unknown, player: ServerPacketR
     row = await WorldNames.status(postgresStore,worldName);
     const info = WorldNames.publicStatus(row);
     ensureWorldState(worldName).world_name_claim = info;
-    if (row?.owner_account_id) ensureWorldState(worldName).world_name_owner = row.owner_lock;
+    ensureWorldState(worldName).world_name_owner = row?.owner_account_id ? row.owner_lock : {};
     reply({ok:true,...inventoryPayload,world_name_claim:info,can_manage:row?.owner_account_id === identity.account_id,
       message:action === "world_name_claim" ? "Name claimed permanently. The original payment is recorded publicly." : action === "world_name_reserve" ? "Name reserved for seven days." : ""});
     if (action !== "world_name_status") broadcastToWorld(worldName,{type:"world_name_status",world:worldName,world_name_claim:info});
@@ -28755,7 +28759,7 @@ function sanitizeWorldLockState(state: any) {
 
   return {
     is_locked: isLocked,
-    persistent_ownership: WorldNames.enabled && isLocked,
+    persistent_ownership: WorldNames.enabled && isLocked && Boolean(rawState.persistent_ownership),
     owner_name: ownerName,
     owner_account_id: ownerAccountId,
     owner_player_id: ownerPlayerId,

@@ -1,6 +1,7 @@
 "use strict";
 // Isolated PostgreSQL/WASM database; never loads .env or connects to game servers.
 process.env.WORLD_NAME_CLAIMS_ENABLED = "true";
+process.env.WORLD_TAX_ENABLED = "false"; // Taxes have their own isolated integration suite.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
@@ -41,9 +42,21 @@ async function main() {
   await Names.ensureSchema(store);
   assert.equal(new Date((await Names.status(store,"SHOP")).expires_at).getTime(),originalDeadline,"Restart cannot extend deadline");
   await store.withTransaction(client=>Names.mirrorOwner(store,client,existing,{},null));
-  assert.equal((await Names.status(store,"SHOP")).owner_account_id,aliceAccount,"Removing lock preserves ownership");
+  assert.equal((await Names.status(store,"SHOP")).owner_account_id,null,"Removing an unpaid lock releases ownership");
+  assert.equal((await Names.status(store,"SHOP")).public_name,"SHOP","Unlocking must not auto-rename");
+  assert.equal((await Names.status(store,"SHOP")).status,"unowned");
+  assert.equal((await Names.status(store,"SHOP")).expires_at,null);
+  const releasedSearch = await Names.search(store,aliceAccount,"SHOP");
+  assert.equal(releasedSearch.available,true);
+  assert.equal(releasedSearch.requires_world_lock,true);
+  assert.equal(await Names.resolve(store,"SHOP"),"SHOP","Released name remains the address of the unlocked world");
+  await store.withTransaction(client=>Names.mirrorOwner(store,client,existing,lock(bobAccount,"namebob"),bobAccount));
+  assert.equal((await Names.status(store,"SHOP")).owner_account_id,bobAccount,"Another player can immediately reserve the released world");
+  await store.withTransaction(client=>Names.mirrorOwner(store,client,existing,{},null));
+  await store.withTransaction(client=>Names.mirrorOwner(store,client,existing,lock(aliceAccount,"namealice"),aliceAccount));
+  const renewedDeadline = new Date((await Names.status(store,"SHOP")).expires_at).getTime();
   await Names.reserve(store,"SHOP",aliceAccount,"shop");
-  assert.equal(new Date((await Names.status(store,"SHOP")).expires_at).getTime(),originalDeadline,"Repeated reserve cannot reset deadline");
+  assert.equal(new Date((await Names.status(store,"SHOP")).expires_at).getTime(),renewedDeadline,"Repeated reserve without unlocking cannot reset deadline");
   await assert.rejects(Names.reserve(store,"SHOP",bobAccount,"SHOP"),/owner/);
 
   // Insufficient funds and forged price/name leave receipt and balance untouched.
@@ -69,6 +82,8 @@ async function main() {
   assert.equal(results.filter(r=>r.ok).length,1,JSON.stringify(results));
   row = await Names.status(store,"SHOP");
   assert.equal(row.status,"claimed"); assert.equal(Number(row.paid_gems),750000);
+  await store.withTransaction(client=>Names.mirrorOwner(store,client,existing,{},null));
+  assert.equal((await Names.status(store,"SHOP")).owner_account_id,aliceAccount,"Paid ownership survives removing the physical lock");
   assert.equal(Number((await db.query("SELECT amount FROM pixelmania.inventory WHERE player_id=$1 AND item_type='gem'",[alice])).rows[0].amount),250000);
   assert.equal((await db.query("SELECT count(*)::int AS n FROM pixelmania.gem_ledger WHERE player_id=$1 AND delta=-750000",[alice])).rows[0].n,1);
   await store.withTransaction(client=>Names.mirrorOwner(store,client,existing,lock(bobAccount,"namebob"),bobAccount));
@@ -77,6 +92,9 @@ async function main() {
 
   // Every newly locked world retains its entered name for the full payment window.
   const first = await Names.resolve(store,"FISHING");
+  assert.equal((await Names.status(store,first)).public_name,"FISHING");
+  assert.equal((await Names.status(store,first)).status,"unowned");
+  assert.equal((await Names.status(store,first)).expires_at,null,"Creation alone must not start an expiry or generate a public name");
   const firstId = (await db.query("SELECT world_id FROM pixelmania.worlds WHERE world_name=$1",[first])).rows[0].world_id;
   await store.withTransaction(client=>Names.mirrorOwner(store,client,firstId,lock(aliceAccount,"namealice"),aliceAccount));
   const second = await Names.resolve(store,"HELLO123");

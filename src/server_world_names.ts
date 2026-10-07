@@ -170,14 +170,25 @@ export function publicStatus(row: RecordData | null): RecordData | null {
 }
 
 // Called only from the authoritative world-lock mirror, in its world transaction.
-// Removing a block doesn't erase ownership, and changing owners doesn't reset time.
+// Only paid names retain ownership without a physical world lock.
 export async function mirrorOwner(store: any, client: any, worldId: string, lock: RecordData, ownerId: string | null): Promise<void> {
-  if (!enabled || !lock.is_locked || !ownerId) return;
+  if (!enabled) return;
   await mutex(store, client);
   const world = await client.query(`SELECT world_name::text AS name FROM ${store.table("worlds")} WHERE world_id=$1`, [worldId]);
   const internal = world.rows[0]?.name;
   if (!internal || systemName(internal)) return;
   let row = (await client.query(`SELECT * FROM ${store.table("world_name_registry")} WHERE world_id=$1 FOR UPDATE`, [worldId])).rows[0];
+  if (!lock.is_locked) {
+    if (!row?.owner_account_id || row.status === "claimed") return;
+    await WorldTaxes.beforeOwnerChange(store, client, row.owner_account_id, null, worldId);
+    await client.query(`UPDATE ${store.table("world_name_registry")} SET status='unowned',owner_account_id=NULL,owner_lock='{}'::jsonb,
+      quoted_gems=0,pricing_version=0,reserved_at=NULL,expires_at=NULL,updated_at=clock_timestamp() WHERE world_id=$1`, [worldId]);
+    await WorldTaxes.afterOwnerChange(store, client, row.owner_account_id, null);
+    await store.recordTransactionLedger(client, {transaction_type:"WORLD_NAME_RELEASED",source:"world_name",action:"world_lock_name_release",
+      world_id:worldId,status:"success",metadata:{name:row.public_name,previous_owner_account_id:row.owner_account_id,reason:"unpaid_world_lock_removed"}});
+    return;
+  }
+  if (!ownerId) return;
   if (!row) {
     // Covers worlds first created by legacy/admin paths after activation.
     const occupied = await client.query(`SELECT 1 FROM ${store.table("world_name_registry")} WHERE public_name=$1`, [internal]);
@@ -211,10 +222,11 @@ export async function search(store: any, account: string, rawName: string): Prom
   return await store.withTransaction(async (client: any) => {
     await mutex(store, client); await expire(store, client);
     let reason = "";
+    const existing = (await client.query(`SELECT status FROM ${store.table("world_name_registry")} WHERE public_name=$1`, [quote.name])).rows[0];
     if (systemName(quote.name)) reason = "This name is reserved for the game.";
-    else if ((await client.query(`SELECT 1 FROM ${store.table("world_name_registry")} WHERE public_name=$1`, [quote.name])).rows.length) reason = "This name is already in use.";
+    else if (existing && existing.status !== "unowned") reason = "This name is already in use.";
     else if ((await client.query(`SELECT 1 FROM ${store.table("world_name_cooldowns")} WHERE account_id=$1 AND name=$2 AND until_at>clock_timestamp()`, [account,quote.name])).rows.length) reason = "You must wait seven days before reserving this expired name again.";
-    return {name:quote.name,price_gems:quote.price_gems,pricing_version:quote.pricing_version,available:!reason,reason};
+    return {name:quote.name,price_gems:quote.price_gems,pricing_version:quote.pricing_version,available:!reason,requires_world_lock:existing?.status === "unowned",reason};
   }, "world_name_search");
 }
 
