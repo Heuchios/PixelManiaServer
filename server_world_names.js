@@ -252,7 +252,7 @@ async function mirrorOwner(store, client, worldId, lock, ownerId) {
         row = (await client.query(`INSERT INTO ${store.table("world_name_registry")}(world_id,public_name,status)
       VALUES($1,$2,'unowned') RETURNING *`, [worldId, internal])).rows[0];
     }
-    await WorldTaxes.beforeOwnerChange(store, client, row.owner_account_id, ownerId);
+    await WorldTaxes.beforeOwnerChange(store, client, row.owner_account_id, ownerId, worldId);
     if (row.status === "unowned") {
         await expire(store, client);
         const cooldown = await client.query(`SELECT 1 FROM ${store.table("world_name_cooldowns")}

@@ -11902,6 +11902,8 @@ class PostgresStore {
           }
         }
 
+        if (normalizedRequesterOffers.some(isWorldLockKeyTradeItem)) await WorldTaxes.authorizeTrade(this,client,worldId,requesterId,targetId,requestId);
+        if (normalizedTargetOffers.some(isWorldLockKeyTradeItem)) await WorldTaxes.authorizeTrade(this,client,worldId,targetId,requesterId,requestId);
         const tradeLedgerContextByEntry = new Map<string, RuntimeRecord>();
         const tradeLedgerEntryKey = (playerId: string, entry: InventoryLedgerEntry): string =>
           `${playerId}\u0000${entry.item_type}\u0000${entry.item_category}\u0000${entry.delta}`;

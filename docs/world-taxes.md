@@ -34,6 +34,12 @@ settles the prior count before changing ownership and updates both accounts afte
 the change in the same transaction. Overdue acquisition checks are in that mirror,
 not merely in the UI. Name reserve and claim paths also check overdue tax.
 
+World-key trades also check the recipient inside the inventory transaction. A
+durable, single-use transfer permit commits with the trade and is consumed by
+the ownership mirror. This honors an already paid purchase if a grace deadline
+passes between trade completion and the world save; an overdue buyer cannot
+create a new permit. Unrelated ownership changes cannot consume that permit.
+
 Bills materialize lazily on status, payment or ownership/name mutations, using
 PostgreSQL time. Offline accounts accrue every complete week using the persisted
 ownership count; checking twice does not create duplicate bills. There is no timer

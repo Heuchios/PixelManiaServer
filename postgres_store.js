@@ -10830,6 +10830,10 @@ class PostgresStore {
                         trackedInstanceMovements.push(...(transferResult.item_instances || []));
                     }
                 }
+                if (normalizedRequesterOffers.some(isWorldLockKeyTradeItem))
+                    await WorldTaxes.authorizeTrade(this, client, worldId, requesterId, targetId, requestId);
+                if (normalizedTargetOffers.some(isWorldLockKeyTradeItem))
+                    await WorldTaxes.authorizeTrade(this, client, worldId, targetId, requesterId, requestId);
                 const tradeLedgerContextByEntry = new Map();
                 const tradeLedgerEntryKey = (playerId, entry) => `${playerId}\u0000${entry.item_type}\u0000${entry.item_category}\u0000${entry.delta}`;
                 const rememberTradeLedgerContext = (playerId, entry, context = {}) => {

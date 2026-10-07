@@ -4,6 +4,7 @@ exports.RATE = exports.FREE_WORLDS = exports.WEEK_MS = exports.enabled = void 0;
 exports.ensureSchema = ensureSchema;
 exports.assertCanAcquire = assertCanAcquire;
 exports.beforeOwnerChange = beforeOwnerChange;
+exports.authorizeTrade = authorizeTrade;
 exports.afterOwnerChange = afterOwnerChange;
 exports.status = status;
 exports.preparePayment = preparePayment;
@@ -49,6 +50,11 @@ async function ensureSchema(store) {
       account_id uuid NOT NULL REFERENCES ${store.table("accounts")}(account_id),request_id text NOT NULL,
       amount_gems bigint NOT NULL CHECK(amount_gems>0),paid_at timestamptz NOT NULL DEFAULT now(),
       PRIMARY KEY(account_id,request_id))`);
+        await client.query(`CREATE TABLE IF NOT EXISTS ${store.table("world_tax_transfer_permits")} (
+      world_id uuid PRIMARY KEY REFERENCES ${store.table("worlds")}(world_id),
+      from_account_id uuid NOT NULL REFERENCES ${store.table("accounts")}(account_id),
+      to_account_id uuid NOT NULL REFERENCES ${store.table("accounts")}(account_id),
+      request_id text NOT NULL,authorized_at timestamptz NOT NULL DEFAULT now())`);
         const activation = await client.query(`INSERT INTO ${store.table("world_tax_activation")}(singleton) VALUES(true)
       ON CONFLICT DO NOTHING RETURNING activated_at`);
         if (activation.rows.length)
@@ -100,13 +106,37 @@ async function assertCanAcquire(store, client, account) {
     if (overdue.rows.length)
         throw new Error("Pay overdue world tax in Profile > Taxes before acquiring worlds or reserving/claiming names.");
 }
-async function beforeOwnerChange(store, client, oldOwner, newOwner) {
+async function beforeOwnerChange(store, client, oldOwner, newOwner, worldId) {
     if (!exports.enabled || oldOwner === newOwner)
         return;
     await lock(store, client);
     if (oldOwner)
         await settle(store, client, oldOwner);
+    const permit = (await client.query(`SELECT * FROM ${store.table("world_tax_transfer_permits")} WHERE world_id=$1`, [worldId])).rows[0];
+    if (permit) {
+        if (permit.from_account_id !== oldOwner || permit.to_account_id !== newOwner)
+            throw new Error("A committed world key trade is awaiting its ownership transfer.");
+        // The buyer already passed the check inside the committed trade. Honor that
+        // purchase even if a grace deadline passes before the world save completes.
+        await settle(store, client, newOwner);
+        await client.query(`DELETE FROM ${store.table("world_tax_transfer_permits")} WHERE world_id=$1`, [worldId]);
+        return;
+    }
     await assertCanAcquire(store, client, newOwner);
+}
+async function authorizeTrade(store, client, worldId, fromPlayer, toPlayer, requestId) {
+    if (!exports.enabled)
+        return;
+    await lock(store, client);
+    const owners = (await client.query(`SELECT a.account_id AS from_account,b.account_id AS to_account,n.owner_account_id
+    FROM ${store.table("players")} a CROSS JOIN ${store.table("players")} b
+    JOIN ${store.table("world_name_registry")} n ON n.world_id=$3
+    WHERE a.player_id=$1 AND b.player_id=$2`, [fromPlayer, toPlayer, worldId])).rows[0];
+    if (!owners || owners.from_account !== owners.owner_account_id)
+        throw new Error("World ownership changed before the key trade.");
+    await assertCanAcquire(store, client, owners.to_account);
+    await client.query(`INSERT INTO ${store.table("world_tax_transfer_permits")}(world_id,from_account_id,to_account_id,request_id)
+    VALUES($1,$2,$3,$4)`, [worldId, owners.from_account, owners.to_account, requestId]);
 }
 async function afterOwnerChange(store, client, oldOwner, newOwner) {
     if (!exports.enabled || oldOwner === newOwner)

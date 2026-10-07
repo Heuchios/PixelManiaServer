@@ -98,6 +98,19 @@ async function main() {
   assert.equal((await pay(1500)).ok,false,"A request ID from a paid bill cannot be replayed against later bills");
   assert.equal((await Tax.status(store,a)).amount_due,1500);
   assert.equal((await db.query("SELECT count(*)::int AS n FROM pixelmania.transaction_ledger WHERE action='world_tax_assess' AND status='success'")).rows[0].n,4,"Each bill is assessed once in the audit ledger");
+  await assert.rejects(store.withTransaction(c=>Tax.authorizeTrade(store,c,worlds[2].id,bob,alice,"blocked-trade")),/overdue world tax/);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM pixelmania.world_tax_transfer_permits")).rows[0].n,0);
+  // Authorize while within grace. Crossing its end before the world save must
+  // honor the already committed purchase, rather than strand the buyer's gems.
+  await db.query("UPDATE pixelmania.world_tax_bills SET grace_until=now()+interval '1 day' WHERE account_id=$1 AND paid_at IS NULL",[a]);
+  await assert.rejects(store.withTransaction(async c=>{await Tax.authorizeTrade(store,c,worlds[2].id,bob,alice,"rollback-trade");throw Error("trade rollback");}),/trade rollback/);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM pixelmania.world_tax_transfer_permits")).rows[0].n,0);
+  await store.withTransaction(c=>Tax.authorizeTrade(store,c,worlds[2].id,bob,alice,"approved-trade"));
+  await db.query("UPDATE pixelmania.world_tax_bills SET grace_until=now()-interval '1 second' WHERE account_id=$1 AND paid_at IS NULL",[a]);
+  assert.equal((await Tax.status(store,a)).blocked,true);
+  await store.withTransaction(c=>Names.mirrorOwner(store,c,worlds[2].id,lock(a),a));
+  assert.equal((await Names.status(store,worlds[2].name)).owner_account_id,a);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM pixelmania.world_tax_transfer_permits")).rows[0].n,0,"Committed transfer authorization is consumed once");
   console.log("[world-tax-postgres] PASS: activation, restart, allowance, high-water billing, transfers, lock removal, overdue guards, offline catchup, forged/insufficient payments, atomic rollback, duplicate payment, gem and transaction ledgers");
   await db.close();
 }

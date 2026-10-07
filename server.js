@@ -5670,6 +5670,12 @@ async function executeTrade(trade) {
                     cancelTrade(trade, "Claim the world name before transferring its key.");
                     return;
                 }
+                const recipient = transfer.to_player_id === trade.requester_id ? requesterRecord.player : targetRecord.player;
+                const tax = await WorldTaxes.status(postgresStore, getPlayerLockIdentity(recipient).account_id);
+                if (tax.blocked) {
+                    cancelTrade(trade, "The buyer must pay overdue world tax in Profile > Taxes first.");
+                    return;
+                }
             }
         }
         if (!worldKeyValidation.ok) {
