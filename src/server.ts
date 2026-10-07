@@ -22194,7 +22194,8 @@ function getBlockBreakXp(blockType: any, layer: any) {
   const definition = ItemDatabase.getItemDefinition(clampString(blockType || ""));
   if (!definition || definition.category !== "block") return 0;
 
-  return 3;
+  const configured = Number(definition.break_xp);
+  return Number.isInteger(configured) && configured >= 0 ? configured : 3;
 }
 
 function getRecipeXp(stationId: any, output: any) {

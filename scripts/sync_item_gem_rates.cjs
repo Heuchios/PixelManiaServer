@@ -1,4 +1,7 @@
 // Import block-break gem expectations without changing block/seed probabilities.
+if(require('../../pixel-mania/Data/items/farming_balance.json').version>=2){
+  throw new Error('Legacy audit rates are superseded. Use import_sheet_drop_rates.cjs, then npm run build:farming-balance.');
+}
 const fs = require('node:fs');
 const path = require('node:path');
 const assert = require('node:assert/strict');
