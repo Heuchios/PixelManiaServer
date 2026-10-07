@@ -1,4 +1,5 @@
 import { randomInt, randomUUID } from "node:crypto";
+import * as WorldTaxes from "./server_world_taxes";
 import { quoteWorldName, RESERVATION_DURATION_MS } from "./world_name_pricing";
 
 // Roll out with the matching client. Persisted activation time never moves on restart.
@@ -184,6 +185,7 @@ export async function mirrorOwner(store: any, client: any, worldId: string, lock
     row = (await client.query(`INSERT INTO ${store.table("world_name_registry")}(world_id,public_name,status)
       VALUES($1,$2,'unowned') RETURNING *`, [worldId,internal])).rows[0];
   }
+  await WorldTaxes.beforeOwnerChange(store, client, row.owner_account_id, ownerId);
   if (row.status === "unowned") {
     await expire(store, client);
     const cooldown = await client.query(`SELECT 1 FROM ${store.table("world_name_cooldowns")}
@@ -200,6 +202,7 @@ export async function mirrorOwner(store: any, client: any, worldId: string, lock
   }
   await client.query(`UPDATE ${store.table("world_name_registry")} SET owner_account_id=$2,owner_lock=$3::jsonb,
     updated_at=clock_timestamp() WHERE world_id=$1`, [worldId,ownerId,JSON.stringify(lock)]);
+  await WorldTaxes.afterOwnerChange(store, client, row.owner_account_id, ownerId);
 }
 
 export async function search(store: any, account: string, rawName: string): Promise<RecordData> {
@@ -224,6 +227,7 @@ export async function reserve(store: any, internal: string, account: string, raw
     const row = (await client.query(`SELECT n.* FROM ${store.table("world_name_registry")} n
       JOIN ${store.table("worlds")} w USING(world_id) WHERE w.world_name=$1 FOR UPDATE OF n`, [internal])).rows[0];
     if (!row || row.owner_account_id !== account) throw new Error("Only the world owner can reserve its name.");
+    await WorldTaxes.assertCanAcquire(store, client, account);
     if (row.status === "reserved" && row.public_name === quote.name) return true; // No timer reset.
     if (row.status !== "generated") throw new Error("This world already has a reserved or claimed name.");
     if ((await client.query(`SELECT 1 FROM ${store.table("world_name_registry")} WHERE public_name=$1`, [quote.name])).rows.length) throw new Error("That name is in use.");
@@ -245,6 +249,7 @@ export async function prepareClaim(store: any, client: any, worldId: string, pla
   const row = (await client.query(`SELECT n.*,p.account_id FROM ${store.table("world_name_registry")} n
     JOIN ${store.table("players")} p ON p.player_id=$2 WHERE n.world_id=$1 FOR UPDATE OF n`, [worldId,playerId])).rows[0];
   if (!row || row.owner_account_id !== row.account_id) throw new Error("Only the owner can claim this name.");
+  await WorldTaxes.assertCanAcquire(store, client, row.account_id);
   if (row.status !== "reserved") throw new Error("This name is not pending payment.");
   const live = await client.query(`SELECT expires_at>clock_timestamp() AS live FROM ${store.table("world_name_registry")} WHERE world_id=$1`, [worldId]);
   if (!live.rows[0]?.live) throw new Error("The name reservation expired.");

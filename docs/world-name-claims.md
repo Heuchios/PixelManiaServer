@@ -14,7 +14,8 @@ local implementation/testing does not activate claims or start production deadli
   requires an explicit confirmation. This is the original claim fee, not a resale
   price or an estimate of market value.
 - Payment permanently claims the name. A transfer retains its original receipt.
-  No recurring world tax has been introduced.
+  Separate optional account-wide taxes are described in `world-taxes.md`; they
+  never remove a permanently claimed name.
 - Unpaid expiry changes only the public name to its original name plus 1–3 random
   digits (for example `ABC7`, `ABC42`, or `ABC315`). All occupied names are skipped,
   trying one-digit suffixes first, then two and three. Names at the 32-character

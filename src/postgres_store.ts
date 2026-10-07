@@ -13,6 +13,7 @@ import PostgresContracts = require("./postgres_store_contracts");
 import ItemDatabase = require("./server_item_database");
 import * as FishMarketStore from "./server_fish_market_store";
 import * as WorldNames from "./server_world_names";
+import * as WorldTaxes from "./server_world_taxes";
 import QuestStore = require("./server_quest_store");
 
 type PostgresPoolConstructor = new (config?: PoolConfig) => Pool;
@@ -735,6 +736,7 @@ class PostgresStore {
           await this.ensurePersistenceSchema();
           await FishMarketStore.ensureSchema(this);
           await WorldNames.ensureSchema(this);
+          await WorldTaxes.ensureSchema(this);
         } catch (error) {
           if (isRetryablePostgresError(error) && attempt < POSTGRES_INIT_MAX_ATTEMPTS) {
             throw error;
@@ -9978,6 +9980,8 @@ class PostgresStore {
         const inventoryBeforeHash = await this.getInventorySnapshotHash(client, playerId);
         const nameClaim = action === "world_name_claim"
           ? await WorldNames.prepareClaim(this, client, worldId, playerId, deltas, metadata) : null;
+        const taxAccount = action === "world_tax_pay"
+          ? await WorldTaxes.preparePayment(this, client, playerId, deltas, metadata, requestId) : null;
         if (source === "fish_monger") await FishMarketStore.lockSale(this, client, metadata, deltas, playerId, requestId);
         for (const deltaEntry of deltas) {
           const itemInventory = await client.query(
@@ -10343,6 +10347,7 @@ class PostgresStore {
         }
         await QuestStore.recordGameplay(this,client,playerId,action,metadata,String(metadata.transaction_id||requestId));
         if (nameClaim) await WorldNames.finishClaim(this, client, nameClaim, requestId);
+        if (taxAccount) await WorldTaxes.finishPayment(this, client, taxAccount, requestId);
         return {
           ...InventoryContracts.buildPostgresInventoryDeltaTransactionSuccess({playerId, worldId, ledgerEntries}),
           ...(source === "fish_monger" ? {fish_market_sales: metadata.fish_market_sales} : {}),

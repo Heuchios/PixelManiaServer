@@ -42,6 +42,8 @@ function createServerInventoryEconomyRoutes(deps) {
         ["world_name_search", handleWorldNameTransaction],
         ["world_name_reserve", handleWorldNameTransaction],
         ["world_name_claim", handleWorldNameTransaction],
+        ["world_tax_status", handleWorldNameTransaction],
+        ["world_tax_pay", handleWorldNameTransaction],
         ["seed_place", handleSeedPlaceTransaction],
         ["seed_fertilize", handleSeedFertilizeTransaction],
         ["seed_splice", handleSeedSpliceTransaction],

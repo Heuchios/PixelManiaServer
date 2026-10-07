@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.enabled = void 0;
 exports.systemName = systemName;
@@ -17,6 +50,7 @@ exports.finishClaim = finishClaim;
 exports.owned = owned;
 exports.aliases = aliases;
 const node_crypto_1 = require("node:crypto");
+const WorldTaxes = __importStar(require("./server_world_taxes"));
 const world_name_pricing_1 = require("./world_name_pricing");
 // Roll out with the matching client. Persisted activation time never moves on restart.
 exports.enabled = /^(1|true)$/i.test(process.env.WORLD_NAME_CLAIMS_ENABLED || "false");
@@ -218,6 +252,7 @@ async function mirrorOwner(store, client, worldId, lock, ownerId) {
         row = (await client.query(`INSERT INTO ${store.table("world_name_registry")}(world_id,public_name,status)
       VALUES($1,$2,'unowned') RETURNING *`, [worldId, internal])).rows[0];
     }
+    await WorldTaxes.beforeOwnerChange(store, client, row.owner_account_id, ownerId);
     if (row.status === "unowned") {
         await expire(store, client);
         const cooldown = await client.query(`SELECT 1 FROM ${store.table("world_name_cooldowns")}
@@ -234,6 +269,7 @@ async function mirrorOwner(store, client, worldId, lock, ownerId) {
     }
     await client.query(`UPDATE ${store.table("world_name_registry")} SET owner_account_id=$2,owner_lock=$3::jsonb,
     updated_at=clock_timestamp() WHERE world_id=$1`, [worldId, ownerId, JSON.stringify(lock)]);
+    await WorldTaxes.afterOwnerChange(store, client, row.owner_account_id, ownerId);
 }
 async function search(store, account, rawName) {
     const quote = (0, world_name_pricing_1.quoteWorldName)(rawName);
@@ -265,6 +301,7 @@ async function reserve(store, internal, account, rawName, expectedPrice) {
       JOIN ${store.table("worlds")} w USING(world_id) WHERE w.world_name=$1 FOR UPDATE OF n`, [internal])).rows[0];
         if (!row || row.owner_account_id !== account)
             throw new Error("Only the world owner can reserve its name.");
+        await WorldTaxes.assertCanAcquire(store, client, account);
         if (row.status === "reserved" && row.public_name === quote.name)
             return true; // No timer reset.
         if (row.status !== "generated")
@@ -292,6 +329,7 @@ async function prepareClaim(store, client, worldId, playerId, deltas, metadata) 
     JOIN ${store.table("players")} p ON p.player_id=$2 WHERE n.world_id=$1 FOR UPDATE OF n`, [worldId, playerId])).rows[0];
     if (!row || row.owner_account_id !== row.account_id)
         throw new Error("Only the owner can claim this name.");
+    await WorldTaxes.assertCanAcquire(store, client, row.account_id);
     if (row.status !== "reserved")
         throw new Error("This name is not pending payment.");
     const live = await client.query(`SELECT expires_at>clock_timestamp() AS live FROM ${store.table("world_name_registry")} WHERE world_id=$1`, [worldId]);

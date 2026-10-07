@@ -36,6 +36,7 @@ var __importStar = (this && this.__importStar) || (function () {
 Object.defineProperty(exports, "__esModule", { value: true });
 require("dotenv").config({ quiet: true });
 const WorldNames = __importStar(require("./server_world_names"));
+const WorldTaxes = __importStar(require("./server_world_taxes"));
 const WebSocket = require("ws");
 const childProcess = require("child_process");
 const crypto = require("crypto");
@@ -12940,7 +12941,7 @@ async function removeWorldLockKeysFromPlayerInventory(socket, player, worldName 
  */
 async function handleWorldNameTransaction(socket, player, data) {
     const action = String(data.action || "");
-    const readOnly = action === "world_name_status" || action === "world_name_search";
+    const readOnly = action === "world_name_status" || action === "world_name_search" || action === "world_tax_status";
     const requestId = makeRequestId(data);
     const worldName = getPlayerCurrentWorldName(player);
     const reply = (payload) => sendInventoryTransactionResult(socket, { request_id: requestId, action, world: worldName, ...payload });
@@ -12965,6 +12966,30 @@ async function handleWorldNameTransaction(socket, player, data) {
             const flush = await flushPendingSessionPersistence(player.account_username, worldName, "before_world_name_claim");
             if (!flush.ok || player.disconnected || getPlayerCurrentWorldName(player) !== worldName)
                 throw new Error("Your session changed. Open the lock again.");
+        }
+        if (action === "world_tax_status" || action === "world_tax_pay") {
+            const account = getPlayerLockIdentity(player).account_id;
+            let tax = await WorldTaxes.status(postgresStore, account);
+            let inventoryPayload = {};
+            if (action === "world_tax_pay") {
+                const amount = Number(tax.amount_due);
+                if (!tax.enabled || !Number.isSafeInteger(amount) || amount <= 0 || amount !== Number(data.tax_amount))
+                    throw new Error("The tax bill changed. Refresh Taxes before paying.");
+                const before = cloneJson(ensureWritablePlayerState(player.account_username));
+                const staged = cloneJson(before);
+                if (!spendItemFromState(staged, "gem", "currency", amount))
+                    throw new Error("You do not have enough gems to pay this tax bill.");
+                const committed = await commitPlayerInventoryState(socket, player, player.account_username, before, staged, {
+                    source: "world_tax", action: "world_tax_pay", reason: "weekly_world_tax", request_id: requestId,
+                    world: worldName, skip_inventory_lock: true, metadata: { tax_amount: amount },
+                });
+                if (!committed.ok)
+                    throw new Error(committed.message || "Tax payment could not be completed.");
+                inventoryPayload = { player_data: buildPlayerStateForClient(committed.state), inventory_deltas: buildInventoryDeltaClientPayloads(committed.deltas, committed.state) };
+                tax = await WorldTaxes.status(postgresStore, account);
+            }
+            reply({ ok: true, ...inventoryPayload, world_tax: tax, message: action === "world_tax_pay" ? "World tax paid." : "" });
+            return;
         }
         let row = await WorldNames.status(postgresStore, worldName);
         if (!row)

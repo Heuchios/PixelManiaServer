@@ -321,7 +321,7 @@ function run() {
       "quest failures must use the audited inventory action and only log valuable completion/redemption failures");
     assert.match(source, /if \(!readOnly\)\s*queueFailedTransactionLedger\(socket, "inventory_transaction_request", message/,
       "name reservation/payment failures must use the audited inventory action; status reads do not write failure ledgers");
-    assert.match(source, /const readOnly = action === "world_name_status" \|\| action === "world_name_search"/);
+    assert.match(source, /const readOnly = action === "world_name_status" \|\| action === "world_name_search" \|\| action === "world_tax_status";/);
   });
 
   console.log("");

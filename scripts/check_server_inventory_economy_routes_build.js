@@ -307,7 +307,7 @@ const routes = InventoryEconomyRoutesModule.createServerInventoryEconomyRoutes(r
     request_id: "lock-1",
   });
   assert.deepEqual(delegated.pop(), { name: "world_lock_get_key", action: "world_lock_get_key" });
-  for (const action of ["world_name_status", "world_name_search", "world_name_reserve", "world_name_claim"]) {
+  for (const action of ["world_name_status", "world_name_search", "world_name_reserve", "world_name_claim", "world_tax_status", "world_tax_pay"]) {
     await routes.handleInventoryTransactionRequest(socket, player, {action,world:"TEST",name:"SHOP"});
     assert.deepEqual(delegated.pop(), {name:"world_names",action});
   }
