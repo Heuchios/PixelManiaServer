@@ -123,6 +123,10 @@ console.log(`[machine-break-return] verified ${expectedReturns.size} recoverable
 const recycle = ItemDatabase.getItemDefinition("recycle_bin");
 assert.equal(recycle.break_return_to_inventory, false);
 assert.equal(recycle.seed, "recycle_bin_seed");
-assert.deepEqual(recycle.drop_rules.fixed_drops.map(d => d.item_id).sort(), ["gem", "recycle_bin", "recycle_bin_seed"]);
+// Fractional averages use a guaranteed gem entry plus a fractional extra.
+assert.deepEqual([...new Set(recycle.drop_rules.fixed_drops.map(d => d.item_id))].sort(), ["gem", "recycle_bin", "recycle_bin_seed"]);
+const recycleGems = recycle.drop_rules.fixed_drops.filter(d => d.item_id === "gem");
+assert.ok(recycleGems.every(d => Number.isInteger(d.amount) && d.amount > 0));
+assert.equal(recycleGems.reduce((sum, d) => sum + d.amount * (d.chance ?? 1), 0), 7.5);
 assert.ok(recycle.drop_rules.fixed_drops.every(d => d.amount > 0 || d.amount_range?.[1] > 0));
 assert.equal(ItemDatabase.getSpliceResult("green_couch_seed", "biohazard_barrel_seed"), "recycle_bin_seed");
