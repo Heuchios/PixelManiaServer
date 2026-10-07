@@ -19319,9 +19319,9 @@ async function handleDoorEnterRequest(socket: any, player: any, data: any) {
     player.velocity_y = 0;
     player.animation_state = "idle";
     resetPlayerMovementTracking(player);
-    if (changedWorld) {
-      setPlayerWorldEntrySpawnGuard(player, targetWorld, targetPosition);
-    }
+    // Same-world portals also need to reject movement still queued at the source.
+    // The guard clears as soon as the client acknowledges the destination position.
+    setPlayerWorldEntrySpawnGuard(player, targetWorld, targetPosition);
     clearNetfoxTrustedPlayerState(player);
     clearTrustedMovementBaseline(player);
     ensureWorldState(targetWorld);
