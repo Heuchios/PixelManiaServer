@@ -1,6 +1,9 @@
 // Durable account bills. Ownership changes settle the old count before recording
 // the new count. Weekly high-water billing prevents transfer/lock-reset avoidance.
-export const enabled = /^(1|true)$/i.test(process.env.WORLD_TAX_ENABLED || "false");
+// Removed from gameplay for now, including environments previously activated.
+// Restoring taxes requires an explicit billing-date migration before opting in.
+export const suspended = !/^(0|false)$/i.test(process.env.WORLD_TAX_SUSPENDED || "true");
+export const enabled = !suspended && /^(1|true)$/i.test(process.env.WORLD_TAX_ENABLED || "false");
 export const WEEK_MS = 7 * 86400000;
 export const FREE_WORLDS = 3;
 export const RATE = 500;
@@ -9,6 +12,7 @@ async function lock(store: any, client: any): Promise<void> {
   await client.query("SELECT pg_advisory_xact_lock(hashtext($1))", [`${store.schema}:world-tax-v1`]);
 }
 export async function ensureSchema(store: any): Promise<void> {
+  if (suspended) return; // Preserve historical records without accruing or enforcing bills.
   if (!enabled) {
     const existing = await store.db.query("SELECT to_regclass($1) AS present", [`${store.schema}.world_tax_activation`]);
     if (existing.rows[0]?.present) {

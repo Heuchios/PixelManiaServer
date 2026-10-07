@@ -1,9 +1,9 @@
 # World taxes
 
-`WORLD_TAX_ENABLED=true` activates account-wide weekly taxes. Requires world name
-claims on every shard. Defaults off; staging activation is separate from deployment.
-Once activated, the flag must stay on so ownership changes cannot escape accounting.
-Do not roll back to a pre-tax binary after activation without a billing migration.
+Taxes are currently removed from gameplay. `WORLD_TAX_SUSPENDED` defaults true,
+overriding `WORLD_TAX_ENABLED` and prior activation. The following rules document
+the archived implementation. See the current-status section below before any
+future reactivation; elapsed disabled time must not become retroactive bills.
 
 ## Rules
 
@@ -71,3 +71,13 @@ the existing audited inventory rejection path. Debts stay with the liable accoun
 Production activation and multi-shard rollout are separate work, not authorized
 by the staging implementation. Back up before activation; all shards must switch
 together to prevent old code accepting ownership changes without tax accounting.
+# Current status: removed from gameplay
+
+World taxes are suspended by default, including environments with
+`WORLD_TAX_ENABLED=true`. The profile Taxes entry is removed. Billing, payment,
+and acquisition restrictions do not run; historical tables and receipts remain.
+World-name reservations and claim prices are unaffected. Do not set
+`WORLD_TAX_SUSPENDED=false` in a live environment without first implementing an
+explicit billing-date reset/migration: the archived active implementation would
+otherwise catch up elapsed weeks. Isolated legacy tests opt in explicitly.
+

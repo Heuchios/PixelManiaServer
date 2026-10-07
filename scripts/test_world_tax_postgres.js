@@ -1,6 +1,7 @@
 "use strict";
 process.env.WORLD_NAME_CLAIMS_ENABLED = "true";
 process.env.WORLD_TAX_ENABLED = "true";
+process.env.WORLD_TAX_SUSPENDED = "false"; // Exercise the archived active implementation in isolation.
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
