@@ -165,7 +165,8 @@ assert.match(
 );
 assert.match(
   serverSource,
-  /if \(changedWorld\) \{\s*setPlayerWorldEntrySpawnGuard\(player, targetWorld, targetPosition\);/
+  /resetPlayerMovementTracking\(player\);\s*(?:\/\/[^\n]*\n\s*)*setPlayerWorldEntrySpawnGuard\(player, targetWorld, targetPosition\);/,
+  "Every door arrival must be protected, including portals within the same world"
 );
 assert.match(
   sessionRoutesSource,
