@@ -1,3 +1,22 @@
+# Claimed-name unlock grace (current rule)
+
+Removing a claimed world's physical World Lock starts a durable seven-day
+`unlocked_until` deadline. Protection remains with the owner; only that owner can
+replace the lock during grace. Replacement cancels the deadline without payment.
+Repeated saves and restarts never extend an active deadline. Existing claimed
+worlds missing their lock receive a full seven days when this migration runs.
+
+At expiry the world becomes unowned under the same public name, with all terrain
+preserved. Anyone may place a World Lock and pay a new claim fee. The old receipt
+is archived in `world_name_claim_history`, and the release is ledgered; no refund.
+Inactive worlds expire through the normal server sweep and name lookups. Busy
+world writes are skipped by the sweep and retried to avoid reversed row locks.
+
+The client warns immediately after removal and reminds the owner of the exact
+UTC deadline once per day per client session while visiting the world. Claim and
+reservation confirmations explain the ownership condition before payment.
+This supersedes older descriptions below of permanently retained paid ownership.
+
 # World name reservations and original payment receipts
 
 Implementation is behind `WORLD_NAME_CLAIMS_ENABLED=true`. It is off by default;

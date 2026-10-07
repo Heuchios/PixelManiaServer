@@ -84,6 +84,13 @@ async function main() {
   assert.equal(row.status,"claimed"); assert.equal(Number(row.paid_gems),750000);
   await store.withTransaction(client=>Names.mirrorOwner(store,client,existing,{},null));
   assert.equal((await Names.status(store,"SHOP")).owner_account_id,aliceAccount,"Paid ownership survives removing the physical lock");
+  const grace = (await Names.status(store,"SHOP")).unlocked_until;
+  assert(grace);
+  await store.withTransaction(client=>Names.mirrorOwner(store,client,existing,{},null));
+  assert.equal(String((await Names.status(store,"SHOP")).unlocked_until),String(grace),"Repeated saves must not reset grace");
+  await assert.rejects(store.withTransaction(client=>Names.mirrorOwner(store,client,existing,lock(bobAccount,"namebob"),bobAccount)),/Only the owner/);
+  await store.withTransaction(client=>Names.mirrorOwner(store,client,existing,lock(aliceAccount,"namealice"),aliceAccount));
+  assert.equal((await Names.status(store,"SHOP")).unlocked_until,null,"Replacing the lock cancels grace without another payment");
   assert.equal(Number((await db.query("SELECT amount FROM pixelmania.inventory WHERE player_id=$1 AND item_type='gem'",[alice])).rows[0].amount),250000);
   assert.equal((await db.query("SELECT count(*)::int AS n FROM pixelmania.gem_ledger WHERE player_id=$1 AND delta=-750000",[alice])).rows[0].n,1);
   await store.withTransaction(client=>Names.mirrorOwner(store,client,existing,lock(bobAccount,"namebob"),bobAccount));
@@ -164,6 +171,29 @@ async function main() {
   const noNames = {query:async()=>({rows:[]})};
   assert.match(await Names.availableFallbackName(store,noNames,"ABC"),/^ABC\d$/);
   assert.match(await Names.availableFallbackName(store,noNames,"A".repeat(32)),/^A{31}\d$/,"Fallback stays within 32 characters");
+  // Exercise the real world-snapshot mirror: effective protection is still locked,
+  // but the physical block is gone. Deadline survives restart and then releases.
+  const snapshot = {world_lock:lock(bobAccount,"namebob"),world_name_claim:{status:"claimed"},blocks:[{x:8,y:9,block_type:"gold_block"}]};
+  await store.withTransaction(client=>store.mirrorWorldLockState(client,existing,snapshot));
+  const finalDeadline = (await Names.status(store,"SHOP")).unlocked_until;
+  assert(finalDeadline);
+  await Names.ensureSchema(store);
+  assert.equal(String((await Names.status(store,"SHOP")).unlocked_until),String(finalDeadline));
+  await db.query("UPDATE pixelmania.world_name_registry SET unlocked_until=clock_timestamp()-interval '1 second' WHERE world_id=$1",[existing]);
+  await Names.sweep(store);
+  row = await Names.status(store,"SHOP");
+  assert.equal(row.status,"unowned"); assert.equal(row.owner_account_id,null); assert.equal(row.paid_gems,null);
+  assert.equal(row.public_name,"SHOP"); assert.equal(await Names.resolve(store,"SHOP"),"SHOP");
+  assert.equal((await Names.search(store,aliceAccount,"SHOP")).available,true);
+  assert.equal((await db.query("SELECT count(*)::int AS n FROM pixelmania.world_name_claim_history WHERE world_id=$1",[existing])).rows[0].n,1);
+  assert.equal((await db.query("SELECT is_locked FROM pixelmania.world_locks WHERE world_id=$1",[existing])).rows[0].is_locked,false);
+  await store.withTransaction(client=>store.mirrorWorldLockState(client,existing,snapshot));
+  assert.equal((await Names.status(store,"SHOP")).status,"unowned","Stale snapshot cannot restore expired protection");
+  assert.deepEqual(snapshot.blocks,[{x:8,y:9,block_type:"gold_block"}]);
+  await store.withTransaction(client=>Names.mirrorOwner(store,client,existing,lock(aliceAccount,"namealice"),aliceAccount));
+  await db.query("UPDATE pixelmania.inventory SET amount=1000000 WHERE player_id=$1 AND item_type='gem'",[alice]);
+  assert.equal((await claim("namealice","SHOP")).ok,true,"Released claim can be paid again");
+  assert.equal((await Names.status(store,"SHOP")).status,"claimed");
   await db.close();
   console.log("[world-name-postgres] PASS: activation, restart, ownership, price validation, atomic rollback, duplicate claims, ledgers, transfer receipt, multiple pending names, numeric expiry suffixes, collisions, cooldown and alias reuse");
 }

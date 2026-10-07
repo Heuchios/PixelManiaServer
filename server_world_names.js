@@ -42,6 +42,8 @@ exports.resolve = resolve;
 exports.resolveEntry = resolveEntry;
 exports.status = status;
 exports.publicStatus = publicStatus;
+exports.hasPhysicalLock = hasPhysicalLock;
+exports.reconcileLockSnapshot = reconcileLockSnapshot;
 exports.mirrorOwner = mirrorOwner;
 exports.search = search;
 exports.reserve = reserve;
@@ -95,6 +97,16 @@ async function ensureSchema(store) {
       name text NOT NULL, until_at timestamptz NOT NULL, PRIMARY KEY(account_id,name));
       CREATE INDEX IF NOT EXISTS world_name_expiry_idx ON ${store.table("world_name_registry")}(expires_at) WHERE status='reserved';
       CREATE INDEX IF NOT EXISTS world_name_owner_idx ON ${store.table("world_name_registry")}(owner_account_id);`);
+        await client.query(`ALTER TABLE ${store.table("world_name_registry")} ADD COLUMN IF NOT EXISTS unlocked_until timestamptz;
+      CREATE TABLE IF NOT EXISTS ${store.table("world_name_claim_history")} (
+        LIKE ${store.table("world_name_claim_receipts")} INCLUDING DEFAULTS,
+        released_at timestamptz NOT NULL DEFAULT clock_timestamp());
+      CREATE INDEX IF NOT EXISTS world_name_unlock_expiry_idx ON ${store.table("world_name_registry")}(unlocked_until) WHERE unlocked_until IS NOT NULL;`);
+        // Existing claimed worlds already missing their lock get a full window at rollout.
+        await client.query(`UPDATE ${store.table("world_name_registry")} n SET unlocked_until=clock_timestamp()+interval '7 days'
+      FROM ${store.table("worlds")} w WHERE w.world_id=n.world_id AND n.status='claimed' AND n.unlocked_until IS NULL
+      AND jsonb_typeof(w.world_state->'blocks')='array' AND NOT EXISTS
+      (SELECT 1 FROM jsonb_array_elements(w.world_state->'blocks') b WHERE COALESCE(b->>'block_type',b->>'type') IN ('world_lock','super_world_lock'))`);
         const activation = await client.query(`INSERT INTO ${store.table("world_name_activation")} (singleton) VALUES(true)
       ON CONFLICT DO NOTHING RETURNING activated_at`);
         // Migrate exactly once: existing owners all get the same seven-day window.
@@ -154,6 +166,29 @@ async function availableFallbackName(store, client, original) {
     return candidates.find(name => name !== original && !systemName(name) && !occupied.has(name)) || null;
 }
 async function expire(store, client) {
+    // World saves acquire the world row before the directory mutex. Skip busy
+    // worlds instead of waiting in the reverse lock order; the next sweep retries.
+    const abandoned = await client.query(`SELECT n.* FROM ${store.table("world_name_registry")} n
+    JOIN ${store.table("worlds")} w USING(world_id)
+    WHERE n.status='claimed' AND n.unlocked_until<=clock_timestamp() FOR UPDATE OF w,n SKIP LOCKED`);
+    for (const row of abandoned.rows) {
+        await WorldTaxes.beforeOwnerChange(store, client, row.owner_account_id, null, row.world_id);
+        await client.query(`INSERT INTO ${store.table("world_name_claim_history")}
+      SELECT r.*,clock_timestamp() FROM ${store.table("world_name_claim_receipts")} r WHERE world_id=$1`, [row.world_id]);
+        await client.query(`DELETE FROM ${store.table("world_name_claim_receipts")} WHERE world_id=$1`, [row.world_id]);
+        await client.query(`UPDATE ${store.table("world_name_registry")} SET status='unowned',owner_account_id=NULL,
+      owner_lock='{}',quoted_gems=0,pricing_version=0,reserved_at=NULL,expires_at=NULL,unlocked_until=NULL,
+      updated_at=clock_timestamp() WHERE world_id=$1`, [row.world_id]);
+        await client.query(`DELETE FROM ${store.table("world_lock_access")} WHERE world_id=$1`, [row.world_id]);
+        await client.query(`DELETE FROM ${store.table("world_members")} WHERE world_id=$1`, [row.world_id]);
+        await client.query(`UPDATE ${store.table("world_locks")} SET is_locked=false,owner_player_id=NULL,
+      lock_type='none',metadata='{}',updated_at=clock_timestamp() WHERE world_id=$1`, [row.world_id]);
+        await client.query(`UPDATE ${store.table("worlds")} SET owner_player_id=NULL WHERE world_id=$1`, [row.world_id]);
+        await WorldTaxes.afterOwnerChange(store, client, row.owner_account_id, null);
+        await store.recordTransactionLedger(client, { transaction_type: "WORLD_NAME_RELEASED", source: "world_name",
+            action: "claimed_world_unlock_expired", world_id: row.world_id, status: "success",
+            metadata: { name: row.public_name, previous_owner_account_id: row.owner_account_id, deadline: row.unlocked_until } });
+    }
     const due = await client.query(`SELECT * FROM ${store.table("world_name_registry")}
     WHERE status='reserved' AND expires_at <= clock_timestamp() FOR UPDATE`);
     for (const row of due.rows) {
@@ -230,12 +265,29 @@ function publicStatus(row) {
         return null;
     return { name: row.public_name, status: row.status, quoted_gems: Number(row.quoted_gems),
         original_paid_gems: row.paid_gems == null ? null : Number(row.paid_gems),
-        claimed_at: row.claimed_at || null, expires_at: row.expires_at || null,
+        claimed_at: row.claimed_at || null, expires_at: row.expires_at || null, unlocked_until: row.unlocked_until || null,
         pricing_version: Number(row.pricing_version), server_time: new Date().toISOString() };
 }
 // Called only from the authoritative world-lock mirror, in its world transaction.
 // Only paid names retain ownership without a physical world lock.
-async function mirrorOwner(store, client, worldId, lock, ownerId) {
+function hasPhysicalLock(state) {
+    return Array.isArray(state.blocks) && state.blocks.some((block) => ["world_lock", "super_world_lock"].includes(block.block_type || block.type));
+}
+async function reconcileLockSnapshot(store, client, worldId, state) {
+    if (!exports.enabled || !Array.isArray(state.blocks))
+        return;
+    await mutex(store, client);
+    await expire(store, client);
+    const row = (await client.query(`SELECT * FROM ${store.table("world_name_registry")} WHERE world_id=$1`, [worldId])).rows[0];
+    if (!row || hasPhysicalLock(state))
+        return;
+    // Persisted protection can outlive its physical lock only during a paid grace period.
+    state.world_lock = row.status === "claimed" ? row.owner_lock : {};
+    state.world_name_owner = row.status === "claimed" ? row.owner_lock : {};
+    if (!row.owner_account_id)
+        await client.query(`UPDATE ${store.table("worlds")} SET owner_player_id=NULL WHERE world_id=$1`, [worldId]);
+}
+async function mirrorOwner(store, client, worldId, lock, ownerId, physicalLockPresent = Boolean(lock.is_locked)) {
     if (!exports.enabled)
         return;
     await mutex(store, client);
@@ -244,6 +296,16 @@ async function mirrorOwner(store, client, worldId, lock, ownerId) {
     if (!internal || systemName(internal))
         return;
     let row = (await client.query(`SELECT * FROM ${store.table("world_name_registry")} WHERE world_id=$1 FOR UPDATE`, [worldId])).rows[0];
+    if (row?.status === "claimed") {
+        if (!physicalLockPresent) {
+            await client.query(`UPDATE ${store.table("world_name_registry")} SET unlocked_until=COALESCE(unlocked_until,clock_timestamp()+interval '7 days'),
+        updated_at=clock_timestamp() WHERE world_id=$1`, [worldId]);
+            return;
+        }
+        if (row.unlocked_until && ownerId !== row.owner_account_id)
+            throw new Error("Only the owner may replace the World Lock during the seven-day grace period.");
+        await client.query(`UPDATE ${store.table("world_name_registry")} SET unlocked_until=NULL WHERE world_id=$1`, [worldId]);
+    }
     if (!lock.is_locked) {
         if (!row?.owner_account_id || row.status === "claimed")
             return;

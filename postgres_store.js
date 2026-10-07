@@ -5708,6 +5708,7 @@ class PostgresStore {
         if (!worldId)
             return;
         const state = toObject(worldState);
+        await WorldNames.reconcileLockSnapshot(this, client, worldId, state);
         const lock = toObject(state.world_lock);
         const isLocked = Boolean(lock.is_locked);
         const cleanLockType = cleanName(lock.lock_block_type || lock.lock_type || "world_lock").toLowerCase();
@@ -5735,7 +5736,7 @@ class PostgresStore {
             owner_player_id: ownerPlayerId || cleanName(lock.owner_player_id || lock.owner_profile_id || ""),
             owner_profile_id: ownerPlayerId || cleanName(lock.owner_player_id || lock.owner_profile_id || ""),
         });
-        await WorldNames.mirrorOwner(this, client, worldId, lockMetadata, ownerAccountId);
+        await WorldNames.mirrorOwner(this, client, worldId, lockMetadata, ownerAccountId, Array.isArray(state.blocks) ? WorldNames.hasPhysicalLock(state) : isLocked);
         const allowedPlayers = Array.isArray(lock.allowed_players) ? lock.allowed_players : [];
         const roles = toObject(lock.player_roles);
         // Rebuild identity access from the current member list so removed members
@@ -6525,8 +6526,10 @@ class PostgresStore {
           `, [cleanWorldName]),
                 this.loadActiveWorldDrops(cleanWorldName),
             ]);
-            const normalizedWorldLock = worldLockResult.rows[0] ? worldLockRowToPayload(worldLockResult.rows[0]) : {};
             const nameRecord = await WorldNames.status(this, cleanWorldName);
+            const normalizedWorldLock = nameRecord && !nameRecord.owner_account_id ? {} : (worldLockResult.rows[0] ? worldLockRowToPayload(worldLockResult.rows[0]) : {});
+            if (nameRecord && !nameRecord.owner_account_id && !WorldNames.hasPhysicalLock(state))
+                state.world_lock = {};
             state.world_name_owner = nameRecord?.owner_account_id ? nameRecord.owner_lock : {};
             state.world_name_claim = WorldNames.publicStatus(nameRecord);
             const savedWorldLock = toObject(state.world_lock);

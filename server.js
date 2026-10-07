@@ -2863,13 +2863,15 @@ const worldNameRefreshTimer = setInterval(async () => {
             const row = await WorldNames.status(postgresStore, name, false);
             const info = WorldNames.publicStatus(row);
             const previous = state.world_name_claim;
-            if (info && (previous?.name !== info.name || previous?.status !== info.status || previous?.original_paid_gems !== info.original_paid_gems || previous?.expires_at !== info.expires_at)) {
+            if (info && (previous?.name !== info.name || previous?.status !== info.status || previous?.original_paid_gems !== info.original_paid_gems || previous?.expires_at !== info.expires_at || previous?.unlocked_until !== info.unlocked_until)) {
                 state.world_name_claim = info;
                 state.world_name_owner = row?.owner_account_id ? row.owner_lock : {};
                 broadcastToWorld(name, { type: "world_name_status", world: name, world_name_claim: info });
                 reconcileWorldLockStateWithBlocks(name);
                 broadcastToWorld(name, makeWorldLockStatePayload(name, getEffectiveWorldLockStateInState(state)));
             }
+            if (info?.unlocked_until)
+                broadcastToWorld(name, { type: "world_name_status", world: name, world_name_claim: info });
         }
     }
     catch (error) {
@@ -6025,7 +6027,8 @@ function reconcileWorldLockStateWithBlocks(worldName) {
     if (hasWorldLockBlockInState(state)) {
         return false;
     }
-    if (WorldNames.enabled && state.world_name_claim?.status === "claimed" && state.world_name_owner?.is_locked)
+    if (WorldNames.enabled && state.world_name_claim?.status === "claimed" && state.world_name_owner?.is_locked &&
+        (!state.world_name_claim.unlocked_until || Date.parse(state.world_name_claim.unlocked_until) > Date.now()))
         return false;
     state.world_lock = {};
     return true;
@@ -6040,7 +6043,8 @@ function isWorldLockPlacementBlocked(worldName) {
  * @returns {PixelMania.WorldLockState}
  */
 function getEffectiveWorldLockStateInState(state) {
-    const persistent = WorldNames.enabled && state?.world_name_claim?.status === "claimed";
+    const persistent = WorldNames.enabled && state?.world_name_claim?.status === "claimed" &&
+        (!state.world_name_claim.unlocked_until || Date.parse(state.world_name_claim.unlocked_until) > Date.now());
     const lock = sanitizeWorldLockState({ ...((state?.world_lock?.is_locked ? state.world_lock : (persistent ? state?.world_name_owner || {} : {}))), persistent_ownership: persistent });
     if (!lock.is_locked)
         return {};
@@ -13044,7 +13048,7 @@ async function handleWorldNameTransaction(socket, player, data) {
         ensureWorldState(worldName).world_name_claim = info;
         ensureWorldState(worldName).world_name_owner = row?.owner_account_id ? row.owner_lock : {};
         reply({ ok: true, ...inventoryPayload, world_name_claim: info, can_manage: row?.owner_account_id === identity.account_id,
-            message: action === "world_name_claim" ? "Name claimed permanently. The original payment is recorded publicly." : action === "world_name_reserve" ? "Name reserved for seven days." : "" });
+            message: action === "world_name_claim" ? "Name claimed. If you remove the World Lock, replace it within seven days or lose ownership. Your payment is recorded publicly." : action === "world_name_reserve" ? "Name reserved for seven days." : "" });
         if (action !== "world_name_status")
             broadcastToWorld(worldName, { type: "world_name_status", world: worldName, world_name_claim: info });
     }
