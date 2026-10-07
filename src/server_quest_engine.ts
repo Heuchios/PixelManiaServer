@@ -12,9 +12,8 @@ const BY_ID = new Map<string, RecordData>(CATALOGUE.map(q => [q.id, q]));
 const DAY = 86400000;
 const DAILY_SLOTS = ["favor_0", "favor_1", "trip_0", "trip_1"];
 const TIERS = [...DAILY_SLOTS, "story"];
-const REWARDS: Record<string, {gems: number; stamps: number; xp:number}> = {
-  favor: {gems:10, stamps:0,xp:50}, trip:{gems:25, stamps:0,xp:125}, story:{gems:15, stamps:0,xp:75},
-};
+const REWARDS: Record<string, {gems: number; stamps: number; xp:number}> =
+ JSON.parse(fs.readFileSync(path.join(__dirname,"data","quests","balance.json"),"utf8")).rewards;
 // Account cosmetics are usable inside the Dispatch; no inventory items are minted.
 const COSMETICS = [
   {id:"envelope_sticker",name:"Hanging Envelope",price:12,kind:"scrapbook sticker",color:"#f7cc85"},
@@ -103,6 +102,7 @@ function publicInstance(instance:RecordData):RecordData {
 }
 function activateDailies(s:RecordData,day:number):void {
  const board=s.days[String(day)];
+ let contentChanged=false;
  // Preserve durable entitlement IDs from the two-choice board without personal offers.
  for(const tier of ["favor","trip"]){
   const slot=`${tier}_0`;
@@ -116,8 +116,21 @@ function activateDailies(s:RecordData,day:number):void {
  }
  for(const slot of DAILY_SLOTS){
   if(s.active[slot]?.day!==day||board.done[slot])delete s.active[slot];
-  if(board.done[slot]||s.active[slot])continue;
+  if(board.done[slot])continue;
   const [tier,index]=slot.split("_");const q=BY_ID.get(board.offers[tier][Number(index)])!;
+  const active=s.active[slot];
+  if(active){
+   if(active.quest.content_version!==q.content_version){
+    // Keep identity, reset-day window and earned counts; the PostgreSQL adapter
+    // recounts committed gameplay against the new targets before any claim.
+    active.quest=JSON.parse(JSON.stringify(q));
+    active.objectives=JSON.parse(JSON.stringify(q.objectives));
+    active.progress=active.objectives.map((o:RecordData,i:number)=>Math.min(o.target,Number(active.progress?.[i]||0)));
+    active.solved=active.objectives.every((o:RecordData,i:number)=>active.progress[i]>=o.target);
+    active.reward={...REWARDS[tier]};contentChanged=true;
+   }
+   continue;
+  }
   const variant=hash(`global-daily-v1:${day}:${q.id}`)%q.variants.length;
   // Slot zero reuses the old receipt ID so restored legacy state cannot regrant it.
   s.active[slot]={id:Number(index)===0?`${day}:${tier}`:`${day}:${slot}`,tier:slot,day,quest:JSON.parse(JSON.stringify(q)),variant,
@@ -125,6 +138,7 @@ function activateDailies(s:RecordData,day:number):void {
    accepted_at:day*DAY+4*3600000,expires_at:(day+1)*DAY+4*3600000,
    reward:REWARDS[tier],objectives:JSON.parse(JSON.stringify(q.objectives)),progress:q.objectives.map(()=>0)};
  }
+ if(contentChanged)s.revision++;
 }
 function view(s:RecordData,day:number,now:number,account:string):RecordData {
  const board=s.days[String(day)];

@@ -327,6 +327,7 @@ $clientReleasePaths = @(
   "Scenes/ui/inventory/InventoryPreview.tscn",
   "Data/items/atlas_items.json",
   "Data/items/item_data_overrides.json",
+  "Data/items/fishing_catalog.json",
   "Assets/ui/clothes_slot.png",
   "Assets/ui/clothes_slot.png.import",
   "Assets/ui/material_slot.png",

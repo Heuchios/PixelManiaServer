@@ -1,0 +1,18 @@
+{
+  "version": 3,
+  "rewards": {
+    "favor": {"gems": 15, "xp": 75, "stamps": 0},
+    "trip": {"gems": 35, "xp": 175, "stamps": 0},
+    "story": {"gems": 15, "xp": 75, "stamps": 0}
+  },
+  "daily": {
+    "favor": {
+      "minutes": [5, 7],
+      "targets": {"plant": 120, "harvest": 90, "break": 240, "fish": 12, "splice": 30}
+    },
+    "trip": {
+      "minutes": [10, 15],
+      "targets": {"plant": 300, "harvest": 225, "break": 600, "fish": 30, "splice": 75}
+    }
+  }
+}

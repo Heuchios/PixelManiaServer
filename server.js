@@ -897,14 +897,31 @@ const PRESTIGE_COLOURED_BLOCK_PACK_TABLE = [
     { item_id: "ps_yellow_block", item_category: "block", weight: 100 },
 ];
 const LURE_PACK_TABLE = [
-    { item_id: "hook", item_category: "lure", weight: 300 },
-    { item_id: "worm_lure", item_category: "lure", weight: 300 },
-    { item_id: "shiny_lure", item_category: "lure", weight: 180 },
-    { item_id: "golden_lure", item_category: "lure", weight: 100 },
-    { item_id: "magnet_lure", item_category: "lure", weight: 60 },
-    { item_id: "bonito_lure", item_category: "lure", weight: 30 },
-    { item_id: "cotton_cordel_lure", item_category: "lure", weight: 25 },
-    { item_id: "void_worm_lure", item_category: "lure", weight: 5 },
+    {
+        "item_id": "bait",
+        "item_category": "lure",
+        "weight": 600
+    },
+    {
+        "item_id": "worm_bait",
+        "item_category": "lure",
+        "weight": 180
+    },
+    {
+        "item_id": "shiny_worm_bait",
+        "item_category": "lure",
+        "weight": 160
+    },
+    {
+        "item_id": "minnow_bait",
+        "item_category": "lure",
+        "weight": 55
+    },
+    {
+        "item_id": "shrimp_bait",
+        "item_category": "lure",
+        "weight": 5
+    }
 ];
 const WORLD_BACKGROUND_THEMES = new Set(["night", "snow", "city"]);
 const WorldStateHelpers = WorldStateHelpersModule.createWorldStateHelpers({

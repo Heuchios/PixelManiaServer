@@ -1,3 +1,4 @@
+import * as FishingCatalog from "./server_fishing_catalog";
 // Fish inventory quantities are integer tenths of a kilogram, including on the wire.
 // Rates are integer hundredths of a gem/kg; gems are rounded once per sale.
 export const UNIT = "tenths_kg";
@@ -72,6 +73,7 @@ export function kgToUnits(value: unknown): number {
 }
 
 export function migratePlayer(state: Record<string, any>): Record<string, any> {
+  FishingCatalog.migratePlayer(state);
   const inventory = state.fish_inventory || {};
   for (const id of state.fish_inventory_unit === UNIT ? [] : Object.keys(inventory)) {
     const count = Number(inventory[id]);

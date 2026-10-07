@@ -434,6 +434,7 @@ function createPlayerStateHelpers(config) {
         const progression = normalizeProgressionState(rawState);
         const state = {
             fish_inventory_unit: FishMarket.UNIT,
+            fishing_catalog_version: 3,
             player_data_version: Math.max(1, Math.trunc(Number(rawState.player_data_version) || 1)),
             account_username: accountUsername,
             shop_claims: sanitizeStringArray(rawState.shop_claims, 32).filter((id) => id === "appreciation_wings"),

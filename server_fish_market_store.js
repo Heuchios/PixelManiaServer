@@ -37,6 +37,7 @@ exports.ensureSchema = ensureSchema;
 exports.quotes = quotes;
 exports.lockSale = lockSale;
 exports.commitLocal = commitLocal;
+const server_fishing_catalog_store_1 = require("./server_fishing_catalog_store");
 const Market = __importStar(require("./server_fish_market"));
 const ItemDatabase = require("./server_item_database");
 const PostgresContracts = require("./postgres_store_contracts");
@@ -55,6 +56,7 @@ async function ensureSchema(store) {
       CREATE TABLE IF NOT EXISTS ${store.table("fish_market_receipts")} (
       player_id uuid NOT NULL REFERENCES ${store.table("players")}(player_id), request_id text NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (player_id, request_id));`);
+        await (0, server_fishing_catalog_store_1.retireOldLineup)(store, client);
         const migrated = await client.query(`SELECT version FROM ${store.table("fish_weight_migrations")} WHERE version = 1`);
         if (!migrated.rowCount) {
             const players = await client.query(`SELECT DISTINCT player_id FROM ${store.table("inventory")} WHERE item_category = 'fish' AND amount > 0`);

@@ -153,6 +153,11 @@ async function main() {
  const personal=(await db.query('SELECT state FROM pixelmania.quest_accounts WHERE player_id=$1',[autoId])).rows[0].state;
  const today=autoBoard.day;
  delete personal.days[today].assignment;
+ for(const letter of Object.values(personal.active)){
+  letter.quest.content_version=2;
+  letter.objectives[0].target=1;letter.progress=[1];letter.solved=true;
+  letter.reward={gems:10,xp:50,stamps:0};
+ }
  for(const tier of ['favor','trip']){
   personal.days[today].offers[tier].reverse();
   const first=personal.active[`${tier}_0`],second=personal.active[`${tier}_1`];
@@ -171,16 +176,16 @@ async function main() {
   assert.equal(result.ok,true,result.message);autoBoard=result.board;
  }
  assert(autoBoard.dailies.every(d=>d.claimed));assert.equal(Object.keys(autoBoard.active).length,0);
- assert.equal(Number((await db.query("SELECT amount FROM pixelmania.inventory WHERE player_id=$1 AND item_type='gem'",[autoId])).rows[0].amount),70);
- assert.equal(Number((await db.query('SELECT player_total_xp FROM pixelmania.players WHERE player_id=$1',[autoId])).rows[0].player_total_xp),350);
+ assert.equal(Number((await db.query("SELECT amount FROM pixelmania.inventory WHERE player_id=$1 AND item_type='gem'",[autoId])).rows[0].amount),100);
+ assert.equal(Number((await db.query('SELECT player_total_xp FROM pixelmania.players WHERE player_id=$1',[autoId])).rows[0].player_total_xp),500);
  // Reconnect/reload and retransmission of every daily claim keep all rewards single-grant.
  const reloaded=await Quests.apply(store,{username:'quest-other-test',world:'START',request_id:'reconnect',action:'quest_board_get',payload:{}});
  assert(reloaded.board.dailies.every(d=>d.claimed));
  for(const claim of dailyClaims)assert.equal((await Quests.apply(store,claim)).ok,false);
- assert.equal(Number((await db.query("SELECT amount FROM pixelmania.inventory WHERE player_id=$1 AND item_type='gem'",[autoId])).rows[0].amount),70);
+ assert.equal(Number((await db.query("SELECT amount FROM pixelmania.inventory WHERE player_id=$1 AND item_type='gem'",[autoId])).rows[0].amount),100);
  const xpReload=(await store.loadPlayerState('quest-other-test'));
  assert.equal(xpReload.ok,true);assert.equal(xpReload.found,true);
- assert.equal(Number(xpReload.state.player_total_xp),350,'XP survives canonical player-state reload');
+ assert.equal(Number(xpReload.state.player_total_xp),500,'XP survives canonical player-state reload');
  assert.equal(Number(xpReload.state.player_level),2,'Quest XP applies level-ups');
  assert(xpReload.state.last_level_up_at,'Quest level-up timestamp survives reload');
  assert.equal((await db.query('SELECT count(*)::integer AS n FROM pixelmania.quest_receipts WHERE player_id=$1',[autoId])).rows[0].n,4);

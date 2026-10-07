@@ -15,11 +15,6 @@ async function run() {
   assert.equal(speciesWorld.safe.slots[0].amount,17);
   assert.equal(speciesWorld.vend.stock,28);
   assert.equal(Market.migrateWorldSpecies(speciesWorld), false);
-  for (const [id,target] of Object.entries(Market.SPECIES_ALIASES)) {
-    assert.equal(Items.ITEMS[id].hidden,true);
-    assert.equal(Items.ITEMS[target].hidden,false);
-    assert.ok(!/^(Small|Medium|Large) /.test(Items.ITEMS[target].display_name));
-  }
   assert.equal(Market.saleValue([{ amount: 57, price_cents: 200 }]), 12);
   assert.equal(Market.saleValue([{ amount: 50, price_cents: 200 }]), 10);
   assert.equal(Market.saleValue([{ amount: 1, price_cents: 200 }, { amount: 1, price_cents: 200 }]), 1);
@@ -33,18 +28,20 @@ async function run() {
   for (let i = 0; i < 10000; i++) {
     const weight = Market.catchAmount(); assert.ok(Number.isInteger(weight) && weight >= 1 && weight <= 1500);
   }
-  const migrated = Market.migratePlayer({ fish_inventory: { pond_fish_large: 7 } });
-  assert.equal(migrated.fish_inventory.pond_fish_large, 70);
-  assert.equal(Market.migratePlayer(migrated).fish_inventory.pond_fish_large, 70);
-  const holdings = { safe: { slots: [{ item_id: "pond_fish_large", amount: 7 }, { item_id: "dirt", amount: 2 }] },
-    vending: { item_id: "pond_fish_large", stock: 10, amount_per_sale: 2 }, drops: [{ item_type: "pond_fish_large", amount: 400 }] };
+  const migrated = Market.migratePlayer({ fish_inventory: { pond_fish_large: 7 }, lure_inventory: {hook: 2} });
+  assert.deepEqual(migrated.fish_inventory, {});
+  assert.deepEqual(migrated.lure_inventory, {});
+  migrated.fish_inventory = {guppy: 70, bluegill: 25};
+  assert.deepEqual(Market.migratePlayer(migrated).fish_inventory, {guppy:70, bluegill:25});
+  const holdings = { safe: { slots: [{ item_id: "guppy", amount: 7 }, { item_id: "dirt", amount: 2 }] },
+    vending: { item_id: "guppy", stock: 10, amount_per_sale: 2 }, drops: [{ item_type: "guppy", amount: 400 }] };
   assert.equal(Market.migrateWorldHoldings(holdings, id => Items.ITEMS[id]?.category === "fish"), true);
   assert.equal(holdings.safe.slots[0].amount, 70); assert.equal(holdings.safe.slots[1].amount, 2);
   assert.equal(holdings.vending.stock, 100); assert.equal(holdings.vending.amount_per_sale, 20);
   assert.equal(holdings.drops[0].amount, 4000);
   assert.equal(Market.migrateWorldHoldings(holdings, id => Items.ITEMS[id]?.category === "fish"), false);
-  const settings = Market.policy(Items.ITEMS.pond_fish_large);
-  const row = { item_id: "pond_fish_large", supply: settings.target, updated_ms: 1000, revision: 0 };
+  const settings = Market.policy(Items.ITEMS.guppy);
+  const row = { item_id: "guppy", supply: settings.target, updated_ms: 1000, revision: 0 };
   const base = Market.quote(row, settings, 1000);
   assert.equal(base.price_cents, 10);
   assert.ok(Market.quote({ ...row, supply: row.supply * 2 }, settings, 1000).price_cents < settings.base);
@@ -58,7 +55,7 @@ async function run() {
     assert.ok(Market.saleValue([{amount:1500,price_cents:peak.price_cents}]) <= 250,
       'A maximum-weight catch must stay under the 250-gem ceiling even at zero supply');
   }
-  assert.equal(Market.saleValue([{amount:1500,price_cents:Market.policy(Items.ITEMS.kraken).max}]),249);
+  assert.equal(Market.saleValue([{amount:1500,price_cents:Market.policy(Items.ITEMS.swordfish).max}]),249);
   assert.equal(Market.saleValue([{amount:1500,price_cents:settings.max}]),30);
   // Execute the actual route with mocked persistence and an exact authoritative inventory.
   const server = fs.readFileSync(require.resolve("../server"), "utf8");
@@ -70,7 +67,7 @@ async function run() {
   });
   const context = {
     // A fixed quote exercises payout arithmetic independently of balance changes.
-    FishMarket: Market, FishMarketStore: { quotes: async () => ({ pond_fish_large: {...base,price_cents:200} }), commitLocal: () => {} },
+    FishMarket: Market, FishMarketStore: { quotes: async () => ({ guppy: {...base,price_cents:200} }), commitLocal: () => {} },
     ItemDatabase: Items, POSTGRES_ENABLED: false, POSTGRES_AUTHORITATIVE: false, tradeByPlayerId: new Map(),
     makeRequestId: d => d.request_id || "request", getTransactionWorldName: () => "START", cleanWorld: v => v,
     rejectIfWorldBanned: async () => false, getTransactionGrid: () => ({ x: 1, y: 1 }), validateFishMongerAccess: () => ({ x: 1, y: 1 }),
@@ -87,24 +84,24 @@ async function run() {
   };
   vm.createContext(context); vm.runInContext(server.slice(start, end), context);
   const sell = async (data, gems = 0) => {
-    state = { fish_inventory: { pond_fish_large: 57 }, currency_inventory: { gem: gems } }; commits = 0; released = 0;
+    state = { fish_inventory: { guppy: 57 }, currency_inventory: { gem: gems } }; commits = 0; released = 0;
     await context.handleFishMongerTransaction({}, { id: "p", world: "START", account_username: "p" },
-      { action: "fish_monger_sell", weight_kg: 5.7, item_id: "pond_fish_large", expected_prices: { pond_fish_large: 200 }, ...data });
+      { action: "fish_monger_sell", weight_kg: 5.7, item_id: "guppy", expected_prices: { guppy: 200 }, ...data });
     assert.equal(released, 1); return result;
   };
-  assert.equal((await sell({})).total_gems, 12); assert.equal(state.fish_inventory.pond_fish_large, 0); assert.equal(state.currency_inventory.gem, 12);
-  assert.equal((await sell({ weight_kg: 0.1 })).total_gems, 1); assert.equal(state.fish_inventory.pond_fish_large, 56);
+  assert.equal((await sell({})).total_gems, 12); assert.equal(state.fish_inventory.guppy, 0); assert.equal(state.currency_inventory.gem, 12);
+  assert.equal((await sell({ weight_kg: 0.1 })).total_gems, 1); assert.equal(state.fish_inventory.guppy, 56);
   for (const data of [{ weight_kg: 5.8 }, { weight_kg: -1 }, { weight_kg: 0.01 }]) {
-    assert.equal((await sell(data)).ok, false); assert.equal(commits, 0); assert.equal(state.fish_inventory.pond_fish_large, 57);
+    assert.equal((await sell(data)).ok, false); assert.equal(commits, 0); assert.equal(state.fish_inventory.guppy, 57);
   }
-  for (const data of [{expected_prices:{pond_fish_large:100}}, {expected_prices:{}}, {expected_prices:null}]) {
+  for (const data of [{expected_prices:{guppy:100}}, {expected_prices:{}}, {expected_prices:null}]) {
     assert.equal((await sell(data)).ok,true, 'A stale or missing displayed quote must not block a sale');
     assert.equal(result.total_gems,12);
   }
   assert.equal((await sell({}, Items.getStackLimit("gem"))).ok, false); assert.equal(commits, 0);
   assert.equal((await sell({ action: "fish_monger_sell_all" })).total_gems, 12);
   assert.equal((await sell({ action: "fish_monger_prices" })).ok, true); assert.equal(commits, 0);
-  assert.equal(result.fish_market.pond_fish_large.price_cents,200, 'Price response must survive the real wire serializer');
+  assert.equal(result.fish_market.guppy.price_cents,200, 'Price response must survive the real wire serializer');
   const originalCommit = context.commitPlayerInventoryState;
   context.isPostgresAuthoritativeReady = () => true;
   context.postgresStore = {};
@@ -134,14 +131,14 @@ async function run() {
   for (const rng of [0,0.4,0.5,0.8,1]) {
     const units = Market.catchAmount(()=>rng);
     context.FishMarket = {...Market,catchAmount:()=>units};
-    sessions.set('p',{session_id:'catch',world:'START',expires_at:Date.now()+10000,item_id:'pond_fish_large',fish_id:'pond_fish_large',item_category:'fish'});
+    sessions.set('p',{session_id:'catch',world:'START',expires_at:Date.now()+10000,item_id:'guppy',fish_id:'guppy',item_category:'fish'});
     state={fish_inventory:{},currency_inventory:{gem:0}};
     await context.handleFishingCompleteTransaction({}, {id:'p',world:'START',account_username:'p'}, {success:true,session_id:'catch'});
     assert.equal(result.catch_weight,units/10);
     assert.equal(result.rewards[0].amount,units);
-    assert.equal(state.fish_inventory.pond_fish_large,units);
+    assert.equal(state.fish_inventory.guppy,units);
     assert.equal(result.fish_inventory_unit,'tenths_kg');
-    assert.equal(result.fish_market.pond_fish_large.price_cents,200);
+    assert.equal(result.fish_market.guppy.price_cents,200);
   }
   // Two shard clients see the same row. A queued sale reprices after the first commits.
   const realNow = Date.now;
@@ -153,7 +150,7 @@ async function run() {
     throw Error(sql);
   } };
   const sale = { ...base, amount: 57 };
-  const deltas = [{ item_type: "pond_fish_large", item_category: "fish", delta: -57 }, { item_type: "gem", item_category: "currency", delta: 12 }];
+  const deltas = [{ item_type: "guppy", item_category: "fish", delta: -57 }, { item_type: "gem", item_category: "currency", delta: 12 }];
   await Store.lockSale({ table: s => s }, client, { fish_market_sales: [sale] }, deltas);
   assert.equal(marketRow.supply, settings.target + 57);
   const secondMetadata = {fish_market_sales:[{...sale,price_cents:999999}]};

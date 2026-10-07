@@ -1,0 +1,199 @@
+{
+  "version": 3,
+  "fish_ids": [
+    "guppy",
+    "goldfish",
+    "blue_tang",
+    "bass",
+    "catfish",
+    "red_snapper",
+    "minnow",
+    "bluegill",
+    "mudfish",
+    "clownfish",
+    "tuna",
+    "salmon",
+    "swordfish"
+  ],
+  "bait_ids": [
+    "bait",
+    "worm_bait",
+    "shiny_worm_bait",
+    "minnow_bait",
+    "shrimp_bait"
+  ],
+  "retired_ids": [
+    "hook",
+    "worm_lure",
+    "shiny_lure",
+    "golden_lure",
+    "bonito_lure",
+    "cotton_cordel_lure",
+    "void_worm_lure",
+    "magnet_lure",
+    "pond_fish",
+    "pond_fish_small",
+    "pond_fish_med",
+    "pond_fish_large",
+    "golden_carp",
+    "crystal_fish",
+    "cat_fish_small",
+    "cat_fish_med",
+    "cat_fish_large",
+    "bone_fish_small",
+    "bone_fish_med",
+    "bone_fish_large",
+    "barracuda_small",
+    "barracuda_med",
+    "barracuda_large",
+    "sea_horse_small",
+    "sea_horse_med",
+    "sea_horse_large",
+    "stingray_small",
+    "stingray_med",
+    "stingray_large",
+    "shark_small",
+    "shark_med",
+    "shark_large",
+    "lava_fish_small",
+    "lava_fish_med",
+    "lava_fish_large",
+    "alien_fish_small",
+    "alien_fish_med",
+    "alien_fish_large",
+    "mossy_chest",
+    "treasure_chest",
+    "sea_eater",
+    "tail_of_trident",
+    "mermaid",
+    "megalodon",
+    "kraken"
+  ],
+  "retired_fish_ids": [
+    "pond_fish",
+    "pond_fish_small",
+    "pond_fish_med",
+    "pond_fish_large",
+    "golden_carp",
+    "crystal_fish",
+    "cat_fish_small",
+    "cat_fish_med",
+    "cat_fish_large",
+    "bone_fish_small",
+    "bone_fish_med",
+    "bone_fish_large",
+    "barracuda_small",
+    "barracuda_med",
+    "barracuda_large",
+    "sea_horse_small",
+    "sea_horse_med",
+    "sea_horse_large",
+    "stingray_small",
+    "stingray_med",
+    "stingray_large",
+    "shark_small",
+    "shark_med",
+    "shark_large",
+    "lava_fish_small",
+    "lava_fish_med",
+    "lava_fish_large",
+    "alien_fish_small",
+    "alien_fish_med",
+    "alien_fish_large",
+    "mossy_chest",
+    "treasure_chest",
+    "sea_eater",
+    "tail_of_trident",
+    "mermaid",
+    "megalodon",
+    "kraken"
+  ],
+  "rarity_pools": {
+    "common": [
+      {
+        "fish_id": "guppy"
+      },
+      {
+        "fish_id": "goldfish"
+      },
+      {
+        "fish_id": "catfish"
+      },
+      {
+        "fish_id": "minnow"
+      }
+    ],
+    "uncommon": [
+      {
+        "fish_id": "bass"
+      },
+      {
+        "fish_id": "bluegill"
+      },
+      {
+        "fish_id": "mudfish"
+      }
+    ],
+    "rare": [
+      {
+        "fish_id": "blue_tang"
+      },
+      {
+        "fish_id": "red_snapper"
+      },
+      {
+        "fish_id": "clownfish"
+      }
+    ],
+    "epic": [
+      {
+        "fish_id": "tuna"
+      },
+      {
+        "fish_id": "salmon"
+      }
+    ],
+    "legendary": [
+      {
+        "fish_id": "swordfish"
+      }
+    ]
+  },
+  "bait_weights": {
+    "bait": {
+      "common": 8000,
+      "uncommon": 1600,
+      "rare": 300,
+      "epic": 90,
+      "legendary": 10
+    },
+    "worm_bait": {
+      "common": 3000,
+      "uncommon": 6100,
+      "rare": 800,
+      "epic": 90,
+      "legendary": 10
+    },
+    "shiny_worm_bait": {
+      "common": 2000,
+      "uncommon": 3000,
+      "rare": 4500,
+      "epic": 490,
+      "legendary": 10
+    },
+    "minnow_bait": {
+      "common": 1000,
+      "uncommon": 2000,
+      "rare": 3000,
+      "epic": 3500,
+      "legendary": 500
+    },
+    "shrimp_bait": {
+      "common": 1000,
+      "uncommon": 1500,
+      "rare": 2000,
+      "epic": 2000,
+      "legendary": 3500
+    }
+  }
+}

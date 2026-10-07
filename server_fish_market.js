@@ -1,4 +1,37 @@
 "use strict";
+var __createBinding = (this && this.__createBinding) || (Object.create ? (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    var desc = Object.getOwnPropertyDescriptor(m, k);
+    if (!desc || ("get" in desc ? !m.__esModule : desc.writable || desc.configurable)) {
+      desc = { enumerable: true, get: function() { return m[k]; } };
+    }
+    Object.defineProperty(o, k2, desc);
+}) : (function(o, m, k, k2) {
+    if (k2 === undefined) k2 = k;
+    o[k2] = m[k];
+}));
+var __setModuleDefault = (this && this.__setModuleDefault) || (Object.create ? (function(o, v) {
+    Object.defineProperty(o, "default", { enumerable: true, value: v });
+}) : function(o, v) {
+    o["default"] = v;
+});
+var __importStar = (this && this.__importStar) || (function () {
+    var ownKeys = function(o) {
+        ownKeys = Object.getOwnPropertyNames || function (o) {
+            var ar = [];
+            for (var k in o) if (Object.prototype.hasOwnProperty.call(o, k)) ar[ar.length] = k;
+            return ar;
+        };
+        return ownKeys(o);
+    };
+    return function (mod) {
+        if (mod && mod.__esModule) return mod;
+        var result = {};
+        if (mod != null) for (var k = ownKeys(mod), i = 0; i < k.length; i++) if (k[i] !== "default") __createBinding(result, mod, k[i]);
+        __setModuleDefault(result, mod);
+        return result;
+    };
+})();
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.SPECIES_ALIASES = exports.FISH_FAMILIES = exports.STACK_LIMIT = exports.UNIT = void 0;
 exports.mergeSpecies = mergeSpecies;
@@ -10,6 +43,7 @@ exports.catchAmount = catchAmount;
 exports.kgToUnits = kgToUnits;
 exports.migratePlayer = migratePlayer;
 exports.migrateWorldHoldings = migrateWorldHoldings;
+const FishingCatalog = __importStar(require("./server_fishing_catalog"));
 // Fish inventory quantities are integer tenths of a kilogram, including on the wire.
 // Rates are integer hundredths of a gem/kg; gems are rounded once per sale.
 exports.UNIT = "tenths_kg";
@@ -79,6 +113,7 @@ function kgToUnits(value) {
     return units > 0 && units <= exports.STACK_LIMIT && Math.abs(value * 10 - units) < 1e-7 ? units : 0;
 }
 function migratePlayer(state) {
+    FishingCatalog.migratePlayer(state);
     const inventory = state.fish_inventory || {};
     for (const id of state.fish_inventory_unit === exports.UNIT ? [] : Object.keys(inventory)) {
         const count = Number(inventory[id]);

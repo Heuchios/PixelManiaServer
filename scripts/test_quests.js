@@ -29,15 +29,15 @@ for(let day=0;day<30;day++){
   }
   const publicView=call('quest_board_get').board.active[tier];
   assert(!Object.hasOwn(publicView.puzzle,'solution'));assert(!Object.hasOwn(publicView.quest,'variants'));
-  const before=total;finish(tier);assert.equal(total-before,tier==='story'?15:tier.startsWith('favor')?10:25);
+  const before=total;finish(tier);assert.equal(total-before,tier==='story'?15:tier.startsWith('favor')?15:35);
   assert.throws(()=>call('quest_choose',{tier,instance_id:a.id,choice:'a'}));
   assert.throws(()=>call('quest_accept',{tier,quest_id:a.quest.id}));
  }
  const claimed=call('quest_board_get');assert(claimed.board.dailies.every(d=>d.claimed));
  assert.equal(Object.keys(state.active).length,0);
 }
-assert.equal(total,2550);assert.equal(state.stamps,0);assert.equal(Object.keys(state.chapters).length,24);
-assert.equal(receipts.reduce((n,r)=>n+(r.xp||0),0),13150);
+assert.equal(total,3450);assert.equal(state.stamps,0);assert.equal(Object.keys(state.chapters).length,24);
+assert.equal(receipts.reduce((n,r)=>n+(r.xp||0),0),17650);
 assert.equal(state.story_next,25);fixture('archive',call('quest_board_get').board);
 assert.equal(new Set(receipts.map(r=>r.id)).size,receipts.length);
 assert.equal(receipts.filter(r=>r.tier==='weekly').length,4);
@@ -108,5 +108,46 @@ const atReset=E.transition(beforeReset.state,'quest_board_get',{},Date.UTC(2026,
 const freshAtReset=E.transition(E.fresh(),'quest_board_get',{},Date.UTC(2026,8,22,4),'second');
 assert.equal(atReset.board.day,beforeReset.board.day+1);
 assert.deepEqual(atReset.board.dailies,freshAtReset.board.dailies);
-console.log('[quests] PASS: four automatic dailies, independent claims, 30 reward days, 24 chapters, 2,550 gems / 13,150 XP, resets, legacy migration and replay protection');
+console.log('[quests] PASS: four automatic dailies, independent claims, 30 reward days, 24 chapters, 3,450 gems / 17,650 XP, resets, legacy migration and replay protection');
 console.log('[quests] PASS: global daily selection across accounts/history, cached-board migration, stale claim rejection and shared reset boundary');
+
+// Existing boards adopt the rebalance without losing counts or granting a
+// completed slot again. An old solved flag must not bypass the harder target.
+const oldBoard=E.transition(E.fresh(),'quest_board_get',{},base,'balance-player');
+const oldState=structuredClone(oldBoard.state);
+for(const a of Object.values(oldState.active)){
+ a.quest.content_version=2;
+ a.objectives[0].target=1;a.progress=[1];a.solved=true;
+ a.reward={gems:10,xp:50,stamps:0};
+}
+oldState.days[E.dayId(base)].done.trip_1=true;
+delete oldState.active.trip_1;
+const balanced=E.transition(oldState,'quest_board_get',{},base,'balance-player');
+assert.equal(balanced.state.revision,oldState.revision+1);
+assert(balanced.board.dailies.find(d=>d.slot==='trip_1').claimed);
+assert(!balanced.state.active.trip_1);
+for(const [slot,a] of Object.entries(balanced.state.active)){
+ assert.equal(a.id,oldState.active[slot].id);
+ assert.equal(a.accepted_at,oldState.active[slot].accepted_at);
+ assert.deepEqual(a.progress,[1]);assert(!a.solved);
+ assert.deepEqual(a.reward,a.quest.reward);
+ assert(a.objectives[0].target>1);
+}
+assert.throws(()=>E.transition(oldState,'quest_choose',{revision:oldState.revision,tier:'favor_0',instance_id:oldState.active.favor_0.id,choice:'a'},base,'balance-player'),/board changed/);
+assert.throws(()=>E.transition(balanced.state,'quest_choose',{revision:balanced.state.revision,tier:'favor_0',instance_id:balanced.state.active.favor_0.id,choice:'a'},base,'balance-player'),/Complete the gameplay/);
+assert.deepEqual(E.transition(balanced.state,'quest_board_get',{},base,'balance-player').state,balanced.state);
+// Check a year's rotations: four different activities, consistent advertised
+// and payable rewards, and a 30–44 minute authored daily effort budget.
+for(let day=0;day<366;day++){
+ const board=E.transition(E.fresh(),'quest_board_get',{},base+day*86400000,'balance-player').board;
+ assert.equal(new Set(board.dailies.map(d=>d.quest.family)).size,4);
+ assert.equal(board.dailies.reduce((n,d)=>n+d.quest.minutes[0],0),30);
+ assert.equal(board.dailies.reduce((n,d)=>n+d.quest.minutes[1],0),44);
+ assert.equal(board.dailies.reduce((n,d)=>n+d.quest.reward.gems,0),100);
+ assert.equal(board.dailies.reduce((n,d)=>n+d.quest.reward.xp,0),500);
+ for(const d of board.dailies){
+  assert.deepEqual(board.active[d.slot].reward,d.quest.reward);
+  assert(d.quest.objectives[0].label.includes(String(d.quest.objectives[0].target)));
+ }
+}
+console.log('[quests] PASS: harder daily migration preserves progress and claims; all annual rotations share the new effort and reward budgets');

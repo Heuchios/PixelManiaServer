@@ -1,3 +1,4 @@
+import { retireOldLineup } from "./server_fishing_catalog_store";
 import * as Market from "./server_fish_market";
 import ItemDatabase = require("./server_item_database");
 import PostgresContracts = require("./postgres_store_contracts");
@@ -18,6 +19,7 @@ export async function ensureSchema(store: any): Promise<void> {
       CREATE TABLE IF NOT EXISTS ${store.table("fish_market_receipts")} (
       player_id uuid NOT NULL REFERENCES ${store.table("players")}(player_id), request_id text NOT NULL,
       created_at timestamptz NOT NULL DEFAULT now(), PRIMARY KEY (player_id, request_id));`);
+    await retireOldLineup(store, client);
     const migrated = await client.query(`SELECT version FROM ${store.table("fish_weight_migrations")} WHERE version = 1`);
     if (!migrated.rowCount) {
       const players = await client.query(`SELECT DISTINCT player_id FROM ${store.table("inventory")} WHERE item_category = 'fish' AND amount > 0`);

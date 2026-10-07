@@ -4979,15 +4979,6 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
     equipable: true,
     permissions: { interact_player_profiles: true },
   }),
-
-  hook: item("lure", { display_name: "Basic Hook", rarity: "common" }),
-  worm_lure: item("lure", { display_name: "Worm Bait", rarity: "common" }),
-  shiny_lure: item("lure", { display_name: "Shiny Bait", rarity: "uncommon" }),
-  golden_lure: item("lure", { display_name: "Golden Bait", rarity: "rare" }),
-  bonito_lure: item("lure", { display_name: "Bonito Bait", rarity: "epic" }),
-  cotton_cordel_lure: item("lure", { display_name: "Cotton Cordel Bait", rarity: "epic" }),
-  void_worm_lure: item("lure", { display_name: "Void Worm Bait", rarity: "legendary" }),
-  magnet_lure: item("lure", { display_name: "Magnetic Bait", rarity: "uncommon", material_fishing_lure: true }),
   basic_items_pack: item("material", {
     rarity: "common",
     shop_price: 500,
@@ -5039,44 +5030,29 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
       "ps_yellow_block",
     ],
   }),
+  bait: item("lure", {"category":"lure","rarity":"common","stack_limit":400,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":0,"shop_price":0,"permissions":{},"display_name":"Bait","order":299,"texture":{"atlas":"res://Assets/items/material.png","cell":[0,5],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[0,5],"cell_size":[32,32]},"consumable":true,"description":"Consumed when casting. Basic fishing bait."}),
+  worm_bait: item("lure", {"category":"lure","rarity":"uncommon","stack_limit":400,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":0,"shop_price":0,"permissions":{},"display_name":"Worm Bait","order":300,"texture":{"atlas":"res://Assets/items/material.png","cell":[1,5],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[1,5],"cell_size":[32,32]},"consumable":true,"description":"Consumed when casting. Favors uncommon fish."}),
+  shiny_worm_bait: item("lure", {"category":"lure","rarity":"rare","stack_limit":400,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":0,"shop_price":0,"permissions":{},"display_name":"Shiny Worm Bait","order":301,"texture":{"atlas":"res://Assets/items/material.png","cell":[2,5],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[2,5],"cell_size":[32,32]},"consumable":true,"description":"Consumed when casting. Favors rare fish."}),
+  minnow_bait: item("lure", {"category":"lure","rarity":"epic","stack_limit":400,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":0,"shop_price":0,"permissions":{},"display_name":"Minnow Bait","order":302,"texture":{"atlas":"res://Assets/items/material.png","cell":[3,5],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[3,5],"cell_size":[32,32]},"consumable":true,"description":"Consumed when casting. Improves epic catch odds."}),
+  shrimp_bait: item("lure", {"category":"lure","rarity":"legendary","stack_limit":400,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":0,"shop_price":0,"permissions":{},"display_name":"Shrimp Bait","order":303,"texture":{"atlas":"res://Assets/items/material.png","cell":[4,5],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[4,5],"cell_size":[32,32]},"consumable":true,"description":"Consumed when casting. Best chance of a legendary catch."}),
+  guppy: item("fish", {"category":"fish","rarity":"common","stack_limit":20000,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":7,"shop_price":0,"permissions":{},"display_name":"Guppy","is_fish":true,"quantity_type":"weight","difficulty":2,"fish_family":"guppy","weight_unit":"kg","inventory_unit":"tenths_kg","fish_base_price_kg":0.1,"fish_min_price_kg":0.05,"fish_max_price_kg":0.2,"fish_market_target_kg":1000,"fish_market_half_life_seconds":3600,"min_weight_kg":0.1,"max_weight_kg":150,"order":400,"texture":{"atlas":"res://Assets/items/material.png","cell":[0,6],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[0,6],"cell_size":[32,32]},"fish_size":"weight","max_stack":20000}),
+  goldfish: item("fish", {"category":"fish","rarity":"common","stack_limit":20000,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":7,"shop_price":0,"permissions":{},"display_name":"Goldfish","is_fish":true,"quantity_type":"weight","difficulty":2,"fish_family":"goldfish","weight_unit":"kg","inventory_unit":"tenths_kg","fish_base_price_kg":0.1,"fish_min_price_kg":0.05,"fish_max_price_kg":0.2,"fish_market_target_kg":1000,"fish_market_half_life_seconds":3600,"min_weight_kg":0.1,"max_weight_kg":150,"order":401,"texture":{"atlas":"res://Assets/items/material.png","cell":[1,6],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[1,6],"cell_size":[32,32]},"fish_size":"weight","max_stack":20000}),
+  blue_tang: item("fish", {"category":"fish","rarity":"rare","stack_limit":20000,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":110,"shop_price":0,"permissions":{},"display_name":"Blue Tang","is_fish":true,"quantity_type":"weight","difficulty":7,"fish_family":"blue_tang","weight_unit":"kg","inventory_unit":"tenths_kg","fish_base_price_kg":0.55,"fish_min_price_kg":0.28,"fish_max_price_kg":1.1,"fish_market_target_kg":1000,"fish_market_half_life_seconds":3600,"min_weight_kg":0.1,"max_weight_kg":150,"order":402,"texture":{"atlas":"res://Assets/items/material.png","cell":[2,6],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[2,6],"cell_size":[32,32]},"fish_size":"weight","max_stack":20000}),
+  bass: item("fish", {"category":"fish","rarity":"uncommon","stack_limit":20000,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":20,"shop_price":0,"permissions":{},"display_name":"Bass","is_fish":true,"quantity_type":"weight","difficulty":4,"fish_family":"bass","weight_unit":"kg","inventory_unit":"tenths_kg","fish_base_price_kg":0.2,"fish_min_price_kg":0.1,"fish_max_price_kg":0.4,"fish_market_target_kg":1000,"fish_market_half_life_seconds":3600,"min_weight_kg":0.1,"max_weight_kg":150,"order":403,"texture":{"atlas":"res://Assets/items/material.png","cell":[3,6],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[3,6],"cell_size":[32,32]},"fish_size":"weight","max_stack":20000}),
+  catfish: item("fish", {"category":"fish","rarity":"common","stack_limit":20000,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":14,"shop_price":0,"permissions":{},"display_name":"Catfish","is_fish":true,"quantity_type":"weight","difficulty":3,"fish_family":"catfish","weight_unit":"kg","inventory_unit":"tenths_kg","fish_base_price_kg":0.15,"fish_min_price_kg":0.08,"fish_max_price_kg":0.3,"fish_market_target_kg":1000,"fish_market_half_life_seconds":3600,"min_weight_kg":0.1,"max_weight_kg":150,"order":404,"texture":{"atlas":"res://Assets/items/material.png","cell":[4,6],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[4,6],"cell_size":[32,32]},"fish_size":"weight","max_stack":20000}),
+  red_snapper: item("fish", {"category":"fish","rarity":"rare","stack_limit":20000,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":130,"shop_price":0,"permissions":{},"display_name":"Red Snapper","is_fish":true,"quantity_type":"weight","difficulty":7,"fish_family":"red_snapper","weight_unit":"kg","inventory_unit":"tenths_kg","fish_base_price_kg":0.6,"fish_min_price_kg":0.3,"fish_max_price_kg":1.2,"fish_market_target_kg":1000,"fish_market_half_life_seconds":3600,"min_weight_kg":0.1,"max_weight_kg":150,"order":405,"texture":{"atlas":"res://Assets/items/material.png","cell":[5,6],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[5,6],"cell_size":[32,32]},"fish_size":"weight","max_stack":20000}),
+  minnow: item("fish", {"category":"fish","rarity":"common","stack_limit":20000,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":7,"shop_price":0,"permissions":{},"display_name":"Minnow","is_fish":true,"quantity_type":"weight","difficulty":2,"fish_family":"minnow","weight_unit":"kg","inventory_unit":"tenths_kg","fish_base_price_kg":0.1,"fish_min_price_kg":0.05,"fish_max_price_kg":0.2,"fish_market_target_kg":1000,"fish_market_half_life_seconds":3600,"min_weight_kg":0.1,"max_weight_kg":150,"order":406,"texture":{"atlas":"res://Assets/items/material.png","cell":[6,6],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[6,6],"cell_size":[32,32]},"fish_size":"weight","max_stack":20000}),
+  bluegill: item("fish", {"category":"fish","rarity":"uncommon","stack_limit":20000,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":8,"shop_price":0,"permissions":{},"display_name":"Bluegill","is_fish":true,"quantity_type":"weight","difficulty":2,"weight_unit":"kg","inventory_unit":"tenths_kg","fish_base_price_kg":0.12,"fish_min_price_kg":0.06,"fish_max_price_kg":0.24,"fish_market_target_kg":1000,"fish_market_half_life_seconds":3600,"min_weight_kg":0.1,"max_weight_kg":150,"order":407,"texture":{"atlas":"res://Assets/items/material.png","cell":[7,6],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[7,6],"cell_size":[32,32]},"fish_family":"bluegill","fish_size":"weight","max_stack":20000}),
+  mudfish: item("fish", {"category":"fish","rarity":"uncommon","stack_limit":20000,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":50,"shop_price":0,"permissions":{},"display_name":"Mudfish","is_fish":true,"quantity_type":"weight","difficulty":5,"fish_family":"mudfish","weight_unit":"kg","inventory_unit":"tenths_kg","fish_base_price_kg":0.4,"fish_min_price_kg":0.2,"fish_max_price_kg":0.8,"fish_market_target_kg":1000,"fish_market_half_life_seconds":3600,"min_weight_kg":0.1,"max_weight_kg":150,"order":408,"texture":{"atlas":"res://Assets/items/material.png","cell":[8,6],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[8,6],"cell_size":[32,32]},"fish_size":"weight","max_stack":20000}),
+  clownfish: item("fish", {"category":"fish","rarity":"rare","stack_limit":20000,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":25,"shop_price":0,"permissions":{},"display_name":"Clownfish","is_fish":true,"quantity_type":"weight","difficulty":4,"weight_unit":"kg","inventory_unit":"tenths_kg","fish_base_price_kg":0.25,"fish_min_price_kg":0.13,"fish_max_price_kg":0.5,"fish_market_target_kg":1000,"fish_market_half_life_seconds":3600,"min_weight_kg":0.1,"max_weight_kg":150,"order":409,"texture":{"atlas":"res://Assets/items/material.png","cell":[9,6],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[9,6],"cell_size":[32,32]},"fish_family":"clownfish","fish_size":"weight","max_stack":20000}),
+  tuna: item("fish", {"category":"fish","rarity":"epic","stack_limit":20000,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":30,"shop_price":0,"permissions":{},"display_name":"Tuna","is_fish":true,"quantity_type":"weight","difficulty":4,"fish_family":"tuna","weight_unit":"kg","inventory_unit":"tenths_kg","fish_base_price_kg":0.3,"fish_min_price_kg":0.15,"fish_max_price_kg":0.6,"fish_market_target_kg":1000,"fish_market_half_life_seconds":3600,"min_weight_kg":0.1,"max_weight_kg":150,"order":410,"texture":{"atlas":"res://Assets/items/material.png","cell":[10,6],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[10,6],"cell_size":[32,32]},"fish_size":"weight","max_stack":20000}),
+  salmon: item("fish", {"category":"fish","rarity":"epic","stack_limit":20000,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":75,"shop_price":0,"permissions":{},"display_name":"Salmon","is_fish":true,"quantity_type":"weight","difficulty":6,"fish_family":"salmon","weight_unit":"kg","inventory_unit":"tenths_kg","fish_base_price_kg":0.5,"fish_min_price_kg":0.25,"fish_max_price_kg":1,"fish_market_target_kg":1000,"fish_market_half_life_seconds":3600,"min_weight_kg":0.1,"max_weight_kg":150,"order":411,"texture":{"atlas":"res://Assets/items/material.png","cell":[11,6],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[11,6],"cell_size":[32,32]},"fish_size":"weight","max_stack":20000}),
+  swordfish: item("fish", {"category":"fish","rarity":"legendary","stack_limit":20000,"tradeable":true,"dropable":true,"admin_grantable":true,"hidden":false,"equipment_slot":"","gem_value":0,"sell_value":500,"shop_price":0,"permissions":{},"display_name":"Swordfish","is_fish":true,"quantity_type":"weight","difficulty":10,"weight_unit":"kg","inventory_unit":"tenths_kg","fish_base_price_kg":0.83,"fish_min_price_kg":0.42,"fish_max_price_kg":1.66,"fish_market_target_kg":1000,"fish_market_half_life_seconds":3600,"min_weight_kg":0.1,"max_weight_kg":150,"order":412,"texture":{"atlas":"res://Assets/items/material.png","cell":[12,6],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[12,6],"cell_size":[32,32]},"fish_family":"swordfish","fish_size":"weight","max_stack":20000}),
   lure_pack: item("lure", {
     rarity: "uncommon",
     shop_price: 25,
     shop_pack: true,
   }),
-
-  pond_fish: fishCatch("Pond Fish", "common", 3, { difficulty: 1 }),
-  pond_fish_small: fishCatch("Small Pond Fish", "common", 2, { difficulty: 1, fish_family: "pond_fish", fish_size: "small" }),
-  pond_fish_med: fishCatch("Medium Pond Fish", "common", 4, { difficulty: 1, fish_family: "pond_fish", fish_size: "medium" }),
-  pond_fish_large: fishCatch("Large Pond Fish", "common", 7, { difficulty: 2, fish_family: "pond_fish", fish_size: "large" }),
-  bluegill: fishCatch("Bluegill", "uncommon", 8, { difficulty: 2 }),
-  golden_carp: fishCatch("Golden Carp", "rare", 25, { difficulty: 4 }),
-  crystal_fish: fishCatch("Crystal Fish", "epic", 75, { difficulty: 6 }),
-  cat_fish_small: fishCatch("Small Cat Fish", "common", 4, { difficulty: 1, fish_family: "cat_fish", fish_size: "small" }),
-  cat_fish_med: fishCatch("Medium Cat Fish", "common", 8, { difficulty: 2, fish_family: "cat_fish", fish_size: "medium" }),
-  cat_fish_large: fishCatch("Large Cat Fish", "common", 14, { difficulty: 3, fish_family: "cat_fish", fish_size: "large" }),
-  bone_fish_small: fishCatch("Small Bone Fish", "uncommon", 6, { difficulty: 2, fish_family: "bone_fish", fish_size: "small" }),
-  bone_fish_med: fishCatch("Medium Bone Fish", "uncommon", 12, { difficulty: 3, fish_family: "bone_fish", fish_size: "medium" }),
-  bone_fish_large: fishCatch("Large Bone Fish", "uncommon", 20, { difficulty: 4, fish_family: "bone_fish", fish_size: "large" }),
-  barracuda_small: fishCatch("Small Barracuda", "epic", 10, { difficulty: 2, fish_family: "barracuda", fish_size: "small" }),
-  barracuda_med: fishCatch("Medium Barracuda", "epic", 18, { difficulty: 3, fish_family: "barracuda", fish_size: "medium" }),
-  barracuda_large: fishCatch("Large Barracuda", "epic", 30, { difficulty: 4, fish_family: "barracuda", fish_size: "large" }),
-  sea_horse_small: fishCatch("Small Sea Horse", "common", 12, { difficulty: 3, fish_family: "sea_horse", fish_size: "small" }),
-  sea_horse_med: fishCatch("Medium Sea Horse", "common", 22, { difficulty: 4, fish_family: "sea_horse", fish_size: "medium" }),
-  sea_horse_large: fishCatch("Large Sea Horse", "common", 40, { difficulty: 5, fish_family: "sea_horse", fish_size: "large" }),
-  stingray_small: fishCatch("Small Stingray", "uncommon", 15, { difficulty: 3, fish_family: "stingray", fish_size: "small" }),
-  stingray_med: fishCatch("Medium Stingray", "uncommon", 28, { difficulty: 4, fish_family: "stingray", fish_size: "medium" }),
-  stingray_large: fishCatch("Large Stingray", "uncommon", 50, { difficulty: 5, fish_family: "stingray", fish_size: "large" }),
-  shark_small: fishCatch("Small Shark", "epic", 20, { difficulty: 4, fish_family: "shark", fish_size: "small" }),
-  shark_med: fishCatch("Medium Shark", "epic", 40, { difficulty: 5, fish_family: "shark", fish_size: "medium" }),
-  shark_large: fishCatch("Large Shark", "epic", 75, { difficulty: 6, fish_family: "shark", fish_size: "large" }),
-  lava_fish_small: fishCatch("Small Lava Fish", "rare", 30, { difficulty: 5, fish_family: "lava_fish", fish_size: "small" }),
-  lava_fish_med: fishCatch("Medium Lava Fish", "rare", 60, { difficulty: 6, fish_family: "lava_fish", fish_size: "medium" }),
-  lava_fish_large: fishCatch("Large Lava Fish", "rare", 110, { difficulty: 7, fish_family: "lava_fish", fish_size: "large" }),
-  alien_fish_small: fishCatch("Small Alien Fish", "rare", 35, { difficulty: 5, fish_family: "alien_fish", fish_size: "small" }),
-  alien_fish_med: fishCatch("Medium Alien Fish", "rare", 70, { difficulty: 6, fish_family: "alien_fish", fish_size: "medium" }),
-  alien_fish_large: fishCatch("Large Alien Fish", "rare", 130, { difficulty: 7, fish_family: "alien_fish", fish_size: "large" }),
-  mossy_chest: fishCatch("Mossy Chest", "uncommon", 100, { difficulty: 5, fishing_treasure: true }),
   atlantic_chest: block({
     display_name: "Atlantic Chest",
     rarity: "epic",
@@ -5094,10 +5070,10 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
       gem_range: [0, 0],
       loot_table: Object.freeze([
         Object.freeze({ item_id: "neptune_trident", item_category: "tool", weight: 1, amount: 1 }),
-        Object.freeze({ item_id: "treasure_chest", item_category: "fish", weight: 9, amount: 1 }),
-        Object.freeze({ item_id: "mossy_chest", item_category: "fish", weight: 14, amount: 1 }),
-        Object.freeze({ item_id: "golden_lure", item_category: "lure", weight: 10, amount: 1 }),
-        Object.freeze({ item_id: "void_worm_lure", item_category: "lure", weight: 4, amount: 1 }),
+        Object.freeze({ item_id: "minnow_bait", item_category: "lure", weight: 9, amount: 1 }),
+        Object.freeze({ item_id: "worm_bait", item_category: "lure", weight: 14, amount: 1 }),
+        Object.freeze({ item_id: "shiny_worm_bait", item_category: "lure", weight: 10, amount: 1 }),
+        Object.freeze({ item_id: "shrimp_bait", item_category: "lure", weight: 4, amount: 1 }),
         Object.freeze({ item_id: "coral", item_category: "material", weight: 12, amount_range: [2, 5] }),
         Object.freeze({ item_id: "clam", item_category: "material", weight: 12, amount_range: [2, 5] }),
         Object.freeze({ item_id: "seaweed", item_category: "material", weight: 14, amount_range: [3, 8] }),
@@ -5107,17 +5083,6 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
       ]),
     },
   }),
-  treasure_chest: fishCatch("Treasure Chest", "rare", 300, { difficulty: 8, fishing_treasure: true }),
-  sea_eater: fishCatch("Sea Eater", "legendary", 250, {
-    difficulty: 9,
-  }),
-  tail_of_trident: fishCatch("Tail of Trident", "legendary", 225, {
-    difficulty: 8,
-    texture: "res://Assets/items/fish/Tail_of_trident.png",
-  }),
-  mermaid: fishCatch("Mermaid", "legendary", 300, { difficulty: 9 }),
-  megalodon: fishCatch("Megalodon", "legendary", 450, { difficulty: 10 }),
-  kraken: fishCatch("Kraken", "legendary", 500, { difficulty: 10 }),
 };
 
 applyTier1SpliceBalance(ITEM_DEFINITIONS);
@@ -6337,30 +6302,55 @@ const SPLICE_RECIPES: Readonly<Record<string, string>> = Object.freeze({
 });
 
 const FISHING_RARITY_POOLS: Readonly<Record<string, ReadonlyArray<FishingEntry>>> = Object.freeze({
-  common: Object.freeze([
-    Object.freeze({ fish_id: "pond_fish_large" }),
-    Object.freeze({ fish_id: "cat_fish_large" }),
-    Object.freeze({ fish_id: "sea_horse_large" }),
-  ]),
-  uncommon: Object.freeze([
-    Object.freeze({ fish_id: "bone_fish_large" }),
-    Object.freeze({ fish_id: "stingray_large" }),
-  ]),
-  rare: Object.freeze([
-    Object.freeze({ fish_id: "lava_fish_large" }),
-    Object.freeze({ fish_id: "alien_fish_large" }),
-  ]),
-  epic: Object.freeze([
-    Object.freeze({ fish_id: "barracuda_large" }),
-    Object.freeze({ fish_id: "shark_large" }),
-  ]),
-  legendary: Object.freeze([
-    Object.freeze({ fish_id: "tail_of_trident" }),
-    Object.freeze({ fish_id: "mermaid" }),
-    Object.freeze({ fish_id: "megalodon" }),
-    Object.freeze({ fish_id: "kraken" }),
-    Object.freeze({ fish_id: "sea_eater" }),
-  ]),
+  "common": [
+    {
+      "fish_id": "guppy"
+    },
+    {
+      "fish_id": "goldfish"
+    },
+    {
+      "fish_id": "catfish"
+    },
+    {
+      "fish_id": "minnow"
+    }
+  ],
+  "uncommon": [
+    {
+      "fish_id": "bass"
+    },
+    {
+      "fish_id": "bluegill"
+    },
+    {
+      "fish_id": "mudfish"
+    }
+  ],
+  "rare": [
+    {
+      "fish_id": "blue_tang"
+    },
+    {
+      "fish_id": "red_snapper"
+    },
+    {
+      "fish_id": "clownfish"
+    }
+  ],
+  "epic": [
+    {
+      "fish_id": "tuna"
+    },
+    {
+      "fish_id": "salmon"
+    }
+  ],
+  "legendary": [
+    {
+      "fish_id": "swordfish"
+    }
+  ]
 });
 
 const NEPTUNE_ROD_SPECIAL_FISHING_REWARDS = Object.freeze([
@@ -6368,30 +6358,60 @@ const NEPTUNE_ROD_SPECIAL_FISHING_REWARDS = Object.freeze([
 ]);
 
 const FISHING_TABLE_SPECS: Readonly<Record<string, FishingTableSpec>> = Object.freeze({
-  hook: Object.freeze({ rarity_weights: Object.freeze({ common: 8000, uncommon: 1600, rare: 300, epic: 90, legendary: 10 }) }),
-  worm_lure: Object.freeze({ rarity_weights: Object.freeze({ common: 8000, uncommon: 1600, rare: 300, epic: 90, legendary: 10 }) }),
-  shiny_lure: Object.freeze({ rarity_weights: Object.freeze({ common: 3000, uncommon: 6100, rare: 800, epic: 90, legendary: 10 }) }),
-  golden_lure: Object.freeze({ rarity_weights: Object.freeze({ common: 2000, uncommon: 3000, rare: 4500, epic: 490, legendary: 10 }) }),
-  bonito_lure: Object.freeze({ rarity_weights: Object.freeze({ common: 1000, uncommon: 2000, rare: 3000, epic: 3500, legendary: 500 }) }),
-  cotton_cordel_lure: Object.freeze({ rarity_weights: Object.freeze({ common: 1000, uncommon: 2000, rare: 3000, epic: 3500, legendary: 500 }) }),
-  void_worm_lure: Object.freeze({ rarity_weights: Object.freeze({ common: 1000, uncommon: 1500, rare: 2000, epic: 2000, legendary: 3500 }) }),
-  magnet_lure: Object.freeze({
-    rewards: Object.freeze([
-      Object.freeze({ item_id: "seaweed", item_category: "material", weight: 18, difficulty: 1 }),
-      Object.freeze({ item_id: "trash_can", item_category: "material", weight: 16, difficulty: 1 }),
-      Object.freeze({ item_id: "coral", item_category: "material", weight: 13, difficulty: 2 }),
-      Object.freeze({ item_id: "clam", item_category: "material", weight: 13, difficulty: 2 }),
-      Object.freeze({ item_id: "compass", item_category: "material", weight: 9, difficulty: 3 }),
-      Object.freeze({ item_id: "pearl", item_category: "material", weight: 8, difficulty: 3 }),
-      Object.freeze({ item_id: "rusty_bicycle", item_category: "material", weight: 7, difficulty: 4 }),
-      Object.freeze({ item_id: "lost_chapter", item_category: "material", weight: 5, difficulty: 5 }),
-      Object.freeze({ item_id: "topaz_necklace", item_category: "material", weight: 4, difficulty: 6 }),
-      Object.freeze({ item_id: "toxic_waste", item_category: "block", weight: 4, difficulty: 6 }),
-      Object.freeze({ item_id: "naval_mines", item_category: "material", weight: 2, difficulty: 7 }),
-      Object.freeze({ item_id: "atlantic_chest", item_category: "block", weight: 1, difficulty: 6 }),
-    ]),
-  }),
-  default: Object.freeze({ rarity_weights: Object.freeze({ common: 8000, uncommon: 1600, rare: 300, epic: 90, legendary: 10 }) }),
+  "bait": {
+    "rarity_weights": {
+      "common": 8000,
+      "uncommon": 1600,
+      "rare": 300,
+      "epic": 90,
+      "legendary": 10
+    }
+  },
+  "worm_bait": {
+    "rarity_weights": {
+      "common": 3000,
+      "uncommon": 6100,
+      "rare": 800,
+      "epic": 90,
+      "legendary": 10
+    }
+  },
+  "shiny_worm_bait": {
+    "rarity_weights": {
+      "common": 2000,
+      "uncommon": 3000,
+      "rare": 4500,
+      "epic": 490,
+      "legendary": 10
+    }
+  },
+  "minnow_bait": {
+    "rarity_weights": {
+      "common": 1000,
+      "uncommon": 2000,
+      "rare": 3000,
+      "epic": 3500,
+      "legendary": 500
+    }
+  },
+  "shrimp_bait": {
+    "rarity_weights": {
+      "common": 1000,
+      "uncommon": 1500,
+      "rare": 2000,
+      "epic": 2000,
+      "legendary": 3500
+    }
+  },
+  "default": {
+    "rarity_weights": {
+      "common": 8000,
+      "uncommon": 1600,
+      "rare": 300,
+      "epic": 90,
+      "legendary": 10
+    }
+  }
 });
 
 function isFishingEntryAvailableForRod(entry: FishingEntry, rodId: string): boolean {

@@ -8,7 +8,23 @@ Previously saved personal boards migrate on the next board request, including to
 
 Daily quests now count server-accepted gameplay: planting seeds, splicing named trees, harvesting mature trees, breaking foreground blocks, and successful fish catches. Named targets use canonical item IDs; splice descriptions show the recipe. Story chapters retain their narrative and completion choices while using gameplay objectives. All four daily quests activate together when the board is first visited; after enrollment, gameplay continues to be recorded between daily resets even when every reward has been claimed. Play, then return or refresh to reconcile progress and claim each reward independently. Story quests still require acceptance. Progress is not a live HUD feed.
 
-There are 24 commission templates and 24 story chapters. Two Easy quests and two Challenges are assigned automatically each day. There are no daily accept, abandon or reroll controls. All four can be completed, for 70 gems and 350 XP total, plus the optional story reward. Quick favors award 10 gems/50 XP, daily challenges 25 gems/125 XP, and story chapters 15 gems/75 XP. Five distinct completion days in the week award 100 extra XP. Daily reset remains 04:00 UTC; unclaimed daily quests expire at that reset and story chapters persist. Level-100 players receive no additional XP under the existing progression cap.
+There are 24 commission templates and 24 story chapters. Two Easy quests and two Challenges are assigned automatically each day. There are no daily accept, abandon or reroll controls. All four can be completed, for 100 gems and 500 XP total, plus the optional story reward. Easy quests award 15 gems/75 XP, daily challenges 35 gems/175 XP, and story chapters remain 15 gems/75 XP. Five distinct completion days in the week award 100 extra XP. Daily reset remains 04:00 UTC; unclaimed daily quests expire at that reset and story chapters persist. Level-100 players receive no additional XP under the existing progression cap.
+
+## Daily pacing rebalance (content version 3)
+
+The full set targets roughly 30–45 minutes of normal gameplay: 5–7 minutes per Easy quest and 10–15 minutes per Challenge. These are initial design estimates, not measured player timings or a minimum-time claim gate. Stockpiled seeds, prepared farms, tools, travel and simultaneous planting/harvesting can change actual completion time. Validate pacing with player sessions before further tuning.
+
+| Activity | Easy target | Challenge target |
+| --- | ---: | ---: |
+| Plant seeds | 120 | 300 |
+| Harvest mature trees | 90 | 225 |
+| Break foreground blocks | 240 | 600 |
+| Catch fish | 12 | 30 |
+| Splice named trees | 30 | 75 |
+
+Named-item restrictions remain unchanged. The selection favors four distinct activities, so two quests do not finish from the same action stream. The initial target calibration assumes sustained effective rates of 20 plants, 15 harvests, 40 breaks, 2 catches or 5 splices per minute, including routine preparation; that gives a 42-minute nominal set. This assumption needs playtesting and is not a benchmark of maximum action speed.
+
+`data/quests/balance.json` supplies both compiled catalogue rewards and authoritative claim rewards. Existing unclaimed dailies migrate when the board is read, retaining instance IDs and progress; the PostgreSQL adapter recounts committed gameplay since reset against the higher targets. Old solved flags are recalculated, board revisions invalidate stale claim requests, and completed slots stay claimed. Story instances and weekly rewards are unchanged.
 
 Existing active puzzle letters migrate to gameplay objectives with progress reset at migration. Completed story history, receipts, owned decorations and previously earned stamps survive. New quests award no stamps; old stamps can still purchase the existing account-bound panel decorations. Those decorations are not wearable inventory items or world pets.
 

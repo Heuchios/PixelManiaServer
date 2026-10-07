@@ -9,12 +9,12 @@
       "title": "A Fresh Start",
       "opening": "A bare patch can become a little promise. Plant a fresh row for tomorrow.",
       "reward": {
-        "gems": 10,
-        "xp": 50,
+        "gems": 15,
+        "xp": 75,
         "stamps": 0
       },
       "minutes": [
-        4,
+        5,
         7
       ],
       "steps": [
@@ -117,13 +117,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "plant",
           "item_type": "",
-          "target": 8,
-          "label": "Plant 8 seeds"
+          "target": 120,
+          "label": "Plant 120 seeds"
         }
       ]
     },
@@ -135,12 +135,12 @@
       "title": "The Morning Harvest",
       "opening": "The neighbors are waiting for the first harvest. Let the trees finish growing.",
       "reward": {
-        "gems": 10,
-        "xp": 50,
+        "gems": 15,
+        "xp": 75,
         "stamps": 0
       },
       "minutes": [
-        4,
+        5,
         7
       ],
       "steps": [
@@ -258,13 +258,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "harvest",
           "item_type": "",
-          "target": 6,
-          "label": "Harvest 6 mature trees"
+          "target": 90,
+          "label": "Harvest 90 mature trees"
         }
       ]
     },
@@ -276,13 +276,13 @@
       "title": "Room to Grow",
       "opening": "Rue needs a planting patch cleared before the next garden visit.",
       "reward": {
-        "gems": 25,
-        "xp": 125,
+        "gems": 35,
+        "xp": 175,
         "stamps": 0
       },
       "minutes": [
-        8,
-        12
+        10,
+        15
       ],
       "steps": [
         "Inspect three recipient cards with explicit object preferences.",
@@ -399,13 +399,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "break",
           "item_type": "dirt",
-          "target": 40,
-          "label": "Break 40 dirt blocks"
+          "target": 600,
+          "label": "Break 600 dirt blocks"
         }
       ]
     },
@@ -417,13 +417,13 @@
       "title": "Supper by the River",
       "opening": "Nell has invited the neighbors for supper. A few good catches will help.",
       "reward": {
-        "gems": 25,
-        "xp": 125,
+        "gems": 35,
+        "xp": 175,
         "stamps": 0
       },
       "minutes": [
-        8,
-        12
+        10,
+        15
       ],
       "steps": [
         "Inspect four shelf symbols and the moving page description.",
@@ -525,13 +525,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "fish",
           "item_type": "",
-          "target": 6,
-          "label": "Catch 6 fish"
+          "target": 30,
+          "label": "Catch 30 fish"
         }
       ]
     },
@@ -543,12 +543,12 @@
       "title": "A Little Green",
       "opening": "Tansy wants a green border for the community garden.",
       "reward": {
-        "gems": 10,
-        "xp": 50,
+        "gems": 15,
+        "xp": 75,
         "stamps": 0
       },
       "minutes": [
-        4,
+        5,
         7
       ],
       "steps": [
@@ -630,13 +630,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "splice",
           "item_type": "grass_seed",
-          "target": 1,
-          "label": "Splice 1 Grass tree (Dirt + Leaf seeds)"
+          "target": 30,
+          "label": "Splice 30 Grass tree (Dirt + Leaf seeds)"
         }
       ]
     },
@@ -648,12 +648,12 @@
       "title": "Seeds for Tomorrow",
       "opening": "Pip promised to bring news of a new orchard on the next delivery.",
       "reward": {
-        "gems": 10,
-        "xp": 50,
+        "gems": 15,
+        "xp": 75,
         "stamps": 0
       },
       "minutes": [
-        4,
+        5,
         7
       ],
       "steps": [
@@ -732,13 +732,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "plant",
           "item_type": "",
-          "target": 12,
-          "label": "Plant 12 seeds"
+          "target": 120,
+          "label": "Plant 120 seeds"
         }
       ]
     },
@@ -750,13 +750,13 @@
       "title": "Stone for the Path",
       "opening": "The path to the garden needs a sturdier foundation.",
       "reward": {
-        "gems": 25,
-        "xp": 125,
+        "gems": 35,
+        "xp": 175,
         "stamps": 0
       },
       "minutes": [
-        8,
-        12
+        10,
+        15
       ],
       "steps": [
         "Assemble a six-piece stall with supplied structural tiles.",
@@ -843,13 +843,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "break",
           "item_type": "stone",
-          "target": 40,
-          "label": "Break 40 stone blocks"
+          "target": 600,
+          "label": "Break 600 stone blocks"
         }
       ]
     },
@@ -859,15 +859,15 @@
       "family": "fish",
       "npc": "Nell",
       "title": "The Patient Angler",
-      "opening": "Nell says every catch has a story. Bring back five of them.",
+      "opening": "Nell says every catch has a story. Bring back a basketful.",
       "reward": {
-        "gems": 25,
-        "xp": 125,
+        "gems": 35,
+        "xp": 175,
         "stamps": 0
       },
       "minutes": [
-        8,
-        12
+        10,
+        15
       ],
       "steps": [
         "Inspect the cart route and two safe support clues.",
@@ -954,13 +954,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "fish",
           "item_type": "",
-          "target": 6,
-          "label": "Catch 6 fish"
+          "target": 30,
+          "label": "Catch 30 fish"
         }
       ]
     },
@@ -972,12 +972,12 @@
       "title": "A Wooden Welcome",
       "opening": "Rue is preparing materials for a welcoming bench.",
       "reward": {
-        "gems": 10,
-        "xp": 50,
+        "gems": 15,
+        "xp": 75,
         "stamps": 0
       },
       "minutes": [
-        4,
+        5,
         7
       ],
       "steps": [
@@ -1095,13 +1095,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "splice",
           "item_type": "wooden_block_seed",
-          "target": 1,
-          "label": "Splice 1 Wooden Block tree (Dirt + Wood seeds)"
+          "target": 30,
+          "label": "Splice 30 Wooden Block tree (Dirt + Wood seeds)"
         }
       ]
     },
@@ -1113,12 +1113,12 @@
       "title": "Harvest Letters",
       "opening": "The mailbag is full of requests from the growers. Time to help with their harvest.",
       "reward": {
-        "gems": 10,
-        "xp": 50,
+        "gems": 15,
+        "xp": 75,
         "stamps": 0
       },
       "minutes": [
-        4,
+        5,
         7
       ],
       "steps": [
@@ -1236,13 +1236,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "harvest",
           "item_type": "",
-          "target": 8,
-          "label": "Harvest 8 mature trees"
+          "target": 90,
+          "label": "Harvest 90 mature trees"
         }
       ]
     },
@@ -1254,13 +1254,13 @@
       "title": "A Brick Beginning",
       "opening": "Bolt has a drawing for a tiny workshop foundation.",
       "reward": {
-        "gems": 25,
-        "xp": 125,
+        "gems": 35,
+        "xp": 175,
         "stamps": 0
       },
       "minutes": [
-        8,
-        12
+        10,
+        15
       ],
       "steps": [
         "Read three planter markers and the cloud movement rule.",
@@ -1341,13 +1341,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "splice",
           "item_type": "stone_brick_seed",
-          "target": 2,
-          "label": "Splice 2 Stone Brick tree (Dirt + Stone seeds)"
+          "target": 75,
+          "label": "Splice 75 Stone Brick tree (Dirt + Stone seeds)"
         }
       ]
     },
@@ -1359,13 +1359,13 @@
       "title": "The Garden Border",
       "opening": "A small green border will make this corner feel like home.",
       "reward": {
-        "gems": 25,
-        "xp": 125,
+        "gems": 35,
+        "xp": 175,
         "stamps": 0
       },
       "minutes": [
-        8,
-        12
+        10,
+        15
       ],
       "steps": [
         "Compare two seed-token traits and choose the combination matching the notebook clue.",
@@ -1482,13 +1482,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "plant",
           "item_type": "grass_seed",
-          "target": 20,
-          "label": "Plant 20 Grass seeds"
+          "target": 300,
+          "label": "Plant 300 Grass seeds"
         }
       ]
     },
@@ -1500,12 +1500,12 @@
       "title": "Orchard Afternoon",
       "opening": "Tansy is planning a larger orchard. Every planted seed gets it closer.",
       "reward": {
-        "gems": 10,
-        "xp": 50,
+        "gems": 15,
+        "xp": 75,
         "stamps": 0
       },
       "minutes": [
-        4,
+        5,
         7
       ],
       "steps": [
@@ -1623,13 +1623,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "plant",
           "item_type": "",
-          "target": 12,
-          "label": "Plant 12 seeds"
+          "target": 120,
+          "label": "Plant 120 seeds"
         }
       ]
     },
@@ -1641,12 +1641,12 @@
       "title": "The Harvest Basket",
       "opening": "Pip volunteered to help with the harvest. The basket is larger than expected.",
       "reward": {
-        "gems": 10,
-        "xp": 50,
+        "gems": 15,
+        "xp": 75,
         "stamps": 0
       },
       "minutes": [
-        4,
+        5,
         7
       ],
       "steps": [
@@ -1749,13 +1749,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "harvest",
           "item_type": "",
-          "target": 8,
-          "label": "Harvest 8 mature trees"
+          "target": 90,
+          "label": "Harvest 90 mature trees"
         }
       ]
     },
@@ -1767,13 +1767,13 @@
       "title": "The Builders Pitch In",
       "opening": "The neighbors are clearing space for their next building project.",
       "reward": {
-        "gems": 25,
-        "xp": 125,
+        "gems": 35,
+        "xp": 175,
         "stamps": 0
       },
       "minutes": [
-        8,
-        12
+        10,
+        15
       ],
       "steps": [
         "Collect three statement tokens through desk observation stations or three fresh catches of any species.",
@@ -1890,13 +1890,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "break",
           "item_type": "",
-          "target": 60,
-          "label": "Break 60 foreground blocks"
+          "target": 600,
+          "label": "Break 600 foreground blocks"
         }
       ]
     },
@@ -1908,13 +1908,13 @@
       "title": "A River Gathering",
       "opening": "The river picnic grew into a neighborhood gathering. Nell could use a hand.",
       "reward": {
-        "gems": 25,
-        "xp": 125,
+        "gems": 35,
+        "xp": 175,
         "stamps": 0
       },
       "minutes": [
-        8,
-        12
+        10,
+        15
       ],
       "steps": [
         "Inspect a supplied reflection card and three light-panel symbols.",
@@ -1992,13 +1992,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "fish",
           "item_type": "",
-          "target": 8,
-          "label": "Catch 8 fish"
+          "target": 30,
+          "label": "Catch 30 fish"
         }
       ]
     },
@@ -2007,15 +2007,15 @@
       "tier": "favor",
       "family": "splice",
       "npc": "Tansy",
-      "title": "Three Green Promises",
-      "opening": "Three little patches of green will connect the neighbors gardens.",
+      "title": "Green Promises",
+      "opening": "Fresh patches of green will connect the neighbors gardens.",
       "reward": {
-        "gems": 10,
-        "xp": 50,
+        "gems": 15,
+        "xp": 75,
         "stamps": 0
       },
       "minutes": [
-        4,
+        5,
         7
       ],
       "steps": [
@@ -2133,13 +2133,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "splice",
           "item_type": "grass_seed",
-          "target": 1,
-          "label": "Splice 1 Grass trees (Dirt + Leaf seeds)"
+          "target": 30,
+          "label": "Splice 30 Grass trees (Dirt + Leaf seeds)"
         }
       ]
     },
@@ -2151,12 +2151,12 @@
       "title": "The Wooden Workshop",
       "opening": "Bolt wants to try building with something quieter than metal.",
       "reward": {
-        "gems": 10,
-        "xp": 50,
+        "gems": 15,
+        "xp": 75,
         "stamps": 0
       },
       "minutes": [
-        4,
+        5,
         7
       ],
       "steps": [
@@ -2259,13 +2259,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "splice",
           "item_type": "wooden_block_seed",
-          "target": 1,
-          "label": "Splice 1 Wooden Block trees (Dirt + Wood seeds)"
+          "target": 30,
+          "label": "Splice 30 Wooden Block trees (Dirt + Wood seeds)"
         }
       ]
     },
@@ -2275,15 +2275,15 @@
       "family": "splice",
       "npc": "Rue",
       "title": "A Stone Brick Path",
-      "opening": "Rue has marked the first three sections of a new path.",
+      "opening": "Rue has marked the sections of a new path.",
       "reward": {
-        "gems": 25,
-        "xp": 125,
+        "gems": 35,
+        "xp": 175,
         "stamps": 0
       },
       "minutes": [
-        8,
-        12
+        10,
+        15
       ],
       "steps": [
         "Choose one of two supplied assembly silhouettes.",
@@ -2364,13 +2364,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "splice",
           "item_type": "stone_brick_seed",
-          "target": 3,
-          "label": "Splice 3 Stone Brick trees (Dirt + Stone seeds)"
+          "target": 75,
+          "label": "Splice 75 Stone Brick trees (Dirt + Stone seeds)"
         }
       ]
     },
@@ -2382,13 +2382,13 @@
       "title": "Green Harvest",
       "opening": "The garden border has grown. Help Tansy gather its first harvest.",
       "reward": {
-        "gems": 25,
-        "xp": 125,
+        "gems": 35,
+        "xp": 175,
         "stamps": 0
       },
       "minutes": [
-        8,
-        12
+        10,
+        15
       ],
       "steps": [
         "Inspect the sender, recipient, and one no-entry symbol.",
@@ -2469,13 +2469,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "harvest",
           "item_type": "grass_seed",
-          "target": 12,
-          "label": "Harvest 12 mature Grass trees"
+          "target": 225,
+          "label": "Harvest 225 mature Grass trees"
         }
       ]
     },
@@ -2487,12 +2487,12 @@
       "title": "A Rocky Errand",
       "opening": "Mica wants the old stonework rebuilt with freshly gathered material.",
       "reward": {
-        "gems": 10,
-        "xp": 50,
+        "gems": 15,
+        "xp": 75,
         "stamps": 0
       },
       "minutes": [
-        4,
+        5,
         7
       ],
       "steps": [
@@ -2595,13 +2595,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "break",
           "item_type": "stone",
-          "target": 20,
-          "label": "Break 20 stone blocks"
+          "target": 240,
+          "label": "Break 240 stone blocks"
         }
       ]
     },
@@ -2613,12 +2613,12 @@
       "title": "A Day by the Water",
       "opening": "Nell has time for a longer fishing trip. There is a place beside her for you.",
       "reward": {
-        "gems": 10,
-        "xp": 50,
+        "gems": 15,
+        "xp": 75,
         "stamps": 0
       },
       "minutes": [
-        4,
+        5,
         7
       ],
       "steps": [
@@ -2736,13 +2736,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "fish",
           "item_type": "",
-          "target": 3,
-          "label": "Catch 3 fish"
+          "target": 12,
+          "label": "Catch 12 fish"
         }
       ]
     },
@@ -2754,13 +2754,13 @@
       "title": "The Next Orchard",
       "opening": "Pip wants to deliver a letter saying the orchard is finally underway.",
       "reward": {
-        "gems": 25,
-        "xp": 125,
+        "gems": 35,
+        "xp": 175,
         "stamps": 0
       },
       "minutes": [
-        8,
-        12
+        10,
+        15
       ],
       "steps": [
         "Inspect four guaranteed clue panels along the Yard route or desk map.",
@@ -2862,13 +2862,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "plant",
           "item_type": "",
-          "target": 35,
-          "label": "Plant 35 seeds"
+          "target": 300,
+          "label": "Plant 300 seeds"
         }
       ]
     },
@@ -2880,13 +2880,13 @@
       "title": "Harvest Festival",
       "opening": "The festival begins with a harvest, and the neighbors are counting on yours.",
       "reward": {
-        "gems": 25,
-        "xp": 125,
+        "gems": 35,
+        "xp": 175,
         "stamps": 0
       },
       "minutes": [
-        8,
-        12
+        10,
+        15
       ],
       "steps": [
         "Read three neighbor clues with clear relative positions.",
@@ -3003,13 +3003,13 @@
       "chapter_order": null,
       "arc": "",
       "chapter_in_arc": 0,
-      "content_version": 2,
+      "content_version": 3,
       "objectives": [
         {
           "action": "harvest",
           "item_type": "",
-          "target": 20,
-          "label": "Harvest 20 mature trees"
+          "target": 225,
+          "label": "Harvest 225 mature trees"
         }
       ]
     },
