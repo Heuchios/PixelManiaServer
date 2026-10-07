@@ -12973,6 +12973,8 @@ async function handleWorldNameTransaction(socket, player, data) {
         if (!readOnly && row.owner_account_id !== identity.account_id)
             throw new Error("Only the owner can reserve or claim this name.");
         if (action === "world_name_search") {
+            if (row.status === "claimed")
+                throw new Error("This world already has a permanently claimed name.");
             const result = await WorldNames.search(postgresStore, identity.account_id, String(data.name || ""));
             const canManage = row.owner_account_id === identity.account_id;
             reply({ ok: true, world_name_claim: WorldNames.publicStatus(row), can_manage: canManage,

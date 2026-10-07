@@ -27,8 +27,8 @@ local implementation/testing does not activate claims or start production deadli
   Search shows a server-verified claim price and availability without reserving
   anything. Owners confirm a free seven-day reservation after searching; the
   server rechecks the quoted price, availability and cooldown before renaming the
-  same world. Editing the search clears the previous quote. Visitors and owners
-  of permanently claimed worlds may search but cannot replace a permanent name.
+  same world. Editing the search clears the previous quote. Permanently claimed
+  worlds hide search controls, and the server rejects searches from those worlds.
   Expiry after a replacement reservation uses that replacement name plus digits.
   Exact, case-insensitive rarity pricing is in `src/world_name_pricing.ts`.
 - Breaking/replacing the lock never clears ownership or resets the deadline.
