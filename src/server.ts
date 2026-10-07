@@ -1083,6 +1083,7 @@ const AREA_LOCK_TILE_LIMITS: any = new Map([
 ]);
 const SUPER_WORLD_LOCK_EXCHANGE_RATE = 100;
 const SHOP_CATALOG: any = new Map([
+  ["water_well", { item_id: "water_well", item_category: "block", amount: 1, price: 500 }],
   ["appreciation_wings", { item_id: "appreciation_wings", item_category: "back", amount: 1, price: 0, once_per_account: true }],
   ["small_lock", { item_id: "small_lock", item_category: "block", amount: 1, price: 500 }],
   ["medium_lock", { item_id: "medium_lock", item_category: "block", amount: 1, price: 1000 }],
