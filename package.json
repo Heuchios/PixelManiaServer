@@ -4,6 +4,8 @@
   "description": "",
   "main": "server.js",
   "scripts": {
+    "audit:world-drop-identities": "node scripts/audit_world_drop_identities.js",
+    "test:drop-identities-postgres": "node scripts/test_legacy_drop_identity_repair.js",
     "check:developer-visibility": "npm run build:server-socket-delivery-helpers && npm run build:server-phase11d-standard-movement && npm run build:server-entry && node scripts/test_developer_visibility.js",
     "build:world-name-pricing": "tsc --project tsconfig.world-name-pricing.json && node scripts/sync_world_names_build.js",
     "check:world-name-pricing": "npm run build:world-name-pricing && node scripts/check_world_name_pricing.js",

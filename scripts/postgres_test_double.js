@@ -215,12 +215,9 @@ function createFakePool(initialState, identity) {
 
     // Orphan probe added by the item-loss fix.
     if (sql.includes('FROM "pixelmania"."item_instances"') && sql.includes("count(*)::integer AS instance_count")) {
-      const [itemType, itemCategory, worldId, dropId] = params;
+      const [dropId] = params;
       const count = working.item_instances.filter(
         (/** @type {any} */ instance) =>
-          instance.item_type === itemType &&
-          instance.item_category === itemCategory &&
-          (!worldId || instance.world_id === worldId) &&
           dropIdOf(instance) === dropId
       ).length;
       return { rows: [{ instance_count: count }], rowCount: 1 };

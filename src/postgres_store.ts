@@ -6903,7 +6903,7 @@ class PostgresStore {
         actor_username: change?.actor_username || "",
         source: cleanName(change?.source_type || "") || "world_block_break",
         action: cleanName(change?.action || "") || "break_drop",
-        item_type: cleanName(change?.item_type || change?.block_type || ""),
+        item_type: cleanName(changeDetails.item_type || change?.item_type || change?.block_type || ""),
         item_category: cleanName(changeDetails.item_category || change?.item_category || "block") || "block",
         amount: Math.max(1, toInt(changeDetails.amount || change?.amount || 1, 1)),
         drop_id: dropId,
@@ -11219,20 +11219,23 @@ class PostgresStore {
           const dropOriginSource = cleanName(dropRowMetadata.origin_source || "");
           const dropOriginAction = cleanName(dropRowMetadata.origin_action || "");
           const serverAuthoredDrop = isServerAuthoredWorldDropOrigin(dropOriginSource, dropOriginAction);
+          // Ownership/world/location may have changed after a prior pickup.
+          // Historical events also retain the old ID after the item is redropped.
           const orphanedInstanceRows = await client.query(
             `
-            SELECT count(*)::integer AS instance_count
-              FROM ${this.table("item_instances")}
-             WHERE item_type = $1
-               AND item_category = $2
-               AND ($3::uuid IS NULL OR world_id = $3::uuid)
-               AND (
-                 metadata->>'drop_id' = $4
-                 OR metadata #>> '{details,drop_id}' = $4
-                 OR metadata #>> '{details,details,drop_id}' = $4
-               )
+            SELECT count(*)::integer AS instance_count FROM (
+              SELECT item_instance_id FROM ${this.table("item_instances")}
+               WHERE metadata->>'drop_id' = $1
+                  OR metadata #>> '{details,drop_id}' = $1
+                  OR metadata #>> '{details,details,drop_id}' = $1
+              UNION
+              SELECT item_instance_id FROM ${this.table("item_instance_events")}
+               WHERE metadata->>'drop_id' = $1
+                  OR metadata #>> '{details,drop_id}' = $1
+                  OR metadata #>> '{details,details,drop_id}' = $1
+            ) known_drop_identities
             `,
-            [itemType, itemCategory || "block", worldId, dropId]
+            [dropId]
           );
           const knownInstanceCount = Math.max(0, toInt(orphanedInstanceRows.rows[0]?.instance_count, 0));
           if (!allowWorldDropRepair || !serverAuthoredDrop || knownInstanceCount > 0) {
@@ -11261,7 +11264,10 @@ class PostgresStore {
               action: "pickup_repair",
               item_type: itemType,
               item_category: itemCategory || "block",
-              amount,
+              // Rebuild the whole outstanding drop. Repairing only this pickup
+              // would leave the remainder without identities; the next pickup
+              // would then see the already-claimed identities and quarantine it.
+              amount: dropBeforeAmount,
               drop_id: dropId,
               details: {
                 source_id: sourceId,

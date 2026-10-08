@@ -25,7 +25,7 @@ const context = {
   growingTreeBreakHits: new WeakMap(), SEED_MUTATION_CHANCE: 0, MATURE_SEED_EXTRA_DROP_CHANCE: 0,
   SEED_MUTATION_REWARD_TABLE: [{ item_id: 'rare', item_category: 'block', min_amount: 2, max_amount: 2 }], SERVER_DROP_PICKUP_DELAY: 1,
   crypto: { randomInt: min => min }, rollWeightedReward: t => t[0], randomChance: () => false,
-  ItemDatabase: { hasItem: id => ['dirt_seed', 'grass_seed', 'rare'].includes(id), getItemDefinition: id => ({ category: 'seed', grow_time: 60, grows_into: id.replace('_seed', '') }), getSpliceResult: () => 'grass_seed' },
+  ItemDatabase: { hasItem: id => ['dirt_seed', 'grass_seed', 'rare', 'serpent_staff', 'sakura_sword'].includes(id), getItemDefinition: id => ({ category: 'seed', grow_time: 60, grows_into: id.replace('_seed', '') }), getSpliceResult: () => 'grass_seed' },
   runtimeProfiler: { enabled: true, observe: (name, value) => profiles.push({ name, value }) },
   makeRequestId: data => data.request_id, getTransactionWorldName: () => 'TEST',
   requireSameWorld: () => true, rejectIfWorldBanned: async () => false, requireBuildPermission: () => true,
@@ -192,6 +192,18 @@ async function run() {
   assert.deepEqual(dropCalls.slice(d).map(x => [x.item_id, x.amount]), [['dirt', 5], ['dirt_seed', 2]], 'Mature configured drops unchanged');
   await place(); world.seeds.get('4:3').mutated = true; now += 60000;
   await hit(); assert.equal(dropCalls.at(-1).item_id, 'rare'); assert.equal(dropCalls.at(-1).amount, 2);
+  // Production's stuck staffs were mutated-tree rewards from before harvest
+  // journal coverage. Exercise each real weapon through the shipped handler.
+  for (const item of ['serpent_staff', 'sakura_sword']) {
+    context.SEED_MUTATION_REWARD_TABLE = [{ item_id: item, item_category: 'tool', min_amount: 1, max_amount: 1 }];
+    await place(); world.seeds.get('4:3').mutated = true; now += 60000;
+    const count = dropCalls.length;
+    await hit();
+    assert.equal(dropCalls.length, count + 1);
+    assert.equal(dropCalls.at(-1).item_id, item);
+    assert.equal(dropCalls.at(-1).item_category, 'tool');
+    assert.equal(dropCalls.at(-1).committed, true, 'Weapon identity journal commits before broadcast');
+  }
   const beforeRapid = inventory.alice.seeds;
   for (let x = 10; x < 20; x++) await place(x);
   assert.equal(inventory.alice.seeds, beforeRapid - 10);

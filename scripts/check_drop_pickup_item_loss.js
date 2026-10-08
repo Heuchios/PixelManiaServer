@@ -226,6 +226,34 @@ function trackedInstancesFor(state, dropId) {
 async function run() {
   console.log("drop pickup item-loss invariants");
 
+  await checkAsync("an identity moved to another world or consumed cannot be minted again", async () => {
+    for (const moved of [
+      { world_id: null, state: "consumed", current_location: "unknown" },
+      { world_id: OTHER_PLAYER_ID, state: "active", current_location: "inventory", owner_player_id: OTHER_PLAYER_ID },
+    ]) {
+      const { store, fake } = createStore(baseState({ item_instances: [trackedInstance("drop-server-1", moved)] }));
+      const result = await store.applyDropPickupTransaction(pickupEntry());
+      assert.equal(result.reason, "world_drop_item_instances_pending");
+      assert.equal(fake.state.item_instances.length, 1);
+      assert.equal(inventoryAmount(fake.state, "pickaxe"), 0);
+      assert.ok(activeDrop(fake.state, "drop-server-1"));
+    }
+  });
+
+  await checkAsync("mutated tree reward uses the reward item identity rather than its source block", async () => {
+    const { store, fake } = createStore(baseState({ world_drops: [] }));
+    await store.withTransaction((/** @type {any} */ client) => store.recordTrackedDropsForWorldChange(client, WORLD_ID, {
+      source_type: "seed_harvest", action: "harvest_drop", block_type: "dirt",
+      details: { drop_id: "mutation-staff", item_type: "serpent_staff", item_category: "tool", amount: 1 },
+    }));
+    assert.equal(trackedInstancesFor(fake.state, "mutation-staff")[0].item_type, "serpent_staff");
+    const result = await store.applyDropPickupTransaction(pickupEntry({
+      drop_id: "mutation-staff", item_type: "serpent_staff", item_category: "tool", allow_world_drop_repair: false,
+    }));
+    assert.equal(result.ok, true, JSON.stringify(result));
+    assert.equal(inventoryAmount(fake.state, "serpent_staff"), 1);
+  });
+
   await checkAsync("harvest rewards create claimable identities before pickup, including partial stacks", async () => {
     const { store, fake } = createStore(baseState({ world_drops: [] }));
     const change = {
@@ -303,6 +331,19 @@ async function run() {
     assert.equal(inventoryAmount(fake.state, "pickaxe"), 0, "no item may be granted");
     assert.ok(activeDrop(fake.state, "drop-inventory-1"), "the drop must stay collectible in the world");
     assert.equal(trackedInstancesFor(fake.state, "drop-inventory-1").length, 0, "no instance may be minted");
+  });
+
+  await checkAsync("repairing a partial server-drop pickup leaves the remainder collectible", async () => {
+    const { store, fake } = createStore(baseState({ world_drops: [serverAuthoredDrop({ amount: 3 })] }));
+    const first = await store.applyDropPickupTransaction(pickupEntry({ amount: 1, stack_limit: 10 }));
+    assert.equal(first.ok, true, JSON.stringify(first));
+    assert.equal(trackedInstancesFor(fake.state, "drop-server-1").length, 3, "Rebuild all outstanding identities once");
+    assert.equal(Number(activeDrop(fake.state, "drop-server-1").amount), 2);
+    const second = await store.applyDropPickupTransaction(pickupEntry({ amount: 2, stack_limit: 10, expected_before_amount: 1 }));
+    assert.equal(second.ok, true, JSON.stringify(second));
+    assert.equal(inventoryAmount(fake.state, "pickaxe"), 3);
+    assert.equal(activeDrop(fake.state, "drop-server-1"), null);
+    assert.equal(trackedInstancesFor(fake.state, "drop-server-1").length, 3, "Never remint the first collected item");
   });
 
   await checkAsync("unknown drop origin with missing tracked data is quarantined", async () => {
