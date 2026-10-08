@@ -3936,7 +3936,7 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
     dropable: true,
   }),
   magnet_machine: block({"id":238,"item_key":"magnet_machine","name":"Magnet Machine","display_name":"Magnet Machine","category":"block","type":"block","rarity":"legendary","layer":"foreground","place_layer":"foreground","source_id":0,"atlas_coords":[24,14],"atlas_item_id":238,"atlas_source_id":0,"collision":false,"no_collision":true,"collidable":false,"solid":false,"placeable":true,"breakable":true,"block_health":8,"hardness":8,"stack_limit":400,"admin_grantable":true,"tradeable":true,"dropable":true,"texture":{"atlas":"res://image.png","cell":[24,14],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://image.png","cell":[24,14],"cell_size":[32,32]},"break_return_to_inventory":true,"break_return_item_id":"magnet_machine","drop_rules":{"seed_chance":0,"gem_range":[0,0],"fixed_drops":[]},"authored_drop_rules":true,"magnet_machine_block":true,"interact_rules":true}),
-  magnet_machine_remote: item("tool", {"category":"tool","display_name":"Magnet Machine Remote","rarity":"legendary","stack_limit":1,"tradeable":false,"dropable":false,"admin_grantable":false,"hidden":false,"hand_item":false,"equipable":false,"texture":{"atlas":"res://Assets/items/material.png","cell":[6,3],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[6,3],"cell_size":[32,32]},"magnet_remote":true}),
+  magnet_machine_remote: item("tool", {"category":"tool","display_name":"Magnet Machine Remote","rarity":"legendary","stack_limit":1,"tradeable":false,"dropable":false,"admin_grantable":false,"hidden":false,"hand_item":false,"equipable":false,"texture":{"atlas":"res://Assets/items/material.png","cell":[6,3],"cell_size":[32,32]},"inventory_icon":{"atlas":"res://Assets/items/material.png","cell":[6,3],"cell_size":[32,32]},"magnet_remote":true,"vendable":false,"storable":false,"donatable":false}),
   octopus_hat: item("hat", {
     display_name: "Octopus Hat",
     description: "A lively octopus caught while fishing. A 0.1% catch chance with any rod and lure.",
@@ -4968,6 +4968,8 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
     admin_grantable: false,
     instance_tracked: true,
     world_lock_key: true,
+    storable: false,
+    donatable: false,
   }),
   wrench: item("tool", {
     rarity: "uncommon",

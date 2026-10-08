@@ -1876,6 +1876,8 @@ let serverPhase9RemainingRoutes = null;
 function getServerPhase9RemainingRoutes() {
     if (!serverPhase9RemainingRoutes) {
         serverPhase9RemainingRoutes = ServerPhase9RemainingRoutesModule.createServerPhase9RemainingRoutes({
+            activeFishingSessions,
+            publishPlayerPresenceUpdate,
             MAX_CHAT_LENGTH,
             isAdmin,
             accountKey,
@@ -2108,6 +2110,7 @@ const ServerPhase7Dispatcher = ServerPhase7DispatcherModule.createServerPhase7Di
         world_entry_ready: (socket, player, data, context) => getServerPhase8PlayerSessionRoutes().handleWorldEntryReady(socket, player, data, context),
         leave_world: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleLeaveWorld(socket, player, data, context),
         chat: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleChat(socket, player, data, context),
+        fishing_hook: (socket, player, data) => getServerPhase9RemainingRoutes().handleFishingHook(socket, player, data),
         player_emote: (socket, player, data, context) => getServerPhase9RemainingRoutes().handlePlayerEmote(socket, player, data, context),
         broadcast: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleBroadcast(socket, player, data, context),
         developer_pin_unlock: (socket, player, data, context) => getServerPhase9RemainingRoutes().handleDeveloperPinUnlockRoute(socket, player, data, context),
@@ -2971,6 +2974,7 @@ wss.on("connection", (socket, request = null) => {
         last_block_break_at: 0,
         last_block_place_at: 0,
         noclip_enabled: false,
+        invisible_enabled: false,
         developer_pin_unlocked_until: 0,
         admin_2fa_verified_until: 0,
         developer_command_cooldowns: new Map(),
@@ -7727,7 +7731,7 @@ function canStoreItemInSafe(itemId, itemCategory) {
     if (cleanItemId === "punch" || cleanItemId === SAFE_BLOCK_TYPE || cleanItemId === WORLD_LOCK_KEY_ITEM_TYPE)
         return false;
     const definition = ItemDatabase.getItemDefinition(cleanItemId);
-    if (!definition || definition.hidden)
+    if (!definition || definition.hidden || definition.storable === false)
         return false;
     const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
     return ItemDatabase.canStoreItemInCategory(cleanItemId, resolvedCategory);
@@ -8293,7 +8297,7 @@ function canStoreItemInDonationBox(itemId, itemCategory) {
     if (cleanItemId === "punch" || cleanItemId === DONATION_BOX_BLOCK_TYPE || cleanItemId === WORLD_LOCK_KEY_ITEM_TYPE)
         return false;
     const definition = ItemDatabase.getItemDefinition(cleanItemId);
-    if (!definition || definition.hidden || definition.tradeable === false)
+    if (!definition || definition.hidden || definition.tradeable === false || definition.donatable === false)
         return false;
     const resolvedCategory = resolveInventoryCategory(cleanItemId, itemCategory);
     if (resolvedCategory === "" || resolvedCategory === "currency")
@@ -12189,14 +12193,16 @@ function isFishingRewardConfettiRarity(rarity) {
 }
 function buildFishingRewardFxPayload(player, session, rewardItemId, rewardCategory) {
     const rarity = getFishingRewardFxRarity(rewardItemId);
-    if (!isFishingRewardConfettiRarity(rarity))
-        return null;
+    // Every confirmed catch has a landing animation, regardless of rarity.
     const playerX = Number(player?.x);
     const playerY = Number(player?.y);
     const targetX = Number(session?.target_x);
     const targetY = Number(session?.target_y);
     return {
         type: "fishing_reward_fx",
+        session_id: String(session?.session_id || ""),
+        target_x: targetX,
+        target_y: targetY,
         action: "fishing_reward",
         world: String(session?.world || player?.world || ""),
         player_id: String(player?.id || ""),
@@ -17528,7 +17534,7 @@ function getDoorStateForBlock(state, block, worldName) {
         return null;
     const key = gridKey(block.x, block.y);
     const interaction = state.interactions.get(key) || {};
-    const destination = cleanDoorDestination(interaction.destination || interaction.door_destination || block.door_destination || block.destination || "");
+    const destination = cleanDoorDestination(interaction.destination ?? interaction.door_destination ?? block.door_destination ?? block.destination ?? "");
     const parsedDestination = parseDoorDestination(destination, worldName);
     return {
         block,
@@ -17536,8 +17542,9 @@ function getDoorStateForBlock(state, block, worldName) {
         door_id: cleanDoorId(interaction.door_id || block.door_id || ""),
         door_name: cleanDoorName(interaction.door_name || block.door_name || block.name || ""),
         destination,
-        target_world: cleanWorld(interaction.target_world || block.door_target_world || parsedDestination.target_world || worldName),
-        target_door_id: cleanDoorId(interaction.target_door_id || block.door_target_id || parsedDestination.target_door_id || ""),
+        // Destination text is authoritative; cached links may belong to an earlier edit.
+        target_world: cleanWorld(parsedDestination.target_world || worldName),
+        target_door_id: cleanDoorId(parsedDestination.target_door_id || ""),
         locked: Boolean(interaction.locked || block.entrance_locked),
         password: cleanDoorPassword(interaction.password || interaction.door_password || block.door_password || ""),
     };
@@ -21939,6 +21946,41 @@ async function handleDeveloperCommandRequestUnsafe(socket, player, data) {
             noclip_enabled: player.noclip_enabled,
             reason: "developer_command",
         }, { command_type: "noclip", noclip_enabled: player.noclip_enabled });
+        return;
+    }
+    if (commandName === "inv" || commandName === "vis") {
+        if (!isAdmin(player)) {
+            deny("Visibility commands are only available to developers.");
+            return;
+        }
+        const beforeInvisible = Boolean(player.invisible_enabled);
+        player.invisible_enabled = commandName === "inv";
+        // Discard pre-command snapshots so /vis cannot replay an old location.
+        pendingPlayerPositionBroadcasts.get(cleanWorld(player.world))?.delete(player.id);
+        player.last_player_position_broadcast_signature = "";
+        if (player.joined_world) {
+            // Backpressured sockets may still hold an older avatar/cull for retry.
+            for (const { socket: receiverSocket } of getWorldPlayerRecords(player.world, { includeSocket: true })) {
+                ServerSocketDeliveryHelpers.clearPendingPlayerPresence(receiverSocket, player.id);
+            }
+            if (player.invisible_enabled) {
+                // Explicitly remove the avatar even when distance-based interest is off.
+                broadcastToWorld(player.world, buildInterestCullPayload(player, player.world), player.id);
+                for (const { player: receiver } of getWorldPlayerRecords(player.world)) {
+                    setPlayerInterestVisible(receiver.id, player.id, false);
+                }
+            }
+            else {
+                publishPlayerPresenceUpdate(socket, player, player.world, "player_position", player.id);
+            }
+        }
+        approve(player.invisible_enabled ? "You are invisible to other players." : "You are visible to other players.", {
+            target_username: player.account_username,
+            target_type: "player",
+            before_invisible_enabled: beforeInvisible,
+            after_invisible_enabled: player.invisible_enabled,
+            reason: "developer_command",
+        }, { command_type: "visibility", invisible_enabled: player.invisible_enabled });
         return;
     }
     if (commandName === "clear_drops") {
@@ -32648,6 +32690,8 @@ function getSquaredPlayerDistance(a, b) {
 function shouldReceiverSeeSubject(receiver, subject, worldName = "") {
     if (!receiver || !subject)
         return false;
+    if (subject.invisible_enabled === true)
+        return false;
     if (receiver.id === subject.id)
         return false;
     if (!receiver.joined_world || !subject.joined_world)
@@ -32677,7 +32721,7 @@ function buildInterestCullPayload(subject, worldName) {
     return {
         ...buildPublicPlayerPresencePayload("player_left", subject, worldName),
         interest_cull: true,
-        reason: "out_of_interest",
+        reason: subject?.invisible_enabled === true ? "developer_invisible" : "out_of_interest",
     };
 }
 function sendRawPresenceToSocket(socket, raw, subject, worldName, messageType) {
@@ -32772,7 +32816,7 @@ function broadcastPlayerPresenceToInterestedPlayers(subject, payload, excludePla
     if (!subject || !payload)
         return;
     const clean = cleanWorld(payload.world || subject.world || "START");
-    if (!isPlayerInterestManagementEnabled()) {
+    if (!isPlayerInterestManagementEnabled() && subject.invisible_enabled !== true) {
         broadcastToWorld(clean, payload, excludePlayerId);
         return;
     }
@@ -32824,7 +32868,7 @@ function queuePlayerPresenceToInterestedPlayers(subject, payload, excludePlayerI
     for (const { playerId, player: receiver, socket: client } of recipientRecords) {
         if (sharedRecords && excludedPlayerId !== "" && playerId === excludedPlayerId)
             continue;
-        if (!isPlayerInterestManagementEnabled() || shouldReceiverSeeSubject(receiver, subject, clean)) {
+        if (shouldReceiverSeeSubject(receiver, subject, clean)) {
             setPlayerInterestVisible(receiver.id, subject.id, true);
             playerNetworkStats.interest_visible_deliveries += 1;
             deliverPlayerPresencePayload(client, payload, clean, batches);
@@ -32871,7 +32915,7 @@ function publishPlayerPresenceUpdate(socket, player, worldName, type = "player_p
 function broadcastPlayerActionToInterestedPlayers(worldName, payload, actors = []) {
     const clean = cleanWorld(worldName || payload?.world || "START");
     const actorList = Array.isArray(actors) ? actors.filter(Boolean) : [];
-    if (!PLAYER_ACTION_INTEREST_MANAGEMENT_ENABLED || actorList.length === 0) {
+    if ((!PLAYER_ACTION_INTEREST_MANAGEMENT_ENABLED && !actorList.some((actor) => actor.invisible_enabled === true)) || actorList.length === 0) {
         broadcastToWorld(clean, payload);
         return;
     }
@@ -32885,7 +32929,8 @@ function broadcastPlayerActionToInterestedPlayers(worldName, payload, actors = [
         const receiverId = String(receiver.id || client.playerId || "");
         let shouldSend = actorIds.has(receiverId);
         if (!shouldSend) {
-            shouldSend = actorList.some((actor) => shouldReceiverSeeSubject(receiver, actor, clean));
+            shouldSend = actorList.some((actor) => actor.invisible_enabled !== true
+                && (!PLAYER_ACTION_INTEREST_MANAGEMENT_ENABLED || shouldReceiverSeeSubject(receiver, actor, clean)));
         }
         if (!shouldSend) {
             playerNetworkStats.action_effect_packets_skipped += 1;
@@ -32900,6 +32945,8 @@ function getPlayersInWorld(worldName, excludePlayerId = "", receiverPlayer = nul
     const clean = cleanWorld(worldName || "START");
     const now = Date.now();
     for (const { player } of getWorldPlayerRecords(clean, { excludePlayerId })) {
+        if (player.invisible_enabled === true)
+            continue;
         if (receiverPlayer && !shouldReceiverSeeSubject(receiverPlayer, player, clean))
             continue;
         if (receiverPlayer && isPlayerInterestManagementEnabled()) {
@@ -32919,6 +32966,7 @@ function getPlayersInWorld(worldName, excludePlayerId = "", receiverPlayer = nul
             facing: player.facing,
             world: player.world,
             animation_state: player.animation_state || "idle",
+            noclip_enabled: player.noclip_enabled === true,
             jump_visual_sequence: clampInteger(player.jump_visual_sequence || 0, 0, 2147483647),
             selected_hand_item: String(player.selected_hand_item || ""),
             selected_hand_category: String(player.selected_hand_category || ""),
@@ -32936,6 +32984,9 @@ function getPlayersInWorld(worldName, excludePlayerId = "", receiverPlayer = nul
             fishing_target_x: fishingActive ? fishingTargetX : -1,
             fishing_target_y: fishingActive ? fishingTargetY : -1,
             fishing_lure_id: fishingActive ? clampString(player.fishing_lure_id || "") : "",
+            fishing_session_id: fishingActive ? clampString(player.fishing_session_id || "") : "",
+            fishing_hooked_item_id: fishingActive ? clampString(player.fishing_hooked_item_id || "") : "",
+            fishing_hooked_item_category: fishingActive ? clampString(player.fishing_hooked_item_category || "") : "",
             fishing_rod_id: fishingActive ? clampString(player.fishing_rod_id || "") : "",
             equipment_slots: equipmentSlots,
             equipped_tool: clampString(equipmentSlots.hand || ""),

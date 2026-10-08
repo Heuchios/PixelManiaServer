@@ -349,6 +349,14 @@ function createServerSocketDeliveryHelpers(config: SocketDeliveryConfig) {
     if (socket) removeMovementState(socket, true);
   }
 
+  function clearPendingPlayerPresence(socket: SocketLike | null | undefined, playerId: string): void {
+    const state = socket?._movementDeliveryState;
+    if (!socket || !state) return;
+    const removed = Number(state.players.delete(playerId)) + Number(state.left.delete(playerId));
+    config.playerNetworkStats.movement_backpressure_dropped_items += removed;
+    if (countMovementItems(state) === 0) removeMovementState(socket, false);
+  }
+
   function getOrCreateMovementState(
     socket: SocketLike,
     payload: PlayerPositionBatchPayload,
@@ -493,6 +501,7 @@ function createServerSocketDeliveryHelpers(config: SocketDeliveryConfig) {
 
   return {
     clearPlayerPositionDeliveryState,
+    clearPendingPlayerPresence,
     flushPendingPlayerPositionBatch,
     getSocketBufferedAmount,
     sendJson,

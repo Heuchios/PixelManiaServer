@@ -1099,5 +1099,16 @@ scenario("spawn acknowledgement and the next honest snapshot can arrive in one T
   assert.equal(h.corrections.length, 0);
 });
 
+scenario("noclip replicates separately from visibility and invalidates idle snapshots", () => {
+  const h = createHarness();
+  const player = createPlayer();
+  const before = h.movement.buildPublicPlayerPresencePayload("player_position", player, player.world);
+  assert.equal(before.noclip_enabled, false);
+  player.noclip_enabled = true;
+  const after = h.movement.buildPublicPlayerPresencePayload("player_position", player, player.world);
+  assert.equal(after.noclip_enabled, true);
+  assert.notEqual(h.movement.getPlayerPresenceBroadcastSignature(before), h.movement.getPlayerPresenceBroadcastSignature(after));
+});
+
 console.log(`[movement-rollback-regression] ${results.length} scenarios passed:`);
 for (const name of results) console.log(`  - ${name}`);

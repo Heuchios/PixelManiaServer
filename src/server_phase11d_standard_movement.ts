@@ -454,6 +454,9 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
     player.fishing_target_y = -1;
     player.fishing_lure_id = "";
     player.fishing_rod_id = "";
+    player.fishing_session_id = "";
+    player.fishing_hooked_item_id = "";
+    player.fishing_hooked_item_category = "";
   }
 
   function applyPlayerFishingPresenceFromSession(
@@ -477,6 +480,9 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
     player.fishing_target_y = targetY;
     player.fishing_lure_id = clampString(session.lure_id || "");
     player.fishing_rod_id = clampString(session.rod_id || "");
+    player.fishing_session_id = clampString(session.session_id || "");
+    player.fishing_hooked_item_id = session.hooked === true ? clampString(session.item_id || "") : "";
+    player.fishing_hooked_item_category = session.hooked === true ? clampString(session.item_category || "") : "";
     return true;
   }
 
@@ -942,6 +948,7 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
       y: Number(player?.y || 0),
       facing: Number(player?.facing || 1),
       world: String(worldName || player?.world || ""),
+      noclip_enabled: player?.noclip_enabled === true,
       animation_state: String(player?.animation_state || "idle"),
       jump_visual_sequence: clampInteger(player?.jump_visual_sequence || 0, 0, 2147483647),
       selected_hand_item: String(player?.selected_hand_item || ""),
@@ -962,6 +969,9 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
       fishing_target_x: fishingActive ? fishingTargetX : -1,
       fishing_target_y: fishingActive ? fishingTargetY : -1,
       fishing_lure_id: fishingActive ? clampString(player?.fishing_lure_id || "") : "",
+      fishing_session_id: fishingActive ? clampString(player?.fishing_session_id || "") : "",
+      fishing_hooked_item_id: fishingActive ? clampString(player?.fishing_hooked_item_id || "") : "",
+      fishing_hooked_item_category: fishingActive ? clampString(player?.fishing_hooked_item_category || "") : "",
       fishing_rod_id: fishingActive ? clampString(player?.fishing_rod_id || "") : "",
       chat_typing: player?.chat_typing === true,
       equipment_slots: equipmentSlots,
@@ -985,6 +995,7 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
     return JSON.stringify({
       player_id: String(payload.player_id || ""),
       world: String(payload.world || ""),
+      noclip_enabled: payload.noclip_enabled === true,
       x: Number(payload.x || 0),
       y: Number(payload.y || 0),
       facing: Number(payload.facing || 1),
@@ -1014,6 +1025,9 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
         ? Math.trunc(Number(payload.fishing_target_y))
         : -1,
       fishing_lure_id: clampString(payload.fishing_lure_id || ""),
+      fishing_session_id: clampString(payload.fishing_session_id || ""),
+      fishing_hooked_item_id: clampString(payload.fishing_hooked_item_id || ""),
+      fishing_hooked_item_category: clampString(payload.fishing_hooked_item_category || ""),
       fishing_rod_id: clampString(payload.fishing_rod_id || ""),
       equipped_tool: clampString(payload.equipped_tool || ""),
       equipped_back_item: clampString(payload.equipped_back_item || ""),

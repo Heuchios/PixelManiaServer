@@ -15,6 +15,8 @@ interface Phase9RemainingRouteDeps extends Record<string, any> {}
 function createServerPhase9RemainingRoutes(deps: Phase9RemainingRouteDeps) {
   const {
     MAX_CHAT_LENGTH,
+    activeFishingSessions,
+    publishPlayerPresenceUpdate,
     isAdmin,
     accountKey,
     broadcastToAuthenticatedPlayers,
@@ -218,6 +220,19 @@ function createServerPhase9RemainingRoutes(deps: Phase9RemainingRouteDeps) {
     return await getPhase8PlayerSessionRoutes().handleLeaveWorld(socket, player, data, context);
   }
 
+  async function handleFishingHook(socket: unknown, player: PacketRecord, data: PacketRecord): Promise<void> {
+    if (!requireAuthenticated(socket, player, "fishing_hook")) return;
+    if (!player.joined_world || !player.world) return;
+    const world = cleanWorld(player.world);
+    if (typeof data.world !== "string" || cleanWorld(data.world) !== world) return;
+    const session = activeFishingSessions.get(player.id);
+    if (!session || session.world !== world || Date.now() > session.expires_at) return;
+    if (data.session_id !== session.session_id || session.hooked === true) return;
+    // Only presentation changes. Item, location and ownership come from the paid cast.
+    session.hooked = true;
+    publishPlayerPresenceUpdate(socket, player, world, "player_position", player.id);
+  }
+
   async function handlePlayerEmote(socket: unknown, player: PacketRecord, data: PacketRecord, context: RouteContext): Promise<void> {
     if (!requireAuthenticated(socket, player, "player_emote")) return;
     if (!player.joined_world || !player.world) return;
@@ -375,6 +390,7 @@ function createServerPhase9RemainingRoutes(deps: Phase9RemainingRouteDeps) {
     handleLeaveWorld,
     handleChat,
     handlePlayerEmote,
+    handleFishingHook,
     handleBroadcast,
     handleDeveloperPinUnlockRoute,
     handleDeveloperCommandRequestRoute,
