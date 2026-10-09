@@ -152,7 +152,6 @@ const ITEM_INSTANCE_RETIRED_STATE = "consumed";
 const ITEM_INSTANCE_STATES = new Set(["active", "consumed", "traded", "destroyed", "dropped", "locked"]);
 const ITEM_INSTANCE_LOCATIONS = new Set(["inventory", "vending", "trade", "world_drop", "safe", "donation_box", "display", "shop", "admin", "system", "unknown"]);
 const ITEM_INSTANCE_EVENT_TYPES = new Set(["created", "reconciled", "owner_changed", "location_changed", "state_changed", "updated", "retired"]);
-const ITEM_INSTANCE_RECONCILE_MAX_PER_ITEM = 250;
 const ITEM_INSTANCE_VAGUE_CREATION_SOURCES = new Set(["", "system", "unknown", "item_ledger", "inventory_delta", "update"]);
 const TRANSACTION_LEDGER_STATUSES = new Set(["success", "failed", "reversed"]);
 const INTEGRITY_HASH_ALGORITHM = "sha256:v1";
@@ -2648,7 +2647,9 @@ class PostgresStore {
         if (!shouldTrackItemInstance(cleanItemType, itemCategory)) continue;
         const amount = Math.max(0, toInt(rawAmount, 0));
         if (amount <= 0) continue;
-        const cappedAmount = Math.min(amount, ITEM_INSTANCE_RECONCILE_MAX_PER_ITEM);
+        // Reconciliation must cover a full legal stack. The old fixed 250 cap
+        // stranded the last 150 units of 400-item admin/migrated holdings.
+        const cappedAmount = Math.min(amount, getInventoryStackLimitForItem(cleanItemType));
         const key = `${cleanItemType}\u0000${itemCategory}`;
         desiredCounts.set(key, (desiredCounts.get(key) || 0) + cappedAmount);
       }
@@ -8988,7 +8989,7 @@ class PostgresStore {
     const balanceAfter = Math.max(0, toInt(e.after_amount || e.balance_after || 0, 0));
     const strict = Boolean(e.strict_item_instances || e.strict || e.instance_id_first);
     const requestedAmount = Math.max(0, Math.abs(delta));
-    const amount = strict ? requestedAmount : Math.min(requestedAmount, ITEM_INSTANCE_RECONCILE_MAX_PER_ITEM);
+    const amount = strict ? requestedAmount : Math.min(requestedAmount, getInventoryStackLimitForItem(itemType));
     if (amount <= 0) return { ok: true, tracked: true, created: 0, moved: 0, item_instances: [] };
 
     const worldId = isUuid(e.world_id) ? cleanName(e.world_id) : null;

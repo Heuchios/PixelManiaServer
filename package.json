@@ -4,6 +4,8 @@
   "description": "",
   "main": "server.js",
   "scripts": {
+    "audit:inventory-identities": "node scripts/audit_inventory_identities.js",
+    "test:inventory-identities-postgres": "node scripts/test_inventory_identity_restore.js",
     "audit:world-drop-identities": "node scripts/audit_world_drop_identities.js",
     "test:drop-identities-postgres": "node scripts/test_legacy_drop_identity_repair.js",
     "check:developer-visibility": "npm run build:server-socket-delivery-helpers && npm run build:server-phase11d-standard-movement && npm run build:server-entry && node scripts/test_developer_visibility.js",
