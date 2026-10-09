@@ -1157,7 +1157,13 @@ const HAIR_PACK_TABLE: any = [
   { item_id: "blonde_hair", item_category: "hair", weight: 999 },
   { item_id: "brunette_hair", item_category: "hair", weight: 999 },
   { item_id: "crazy_hair", item_category: "hair", weight: 999 },
-  { item_id: "baby_hair", item_category: "hair", weight: 11 },
+  { item_id: "black_spiky_hair", item_category: "hair", weight: 999 },
+  { item_id: "chestnut_curtains", item_category: "hair", weight: 999 },
+  { item_id: "supernova_hair", item_category: "hair", weight: 999 },
+  { item_id: "chestnut_bob", item_category: "hair", weight: 999 },
+  { item_id: "ginger_ponytail", item_category: "hair", weight: 999 },
+  { item_id: "ginger_pigtails", item_category: "hair", weight: 999 },
+  { item_id: "baby_hair", item_category: "hair", weight: 17 },
 ];
 const PRESTIGE_COLOURED_BLOCK_PACK_TABLE: any = [
   { item_id: "ps_blue_block", item_category: "block", weight: 100 },
