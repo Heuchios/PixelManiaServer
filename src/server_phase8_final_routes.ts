@@ -948,6 +948,20 @@ function createServerPhase8FinalRoutes(deps: Phase8FinalRouteDeps) {
               }, player.account_username);
             }
 
+            const swing = data.hand_swing_visual;
+            if (swing && typeof swing === "object" && !Array.isArray(swing)
+                && Number.isSafeInteger(swing.sequence) && swing.sequence > 0 && swing.sequence <= 2147483647
+                && swing.sequence !== player.hand_swing_visual?.sequence
+                && Number.isFinite(swing.offset_x) && Number.isFinite(swing.offset_y)
+                && Math.hypot(swing.offset_x, swing.offset_y) <= 256) {
+              // Cosmetic state only: the client cannot choose another player's
+              // identity or a weapon it does not have equipped and own.
+              player.hand_swing_visual = {
+                sequence: swing.sequence, offset_x: swing.offset_x, offset_y: swing.offset_y,
+                tool: String(player.equipment_slots?.hand || ""), facing: position.facing,
+              };
+            }
+
             const nextEquipmentKey = getEquipmentSlotsComparisonKey(player.equipment_slots || {});
             const animationChanged = previousAnimationState !== String(player.animation_state || "idle");
             const equipmentChanged = previousEquipmentKey !== nextEquipmentKey;

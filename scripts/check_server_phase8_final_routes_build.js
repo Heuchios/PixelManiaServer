@@ -196,7 +196,7 @@ function getLegacyBody() {
     sanitizePlayerVelocity: (/** @type {unknown} */ value) => Number(value) || 0,
     sanitizePlayerDamageFlash: () => ({active:false,remaining_ms:0,token:0}),
     refreshPlayerFishingPresence: () => {},
-    buildPublicPlayerPresencePayload: (/** @type {string} */ _type, /** @type {Record<string, unknown>} */ value) => ({jump_visual_sequence:value.jump_visual_sequence,punch_visual_sequence:value.punch_visual_sequence}),
+    buildPublicPlayerPresencePayload: (/** @type {string} */ _type, /** @type {Record<string, unknown>} */ value) => ({jump_visual_sequence:value.jump_visual_sequence,punch_visual_sequence:value.punch_visual_sequence, ...(value.hand_swing_visual ? {hand_swing_visual:value.hand_swing_visual} : {})}),
     getPlayerPresenceBroadcastSignature: (/** @type {unknown} */ value) => JSON.stringify(value),
     getPlayerPositionHeartbeatIntervalMs: () => 1000,
     queuePlayerPositionBroadcast: (/** @type {string} */ _world, /** @type {Record<string, unknown>} */ value) => relayedActions.push(value),
@@ -232,6 +232,27 @@ function getLegacyBody() {
   magnetPreview = '';
   await visualRoutes.handlePlayerPosition(socket, visualPlayer, {selected_hand_item:'stone'}, {playerId:'p1'});
   assert.equal(visualPlayer.selected_hand_item, '', 'Lost machine stock or binding clears the preview');
+
+  visualPlayer.equipment_slots = {hand:'neptune_trident'};
+  const swing = {sequence:1, offset_x:-48, offset_y:20, tool:'dev_weapon', player_id:'victim', facing:-1};
+  await visualRoutes.handlePlayerPosition(socket, visualPlayer, {hand_swing_visual:swing}, {playerId:'p1'});
+  const acceptedSwing = {sequence:1, offset_x:-48, offset_y:20, tool:'neptune_trident', facing:1};
+  assert.deepEqual(visualPlayer.hand_swing_visual, acceptedSwing, 'Weapon and facing come from validated player state');
+  assert.deepEqual(relayedActions.pop()?.hand_swing_visual, acceptedSwing, 'Stationary free swings reach observers');
+  const countBeforeDuplicate = relayedActions.length;
+  await visualRoutes.handlePlayerPosition(socket, visualPlayer, {hand_swing_visual:{...swing, offset_x:10}}, {playerId:'p1'});
+  assert.equal(relayedActions.length, countBeforeDuplicate, 'Repeating a sequence cannot replay or retarget an effect');
+  for (const invalid of [null, [], {}, {...swing, sequence:0}, {...swing, sequence:-1}, {...swing, sequence:1.5}, {...swing, sequence:2147483648}, {...swing, sequence:2, offset_x:Infinity}, {...swing, sequence:2, offset_x:'48'}, {...swing, sequence:2, offset_y:NaN}, {...swing, sequence:2, offset_x:256, offset_y:256}]) {
+    await visualRoutes.handlePlayerPosition(socket, visualPlayer, {hand_swing_visual:invalid}, {playerId:'p1'});
+    assert.deepEqual(visualPlayer.hand_swing_visual, acceptedSwing, 'Invalid cosmetic events cannot replace accepted state');
+  }
+  acceptMotion = false;
+  await visualRoutes.handlePlayerPosition(socket, visualPlayer, {hand_swing_visual:{...swing, sequence:2}}, {playerId:'p1'});
+  assert.deepEqual(visualPlayer.hand_swing_visual, acceptedSwing, 'Rejected movement cannot emit effects');
+  acceptMotion = true;
+  visualPlayer.equipment_slots = {hand:'serpent_staff'};
+  await visualRoutes.handlePlayerPosition(socket, visualPlayer, {hand_swing_visual:{...swing, sequence:2}}, {playerId:'p1'});
+  assert.deepEqual(relayedActions.pop()?.hand_swing_visual, {...acceptedSwing, sequence:2, tool:'serpent_staff'}, 'Next stationary swing uses the current equipment');
 
   const legacyBody = getLegacyBody();
   assert.doesNotMatch(legacyBody, /if \(data\.type === "world_block_update"\)/);

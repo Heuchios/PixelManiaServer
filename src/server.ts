@@ -35652,6 +35652,7 @@ function getPlayersInWorld(worldName: any, excludePlayerId: any = "", receiverPl
       selected_hand_item: String(player.selected_hand_item || ""),
       selected_hand_category: String(player.selected_hand_category || ""),
       punch_visual_sequence: clampInteger(player.punch_visual_sequence || 0, 0, 2147483647),
+      hand_swing_visual: player.hand_swing_visual || null,
       movement_sequence: Math.max(0, Math.trunc(Number(player.movement_sequence) || 0)),
       server_time_msec: Math.max(0, Math.trunc(Number(player.movement_server_time_msec) || now)),
       velocity_x: sanitizePlayerVelocity(player.velocity_x || 0),

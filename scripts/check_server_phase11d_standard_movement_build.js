@@ -505,11 +505,14 @@ player.damage_flash_expires_at = 1500;
 player.damage_flash_token = 7;
 player.jump_visual_sequence = 3;
 player.punch_visual_sequence = 5;
+player.hand_swing_visual = {sequence:3, offset_x:48, offset_y:-4, tool:'neptune_trident', facing:1};
 player.selected_hand_item = "dirt";
 player.selected_hand_category = "block";
 const presence = movement.buildPublicPlayerPresencePayload("player_position", player, "TEST");
 assert.equal(presence.jump_visual_sequence, 3);
 assert.equal(presence.punch_visual_sequence, 5);
+assert.deepEqual(presence.hand_swing_visual, player.hand_swing_visual);
+assert.deepEqual(movement.buildPublicPlayerPresencePayload('player_joined', player, 'TEST').hand_swing_visual, player.hand_swing_visual, 'New observers receive the baseline sequence without replaying it');
 assert.equal(presence.selected_hand_item, "dirt");
 assert.equal(presence.selected_hand_category, "block");
 assert.equal(presence.player_id, "p1");
@@ -520,6 +523,7 @@ assert.equal(presence.equipped_tool, "wrench");
 assert.equal(presence.equipped_back_item, "cape");
 
 const signature = movement.getPlayerPresenceBroadcastSignature(presence);
+assert.notEqual(movement.getPlayerPresenceBroadcastSignature({...presence, hand_swing_visual:{...presence.hand_swing_visual, sequence:4}}), signature, 'Stationary free swings are not filtered as duplicate movement');
 assert.notEqual(movement.getPlayerPresenceBroadcastSignature({...presence, selected_hand_item: "stone"}), signature, "Stationary selection changes must reach peers");
 assert.notEqual(movement.getPlayerPresenceBroadcastSignature({...presence, selected_hand_item: "", selected_hand_category: ""}), signature, "Clearing the preview must reach peers");
 for (const key of ["jump_visual_sequence", "punch_visual_sequence"]) {

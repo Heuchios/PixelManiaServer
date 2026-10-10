@@ -954,6 +954,7 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
       selected_hand_item: String(player?.selected_hand_item || ""),
       selected_hand_category: String(player?.selected_hand_category || ""),
       punch_visual_sequence: clampInteger(player?.punch_visual_sequence || 0, 0, 2147483647),
+      hand_swing_visual: player?.hand_swing_visual || null,
       movement_sequence: Math.max(0, Math.trunc(Number(player?.movement_sequence) || 0)),
       server_time_msec: Math.max(
         0,
@@ -1004,6 +1005,7 @@ function createServerPhase11dStandardMovement(deps: Phase11dStandardMovementDeps
       selected_hand_item: String(payload.selected_hand_item || ""),
       selected_hand_category: String(payload.selected_hand_category || ""),
       punch_visual_sequence: clampInteger(payload.punch_visual_sequence || 0, 0, 2147483647),
+      hand_swing_visual: payload.hand_swing_visual || null,
       velocity_x: sanitizePlayerVelocity(payload.velocity_x || 0),
       velocity_y: sanitizePlayerVelocity(payload.velocity_y || 0),
       on_floor: payload.on_floor === true,
