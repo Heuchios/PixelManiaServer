@@ -3925,7 +3925,7 @@ const ITEM_DEFINITIONS = {
     }),
     chestnut_curtains: item("hair", {
         "category": "hair",
-        "display_name": "Chestnut Curtains",
+        "display_name": "Black Stylish Hair",
         "rarity": "common",
         "texture": "chestnut_curtains",
         "inventory_icon": "chestnut_curtains_icon",
@@ -3953,7 +3953,7 @@ const ITEM_DEFINITIONS = {
     }),
     chestnut_bob: item("hair", {
         "category": "hair",
-        "display_name": "Chestnut Bob",
+        "display_name": "Black Mid Hair",
         "rarity": "common",
         "texture": "chestnut_bob",
         "inventory_icon": "chestnut_bob_icon",
@@ -3967,7 +3967,7 @@ const ITEM_DEFINITIONS = {
     }),
     ginger_ponytail: item("hair", {
         "category": "hair",
-        "display_name": "Ginger Ponytail",
+        "display_name": "Brown Ponytail",
         "rarity": "common",
         "texture": "ginger_ponytail",
         "inventory_icon": "ginger_ponytail_icon",
@@ -3981,7 +3981,7 @@ const ITEM_DEFINITIONS = {
     }),
     ginger_pigtails: item("hair", {
         "category": "hair",
-        "display_name": "Ginger Pigtails",
+        "display_name": "Brown Pigtails",
         "rarity": "common",
         "texture": "ginger_pigtails",
         "inventory_icon": "ginger_pigtails_icon",
@@ -4037,7 +4037,7 @@ const ITEM_DEFINITIONS = {
     }),
     sunflower_cap: item("hat", {
         "category": "hat",
-        "display_name": "Sunflower Cap",
+        "display_name": "Construction Hat",
         "rarity": "common",
         "texture": "sunflower_cap",
         "inventory_icon": "sunflower_cap_icon",
