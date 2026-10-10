@@ -13360,7 +13360,10 @@ function validateFishingTarget(socket: any, player: any, worldName: any, grid: a
   }
 
   const worldState = ensureWorldState(worldName);
-  const serverBlock = worldState.foreground.get(gridKey(grid.x, grid.y));
+  // Natural ponds live in generated terrain, not in the saved placement map.
+  // Use the authoritative overlay so scooped, replaced and frozen water still
+  // overrides generation exactly as it does for world rendering and collision.
+  const serverBlock = buildEffectiveForegroundMap(worldName, worldState).get(gridKey(grid.x, grid.y));
   if (!serverBlock || String(serverBlock.block_type || "") !== "water") {
     sendInventoryTransactionRejected(socket, data, "Cast the fishing rod on water.");
     return false;
@@ -13460,9 +13463,18 @@ async function handleFishingStartTransaction(socket: any, player: any, data: any
   if (!requireSameWorld(socket, player, worldName, "fish in that world")) return;
   if (await rejectIfWorldBanned(socket, player, worldName, "fishing_start")) return;
 
-  if (activeFishingSessions.has(player.id)) {
-    sendInventoryTransactionRejected(socket, data, "Finish your current cast first.");
-    return;
+  const previousCast = activeFishingSessions.get(player.id);
+  if (previousCast) {
+    if (Date.now() <= Number(previousCast.expires_at || 0)) {
+      sendInventoryTransactionRejected(socket, data, "Finish your current cast first.");
+      return;
+    }
+    // A mobile client may never receive the paid cast's reply/cancellation.
+    // Presence expiry alone does not remove the session from this map, so an
+    // expired cast used to block every later start until the player reconnected.
+    activeFishingSessions.delete(player.id);
+    clearPlayerFishingPresence(player);
+    publishPlayerPresenceUpdate(socket, player, previousCast.world, "player_position", player.id);
   }
 
   const grid: any = getFishingGrid(data);
