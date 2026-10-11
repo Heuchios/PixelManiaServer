@@ -15,6 +15,7 @@ import * as FishMarketStore from "./server_fish_market_store";
 import * as WorldNames from "./server_world_names";
 import * as WorldTaxes from "./server_world_taxes";
 import QuestStore = require("./server_quest_store");
+import DailyRewards = require("./server_daily_rewards");
 
 type PostgresPoolConstructor = new (config?: PoolConfig) => Pool;
 type PostgresError = Error & {
@@ -599,6 +600,7 @@ class PostgresStore {
   declare landfillReady: boolean;
   declare pool: Pool | null;
   questReady = false;
+  dailyRewardsReady = false;
   declare bootstrapSqlPath: string;
   declare autoBootstrap: boolean;
   declare writeQueue: Promise<unknown>;
@@ -768,6 +770,13 @@ class PostgresStore {
         } catch (error) {
           this.questReady = false;
           this.logger("[postgres] quest schema unavailable; Dispatch rewards disabled.", getErrorMessage(error));
+        }
+        try {
+          await DailyRewards.ensureSchema(this);
+          this.dailyRewardsReady = true;
+        } catch (error) {
+          this.dailyRewardsReady = false;
+          this.logger("[postgres] daily reward schema unavailable; claims disabled.", getErrorMessage(error));
         }
         this.ready = true;
         this.degraded = false;

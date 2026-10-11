@@ -46,6 +46,7 @@ const FishMarketStore = __importStar(require("./server_fish_market_store"));
 const WorldNames = __importStar(require("./server_world_names"));
 const WorldTaxes = __importStar(require("./server_world_taxes"));
 const QuestStore = require("./server_quest_store");
+const DailyRewards = require("./server_daily_rewards");
 let PoolClass = null;
 try {
     PoolClass = require("pg").Pool;
@@ -487,6 +488,7 @@ function normalizeIp(value) {
 }
 class PostgresStore {
     questReady = false;
+    dailyRewardsReady = false;
     /**
      * @param {PixelMania.PostgresStoreOptions} options
      */
@@ -643,6 +645,14 @@ class PostgresStore {
                 catch (error) {
                     this.questReady = false;
                     this.logger("[postgres] quest schema unavailable; Dispatch rewards disabled.", getErrorMessage(error));
+                }
+                try {
+                    await DailyRewards.ensureSchema(this);
+                    this.dailyRewardsReady = true;
+                }
+                catch (error) {
+                    this.dailyRewardsReady = false;
+                    this.logger("[postgres] daily reward schema unavailable; claims disabled.", getErrorMessage(error));
                 }
                 this.ready = true;
                 this.degraded = false;

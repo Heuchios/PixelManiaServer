@@ -19,7 +19,7 @@ const header = "// Generated from src/postgres_store.ts. Do not edit by hand.\n"
 fs.writeFileSync(outputPath, `${header}${compiledSource}`, "utf8");
 console.log("[postgres-store] synced generated postgres_store.js");
 
-for (const name of ["server_fishing_catalog", "server_fishing_catalog_store", "server_fish_market", "server_fish_market_store", "server_world_names", "world_name_pricing", "server_world_taxes"]) {
+for (const name of ["server_daily_rewards", "server_fishing_catalog", "server_fishing_catalog_store", "server_fish_market", "server_fish_market_store", "server_world_names", "world_name_pricing", "server_world_taxes"]) {
   const source = path.join(repoRoot, ".tsbuild", name + ".js");
   if (fs.existsSync(source)) fs.copyFileSync(source, path.join(repoRoot, name + ".js"));
 }

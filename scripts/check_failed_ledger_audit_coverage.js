@@ -314,13 +314,15 @@ function run() {
     const queueCallSites = [...source.matchAll(/queueFailedTransactionLedger\(/g)].length;
     assert.equal(
       queueCallSites,
-      4,
-      `expected rejection, quest-result, name-claim callers and declaration, found ${queueCallSites} occurrences. Audit any new direct caller.`,
+      5,
+      `expected rejection, quest-result, daily-reward, name-claim callers and declaration, found ${queueCallSites} occurrences. Audit any new direct caller.`,
     );
     assert.match(source, /if \(!result\.ok && \["quest_choose", "quest_redeem"\]\.includes\(String\(data\.action\)\)\)\s*\{\s*queueFailedTransactionLedger\(socket, "inventory_transaction_request", result\.message/,
       "quest failures must use the audited inventory action and only log valuable completion/redemption failures");
     assert.match(source, /if \(!readOnly\)\s*queueFailedTransactionLedger\(socket, "inventory_transaction_request", message/,
       "name reservation/payment failures must use the audited inventory action; status reads do not write failure ledgers");
+    assert.match(source, /if \(!result\.ok && data\.action === "daily_reward_claim"\)\s*\{\s*queueFailedTransactionLedger\(socket, "inventory_transaction_request", result\.message/,
+      "daily claim failures must use the audited inventory action; daily status reads do not write failure ledgers");
     assert.match(source, /const readOnly = action === "world_name_status" \|\| action === "world_name_search" \|\| action === "world_tax_status";/);
   });
 

@@ -36,6 +36,7 @@ const ServerFriendRoutesModule = require("./server_friend_routes");
 const ServerTradeRoutesModule = require("./server_trade_routes");
 const ServerInventoryEconomyRoutesModule = require("./server_inventory_economy_routes");
 import ServerQuestStore = require("./server_quest_store");
+import DailyRewards = require("./server_daily_rewards");
 const ServerCalendarEventsModule = require("./server_calendar_events");
 const ServerLandfillEventModule = require("./server_landfill_event");
 const ServerPhase11aRuntimeModule = require("./server_phase11a_runtime");
@@ -6540,10 +6541,48 @@ async function executeTrade(trade: any) {
 }
 
 async function handleInventoryTransactionRequest(socket: any, player: any, data: any) {
+  if (String(data.action || "").startsWith("daily_reward_")) {
+    return await handleDailyRewardRequest(socket, player, data);
+  }
   if (String(data.action || "").startsWith("quest_")) {
     return await handleQuestRequest(socket, player, data);
   }
   return await getServerInventoryEconomyRoutes().handleInventoryTransactionRequest(socket, player, data);
+}
+
+async function handleDailyRewardRequest(socket: { userAgent?: string }, player: { authenticated: boolean; account_username: string; world: string }, data: ServerPacketRecord) {
+  if (!requireAuthenticated(socket, player, "claim daily rewards")) return;
+  const requestId = makeRequestId(data);
+  const username = player.account_username;
+  const worldName = cleanWorld(player.world || "");
+  const reject = (message: string) => sendInventoryTransactionRejected(socket, data, message);
+  if (!["daily_reward_status", "daily_reward_claim"].includes(String(data.action))) {
+    reject("Unknown daily reward action."); return;
+  }
+  if (!worldName || cleanWorld(data.world || worldName) !== worldName) {
+    reject("Enter a world to open your daily box."); return;
+  }
+  const locks = await acquirePlayerInventoryLocks([username], `daily:${requestId}`);
+  if (!locks.acquired) { reject("Your inventory is busy. Please try again."); return; }
+  try {
+    const flush = await flushPendingSessionPersistence(username, "", "before_daily_reward");
+    if (!flush.ok || !player.authenticated || player.account_username !== username || player.world !== worldName) {
+      reject("Your session changed. Reopen daily rewards."); return;
+    }
+    const result = await DailyRewards.apply(postgresStore, { username, world: worldName,
+      action: String(data.action), reward_day: data.reward_day, request_id: requestId,
+      ip_address: getSocketAddress(socket), user_agent: String(socket?.userAgent || "") });
+    if (!result.ok && data.action === "daily_reward_claim") {
+      queueFailedTransactionLedger(socket, "inventory_transaction_request", result.message,
+        { request_id: requestId, world: worldName, action: data.action });
+    }
+    let statePayload: ServerPacketRecord = {};
+    if (result.ok && result.daily_reward?.reward) {
+      const refreshed = await refreshPlayerStateFromPostgres(username, "daily_reward") as { ok?: boolean; state?: ServerPacketRecord };
+      if (refreshed.ok && refreshed.state) statePayload = { player_data: buildPlayerStateForClient(refreshed.state) };
+    }
+    sendInventoryTransactionResult(socket, { ...result, ...statePayload, action: data.action, request_id: requestId });
+  } finally { releasePlayerInventoryLocks(locks); }
 }
 
 async function handleQuestRequest(socket: { userAgent?: string }, player: { account_username: string; world: string }, data: ServerPacketRecord) {
