@@ -5110,6 +5110,9 @@ function buildTradeStateMessage(trade, message = "") {
             [trade.requester_id]: Boolean(trade.final_accepted[trade.requester_id]),
             [trade.target_id]: Boolean(trade.final_accepted[trade.target_id]),
         },
+        final_confirm_available_at: Number(trade.final_confirm_available_at) || 0,
+        final_review_remaining_ms: trade.status === "final_pending"
+            ? Math.max(0, (Number(trade.final_confirm_available_at) || 0) - Date.now()) : 0,
         message,
     };
 }

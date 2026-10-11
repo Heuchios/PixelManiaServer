@@ -74,6 +74,15 @@ assert.equal(VersionHelpers.compareVersions("1.2.2", "1.2.3"), -1);
 assert.equal(VersionHelpers.compareVersions("", "1.2.3"), null);
 assert.equal(VersionHelpers.isClientVersionAllowed("1.0.2", "1.0.1"), true);
 assert.equal(VersionHelpers.isClientVersionAllowed("1.0.0", "1.0.1"), false);
+for (const invalid of ["", "unknown", "1.2.x", "1.2.25junk", "999bad.0.0", "1.2.25.99", "999999999999999999999.0.0"]) {
+  assert.equal(VersionHelpers.isClientVersionAllowed(invalid, "1.2.25"), false, 'Malformed versions must not pass the update gate');
+}
+for (const platform of ["desktop", "android"]) {
+  for (const old of ["1.2.6", "1.2.14", "1.2.21", "1.2.24"]) {
+    assert.equal(VersionHelpers.isClientVersionAllowed(old, "1.2.25"), false, `${platform}: older releases cannot join`);
+  }
+  assert.equal(VersionHelpers.isClientVersionAllowed("1.2.25", "1.2.25"), true);
+}
 
 assert.deepEqual(AccountHelpers.cloneJson({ nested: { value: 1 } }), { nested: { value: 1 } });
 assert.equal(AccountHelpers.makeAuditHash({ a: 1 }), crypto.createHash("sha256").update(JSON.stringify({ a: 1 })).digest("hex"));

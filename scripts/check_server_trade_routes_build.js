@@ -226,13 +226,29 @@ assert.equal(typeof routes.handleTradeFinalConfirm, "function");
   assert.equal(trade.status, "active");
   routes.handleTradeConfirm(bobSocket, bobPlayer, { trade_id: trade.id });
   assert.equal(trade.status, "final_pending");
-
+  const realNow = Date.now;
+  const reviewStart = trade.final_confirm_available_at - 5000;
+  assert.ok(Math.abs(reviewStart - realNow()) < 100, 'Final review starts after both initial approvals');
+  Date.now = () => reviewStart;
+  try {
+    for (const elapsed of [0, 1000, 4999]) {
+      Date.now = () => reviewStart + elapsed;
+      for (const [socket, player] of [[aliceSocket, alicePlayer], [bobSocket, bobPlayer]]) {
+        await routes.handleTradeFinalConfirm(socket, player, {trade_id:trade.id, final_confirm_available_at:0});
+      }
+      assert.equal(executedTradeCount, 0, 'Early or forged confirms cannot execute a trade');
+      assert.equal(trade.final_accepted[alicePlayer.id], false);
+      assert.equal(trade.final_accepted[bobPlayer.id], false);
+      assert.equal(trade.final_confirm_available_at, reviewStart + 5000, 'Retries do not restart the shared review');
+    }
+    Date.now = () => reviewStart + 5000;
   await routes.handleTradeFinalConfirm(aliceSocket, alicePlayer, { trade_id: trade.id });
   assert.equal(executedTradeCount, 0);
   await routes.handleTradeFinalConfirm(bobSocket, bobPlayer, { trade_id: trade.id });
   assert.equal(executedTradeCount, 1);
   assert.equal(activeTrades.size, 0);
   assert.equal(tradeByPlayerId.size, 0);
+  } finally { Date.now = realNow; }
 
   await routes.handleTradeRequest(aliceSocket, alicePlayer, { target_username: "Bob" });
   assert.equal(activeTrades.size, 1);

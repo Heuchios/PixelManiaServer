@@ -5,6 +5,7 @@ type PacketRecord = Record<string, any>;
 type MaybePromise<T> = T | Promise<T>;
 
 interface TradeRoutesDeps extends Record<string, any> {}
+const FINAL_TRADE_REVIEW_MS = 5000;
 
 function createServerTradeRoutes(deps: TradeRoutesDeps) {
   const {
@@ -271,6 +272,7 @@ function createServerTradeRoutes(deps: TradeRoutesDeps) {
   }
 
   function resetTradeApprovals(trade: PacketRecord): void {
+    trade.final_confirm_available_at = 0;
     for (const playerId of getTradePartyIds(trade)) {
       trade.accepted[playerId] = false;
       trade.final_accepted[playerId] = false;
@@ -336,10 +338,11 @@ function createServerTradeRoutes(deps: TradeRoutesDeps) {
 
     if (getTradePartyIds(trade).every((playerId: string) => Boolean(trade.accepted[playerId]))) {
       trade.status = "final_pending";
+      trade.final_confirm_available_at = Date.now() + FINAL_TRADE_REVIEW_MS;
       for (const playerId of getTradePartyIds(trade)) {
         trade.final_accepted[playerId] = false;
       }
-      sendTradeState(trade, "Final confirmation required.");
+      sendTradeState(trade, "Review the final trade for 5 seconds before accepting.");
       return;
     }
 
@@ -357,6 +360,17 @@ function createServerTradeRoutes(deps: TradeRoutesDeps) {
 
     if (trade.status !== "final_pending") {
       sendTradeError(socket, data, "Final confirmation is not ready.");
+      return;
+    }
+
+    // The final window cannot be skipped by sending a packet before its button
+    // unlocks. Missing legacy state starts a fresh review instead of bypassing it.
+    if (!Number.isFinite(trade.final_confirm_available_at) || trade.final_confirm_available_at <= 0) {
+      trade.final_confirm_available_at = Date.now() + FINAL_TRADE_REVIEW_MS;
+      for (const playerId of getTradePartyIds(trade)) trade.final_accepted[playerId] = false;
+    }
+    if (Date.now() < trade.final_confirm_available_at) {
+      sendTradeState(trade, "Please finish reviewing the final trade before accepting.");
       return;
     }
 

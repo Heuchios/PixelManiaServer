@@ -8,11 +8,10 @@ function parseVersionParts(value) {
     if (clean === "")
         return null;
     const core = clean.split(/[+-]/)[0];
-    const parts = core.split(".").map((part) => {
-        const match = String(part || "").match(/^\d+/);
-        return match ? Number(match[0]) : 0;
-    });
-    if (parts.length === 0 || parts.some((part) => !Number.isFinite(part)))
+    if (!/^\d+(?:\.\d+){0,2}$/.test(core))
+        return null;
+    const parts = core.split(".").map(Number);
+    if (parts.some((part) => !Number.isSafeInteger(part)))
         return null;
     while (parts.length < 3)
         parts.push(0);
