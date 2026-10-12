@@ -758,10 +758,13 @@ function createServerAccountSessionHelpers(deps: AccountSessionDeps) {
     const accountLimit = isTokenLogin ? TOKEN_LOGIN_ATTEMPT_LIMIT_ACCOUNT : LOGIN_ATTEMPT_LIMIT_ACCOUNT;
 
     if (redisStore.isReady()) {
-      checks.push(await redisStore.checkRateLimit(`${scopePrefix}:ip`, subject.ipSubject, ipLimit, LOGIN_ATTEMPT_WINDOW_MS));
+      // Independent buckets still both count this attempt, without two serial
+      // Redis round trips before password/token validation can begin.
+      const pendingChecks = [redisStore.checkRateLimit(`${scopePrefix}:ip`, subject.ipSubject, ipLimit, LOGIN_ATTEMPT_WINDOW_MS)];
       if (subject.accountSubject) {
-        checks.push(await redisStore.checkRateLimit(`${scopePrefix}:account`, subject.accountSubject, accountLimit, LOGIN_ATTEMPT_WINDOW_MS));
+        pendingChecks.push(redisStore.checkRateLimit(`${scopePrefix}:account`, subject.accountSubject, accountLimit, LOGIN_ATTEMPT_WINDOW_MS));
       }
+      checks.push(...await Promise.all(pendingChecks));
     } else {
       checks.push(consumeLocalLoginAttempt(`${scopePrefix}:ip`, subject.ipSubject, ipLimit, LOGIN_ATTEMPT_WINDOW_MS));
       if (subject.accountSubject) {

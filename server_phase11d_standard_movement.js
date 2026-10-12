@@ -330,6 +330,14 @@ function createServerPhase11dStandardMovement(deps) {
         player.last_position_at = now;
         player.movement_server_time_msec = now;
         player.chat_typing = data?.chat_typing === true;
+        if (Object.prototype.hasOwnProperty.call(data || {}, "activity_bubble")) {
+            player.activity_bubble = ["edit", "afk", "shop", "trade"].includes(data?.activity_bubble)
+                ? data?.activity_bubble : "";
+        }
+        // Cosmetic overhead HP only; never write client-reported health to durable state.
+        if (typeof data?.health_preview === "number" && Number.isFinite(data.health_preview)) {
+            player.health_preview = clampInteger(data.health_preview, 0, 10);
+        }
         if (sequence > 0)
             player.movement_sequence = sequence;
         if (clientTimeMsec > 0)
@@ -812,6 +820,8 @@ function createServerPhase11dStandardMovement(deps) {
             fishing_hooked_item_category: fishingActive ? clampString(player?.fishing_hooked_item_category || "") : "",
             fishing_rod_id: fishingActive ? clampString(player?.fishing_rod_id || "") : "",
             chat_typing: player?.chat_typing === true,
+            activity_bubble: ["edit", "afk", "shop", "trade"].includes(player?.activity_bubble) ? player?.activity_bubble : "",
+            health_preview: clampInteger(player?.health_preview ?? 10, 0, 10),
             equipment_slots: equipmentSlots,
             equipped_tool: clampString(equipmentSlots.hand || ""),
             equipped_back_item: clampString(equipmentSlots.back || ""),
@@ -849,6 +859,8 @@ function createServerPhase11dStandardMovement(deps) {
             in_water: payload.in_water === true,
             in_lava_fire: payload.in_lava_fire === true,
             chat_typing: payload.chat_typing === true,
+            activity_bubble: ["edit", "afk", "shop", "trade"].includes(payload.activity_bubble) ? payload.activity_bubble : "",
+            health_preview: clampInteger(payload.health_preview ?? 10, 0, 10),
             damage_flash_active: payload.damage_flash_active === true,
             damage_flash_remaining_ms: clampInteger(payload.damage_flash_remaining_ms || 0, 0, MAX_DAMAGE_FLASH_MS),
             damage_flash_token: clampInteger(payload.damage_flash_token || 0, 0, 2147483647),

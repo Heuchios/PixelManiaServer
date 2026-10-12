@@ -78,6 +78,13 @@ assert.equal(helpers.getRawLength(Buffer.from("abc")), 3);
 assert.equal(helpers.getRawLength("abcd"), 4);
 assert.equal(helpers.getInboundMessageType({ type: " Chat " }), "chat");
 assert.equal(helpers.getInboundMessageType(null), "invalid");
+for (const action of ["account_login", "account_token_login", "account_register", "account_password_reset_request", "account_email_change_request", "dev_backend_login"]) {
+  const rejected = helpers.buildRateLimitedPayload(action, { type: action, request_id: `${action}-1` });
+  assert.equal(rejected.type, "account_auth_error", "Account rejections must finish the login UI wait");
+  assert.equal(rejected.ok, false);
+  assert.equal(rejected.reason, "rate_limited");
+  assert.equal(rejected.request_id, `${action}-1`);
+}
 
 const queuedPosition = {
   data: { type: "player_position", x: 1 },

@@ -220,6 +220,27 @@ const helpers = /** @type {any} */ (AccountSessionHelpersModule.createServerAcco
   assert.equal(blocked.ok, false);
   assert.equal(blocked.retry_after_seconds >= 1, true);
 
+  /** @type {Array<any>} */
+  const pendingLimits = [];
+  const parallelHelpers = AccountSessionHelpersModule.createServerAccountSessionHelpers({
+    ...deps,
+    redisStore: {
+      isReady: () => true,
+      checkRateLimit: (/** @type {string} */ scope, /** @type {string} */ subject, /** @type {number} */ limit, /** @type {number} */ windowMs) => new Promise(resolve => {
+        pendingLimits.push({ scope, subject, limit, windowMs, resolve });
+      }),
+    },
+  });
+  const parallelResult = parallelHelpers.checkLoginAttemptAllowed(socket, "USO", "login");
+  assert.equal(pendingLimits.length, 2, "Both independent Redis buckets must start before either completes");
+  assert.equal(pendingLimits[0].limit, deps.LOGIN_ATTEMPT_LIMIT_IP);
+  assert.equal(pendingLimits[1].limit, deps.LOGIN_ATTEMPT_LIMIT_ACCOUNT);
+  pendingLimits[1].resolve({ allowed: false, resetInMs: 3000 });
+  pendingLimits[0].resolve({ allowed: true, resetInMs: 1000 });
+  const parallelBlocked = await parallelResult;
+  assert.equal(parallelBlocked.ok, false, "Parallelization must not bypass the account limit");
+  assert.equal(parallelBlocked.retry_after_seconds, 3);
+
   assert.equal((await helpers.checkLoginAttemptAllowed(socket, "USO", "refresh_token_login")).ok, true);
   assert.equal((await helpers.checkLoginAttemptAllowed(socket, "USO", "refresh_token_login")).ok, true);
   assert.equal((await helpers.checkLoginAttemptAllowed(socket, "USO", "refresh_token_login")).ok, true);

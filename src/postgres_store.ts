@@ -7909,15 +7909,31 @@ class PostgresStore {
       );
       await runTransaction(async (client) => {
         assertPostgresOperationCanContinue(details);
-        const playerId = await this.ensurePlayerIdentity(client, username, email, role);
-        if (!playerId) return;
-        assertPostgresOperationCanContinue(details);
-
-        const accountResult = await client.query(
-          `SELECT account_id FROM ${this.table("accounts")} WHERE lower(username::text) = lower($1) LIMIT 1`,
+        // Ordinary sign-on must not rewrite the player row (and wait behind an
+        // inventory/world save's row lock) just to obtain its existing identity.
+        // Keep the legacy repair/upsert path when any identity detail differs.
+        const identityResult = await client.query(
+          `SELECT a.account_id, a.email::text AS email, a.role, a.is_active,
+                  p.player_id, p.display_name
+             FROM ${this.table("accounts")} a
+             LEFT JOIN ${this.table("players")} p ON p.account_id = a.account_id
+            WHERE lower(a.username::text) = lower($1) LIMIT 1`,
           [username]
         );
-        const accountId = accountResult.rows[0]?.account_id;
+        const identity = identityResult.rows[0];
+        let accountId = identity?.account_id;
+        assertPostgresOperationCanContinue(details);
+        if (!identity?.player_id || identity.email !== email || identity.role !== role
+          || identity.is_active !== true || identity.display_name !== username) {
+          const playerId = await this.ensurePlayerIdentity(client, username, email, role);
+          if (!playerId) return;
+          assertPostgresOperationCanContinue(details);
+          const accountResult = await client.query(
+            `SELECT account_id FROM ${this.table("accounts")} WHERE lower(username::text) = lower($1) LIMIT 1`,
+            [username]
+          );
+          accountId = accountResult.rows[0]?.account_id;
+        }
         if (!accountId) return;
         assertPostgresOperationCanContinue(details);
 

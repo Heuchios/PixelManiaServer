@@ -250,7 +250,7 @@ fixture.state.spawnCheck = { active: true, accepted: true };
 player = createPlayer();
 assert.equal(
   movement.acceptPlayerMovement({}, player, { x: 105, y: 100, world: "TEST" }, {
-    data: { movement_sequence: 6, client_time_msec: 600, chat_typing: true },
+    data: { movement_sequence: 6, client_time_msec: 600, chat_typing: true, health_preview: 6, activity_bubble: "trade" },
   }),
   true,
 );
@@ -258,6 +258,15 @@ assert.equal(fixture.state.spawnGuardClears, 1);
 assert.equal(player.movement_sequence, 6);
 assert.equal(player.movement_client_time_msec, 600);
 assert.equal(player.chat_typing, true);
+assert.equal(player.activity_bubble, "trade");
+for (const activity of ["edit", "afk", "shop", "trade", ""]) {
+  assert.equal(movement.buildPublicPlayerPresencePayload("player_position", {...player, activity_bubble: activity}, "TEST").activity_bubble, activity);
+}
+assert.equal(movement.buildPublicPlayerPresencePayload("player_position", {...player, activity_bubble: "arbitrary"}, "TEST").activity_bubble, "");
+assert.equal(player.health_preview, 6, "Accepted movement carries cosmetic HP");
+assert.equal(movement.buildPublicPlayerPresencePayload("player_position", {...player, health_preview: 500}, "TEST").health_preview, 10);
+assert.equal(movement.buildPublicPlayerPresencePayload("player_position", {...player, health_preview: -10}, "TEST").health_preview, 0);
+assert.equal(movement.buildPublicPlayerPresencePayload("player_position", {...player, health_preview: 6}, "TEST").health_preview, 6);
 
 fixture.state.spawnCheck = { active: false, accepted: false };
 player = createPlayer();

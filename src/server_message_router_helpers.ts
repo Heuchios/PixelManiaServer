@@ -333,6 +333,16 @@ function createServerMessageRouterHelpers(config: MessageRouterConfig) {
       action: cleanBucketKey,
       message: "Slow down a little.",
     };
+    // Account screens wait for a correlated authentication result. A generic
+    // warning used to leave them spinning until the 20-second auth deadline.
+    if (["account_login", "account_token_login", "account_register", "account_password_reset_request", "account_email_change_request", "dev_backend_login"].includes(cleanBucketKey)) {
+      return {
+        type: "account_auth_error", ok: false,
+        action: cleanBucketKey, request_id: makeRequestId(raw),
+        reason: "rate_limited", rate_limit_bucket: cleanBucketKey,
+        message: "Too many account requests. Please try again shortly.",
+      };
+    }
     const isWorldBlockRateLimit = packetContracts.isWorldBlockUpdatePacket(raw);
     const isDropPickup = isDropPickupRateLimit(raw);
 

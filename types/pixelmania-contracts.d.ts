@@ -1351,6 +1351,9 @@ declare namespace PixelMania {
     name?: string;
     animation_state?: "idle" | "walk" | "run" | "jump" | "fall" | string;
     chat_typing?: boolean;
+    /** Cosmetic overhead health, clamped to 0..10; not authoritative health. */
+    health_preview?: number;
+    activity_bubble?: "" | "edit" | "afk" | "shop" | "trade";
     client_time_msec?: number;
     client_timestamp_msec?: number;
     damage_flash_active?: boolean;

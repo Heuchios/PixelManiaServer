@@ -63,7 +63,7 @@ const playerNetworkStats = {
 
 const messageRouterHelpers = {
   buildRateLimitedPayload: (/** @type {unknown} */ bucketKey, /** @type {unknown} */ data) => ({
-    type: "rate_limited",
+    type: String(bucketKey).startsWith("account_") ? "account_auth_error" : "rate_limited",
     action: String(bucketKey || ""),
     request_id: String((/** @type {Record<string, any>} */ (data && typeof data === "object" && !Array.isArray(data) ? data : {})).request_id || ""),
   }),
@@ -157,6 +157,12 @@ const helpers = BotRateLimitHelpersModule.createServerBotRateLimitHelpers(deps);
   helpers.notifyRateLimited(socket, "inventory_transaction_request", { request_id: "inventory-1" });
   helpers.notifyRateLimited(socket, "inventory_transaction_request", { request_id: "inventory-2" });
   assert.equal(sentPayloads.length, notificationCountBefore + 1);
+
+  const authNoticeCount = sentPayloads.length;
+  helpers.notifyRateLimited(socket, "account_login", { request_id: "auth-1" });
+  helpers.notifyRateLimited(socket, "account_login", { request_id: "auth-2" });
+  assert.equal(sentPayloads.length, authNoticeCount + 2, "Every rejected auth request needs a response, even during warning cooldown");
+  assert.equal(sentPayloads.at(-1).request_id, "auth-2");
 
   helpers.notifyRateLimited(socket, "developer_command_request", { request_id: "dev-1", command: "give" });
   assert.equal(deniedPayloads.at(-1).requestId, "dev-1");
