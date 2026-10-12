@@ -176,13 +176,13 @@ async function main() {
   assert.equal(result.ok,true,result.message);autoBoard=result.board;
  }
  assert(autoBoard.dailies.every(d=>d.claimed));assert.equal(Object.keys(autoBoard.active).length,0);
- assert.equal(Number((await db.query("SELECT amount FROM pixelmania.inventory WHERE player_id=$1 AND item_type='gem'",[autoId])).rows[0].amount),100);
+ assert.equal(Number((await db.query("SELECT amount FROM pixelmania.inventory WHERE player_id=$1 AND item_type='gem'",[autoId])).rows[0].amount),other.board.dailies.reduce((n,d)=>n+d.quest.reward.gems,0));
  assert.equal(Number((await db.query('SELECT player_total_xp FROM pixelmania.players WHERE player_id=$1',[autoId])).rows[0].player_total_xp),500);
  // Reconnect/reload and retransmission of every daily claim keep all rewards single-grant.
  const reloaded=await Quests.apply(store,{username:'quest-other-test',world:'START',request_id:'reconnect',action:'quest_board_get',payload:{}});
  assert(reloaded.board.dailies.every(d=>d.claimed));
  for(const claim of dailyClaims)assert.equal((await Quests.apply(store,claim)).ok,false);
- assert.equal(Number((await db.query("SELECT amount FROM pixelmania.inventory WHERE player_id=$1 AND item_type='gem'",[autoId])).rows[0].amount),100);
+ assert.equal(Number((await db.query("SELECT amount FROM pixelmania.inventory WHERE player_id=$1 AND item_type='gem'",[autoId])).rows[0].amount),other.board.dailies.reduce((n,d)=>n+d.quest.reward.gems,0));
  const xpReload=(await store.loadPlayerState('quest-other-test'));
  assert.equal(xpReload.ok,true);assert.equal(xpReload.found,true);
  assert.equal(Number(xpReload.state.player_total_xp),500,'XP survives canonical player-state reload');
@@ -200,9 +200,53 @@ async function main() {
  // Continue recording between resets even when every quest was already claimed.
  await db.transaction(tx=>Quests.recordGameplay(store,tx,autoId,'seed_place',{seed_type:'grass_seed'},'after-all-claimed'));
  assert.equal((await db.query("SELECT count(*)::integer AS n FROM pixelmania.quest_gameplay_events WHERE player_id=$1 AND event_key='seed_place:after-all-claimed'",[autoId])).rows[0].n,1);
+ // Run a whole reward week through the SQL adapter and its canonical ledgers.
+ // Time and committed gameplay rows are fixtures; claims still reconcile SQL.
+ const actualNow=Date.now,weekStart=Date.UTC(2026,8,21,4,1);
+ let weeklyBoard,weeklyPlayer,preFinal,finalClaim,finalResult;
+ try{
+  for(let day=0;day<7;day++){
+   Date.now=()=>weekStart+day*86400000;
+   const visit=await Quests.apply(store,{username:'quest-weekly-test',world:'START',request_id:`week-visit-${day}`,action:'quest_board_get',payload:{}});
+   assert(visit.ok,visit.message);weeklyBoard=visit.board;
+   weeklyPlayer=(await db.query("SELECT p.player_id FROM pixelmania.players p JOIN pixelmania.accounts a ON a.account_id=p.account_id WHERE a.username='quest-weekly-test'")).rows[0].player_id;
+   for(const [slot,a] of Object.entries(weeklyBoard.active)){
+    for(const o of a.objectives)await db.query(`INSERT INTO pixelmania.quest_gameplay_events(player_id,event_key,action,item_type,created_at)
+     SELECT $1,$2||i::text,$3,$4,to_timestamp($5::double precision/1000) FROM generate_series(1,$6) i`,[weeklyPlayer,`week-${day}-${slot}-`,o.action,o.item_type,Date.now(),o.target]);
+   }
+   for(const slot of weeklyBoard.dailies.map(d=>d.slot)){
+    const claim={username:'quest-weekly-test',world:'START',request_id:`week-claim-${day}-${slot}`,action:'quest_choose',payload:{revision:weeklyBoard.revision,tier:slot,instance_id:weeklyBoard.active[slot].id,choice:'a'}};
+    if(day===6&&slot==='trip_1'){
+     preFinal=(await db.query('SELECT state FROM pixelmania.quest_accounts WHERE player_id=$1',[weeklyPlayer])).rows[0].state;
+     finalClaim=claim;
+     await db.exec('CREATE TRIGGER fail_quest_save BEFORE UPDATE ON pixelmania.quest_accounts FOR EACH ROW EXECUTE FUNCTION pixelmania.fail_quest_save();');
+     assert.equal((await Quests.apply(store,claim)).ok,false);
+     assert.equal((await db.query("SELECT amount FROM pixelmania.inventory WHERE player_id=$1 AND item_type='gem'",[weeklyPlayer])).rows[0].amount,4700);
+     assert.equal((await db.query("SELECT count(*)::integer AS n FROM pixelmania.quest_receipts WHERE player_id=$1 AND receipt_id LIKE 'week_complete:%'",[weeklyPlayer])).rows[0].n,0);
+     await db.exec('DROP TRIGGER fail_quest_save ON pixelmania.quest_accounts');
+    }
+    finalResult=await Quests.apply(store,claim);assert(finalResult.ok,finalResult.message);weeklyBoard=finalResult.board;
+   }
+  }
+  assert(weeklyBoard.weekly.bonus_claimed);assert.equal(weeklyBoard.weekly.claimed_quests,28);
+  assert.equal(finalResult.receipts.find(r=>r.tier==='weekly').gems,1000);
+  const balance=async()=>(await db.query("SELECT amount FROM pixelmania.inventory WHERE player_id=$1 AND item_type='gem'",[weeklyPlayer])).rows[0].amount;
+  assert.equal(await balance(),6000);
+  assert.equal((await db.query('SELECT sum(delta)::integer AS total FROM pixelmania.gem_ledger WHERE player_id=$1',[weeklyPlayer])).rows[0].total,6000);
+  assert.equal((await db.query('SELECT count(*)::integer AS n FROM pixelmania.quest_receipts WHERE player_id=$1',[weeklyPlayer])).rows[0].n,29);
+  const repeats=await Promise.all(Array.from({length:4},()=>Quests.apply(store,finalClaim)));assert(repeats.every(r=>!r.ok));
+  assert.equal(await balance(),6000);
+  // Simulate stale restore and a missing final daily receipt, retaining the
+  // permanent weekly receipt: that guard alone must roll back a re-grant.
+  await db.query('UPDATE pixelmania.quest_accounts SET state=$1::jsonb WHERE player_id=$2',[JSON.stringify(preFinal),weeklyPlayer]);
+  await db.query('DELETE FROM pixelmania.quest_receipts WHERE player_id=$1 AND receipt_id=$2',[weeklyPlayer,finalClaim.payload.instance_id]);
+  assert.equal((await Quests.apply(store,finalClaim)).ok,false);
+  assert.equal(await balance(),6000);
+  assert.equal((await db.query('SELECT sum(delta)::integer AS total FROM pixelmania.gem_ledger WHERE player_id=$1',[weeklyPlayer])).rows[0].total,6000);
+ }finally{Date.now=actualNow;}
  store.questReady=false;
  assert.equal((await Quests.apply(store,{username:'quest-sql-test',action:'quest_board_get',payload:{}})).ok,false);
  await db.close();
- console.log('[quest-postgres] PASS: full schema, migrations, real ledger/hash SQL, atomic rollback, four concurrent duplicate claims, durable reload');
+ console.log('[quest-postgres] PASS: full schema, migrations, real ledger/hash SQL, 6,000-gem week, atomic bonus rollback, concurrent duplicate claims, permanent weekly receipt guard, durable reload');
 }
 main().catch(error=>{console.error(error);process.exit(1);});

@@ -29,14 +29,14 @@ for(let day=0;day<30;day++){
   }
   const publicView=call('quest_board_get').board.active[tier];
   assert(!Object.hasOwn(publicView.puzzle,'solution'));assert(!Object.hasOwn(publicView.quest,'variants'));
-  const before=total;finish(tier);assert.equal(total-before,tier==='story'?15:tier.startsWith('favor')?15:35);
+  const before=total;const paid=finish(tier);assert.equal(total-before,a.reward.gems+paid.receipts.filter(r=>r.tier==='weekly').reduce((n,r)=>n+r.gems,0));
   assert.throws(()=>call('quest_choose',{tier,instance_id:a.id,choice:'a'}));
   assert.throws(()=>call('quest_accept',{tier,quest_id:a.quest.id}));
  }
  const claimed=call('quest_board_get');assert(claimed.board.dailies.every(d=>d.claimed));
  assert.equal(Object.keys(state.active).length,0);
 }
-assert.equal(total,3450);assert.equal(state.stamps,0);assert.equal(Object.keys(state.chapters).length,24);
+assert.equal(total,25850);assert.equal(state.stamps,0);assert.equal(Object.keys(state.chapters).length,24);
 assert.equal(receipts.reduce((n,r)=>n+(r.xp||0),0),17650);
 assert.equal(state.story_next,25);fixture('archive',call('quest_board_get').board);
 assert.equal(new Set(receipts.map(r=>r.id)).size,receipts.length);
@@ -108,7 +108,7 @@ const atReset=E.transition(beforeReset.state,'quest_board_get',{},Date.UTC(2026,
 const freshAtReset=E.transition(E.fresh(),'quest_board_get',{},Date.UTC(2026,8,22,4),'second');
 assert.equal(atReset.board.day,beforeReset.board.day+1);
 assert.deepEqual(atReset.board.dailies,freshAtReset.board.dailies);
-console.log('[quests] PASS: four automatic dailies, independent claims, 30 reward days, 24 chapters, 3,450 gems / 17,650 XP, resets, legacy migration and replay protection');
+console.log('[quests] PASS: four automatic dailies, independent claims, 30 reward days, 24 chapters, 25,850 gems / 17,650 XP, resets, legacy migration and replay protection');
 console.log('[quests] PASS: global daily selection across accounts/history, cached-board migration, stale claim rejection and shared reset boundary');
 
 // Existing boards adopt the rebalance without losing counts or granting a
@@ -143,7 +143,7 @@ for(let day=0;day<366;day++){
  assert.equal(new Set(board.dailies.map(d=>d.quest.family)).size,4);
  assert.equal(board.dailies.reduce((n,d)=>n+d.quest.minutes[0],0),30);
  assert.equal(board.dailies.reduce((n,d)=>n+d.quest.minutes[1],0),44);
- assert.equal(board.dailies.reduce((n,d)=>n+d.quest.reward.gems,0),100);
+ assert.equal(board.dailies.reduce((n,d)=>n+d.quest.reward.gems,0),day%7===6?800:700);
  assert.equal(board.dailies.reduce((n,d)=>n+d.quest.reward.xp,0),500);
  for(const d of board.dailies){
   assert.deepEqual(board.active[d.slot].reward,d.quest.reward);
@@ -151,3 +151,52 @@ for(let day=0;day<366;day++){
  }
 }
 console.log('[quests] PASS: harder daily migration preserves progress and claims; all annual rotations share the new effort and reward budgets');
+
+// Full Monday-Sunday weeks pay exactly 5,000 regular gems + 1,000 once.
+// A single missing slot, or story-only activity, must never unlock the bonus.
+for(const missing of [null,'2:trip_1','6:favor_0','every-day']){
+ let s=E.fresh(),baseGems=0,bonusGems=0,weeklyReceiptCount=0;
+ for(let d=0;d<7;d++){
+  const time=base+d*86400000;
+  let result=E.transition(s,'quest_board_get',{},time,'weekly-test');s=result.state;
+  for(const slot of slots){
+   if(missing===`${d}:${slot}`||(missing==='every-day'&&slot==='trip_1'))continue;
+   const a=s.active[slot];a.progress=a.objectives.map(o=>o.target);a.solved=true;
+   result=E.transition(s,'quest_choose',{revision:s.revision,tier:slot,instance_id:a.id,choice:'a',gems:999999,weekly_complete:true},time,'weekly-test');s=result.state;
+   baseGems+=result.receipts.filter(r=>r.tier!=='weekly').reduce((n,r)=>n+r.gems,0);
+   bonusGems+=result.receipts.filter(r=>r.tier==='weekly').reduce((n,r)=>n+r.gems,0);
+   weeklyReceiptCount+=result.receipts.filter(r=>r.tier==='weekly').length;
+   if(d<6||slot!=='trip_1')assert.equal(bonusGems,0);
+  }
+  assert.equal(result.board.weekly.completed_days,d+1-(missing==='every-day'?d+1:missing&&Number(missing[0])<=d?1:0));
+ }
+ if(missing===null){
+  assert.equal(baseGems,5000);assert.equal(bonusGems,1000);assert.equal(weeklyReceiptCount,1);
+  const view=E.transition(s,'quest_board_get',{},base+6*86400000,'weekly-test');
+  assert.equal(view.gemDelta,0);assert.equal(view.board.weekly.claimed_quests,28);assert(view.board.weekly.bonus_claimed);
+  fixture('weekly_complete',view.board);
+  const reset=E.transition(s,'quest_board_get',{},base+7*86400000-60000,'weekly-test');
+  assert.equal(reset.board.weekly.claimed_quests,0);assert(!reset.board.weekly.bonus_claimed);
+ }else{assert.equal(bonusGems,0);assert.equal(weeklyReceiptCount,0);}
+}
+let storyOnly=E.fresh();
+for(let d=0;d<7;d++){
+ const time=base+d*86400000;let result=E.transition(storyOnly,'quest_board_get',{},time,'story-only');
+ result=E.transition(result.state,'quest_accept',{revision:result.state.revision,tier:'story',quest_id:result.board.story.id},time,'story-only');
+ const a=result.state.active.story;a.progress=a.objectives.map(o=>o.target);a.solved=true;
+ result=E.transition(result.state,'quest_choose',{revision:result.state.revision,tier:'story',instance_id:a.id,choice:'a'},time,'story-only');
+ storyOnly=result.state;assert.equal(result.board.weekly.claimed_quests,0);assert.equal(result.receipts.length,1);
+}
+// Old visit counters (including old XP payouts) cannot mint completion gems.
+const oldVisits=E.fresh();oldVisits.weeks[E.weekId(E.dayId(base))]={days:Array.from({length:7},(_,i)=>E.dayId(base)+i),rewarded:true};
+assert.equal(E.transition(oldVisits,'quest_board_get',{},base,'legacy-visits').board.weekly.claimed_quests,0);
+assert.equal(E.transition(oldVisits,'quest_board_get',{},base,'legacy-visits').gemDelta,0);
+// A reward-only content upgrade keeps completed gameplay and receipt identity.
+const rewardUpgrade=E.transition(E.fresh(),'quest_board_get',{},base+6*86400000,'reward-upgrade').state;
+for(const a of Object.values(rewardUpgrade.active)){
+ a.quest.content_version=3;a.progress=a.objectives.map(o=>o.target);a.solved=true;a.reward={gems:15,xp:75,stamps:0};
+}
+const upgraded=E.transition(rewardUpgrade,'quest_board_get',{},base+6*86400000,'reward-upgrade');
+for(const slot of slots){assert(upgraded.state.active[slot].solved);assert.equal(upgraded.state.active[slot].id,rewardUpgrade.active[slot].id);}
+assert.equal(upgraded.board.active.trip_0.reward.gems,300);
+console.log('[quests] PASS: 5,000 + 1,000 weekly, all 28 claims required, skipped days/slots and story excluded, Monday reset, legacy counters and reward migration');

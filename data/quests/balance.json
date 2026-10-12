@@ -1,9 +1,15 @@
 {
-  "version": 3,
+  "version": 4,
   "rewards": {
-    "favor": {"gems": 15, "xp": 75, "stamps": 0},
-    "trip": {"gems": 35, "xp": 175, "stamps": 0},
+    "favor": {"gems": 100, "xp": 75, "stamps": 0},
+    "trip": {"gems": 250, "xp": 175, "stamps": 0},
     "story": {"gems": 15, "xp": 75, "stamps": 0}
+  },
+  "weekly": {
+    "quest_gems": 5000,
+    "bonus_gems": 1000,
+    "bonus_xp": 100,
+    "final_day_challenge_extra_gems": 50
   },
   "daily": {
     "favor": {

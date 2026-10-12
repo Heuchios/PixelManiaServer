@@ -12,8 +12,8 @@ const BY_ID = new Map<string, RecordData>(CATALOGUE.map(q => [q.id, q]));
 const DAY = 86400000;
 const DAILY_SLOTS = ["favor_0", "favor_1", "trip_0", "trip_1"];
 const TIERS = [...DAILY_SLOTS, "story"];
-const REWARDS: Record<string, {gems: number; stamps: number; xp:number}> =
- JSON.parse(fs.readFileSync(path.join(__dirname,"data","quests","balance.json"),"utf8")).rewards;
+const BALANCE = JSON.parse(fs.readFileSync(path.join(__dirname,"data","quests","balance.json"),"utf8"));
+const REWARDS: Record<string, {gems: number; stamps: number; xp:number}> = BALANCE.rewards;
 // Account cosmetics are usable inside the Dispatch; no inventory items are minted.
 const COSMETICS = [
   {id:"envelope_sticker",name:"Hanging Envelope",price:12,kind:"scrapbook sticker",color:"#f7cc85"},
@@ -28,6 +28,26 @@ const COSMETICS = [
 ];
 function dayId(now:number):number {return Math.floor((now-4*3600000)/DAY);}
 function weekId(day:number):number {return Math.floor((day+3)/7);}
+function dailyReward(tier:string,day:number):RecordData {
+ const reward={...REWARDS[tier]};
+ // Monday through Saturday pay 700; Sunday's two challenges pay 50 extra
+ // each, making exactly 5,000 whole gems across all 28 daily quests.
+ if(tier==="trip"&&day===weekId(day)*7+3)reward.gems+=BALANCE.weekly.final_day_challenge_extra_gems;
+ return reward;
+}
+function dailyQuest(q:RecordData,day:number):RecordData {return {...q,reward:dailyReward(q.tier,day)};}
+function weeklyProgress(s:RecordData,day:number):RecordData {
+ const week=weekId(day),start=week*7-3;
+ let completedDays=0,claimed=0;
+ for(let d=start;d<start+7;d++){
+  const done=s.days[String(d)]?.done||{};
+  const count=DAILY_SLOTS.filter(slot=>done[slot]||(slot.endsWith("_0")&&done[slot.split("_")[0]])).length;
+  claimed+=count;if(count===DAILY_SLOTS.length)completedDays++;
+ }
+ return {quest_gems:BALANCE.weekly.quest_gems,bonus_gems:BALANCE.weekly.bonus_gems,bonus_xp:BALANCE.weekly.bonus_xp,
+  claimed_quests:claimed,total_quests:DAILY_SLOTS.length*7,completed_days:completedDays,required_days:7,
+  bonus_claimed:Boolean(s.weeks[String(week)]?.completion_rewarded),reset_at:(start+7)*DAY+4*3600000};
+}
 function hash(input:string):number{return crypto.createHash("sha256").update(input).digest().readUInt32BE(0);}
 function fail(message:string):never {throw new Error(message);}
 function fresh():RecordData{return {version:1,revision:0,stamps:0,days:{},active:{},history:[],story_next:1,chapters:{},flags:{},cosmetics:[],equipped:"",weeks:{}};}
@@ -117,7 +137,7 @@ function activateDailies(s:RecordData,day:number):void {
  for(const slot of DAILY_SLOTS){
   if(s.active[slot]?.day!==day||board.done[slot])delete s.active[slot];
   if(board.done[slot])continue;
-  const [tier,index]=slot.split("_");const q=BY_ID.get(board.offers[tier][Number(index)])!;
+  const [tier,index]=slot.split("_");const q=dailyQuest(BY_ID.get(board.offers[tier][Number(index)])!,day);
   const active=s.active[slot];
   if(active){
    if(active.quest.content_version!==q.content_version){
@@ -127,7 +147,7 @@ function activateDailies(s:RecordData,day:number):void {
     active.objectives=JSON.parse(JSON.stringify(q.objectives));
     active.progress=active.objectives.map((o:RecordData,i:number)=>Math.min(o.target,Number(active.progress?.[i]||0)));
     active.solved=active.objectives.every((o:RecordData,i:number)=>active.progress[i]>=o.target);
-    active.reward={...REWARDS[tier]};contentChanged=true;
+    active.reward={...q.reward};contentChanged=true;
    }
    continue;
   }
@@ -136,19 +156,20 @@ function activateDailies(s:RecordData,day:number):void {
   s.active[slot]={id:Number(index)===0?`${day}:${tier}`:`${day}:${slot}`,tier:slot,day,quest:JSON.parse(JSON.stringify(q)),variant,
    puzzle:JSON.parse(JSON.stringify(q.variants[variant])),inspected:[],solved:false,hint:false,
    accepted_at:day*DAY+4*3600000,expires_at:(day+1)*DAY+4*3600000,
-   reward:REWARDS[tier],objectives:JSON.parse(JSON.stringify(q.objectives)),progress:q.objectives.map(()=>0)};
+   reward:{...q.reward},objectives:JSON.parse(JSON.stringify(q.objectives)),progress:q.objectives.map(()=>0)};
  }
  if(contentChanged)s.revision++;
 }
 function view(s:RecordData,day:number,now:number,account:string):RecordData {
  const board=s.days[String(day)];
+ const weekly=weeklyProgress(s,day);
  return {version:1,daily_mode:"automatic",revision:s.revision,server_time:now,day,reset_at:(day+1)*DAY+4*3600000,
-  dailies:DAILY_SLOTS.map(slot=>{const [tier,index]=slot.split("_");return {slot,difficulty:tier==="favor"?"easy":"challenge",claimed:Boolean(board.done[slot]),quest:publicQuest(s.active[slot]?.quest||BY_ID.get(board.offers[tier][Number(index)])!)};}),
-  stamps:s.stamps,offers:Object.fromEntries(["favor","trip"].map(t=>[t,board.offers[t].map((id:string)=>publicQuest(BY_ID.get(id)!))])),
+  dailies:DAILY_SLOTS.map(slot=>{const [tier,index]=slot.split("_");return {slot,difficulty:tier==="favor"?"easy":"challenge",claimed:Boolean(board.done[slot]),quest:publicQuest(s.active[slot]?.quest||dailyQuest(BY_ID.get(board.offers[tier][Number(index)])!,day))};}),
+  stamps:s.stamps,offers:Object.fromEntries(["favor","trip"].map(t=>[t,board.offers[t].map((id:string)=>publicQuest(dailyQuest(BY_ID.get(id)!,day)))])),
   done:board.done,refresh:board.refresh,active:Object.fromEntries(Object.entries(s.active).map(([k,v])=>[k,publicInstance(v as RecordData)])),
   story:publicQuest(BY_ID.get(availableStory(s,day,account))!,s.flags),story_next:s.story_next,encore:s.story_next>24,
   chapters:s.chapters,flags:s.flags,cosmetics:COSMETICS.map(c=>({...c,owned:s.cosmetics.includes(c.id)})),equipped:s.equipped,
-  week_days:(s.weeks[String(weekId(day))]?.days||[]).length,weekly_reward:100};
+  week_days:weekly.completed_days,weekly_reward:BALANCE.weekly.bonus_xp,weekly};
 }
 function transition(raw:RecordData,action:string,payload:RecordData,now:number,account:string):RecordData {
  const s=normalize(raw),day=dayId(now);const board=assigned(s,day);
@@ -205,9 +226,18 @@ function transition(raw:RecordData,action:string,payload:RecordData,now:number,a
     s.chapters[a.quest.id]={choice:choice.id,label:choice.label,reply:choice.reply,title:a.quest.title,npc:a.quest.npc,postcard:a.quest.postcard,arc_reward:a.quest.arc_reward,at:now};
     if(a.quest.flag)s.flags[a.quest.flag]=choice.label;s.story_next++;
    }
-   const week=String(weekId(day));s.weeks[week]||={days:[],rewarded:false};
-   if(!s.weeks[week].days.includes(day))s.weeks[week].days.push(day);
-   if(s.weeks[week].days.length>=5&&!s.weeks[week].rewarded){s.weeks[week].rewarded=true;receipts.push({id:`week:${week}`,gems:0,xp:100,stamps:0,at:now,quest_id:"weekly",tier:"weekly"});}
+   if(tier!=="story"){
+    const week=String(weekId(day));s.weeks[week]||={days:[],rewarded:false};
+    const progress=weeklyProgress(s,day);
+    if(progress.claimed_quests===progress.total_quests&&!s.weeks[week].completion_rewarded){
+     // Separate from the legacy five-visit XP receipt. Old visits/story claims
+     // cannot satisfy full completion, and already paid legacy XP stays paid.
+     const xp=s.weeks[week].rewarded?0:BALANCE.weekly.bonus_xp;
+     s.weeks[week].completion_rewarded=true;s.weeks[week].rewarded=true;
+     gemDelta+=BALANCE.weekly.bonus_gems;
+     receipts.push({id:`week_complete:${week}`,gems:BALANCE.weekly.bonus_gems,xp,stamps:0,at:now,quest_id:"weekly",tier:"weekly"});
+    }
+   }
    delete s.active[tier];message=choice.reply;
   }
  }else if(action==="quest_redeem"){
