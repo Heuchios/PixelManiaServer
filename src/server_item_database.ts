@@ -3924,6 +3924,8 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
     jump_type: "double",
   }),
   flaming_skull: item("hat", {
+    slot_z_index: 4,
+    "hides_hair": true,
     display_name: "Flaming Skull",
     rarity: "epic",
     texture: "flaming_skull_1",
@@ -5151,7 +5153,8 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
       0
     ],
     "slot_scale": 1,
-    "slot_z_index": 3,
+    "slot_z_index": 4,
+    "hides_hair": true,
     "display_category": "Mask",
     "animation_fps": 6,
     "beard_animations": {
@@ -5180,7 +5183,8 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
       0
     ],
     "slot_scale": 1,
-    "slot_z_index": 3,
+    "slot_z_index": 4,
+    "hides_hair": true,
     "display_category": "Mask"
   }),
 
@@ -5198,7 +5202,8 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
       0
     ],
     "slot_scale": 1,
-    "slot_z_index": 3,
+    "slot_z_index": 4,
+    "hides_hair": true,
     "display_category": "Mask"
   }),
 
@@ -5216,7 +5221,8 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
       0
     ],
     "slot_scale": 1,
-    "slot_z_index": 3,
+    "slot_z_index": 4,
+    "hides_hair": true,
     "display_category": "Mask"
   }),
 
@@ -5234,7 +5240,8 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
       0
     ],
     "slot_scale": 1,
-    "slot_z_index": 3,
+    "slot_z_index": 4,
+    "hides_hair": true,
     "display_category": "Mask",
     "animation_fps": 6,
     "beard_animations": {
@@ -5265,7 +5272,8 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
       0
     ],
     "slot_scale": 1,
-    "slot_z_index": 3,
+    "slot_z_index": 4,
+    "hides_hair": true,
     "display_category": "Mask"
   }),
 
@@ -5283,7 +5291,8 @@ const ITEM_DEFINITIONS: ItemDefinitions = {
       0
     ],
     "slot_scale": 1,
-    "slot_z_index": 3,
+    "slot_z_index": 4,
+    "hides_hair": true,
     "display_category": "Mask"
   }),
 

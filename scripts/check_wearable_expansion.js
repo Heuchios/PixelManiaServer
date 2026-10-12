@@ -49,4 +49,8 @@ assert.equal(count, 44);
 assert.equal(db.getItemDefinition('flaming_skull').category, 'hat', 'Keep existing owned skull hats valid');
 assert.equal(db.getItemDefinition('basic_yellow_shoes').display_name, 'Yellow Shoes');
 assert.equal(db.getItemDefinition('wizards_robe').display_name, "Wizard's Robe");
+for (const id of ['horse_mask','welding_mask','space_mask','skull_mask','burning_skull','sack_mask','bag_on_the_head','flaming_skull']) {
+  assert.equal(db.getItemDefinition(id).slot_z_index, 4, `${id}: full-head cover layer`);
+  assert.equal(db.getItemDefinition(id).hides_hair, true, `${id}: hide hair without unequipping`);
+}
 console.log(`WEARABLE_EXPANSION_OK: ${count} items; equipment, economy flags, masks, split parts, animation counts${client ? ', complete client/server parity' : ''}`);

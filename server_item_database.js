@@ -3858,6 +3858,8 @@ const ITEM_DEFINITIONS = {
         jump_type: "double",
     }),
     flaming_skull: item("hat", {
+        slot_z_index: 4,
+        "hides_hair": true,
         display_name: "Flaming Skull",
         rarity: "epic",
         texture: "flaming_skull_1",
@@ -5050,7 +5052,8 @@ const ITEM_DEFINITIONS = {
             0
         ],
         "slot_scale": 1,
-        "slot_z_index": 3,
+        "slot_z_index": 4,
+        "hides_hair": true,
         "display_category": "Mask",
         "animation_fps": 6,
         "beard_animations": {
@@ -5078,7 +5081,8 @@ const ITEM_DEFINITIONS = {
             0
         ],
         "slot_scale": 1,
-        "slot_z_index": 3,
+        "slot_z_index": 4,
+        "hides_hair": true,
         "display_category": "Mask"
     }),
     space_mask: item("beard", {
@@ -5095,7 +5099,8 @@ const ITEM_DEFINITIONS = {
             0
         ],
         "slot_scale": 1,
-        "slot_z_index": 3,
+        "slot_z_index": 4,
+        "hides_hair": true,
         "display_category": "Mask"
     }),
     skull_mask: item("beard", {
@@ -5112,7 +5117,8 @@ const ITEM_DEFINITIONS = {
             0
         ],
         "slot_scale": 1,
-        "slot_z_index": 3,
+        "slot_z_index": 4,
+        "hides_hair": true,
         "display_category": "Mask"
     }),
     burning_skull: item("beard", {
@@ -5129,7 +5135,8 @@ const ITEM_DEFINITIONS = {
             0
         ],
         "slot_scale": 1,
-        "slot_z_index": 3,
+        "slot_z_index": 4,
+        "hides_hair": true,
         "display_category": "Mask",
         "animation_fps": 6,
         "beard_animations": {
@@ -5159,7 +5166,8 @@ const ITEM_DEFINITIONS = {
             0
         ],
         "slot_scale": 1,
-        "slot_z_index": 3,
+        "slot_z_index": 4,
+        "hides_hair": true,
         "display_category": "Mask"
     }),
     bag_on_the_head: item("beard", {
@@ -5176,7 +5184,8 @@ const ITEM_DEFINITIONS = {
             0
         ],
         "slot_scale": 1,
-        "slot_z_index": 3,
+        "slot_z_index": 4,
+        "hides_hair": true,
         "display_category": "Mask"
     }),
     void_shirt: item("shirt", {
