@@ -189,14 +189,16 @@ function createServerBotRateLimitHelpers(deps) {
         }
         const isWorldBlockRateLimit = deps.packetContracts.isWorldBlockUpdatePacket(raw);
         const isDropPickupRateLimit = deps.messageRouterHelpers.isDropPickupRateLimit(raw);
+        const payload = deps.messageRouterHelpers.buildRateLimitedPayload(cleanBucketKey, raw);
+        const isAuthRateLimit = payload.type === "account_auth_error";
         const warnings = ensureSocketMap(socket, "rateLimitWarnings");
         const lastWarnedAt = Number(warnings.get(cleanBucketKey) || 0);
         if (socket.readyState !== deps.webSocketOpenState)
             return;
-        if (!isWorldBlockRateLimit && !isDropPickupRateLimit && now - lastWarnedAt <= RATE_LIMIT_NOTIFICATION_COOLDOWN_MS)
+        if (!isWorldBlockRateLimit && !isDropPickupRateLimit && !isAuthRateLimit && now - lastWarnedAt <= RATE_LIMIT_NOTIFICATION_COOLDOWN_MS)
             return;
         warnings.set(cleanBucketKey, now);
-        deps.sendJson(socket, deps.messageRouterHelpers.buildRateLimitedPayload(cleanBucketKey, raw));
+        deps.sendJson(socket, payload);
     }
     function logRateLimitSecurityEvent(socket, player, scope, bucketKey, limits, result = {}, data = null, subjectOverride = "") {
         const cleanScope = String(scope || "message").trim().toLowerCase() || "message";
