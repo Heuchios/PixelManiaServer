@@ -238,7 +238,7 @@ function createServerPhase9RemainingRoutes(deps: Phase9RemainingRouteDeps) {
     if (!player.joined_world || !player.world) return;
     const world = cleanWorld(player.world);
     if (typeof data.world !== "string" || cleanWorld(data.world) !== world) return;
-    if (!["wave", "laugh", "sad"].includes(data.emote)) return;
+    if (!["wave", "laugh", "sad", "dance"].includes(data.emote)) return;
     const now = Date.now();
     if (now - Number(player.last_emote_at || 0) < 1000) return;
     player.last_emote_at = now;

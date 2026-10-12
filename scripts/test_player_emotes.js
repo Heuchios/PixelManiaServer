@@ -32,7 +32,7 @@ async function dispatch(player, overrides = {}) { return dispatcher.dispatch({},
   player.last_emote_at = Date.now() - 1001;
   await dispatch(player, { emote: "sad" });
   assert.equal(messages.pop().packet.sequence, 2);
-  for (const emote of ["laugh", "sad", "wave"]) {
+  for (const emote of ["laugh", "sad", "wave", "dance"]) {
     await dispatch(freshPlayer(), { emote });
     assert.equal(messages.pop().packet.emote, emote);
   }
@@ -41,5 +41,5 @@ async function dispatch(player, overrides = {}) { return dispatcher.dispatch({},
   await dispatch({ ...freshPlayer(), joined_world: false });
   await dispatch({ ...freshPlayer(), world: "" });
   assert.equal(messages.length, 0, "invalid/non-member/unauthenticated emotes never broadcast");
-  console.log("[player-emotes] PASS: routing, membership, cooldown, all three gestures, server identity and no position writes");
+  console.log("[player-emotes] PASS: routing, membership, cooldown, all four gestures, server identity and no position writes");
 })().catch(error => { console.error(error); process.exitCode = 1; });

@@ -150,7 +150,7 @@ function createServerPhase9RemainingRoutes(deps) {
         const world = cleanWorld(player.world);
         if (typeof data.world !== "string" || cleanWorld(data.world) !== world)
             return;
-        if (!["wave", "laugh", "sad"].includes(data.emote))
+        if (!["wave", "laugh", "sad", "dance"].includes(data.emote))
             return;
         const now = Date.now();
         if (now - Number(player.last_emote_at || 0) < 1000)
