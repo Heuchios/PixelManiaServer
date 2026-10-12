@@ -8,6 +8,7 @@ const rows=report.rows.map(r=>{
   if(!reference?.source_rows.length)review.push('No matching reference row');
   for(const [key,f]of Object.entries(reference?.fields||{}))if(f.status!=='Specified'&&!f.status.startsWith('User confirmed'))review.push(key+': '+f.status.toLowerCase());
   if(!['farm','variant'].includes(r.mode))review.push('Special gameplay behavior retained');
+  if(reference?.break_mode_override==='return')review.push('User correction: breaking returns one item to inventory, without seeds or gems; existing tree harvests retained');
   return {...r,reference,before:before.get(r.id),review};
 });
 const data=JSON.stringify({rows,unmatched:matches.unmatched}).replaceAll('<','\\u003c');

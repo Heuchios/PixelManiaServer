@@ -4,6 +4,7 @@
 const assert = require("node:assert/strict");
 const fs = require("node:fs");
 const path = require("node:path");
+const vm = require("node:vm");
 const ItemDatabase = require("../server_item_database");
 
 const repoRoot = path.join(__dirname, "..");
@@ -16,6 +17,7 @@ const clientAtlasItems = JSON.parse(
   fs.readFileSync(path.join(clientRoot, "Data", "items", "atlas_items.json"), "utf8"),
 ).items;
 const blockManagerSource = fs.readFileSync(path.join(clientRoot, "Scripts", "block_manager.gd"), "utf8");
+const clientOverrides = JSON.parse(fs.readFileSync(path.join(clientRoot, "Data", "items", "item_data_overrides.json"), "utf8"));
 
 const expectedReturns = new Map([
 
@@ -26,6 +28,10 @@ const expectedReturns = new Map([
   // normalizes all three to the vending_machine definition (which returns
   // itself, not "vend_empty", on break).
   ["vending_machine", "vending_machine"],
+  ["magnet_machine", "magnet_machine"],
+  ["world_lock", "world_lock"],
+  ["snow_repellent", "snow_repellent"],
+  ["cctv", "cctv"],
   ["anti_punch", "anti_punch"],
   ["anti_talk", "anti_talk"],
   ["anti_gravity", "anti_gravity"],
@@ -34,6 +40,11 @@ const expectedReturns = new Map([
   ["city_theme_machine", "city_theme_machine"],
   ["fish_monger", "fish_monger"],
 ]);
+// Cover every catalog theme machine, including atlas-only and future themes.
+for (const itemId of new Set([...Object.keys(ItemDatabase.ITEMS), ...clientAtlasItems.map(item => item.item_key)])) {
+  const definition = ItemDatabase.getItemDefinition(itemId);
+  if (definition?.theme_machine_block === true || itemId.endsWith("_theme_machine")) expectedReturns.set(itemId, itemId);
+}
 
 function extractClientItemEntry(itemId) {
   const marker = `"${itemId}":`;
@@ -103,8 +114,42 @@ for (const [itemId, expectedReturnItemId] of expectedReturns) {
   assert.notEqual(definition.drops_self, true, `${itemId} must not use the generic self-drop path`);
 
   const clientEntry = extractClientItemEntry(itemId);
-  assert.match(clientEntry, /"break_return_to_inventory"\s*:\s*true/, `${itemId} is missing the client recovery flag`);
+  if (Object.hasOwn(clientOverrides[itemId] || {}, "break_return_to_inventory")) {
+    assert.equal(clientOverrides[itemId].break_return_to_inventory, true, `${itemId} client override disables recovery`);
+  } else {
+    assert.match(clientEntry, /"break_return_to_inventory"\s*:\s*true/, `${itemId} is missing the client recovery flag`);
+  }
 }
+
+// Exercise the real server reward functions, including a future accidental
+// seed rule: direct recovery must win before the random loot roller runs.
+const context = vm.createContext({
+  ItemDatabase, MAX_ITEM_ID_LENGTH: 128,
+  clampString: value => String(value || ""),
+  resolveInventoryCategory: (id, category) => ItemDatabase.resolveItemCategory(id, category),
+});
+for (const name of ["getDirectBreakInventoryReturn", "getBreakDropsForBlock"]) {
+  const start = serverSource.indexOf(`function ${name}(`);
+  const end = serverSource.indexOf("\nfunction ", start + 1);
+  assert(start >= 0 && end > start);
+  vm.runInContext(serverSource.slice(start, end), context);
+}
+for (const [itemId, expectedReturnItemId] of expectedReturns) {
+  assert.deepEqual(JSON.parse(JSON.stringify(context.getDirectBreakInventoryReturn(itemId))), {
+    item_id: expectedReturnItemId, item_category: "block", amount: 1,
+  });
+  for (const layer of ["foreground", "background"]) {
+    assert.equal(context.getBreakDropsForBlock(itemId, layer).length, 0, `${itemId} must never roll world loot`);
+  }
+}
+context.ItemDatabase = {
+  ...ItemDatabase,
+  getItemDefinition: id => ({...ItemDatabase.getItemDefinition(id), drop_rules: {
+    seed_chance: 1, gem_range: [1, 100], fixed_drops: [{item_id: `${id}_seed`, item_category: "seed", amount: 100}],
+  }}),
+};
+assert.equal(context.getBreakDropsForBlock("snow_repellent", "foreground").length, 0);
+assert.equal(context.getBreakDropsForBlock("cctv", "foreground").length, 0);
 
 const suppressIndex = serverSource.search(
   /if\s*\(getDirectBreakInventoryReturn\(itemId\)\)\s*return \[\];/,

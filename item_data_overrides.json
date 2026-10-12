@@ -821,7 +821,8 @@
       ],
       "fixed_drops": []
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "drops_self": false
   },
   "world_lock_key": {
     "description": "Opens a world lock.",
@@ -923,7 +924,8 @@
       ],
       "fixed_drops": []
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "drops_self": false
   },
   "super_world_lock": {
     "description": "A very serious lock.",
@@ -959,7 +961,8 @@
       ],
       "fixed_drops": []
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "drops_self": false
   },
   "small_lock": {
     "description": "A small lock.",
@@ -995,7 +998,8 @@
       ],
       "fixed_drops": []
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "drops_self": false
   },
   "big_lock": {
     "description": "A really big lock.",
@@ -1062,7 +1066,8 @@
       ],
       "fixed_drops": []
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "drops_self": false
   },
   "safe": {
     "description": "Good place for valuables.",
@@ -1098,7 +1103,8 @@
       ],
       "fixed_drops": []
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "drops_self": false
   },
   "bedrock": {
     "description": "Not going anywhere.",
@@ -9399,7 +9405,8 @@
         }
       ]
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "drops_self": false
   },
   "white_wallpaper_seed": {
     "grow_time": 480,
@@ -12433,7 +12440,8 @@
       ],
       "fixed_drops": []
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "drops_self": false
   },
   "anti_talk": {
     "description": "No talking.",
@@ -12469,7 +12477,8 @@
       ],
       "fixed_drops": []
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "drops_self": false
   },
   "anti_gravity": {
     "description": "Gravity? Not here.",
@@ -12505,7 +12514,8 @@
       ],
       "fixed_drops": []
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "drops_self": false
   },
   "display_box_seed": {
     "grow_time": 81900,
@@ -13346,7 +13356,7 @@
     "instant_death": false,
     "hazard_instant_death": false,
     "lava_rebound": false,
-    "break_return_to_inventory": false,
+    "break_return_to_inventory": true,
     "authored_drop_rules": true,
     "drop_rules": {
       "seed_chance": 0,
@@ -13354,35 +13364,7 @@
         0,
         0
       ],
-      "fixed_drops": [
-        {
-          "item_id": "cctv_seed",
-          "item_category": "seed",
-          "amount_range": [
-            0,
-            1
-          ]
-        },
-        {
-          "item_id": "cctv",
-          "item_category": "block",
-          "amount_range": [
-            0,
-            3
-          ]
-        },
-        {
-          "item_id": "gem",
-          "item_category": "currency",
-          "amount": 4
-        },
-        {
-          "item_id": "gem",
-          "item_category": "currency",
-          "amount": 1,
-          "chance": 0.5
-        }
-      ]
+      "fixed_drops": []
     },
     "tree_drop_rules": {
       "seed_chance": 0,
@@ -13414,7 +13396,9 @@
         }
       ]
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "break_return_item_id": "cctv",
+    "drops_self": false
   },
   "snow_repellent_seed": {
     "category": "seed",
@@ -13446,7 +13430,7 @@
     "instant_death": false,
     "hazard_instant_death": false,
     "lava_rebound": false,
-    "break_return_to_inventory": false,
+    "break_return_to_inventory": true,
     "authored_drop_rules": true,
     "drop_rules": {
       "seed_chance": 0,
@@ -13454,35 +13438,7 @@
         0,
         0
       ],
-      "fixed_drops": [
-        {
-          "item_id": "snow_repellent_seed",
-          "item_category": "seed",
-          "amount_range": [
-            0,
-            1
-          ]
-        },
-        {
-          "item_id": "snow_repellent",
-          "item_category": "block",
-          "amount_range": [
-            0,
-            3
-          ]
-        },
-        {
-          "item_id": "gem",
-          "item_category": "currency",
-          "amount": 3
-        },
-        {
-          "item_id": "gem",
-          "item_category": "currency",
-          "amount": 1,
-          "chance": 0.5
-        }
-      ]
+      "fixed_drops": []
     },
     "tree_drop_rules": {
       "seed_chance": 0,
@@ -13514,7 +13470,9 @@
         }
       ]
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "break_return_item_id": "snow_repellent",
+    "drops_self": false
   },
   "recycle_bin_seed": {
     "grow_time": 129600,
@@ -14084,7 +14042,8 @@
       ],
       "fixed_drops": []
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "drops_self": false
   },
   "quest_board": {
     "description": "Jobs go here.",
@@ -14297,7 +14256,8 @@
       ],
       "fixed_drops": []
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "drops_self": false
   },
   "oil_refinery_seed": {
     "grow_time": 604800,
@@ -25131,7 +25091,10 @@
       ],
       "fixed_drops": []
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "break_return_to_inventory": true,
+    "break_return_item_id": "atm_machine",
+    "drops_self": false
   },
   "battery_charger": {
     "authored_drop_rules": true,
@@ -25322,7 +25285,10 @@
       ],
       "fixed_drops": []
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "break_return_to_inventory": true,
+    "break_return_item_id": "city_theme_machine",
+    "drops_self": false
   },
   "crafting_station_left": {
     "authored_drop_rules": true,
@@ -25558,7 +25524,10 @@
       ],
       "fixed_drops": []
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "break_return_to_inventory": true,
+    "break_return_item_id": "fish_monger",
+    "drops_self": false
   },
   "frozen_treasure_2": {
     "authored_drop_rules": true,
@@ -25991,7 +25960,10 @@
       ],
       "fixed_drops": []
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "break_return_to_inventory": true,
+    "break_return_item_id": "magnet_machine",
+    "drops_self": false
   },
   "medium_lock": {
     "authored_drop_rules": true,
@@ -26041,7 +26013,10 @@
       ],
       "fixed_drops": []
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "break_return_to_inventory": true,
+    "break_return_item_id": "night_theme_machine",
+    "drops_self": false
   },
   "open_sign_on": {
     "authored_drop_rules": true,
@@ -26575,7 +26550,10 @@
       ],
       "fixed_drops": []
     },
-    "farming_balance_version": 2
+    "farming_balance_version": 2,
+    "break_return_to_inventory": true,
+    "break_return_item_id": "snow_theme_machine",
+    "drops_self": false
   },
   "spike": {
     "authored_drop_rules": true,

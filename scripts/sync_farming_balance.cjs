@@ -37,6 +37,10 @@ function resolve(id, chain=[]) {
     }
   } else if(item.mode==='reclaimable_tree') {
     result.tree_rules.fixed_drops=[drop(id,'block',1),drop(item.seed_id,'seed',1),drop(item.seed_id,'seed',1,.05)];
+  } else if(item.mode==='return') {
+    // Existing seeds remain usable when an item changes to direct break recovery.
+    // An explicit harvest table does not enable any break drops.
+    result.tree_rules=structuredClone(item.tree_rules||empty());
   } else if(item.mode==='special') result.break_rules=item.break_rules;
   results.set(id,result);return result;
 }
@@ -67,6 +71,8 @@ for(const id of Object.keys(config.items).sort()) {
   const direct=['return','reclaimable_tree'].includes(r.mode);
   const patch=patches[id]??={};
   Object.assign(patch,{authored_drop_rules:true,drop_rules:r.break_rules,tree_drop_rules:r.tree_rules,farming_balance_version:config.version});
+  // The authored recovery mode must override stale spreadsheet farming flags.
+  if(direct) Object.assign(patch,{break_return_to_inventory:true,break_return_item_id:r.return_item_id||id,drops_self:false});
   if(Number.isInteger(r.break_xp))patch.break_xp=r.break_xp;
   if(r.seed_id&&r.grow_seconds) {
     const seedPatch=patches[r.seed_id]??={};

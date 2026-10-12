@@ -11,11 +11,18 @@ const sheetMatches=require('../../pixel-mania/docs/item-sheet-matches.json').com
 const baseline=require('../../pixel-mania/docs/item-sheet-comparison-baseline.json').rows;
 for(const match of sheetMatches){
   const row=rows.get(match.id);
+  if(match.break_mode_override==='return'){
+    assert.equal(row.mode,'return',`${match.id}: user-requested direct recovery`);
+    assert.deepEqual(row.break_blocks,{min:1,max:1,mean:1,chance:1});
+    assert.deepEqual(row.break_seeds,{min:0,max:0,mean:0,chance:0});
+    assert.deepEqual(row.break_gems,{min:0,max:0,mean:0,chance:0});
+  }
   for(const key of match.applied){
     const value=match.fields[key].value;
     if(key==='gems')assert.equal(row.break_gems.mean,value,`${match.id}: sheet gems`);
     if(key==='xp')assert.equal(row.break_xp,value,`${match.id}: sheet XP`);
     if(key==='blocks'||key==='seeds')for(const prefix of ['break','tree']){
+      if(prefix==='break'&&match.break_mode_override==='return')continue;
       const m=row[`${prefix}_${key}`];assert.equal(m.min,value[0]);assert.equal(m.max,value[1]);assert.equal(m.mean,(value[0]+value[1])/2);
     }
   }
