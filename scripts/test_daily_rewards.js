@@ -5,12 +5,13 @@ const vm = require("node:vm");
 const Rewards = require("../server_daily_rewards");
 
 const counts = new Map();
-for (let roll = 0; roll < 100; roll++) {
+assert.equal(Rewards.TOTAL_WEIGHT, 1000);
+for (let roll = 0; roll < 1000; roll++) {
   const reward = Rewards.chooseReward(roll);
   counts.set(reward.gems, (counts.get(reward.gems) || 0) + 1);
 }
-assert.deepEqual([...counts], [[250,75],[1000,20],[5000,5]]);
-for (const bad of [-1, 100, 1.5, NaN, Infinity]) assert.throws(() => Rewards.chooseReward(bad));
+assert.deepEqual([...counts], [[250,795],[1000,200],[5000,5]]);
+for (const bad of [-1, 1000, 1.5, NaN, Infinity]) assert.throws(() => Rewards.chooseReward(bad));
 
 const source = fs.readFileSync(require.resolve("../server.js"), "utf8");
 const start = source.indexOf("async function handleInventoryTransactionRequest(");

@@ -31,6 +31,7 @@ async function main() {
   const count = async table => Number((await db.query(`SELECT count(*) AS total FROM pixelmania.${table}`)).rows[0].total);
   const gems = async () => Number((await db.query("SELECT amount FROM pixelmania.inventory WHERE item_type='gem'")).rows[0]?.amount || 0);
   const status = await call("daily_reward_status");
+  assert.deepEqual(status.daily_reward.rewards.map(reward => reward.chance),[79.5,20,0.5]);
   assert.equal(status.daily_reward.can_claim,true);assert.equal(status.daily_reward.reset_at,21001*Rewards.DAY_MS);
   assert.equal(await count("daily_reward_receipts"),0);
   for (const reward_day of [undefined,-1,21001,"21000",21000.5]) assert.equal((await call("daily_reward_claim",{reward_day})).ok,false);

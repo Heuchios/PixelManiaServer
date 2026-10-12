@@ -3,13 +3,15 @@ import { randomInt } from "node:crypto";
 type Row = Record<string, any>;
 export const DAY_MS = 86400000;
 export const REWARDS = Object.freeze([
-  { id: "gems_250", name: "250 GEMS", gems: 250, weight: 75, rarity: "COMMON" },
-  { id: "gems_1000", name: "1,000 GEMS", gems: 1000, weight: 20, rarity: "RARE" },
+  { id: "gems_250", name: "250 GEMS", gems: 250, weight: 795, rarity: "COMMON" },
+  { id: "gems_1000", name: "1,000 GEMS", gems: 1000, weight: 200, rarity: "RARE" },
   { id: "gems_5000", name: "5,000 GEMS", gems: 5000, weight: 5, rarity: "JACKPOT" },
 ]);
 
-export function chooseReward(roll = randomInt(100)): typeof REWARDS[number] {
-  if (!Number.isInteger(roll) || roll < 0 || roll >= 100) throw new Error("Invalid reward roll");
+export const TOTAL_WEIGHT = REWARDS.reduce((sum, reward) => sum + reward.weight, 0);
+
+export function chooseReward(roll = randomInt(TOTAL_WEIGHT)): typeof REWARDS[number] {
+  if (!Number.isInteger(roll) || roll < 0 || roll >= TOTAL_WEIGHT) throw new Error("Invalid reward roll");
   let cumulative = 0;
   for (const reward of REWARDS) {
     cumulative += reward.weight;
@@ -55,7 +57,7 @@ export async function apply(store: any, entry: Row): Promise<Row> {
       const now = Number(clock.rows[0].now_ms);
       const day = Math.floor(now / DAY_MS);
       const snapshot: Row = { day, server_time: now, reset_at: (day + 1) * DAY_MS,
-        rewards: REWARDS.map(reward => ({ ...reward, chance: reward.weight })), can_claim: true, reward: null };
+        rewards: REWARDS.map(reward => ({ ...reward, chance: reward.weight * 100 / TOTAL_WEIGHT })), can_claim: true, reward: null };
       const saved = await client.query(`SELECT reward FROM ${store.table("daily_reward_receipts")} WHERE player_id=$1 AND reward_day=$2`, [playerId, day]);
       if (saved.rows.length) {
         snapshot.can_claim = false;
