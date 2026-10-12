@@ -268,4 +268,5 @@ assert.match(deploySource, /sync_server_socket_delivery_helpers_build\.js/);
 assert.match(deploySource, /check_server_socket_delivery_helpers_build\.js/);
 assert.match(deploySource, /npm run build:server-socket-delivery-helpers/);
 
+require("./check_movement_queue_drain");
 console.log("[server-socket-delivery-helpers] success");

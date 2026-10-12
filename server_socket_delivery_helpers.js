@@ -343,9 +343,23 @@ function createServerSocketDeliveryHelpers(config) {
                 scheduleMovementFlush(socket);
                 break;
             }
-            const playerEntries = Array.from(state.players.entries()).slice(0, state.maxItems);
+            // Copy only this packet's entries. Materializing the entire remaining map
+            // for every packet makes recovery from a congested connection quadratic.
+            const playerEntries = [];
+            for (const entry of state.players) {
+                playerEntries.push(entry);
+                if (playerEntries.length >= state.maxItems)
+                    break;
+            }
             const remainingSlots = Math.max(0, state.maxItems - playerEntries.length);
-            const leftEntries = Array.from(state.left.entries()).slice(0, remainingSlots);
+            const leftEntries = [];
+            if (remainingSlots > 0) {
+                for (const entry of state.left) {
+                    leftEntries.push(entry);
+                    if (leftEntries.length >= remainingSlots)
+                        break;
+                }
+            }
             const payload = {
                 type: "player_position_batch",
                 world: state.world,
