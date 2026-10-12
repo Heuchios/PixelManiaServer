@@ -6757,6 +6757,12 @@ function getItemDefinition(itemId: unknown): Readonly<ItemDefinition> | null {
   return Object.freeze({ item_id: clean, ...definition });
 }
 
+function getItemDisplayName(itemId: unknown): string {
+  const definition = getItemDefinition(itemId);
+  const displayName = String(definition?.display_name || "").trim();
+  return displayName || displayNameForItemId(definition?.item_id || cleanItemId(itemId)) || "Item";
+}
+
 function hasItem(itemId: unknown): boolean {
   return getItemDefinition(itemId) !== null;
 }
@@ -6908,6 +6914,7 @@ const ServerItemDatabase = {
   getInventoryFieldForCategory,
   getInventoryFieldForItem,
   getItemDefinition,
+  getItemDisplayName,
   getBlockHealth,
   getBreakHitReduction,
   getBreakPower,

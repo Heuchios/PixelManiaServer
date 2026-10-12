@@ -101,20 +101,19 @@ function createServerInventoryTransactionHelpers(config) {
     function getPostgresInventoryFailureMessage(result, fallback = "Server inventory changed. Try again.") {
         const raw = toRecord(result);
         const reason = String(raw.reason || "");
+        const itemId = config.clampString(raw.item_type || "");
+        const item = itemId ? itemDatabase.getItemDisplayName(itemId) : "that item";
         if (reason === "postgres_unavailable")
             return "PostgreSQL is not ready.";
         if (reason === "insufficient_inventory") {
-            const item = config.clampString(raw.item_type || "that item");
             return `Not enough ${item}.`;
         }
         if (reason === "insufficient_capacity") {
-            const item = config.clampString(raw.item_type || "that item");
             return `Your inventory cannot hold ${item}.`;
         }
         if (reason === "world_drop_item_instances_pending") {
             // The drop is still in the world and was not consumed. Tell the player to
             // retry rather than implying their item is gone.
-            const item = config.clampString(raw.item_type || "that item");
             return `${item} is not ready to collect yet. It is still in the world - try again in a moment.`;
         }
         if (reason === "insufficient_item_instances" ||
@@ -124,7 +123,6 @@ function createServerInventoryTransactionHelpers(config) {
             reason === "trade_missing_item_instances" ||
             reason === "vending_missing_item_instances" ||
             reason === "vending_payment_missing_item_instances") {
-            const item = config.clampString(raw.item_type || "that item");
             return `Tracked item data is missing for ${item}.`;
         }
         if (reason === "player_not_found" || reason === "invalid_username")

@@ -193,6 +193,7 @@ console.log("[admin-action-wiring] success");
       const state = { currency_inventory: { gem: remaining } };
       const deltas = [{ item_id: "gem", item_category: "currency", count: remaining, amount: -400 }];
       vm.runInNewContext(notification, {
+        ItemDatabase: require("../server_item_database"),
         removeCommand: { targetUsername: username, itemId: "gem" },
         findOnlinePlayerByUsername: () => username ? { socket: "recipient", player: { account_username: username } } : null,
         cleanAccountName: value => value,

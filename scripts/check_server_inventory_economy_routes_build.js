@@ -168,6 +168,7 @@ const validBlockItemIds = new Set([
 
 /** @type {Record<string, any>} */
 const ItemDatabase = {
+  getItemDisplayName: require("../server_item_database").getItemDisplayName,
   hasItem: (/** @type {unknown} */ itemId) => validBlockItemIds.has(String(itemId || "")) || itemId === "gem",
   canStoreItemInCategory: (
     /** @type {unknown} */ itemId,

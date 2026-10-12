@@ -221,7 +221,7 @@ function createServerPhase8FinalRoutes(deps) {
             return;
         }
         if (getInventoryCount(state, update.item_type, update.item_category) < update.amount) {
-            sendActionRejected(socket, "world_item_drop_create", `Not enough ${update.item_type}.`);
+            sendActionRejected(socket, "world_item_drop_create", `Not enough ${ItemDatabase.getItemDisplayName(update.item_type)}.`);
             return;
         }
         const beforeState = cloneJson(state);
@@ -558,7 +558,7 @@ function createServerPhase8FinalRoutes(deps) {
                     remaining_amount: pickupPlan.remaining,
                     requested_by: player.id,
                     requested_by_name: cleanName(player.name),
-                    message: `Picked up ${pickedDrop.amount} ${pickedDrop.item_type}.`,
+                    message: `Picked up ${pickedDrop.amount} ${ItemDatabase.getItemDisplayName(pickedDrop.item_type)}.`,
                     username: player.account_username,
                     inventory_delta: pickupInventoryDelta,
                     inventory_deltas: pickupInventoryDelta,
@@ -663,7 +663,7 @@ function createServerPhase8FinalRoutes(deps) {
             remaining_amount: pickupResult.remaining,
             requested_by: player.id,
             requested_by_name: cleanName(player.name),
-            message: `Picked up ${pickedDrop.amount} ${pickedDrop.item_type}.`,
+            message: `Picked up ${pickedDrop.amount} ${ItemDatabase.getItemDisplayName(pickedDrop.item_type)}.`,
             username: player.account_username,
             inventory_delta: pickupInventoryDelta,
             inventory_deltas: pickupInventoryDelta,

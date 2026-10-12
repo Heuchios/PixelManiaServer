@@ -25,7 +25,7 @@ const context = {
   growingTreeBreakHits: new WeakMap(), SEED_MUTATION_CHANCE: 0, MATURE_SEED_EXTRA_DROP_CHANCE: 0,
   SEED_MUTATION_REWARD_TABLE: [{ item_id: 'rare', item_category: 'block', min_amount: 2, max_amount: 2 }], SERVER_DROP_PICKUP_DELAY: 1,
   crypto: { randomInt: min => min }, rollWeightedReward: t => t[0], randomChance: () => false,
-  ItemDatabase: { hasItem: id => ['dirt_seed', 'grass_seed', 'rare', 'serpent_staff', 'sakura_sword'].includes(id), getItemDefinition: id => ({ category: 'seed', grow_time: 60, grows_into: id.replace('_seed', '') }), getSpliceResult: () => 'grass_seed' },
+  ItemDatabase: { getItemDisplayName: require('../server_item_database').getItemDisplayName, hasItem: id => ['dirt_seed', 'grass_seed', 'rare', 'serpent_staff', 'sakura_sword'].includes(id), getItemDefinition: id => ({ category: 'seed', grow_time: 60, grows_into: id.replace('_seed', '') }), getSpliceResult: () => 'grass_seed' },
   runtimeProfiler: { enabled: true, observe: (name, value) => profiles.push({ name, value }) },
   makeRequestId: data => data.request_id, getTransactionWorldName: () => 'TEST',
   requireSameWorld: () => true, rejectIfWorldBanned: async () => false, requireBuildPermission: () => true,

@@ -6287,19 +6287,19 @@ function validateFullTradeInventory(trade: any, stateA: any, stateB: any) {
 
   for (const item of offersA) {
     if (!ItemDatabase.isTradeableItem(item.item_id)) {
-      return { ok: false, message: `${item.item_id} cannot be traded.` };
+      return { ok: false, message: `${ItemDatabase.getItemDisplayName(item.item_id)} cannot be traded.` };
     }
     if (!spendItemFromState(stagedA, item.item_id, item.item_category, item.amount)) {
-      return { ok: false, message: `${trade.requester_username} no longer has enough ${item.item_id}.` };
+      return { ok: false, message: `${trade.requester_username} no longer has enough ${ItemDatabase.getItemDisplayName(item.item_id)}.` };
     }
   }
 
   for (const item of offersB) {
     if (!ItemDatabase.isTradeableItem(item.item_id)) {
-      return { ok: false, message: `${item.item_id} cannot be traded.` };
+      return { ok: false, message: `${ItemDatabase.getItemDisplayName(item.item_id)} cannot be traded.` };
     }
     if (!spendItemFromState(stagedB, item.item_id, item.item_category, item.amount)) {
-      return { ok: false, message: `${trade.target_username} no longer has enough ${item.item_id}.` };
+      return { ok: false, message: `${trade.target_username} no longer has enough ${ItemDatabase.getItemDisplayName(item.item_id)}.` };
     }
   }
 
@@ -6308,7 +6308,7 @@ function validateFullTradeInventory(trade: any, stateA: any, stateB: any) {
       continue;
     }
     if (!canAddItemToState(stagedB, item.item_id, item.item_category, item.amount)) {
-      return { ok: false, message: `${trade.target_username} cannot hold ${item.item_id}.` };
+      return { ok: false, message: `${trade.target_username} cannot hold ${ItemDatabase.getItemDisplayName(item.item_id)}.` };
     }
     addItemToState(stagedB, item.item_id, item.item_category, item.amount);
   }
@@ -6318,7 +6318,7 @@ function validateFullTradeInventory(trade: any, stateA: any, stateB: any) {
       continue;
     }
     if (!canAddItemToState(stagedA, item.item_id, item.item_category, item.amount)) {
-      return { ok: false, message: `${trade.requester_username} cannot hold ${item.item_id}.` };
+      return { ok: false, message: `${trade.requester_username} cannot hold ${ItemDatabase.getItemDisplayName(item.item_id)}.` };
     }
     addItemToState(stagedA, item.item_id, item.item_category, item.amount);
   }
@@ -8051,7 +8051,7 @@ async function handleVendSetListing(socket: any, player: any, data: any, worldNa
   const stagedState = cloneJson(state);
 
   if (getInventoryCount(stagedState, itemId, itemCategory) < stock) {
-    rejectVendTransaction(socket, data, `Not enough ${itemId}.`);
+    rejectVendTransaction(socket, data, `Not enough ${ItemDatabase.getItemDisplayName(itemId)}.`);
     return;
   }
 
@@ -8885,7 +8885,7 @@ async function handleSafeDeposit(socket: any, player: any, data: any, worldName:
   }
 
   if (getInventoryCount(state, itemId, itemCategory) < amount) {
-    rejectSafeTransaction(socket, data, `Not enough ${itemId}.`);
+    rejectSafeTransaction(socket, data, `Not enough ${ItemDatabase.getItemDisplayName(itemId)}.`);
     return;
   }
 
@@ -8942,7 +8942,7 @@ async function handleSafeDeposit(socket: any, player: any, data: any, worldName:
     y: safe.y,
   }, { skipPostgres: commit.postgres_committed });
   sendSafeStateUpdateToWorld(worldName, savedSafe);
-  sendSafeTransactionResult(socket, data, player, savedSafe, true, `Stored ${itemId} x${amount}.`, {
+  sendSafeTransactionResult(socket, data, player, savedSafe, true, `Stored ${ItemDatabase.getItemDisplayName(itemId)} x${amount}.`, {
     inventory_deltas: buildInventoryDeltaClientPayloads(commit.deltas, committedState),
   });
   } finally {
@@ -9042,7 +9042,7 @@ async function handleSafeWithdraw(socket: any, player: any, data: any, worldName
     y: safe.y,
   }, { skipPostgres: commit.postgres_committed });
   sendSafeStateUpdateToWorld(worldName, savedSafe);
-  sendSafeTransactionResult(socket, data, player, savedSafe, true, `Withdrew ${slot.item_id} x${amount}.`, {
+  sendSafeTransactionResult(socket, data, player, savedSafe, true, `Withdrew ${ItemDatabase.getItemDisplayName(slot.item_id)} x${amount}.`, {
     inventory_deltas: buildInventoryDeltaClientPayloads(commit.deltas, committedState),
   });
   } finally {
@@ -9472,7 +9472,7 @@ async function handleDonationBoxDonate(socket: unknown, player: ServerPacketReco
       return;
     }
     if (getInventoryCount(state, itemId, itemCategory) < amount) {
-      rejectDonationBoxTransaction(socket, data, `Not enough ${itemId}.`);
+      rejectDonationBoxTransaction(socket, data, `Not enough ${ItemDatabase.getItemDisplayName(itemId)}.`);
       return;
     }
 
@@ -9536,7 +9536,7 @@ async function handleDonationBoxDonate(socket: unknown, player: ServerPacketReco
       y: box.y,
     }, { skipPostgres: commit.postgres_committed });
     sendDonationBoxVisualStateUpdateToWorld(worldName, savedBox);
-    sendDonationBoxTransactionResult(socket, data, player, savedBox, true, `Donated ${itemId} x${amount}.`, {
+    sendDonationBoxTransactionResult(socket, data, player, savedBox, true, `Donated ${ItemDatabase.getItemDisplayName(itemId)} x${amount}.`, {
       inventory_deltas: buildInventoryDeltaClientPayloads(commit.deltas, committedState),
     });
   } finally {
@@ -9634,7 +9634,7 @@ async function handleDonationBoxRetrieve(socket: unknown, player: ServerPacketRe
       }, { skipPostgres: commit.postgres_committed });
     }
     sendDonationBoxVisualStateUpdateToWorld(worldName, savedBox);
-    const message = retrieveAll ? `Retrieved ${entries.length} donation${entries.length === 1 ? "" : "s"}.` : `Retrieved ${entries[0].item_id} x${entries[0].amount}.`;
+    const message = retrieveAll ? `Retrieved ${entries.length} donation${entries.length === 1 ? "" : "s"}.` : `Retrieved ${ItemDatabase.getItemDisplayName(entries[0].item_id)} x${entries[0].amount}.`;
     sendDonationBoxTransactionResult(socket, data, player, savedBox, true, message, {
       inventory_deltas: buildInventoryDeltaClientPayloads(commit.deltas, committedState),
     });
@@ -10390,7 +10390,7 @@ async function handleDisplayDeposit(socket: any, player: any, data: any, worldNa
     }
 
     if (getInventoryCount(state, itemId, itemCategory) < 1) {
-      rejectDisplayTransaction(socket, data, `Not enough ${itemId}.`);
+      rejectDisplayTransaction(socket, data, `Not enough ${ItemDatabase.getItemDisplayName(itemId)}.`);
       return;
     }
 
@@ -10491,7 +10491,7 @@ async function handleDisplayDeposit(socket: any, player: any, data: any, worldNa
       x: display.x,
       y: display.y,
     }, { skipPostgres: commit.postgres_committed });
-    sendDisplayTransactionResult(socket, data, player, savedDisplay, true, `Displayed ${itemId}.`, {
+    sendDisplayTransactionResult(socket, data, player, savedDisplay, true, `Displayed ${ItemDatabase.getItemDisplayName(itemId)}.`, {
       inventory_deltas: buildInventoryDeltaClientPayloads(commit.deltas, committedState),
     });
   } finally {
@@ -10610,7 +10610,7 @@ async function handleDisplayWithdraw(socket: any, player: any, data: any, worldN
       x: display.x,
       y: display.y,
     }, { skipPostgres: commit.postgres_committed });
-    sendDisplayTransactionResult(socket, data, player, savedDisplay, true, `Took ${slot.item_id}.`, {
+    sendDisplayTransactionResult(socket, data, player, savedDisplay, true, `Took ${ItemDatabase.getItemDisplayName(slot.item_id)}.`, {
       inventory_deltas: buildInventoryDeltaClientPayloads(commit.deltas, committedState),
     });
   } finally {
@@ -13331,7 +13331,7 @@ async function handleStationRecipeTransaction(socket: any, player: any, data: an
   const stagedState = cloneJson(state);
   for (const cost of costs) {
     if (getCraftingCostInventoryCount(stagedState, cost.item_id, cost.item_category) < cost.amount) {
-      sendInventoryTransactionRejected(socket, data, `Not enough ${cost.item_id}.`);
+      sendInventoryTransactionRejected(socket, data, `Not enough ${ItemDatabase.getItemDisplayName(cost.item_id)}.`);
       return;
     }
   }
@@ -13378,7 +13378,7 @@ async function handleStationRecipeTransaction(socket: any, player: any, data: an
     action,
     station_id: stationId,
     recipe_id: recipe.id,
-    message: getProgressionMessage(progression, stationId === "furnace" ? `Smelted ${output.item_id}.` : `Crafted ${output.item_id}.`),
+    message: getProgressionMessage(progression, stationId === "furnace" ? `Smelted ${ItemDatabase.getItemDisplayName(output.item_id)}.` : `Crafted ${ItemDatabase.getItemDisplayName(output.item_id)}.`),
     username,
     rewards: [output],
     progression: buildProgressionPayload(progression),
@@ -13737,7 +13737,7 @@ async function handleFishingCompleteTransaction(socket: any, player: any, data: 
     ok: true,
     request_id: requestId,
     action: "fishing_complete",
-    message: getProgressionMessage(progression, `Caught ${rewardItemId}.`),
+    message: getProgressionMessage(progression, `Caught ${ItemDatabase.getItemDisplayName(rewardItemId)}.`),
     username: player.account_username,
     rod_id: session.rod_id || "",
     lure_id: session.lure_id,
@@ -14008,7 +14008,7 @@ async function handleDropInventoryItemTransaction(socket: any, player: any, data
   }
 
   if (getInventoryCount(state, itemId, itemCategory) < amount) {
-    sendInventoryTransactionRejected(socket, data, `Not enough ${itemId}.`);
+    sendInventoryTransactionRejected(socket, data, `Not enough ${ItemDatabase.getItemDisplayName(itemId)}.`);
     return;
   }
 
@@ -14081,7 +14081,7 @@ async function handleDropInventoryItemTransaction(socket: any, player: any, data
     ok: true,
     request_id: requestId,
     action: "drop_inventory_item",
-    message: `Dropped ${amount} ${itemId}.`,
+    message: `Dropped ${amount} ${ItemDatabase.getItemDisplayName(itemId)}.`,
     username: player.account_username,
     inventory_deltas: inventoryDeltas,
   });
@@ -14115,7 +14115,7 @@ async function handleTrashInventoryItemTransaction(socket: any, player: any, dat
   }
 
   if (getInventoryCount(state, itemId, itemCategory) < amount) {
-    sendInventoryTransactionRejected(socket, data, `Not enough ${itemId}.`);
+    sendInventoryTransactionRejected(socket, data, `Not enough ${ItemDatabase.getItemDisplayName(itemId)}.`);
     return;
   }
 
@@ -14156,7 +14156,7 @@ async function handleTrashInventoryItemTransaction(socket: any, player: any, dat
     ok: true,
     request_id: requestId,
     action: "trash_inventory_item",
-    message: `Trashed ${amount} ${itemId}.`,
+    message: `Trashed ${amount} ${ItemDatabase.getItemDisplayName(itemId)}.`,
     username: player.account_username,
     inventory_deltas: inventoryDeltas,
   });
@@ -14947,7 +14947,7 @@ async function handleSeedPlaceTransactionLocked(socket: unknown, player: ServerP
 
   const state = ensureWritablePlayerState(player.account_username);
   if (!state) {
-    sendInventoryTransactionRejected(socket, data, `Not enough ${seedType}.`);
+    sendInventoryTransactionRejected(socket, data, `Not enough ${ItemDatabase.getItemDisplayName(seedType)}.`);
     return;
   }
 
@@ -14956,7 +14956,7 @@ async function handleSeedPlaceTransactionLocked(socket: unknown, player: ServerP
   const magnetSource = getMagnetSystem().source(data);
   const magnetsBefore = magnetSource ? getMagnetSystem().snapshot(worldName) : [];
   if (magnetSource ? !getMagnetSystem().consume(magnetSource, worldName, seedType) : !spendItemFromState(stagedState, seedType, "seed", 1)) {
-    sendInventoryTransactionRejected(socket, data, `Not enough ${seedType}.`);
+    sendInventoryTransactionRejected(socket, data, `Not enough ${ItemDatabase.getItemDisplayName(seedType)}.`);
     return;
   }
 
@@ -15021,7 +15021,7 @@ async function handleSeedPlaceTransactionLocked(socket: unknown, player: ServerP
     ok: true,
     request_id: requestId,
     action: "seed_place",
-    message: `Planted ${seedType}.`,
+    message: `Planted ${ItemDatabase.getItemDisplayName(seedType)}.`,
     username: player.account_username,
     seed_type: seedType,
     inventory_deltas: inventoryDeltas,
@@ -16931,7 +16931,7 @@ async function spendServerInventoryCost(username: any, cost: any, options: any =
   }
 
   if (getInventoryCount(state, cost.item_id, cost.item_category) < cost.amount) {
-    return { ok: false, reason: "insufficient_inventory", message: `Not enough ${cost.item_id}.` };
+    return { ok: false, reason: "insufficient_inventory", message: `Not enough ${ItemDatabase.getItemDisplayName(cost.item_id)}.` };
   }
 
   const beforeState = cloneJson(state);
@@ -17883,7 +17883,7 @@ async function prepareVendBreakInventoryReturn(socket: any, player: any, worldNa
     }
 
     addItemToState(stagedState, itemId, itemCategory, stock);
-    returned.push(`${itemId} x${stock}`);
+    returned.push(`${ItemDatabase.getItemDisplayName(itemId)} x${stock}`);
     returnedEntries.push({
       item_id: itemId,
       item_category: itemCategory,
@@ -18587,7 +18587,7 @@ async function validateBlockUpdateAgainstServerState(socket: any, player: any, w
 
   const requiredLayer = ItemDatabase.getPlaceLayer(update.block_type);
   if (requiredLayer !== update.layer) {
-    sendActionRejected(socket, "world_block_update", `Place ${update.block_type} on the ${requiredLayer} layer.`, {
+    sendActionRejected(socket, "world_block_update", `Place ${ItemDatabase.getItemDisplayName(update.block_type)} on the ${requiredLayer} layer.`, {
       reason: "wrong_layer",
       block_type: update.block_type,
       expected_layer: requiredLayer,
@@ -23556,7 +23556,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
         item_category: giveCommand.itemCategory,
         amount: giveCommand.amount,
         granted_by: player.account_username,
-        message: isSelfGive ? "" : `${player.account_username} gave you ${giveCommand.amount} ${giveCommand.itemId}.`,
+        message: isSelfGive ? "" : `${player.account_username} gave you ${giveCommand.amount} ${ItemDatabase.getItemDisplayName(giveCommand.itemId)}.`,
         rewards: [{
           item_id: giveCommand.itemId,
           item_category: giveCommand.itemCategory,
@@ -23704,7 +23704,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
         sendJson(target.socket, {
           type: "chat",
           sender: "System",
-          message: `${player.account_username} removed ${removal.removed} ${removeCommand.itemId} from your inventory.`,
+          message: `${player.account_username} removed ${removal.removed} ${ItemDatabase.getItemDisplayName(removeCommand.itemId)} from your inventory.`,
         });
       }
     }
@@ -24428,7 +24428,7 @@ async function handleDeveloperCommandRequestUnsafe(socket: any, player: any, dat
     queueWorldUpdateBroadcast(commandWorld, update);
     logWorldChange(socket, player, changeEntry, { skipPostgres: worldCommit.postgres_committed });
     approve(
-      `Spawned ${itemId} in ${commandWorld}.`,
+      `Spawned ${ItemDatabase.getItemDisplayName(itemId)} in ${commandWorld}.`,
       {
         target_world: commandWorld,
         affected_world: commandWorld,

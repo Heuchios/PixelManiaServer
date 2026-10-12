@@ -17,7 +17,7 @@ async function run(existing, amount, failCommit = false) {
     MAX_DROP_TILE_AMOUNT: 2000, MAX_DROP_CREATE_DISTANCE_PIXELS: 200, SERVER_DROP_PICKUP_DELAY: 1,
     makeRequestId: () => 'test', getTransactionWorldName: () => 'TEST', requireSameWorld: () => true,
     rejectIfWorldBanned: async () => false, tradeByPlayerId: new Map(),
-    ItemDatabase: { hasItem: () => true, isDropableItem: () => true, canStoreItemInCategory: () => true, getStackLimit: () => 400 },
+    ItemDatabase: { getItemDisplayName: require('../server_item_database').getItemDisplayName, hasItem: () => true, isDropableItem: () => true, canStoreItemInCategory: () => true, getStackLimit: () => 400 },
     clampString: String, clampInteger: (n, min, max) => Math.max(min, Math.min(max, Math.trunc(n))),
     resolveInventoryCategory: () => 'block', getTransactionDropPosition: () => ({ x: 32, y: 64 }),
     isPositionInWorldBounds: () => true, isPlayerNearPoint: () => true,

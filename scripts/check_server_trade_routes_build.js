@@ -46,6 +46,7 @@ const playerStates = new Map([
 ]);
 
 const ItemDatabase = {
+  getItemDisplayName: require("../server_item_database").getItemDisplayName,
   hasItem: (/** @type {unknown} */ itemId) => ["apple", "gem"].includes(String(itemId || "")),
   isTradeableItem: (/** @type {unknown} */ itemId) => String(itemId || "") !== "gem",
   canStoreItemInCategory: (/** @type {unknown} */ itemId, /** @type {unknown} */ category) => String(itemId || "") !== "" && String(category || "") !== "",

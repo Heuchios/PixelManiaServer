@@ -71,14 +71,10 @@ function createServerInventoryEconomyRoutes(deps) {
             return "Purchased and opened Hair Pack.";
         if (itemId === "prestige_coloured_block_pack")
             return "Purchased and opened Prestige Coloured Block Pack.";
-        return `Purchased ${listing.item_id}.`;
+        return `Purchased ${ItemDatabase.getItemDisplayName(listing.item_id)}.`;
     }
     function getShopItemDisplayName(itemId) {
-        const definition = typeof ItemDatabase.getItemDefinition === "function"
-            ? ItemDatabase.getItemDefinition(itemId)
-            : null;
-        const displayName = clampString(definition?.display_name || definition?.name || "");
-        return displayName || itemId;
+        return ItemDatabase.getItemDisplayName(itemId);
     }
     function getFullPackReward(state, rewardTable) {
         const checkedRewards = new Set();

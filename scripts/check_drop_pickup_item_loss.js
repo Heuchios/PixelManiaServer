@@ -532,6 +532,7 @@ async function run() {
     /** @type {any} */
     const helperConfig = {
       itemDatabase: {
+        getItemDisplayName: require("../server_item_database").getItemDisplayName,
         CATEGORY_TO_FIELD: {},
         FIELD_TO_CATEGORY: {},
         hasItem: () => true,

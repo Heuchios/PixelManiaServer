@@ -202,10 +202,10 @@ function createServerTradeRoutes(deps) {
         const totals = getTradeOfferTotals(slots, overrideSlot, overrideItem);
         for (const item of totals) {
             if (!ItemDatabase.isTradeableItem(item.item_id)) {
-                return { ok: false, message: `${item.item_id} cannot be traded.` };
+                return { ok: false, message: `${ItemDatabase.getItemDisplayName(item.item_id)} cannot be traded.` };
             }
             if (getInventoryCount(state, item.item_id, item.item_category) < item.amount) {
-                return { ok: false, message: `Not enough ${item.item_id}.` };
+                return { ok: false, message: `Not enough ${ItemDatabase.getItemDisplayName(item.item_id)}.` };
             }
         }
         return { ok: true };

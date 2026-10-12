@@ -43,6 +43,7 @@ const stackLimits = new Map([
 /** @type {any} */
 const helpers = InventoryTransactionHelpersModule.createServerInventoryTransactionHelpers({
   itemDatabase: {
+    getItemDisplayName: require("../server_item_database").getItemDisplayName,
     CATEGORY_TO_FIELD: categoryToField,
     FIELD_TO_CATEGORY: fieldToCategory,
     hasItem(/** @type {string} */ itemId) {
@@ -158,9 +159,9 @@ assert.deepEqual(helpers.combineRewardEntries([
 ]);
 
 assert.equal(helpers.getPostgresInventoryFailureMessage({ reason: "postgres_unavailable" }), "PostgreSQL is not ready.");
-assert.equal(helpers.getPostgresInventoryFailureMessage({ reason: "insufficient_inventory", item_type: "dirt" }), "Not enough dirt.");
-assert.equal(helpers.getPostgresInventoryFailureMessage({ reason: "insufficient_capacity", item_type: "dirt" }), "Your inventory cannot hold dirt.");
-assert.equal(helpers.getPostgresInventoryFailureMessage({ reason: "missing_world_drop_item_instances", item_type: "dirt" }), "Tracked item data is missing for dirt.");
+assert.equal(helpers.getPostgresInventoryFailureMessage({ reason: "insufficient_inventory", item_type: "dirt" }), "Not enough Dirt.");
+assert.equal(helpers.getPostgresInventoryFailureMessage({ reason: "insufficient_capacity", item_type: "dirt" }), "Your inventory cannot hold Dirt.");
+assert.equal(helpers.getPostgresInventoryFailureMessage({ reason: "missing_world_drop_item_instances", item_type: "dirt" }), "Tracked item data is missing for Dirt.");
 assert.equal(helpers.getPostgresInventoryFailureMessage({ reason: "player_not_found" }), "Could not load your server inventory.");
 assert.equal(helpers.getPostgresInventoryFailureMessage({ reason: "database_error" }), "PostgreSQL rejected the inventory update.");
 assert.equal(helpers.getPostgresInventoryFailureMessage({ reason: "other" }, "Fallback."), "Fallback.");
